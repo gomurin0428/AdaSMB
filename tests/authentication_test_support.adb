@@ -14,7 +14,7 @@ package body Authentication_Test_Support is
             Output (Index) := 0;
          end loop;
       else
-         raise SMB.Authentication_Error with
+         raise SMB.Invalid_State with
            "injected entropy failure after challenge";
       end if;
    end Fail_After_Negotiate;

@@ -85,7 +85,7 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   `127.0.0.1:1445`. The public integration client passed normal authentication,
   wrong-password rejection, repeat authentication on an authenticated
   connection without disconnecting, and disconnect after an injected
-  post-challenge entropy exception. All seven adversarial cases passed,
+  post-challenge entropy callback raising `SMB.Invalid_State`. All seven adversarial cases passed,
   including wrong-correlation authentication. Malformed signed CREATE and
   interrupted READ invalidation/reconnect regressions passed. In the
   lost-WRITE-response-after-progress regression, the proxy relayed the first

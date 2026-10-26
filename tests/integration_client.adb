@@ -61,7 +61,7 @@ begin
          SMB.Client.Authenticate (Client, User, Password);
          raise Program_Error with "injected authentication unexpectedly succeeded";
       exception
-         when SMB.Authentication_Error => null;
+         when SMB.Invalid_State => null;
       end;
       Assert
         (not SMB.Client.Is_Connected (Client),
