@@ -1000,10 +1000,10 @@ package body SMB.Client is
                when others =>
                   raise SMB.Invalid_State with
                     "SMB directory enumeration entered an invalid stage";
-            end case;
+         end case;
          end loop;
-       Close_Internal (Client, Folder);
-       exception
+         Close_Internal (Client, Folder);
+      exception
          when others =>
             declare
                Original_Status : constant SMB.DWord := Client.Last_Status;
@@ -1022,17 +1022,17 @@ package body SMB.Client is
                   SMB.Core_Client.Abort_Directory
                     (Enumeration, Client.Engine_Core, Core_Status);
                end if;
-            if Folder.Engine_Token.Ticket /= 0
-              and then SMB.Engine.Current_Phase (Client.Engine_Core) =
-                Share_Connected
-            then
+               if Folder.Engine_Token.Ticket /= 0
+                 and then SMB.Engine.Current_Phase (Client.Engine_Core) =
+                   Share_Connected
+               then
                   SMB.Engine.Validate_Handle
                     (Client.Engine_Core, Folder.Engine_Token, False, False,
                      File_Id, Access_Mode, Is_Directory, Handle_Status);
                   if Handle_Status = SMB.Ok then
                      Cleanup_Close (Client, Folder, Original_Status);
                   end if;
-            end if;
+               end if;
             end;
             raise;
       end;

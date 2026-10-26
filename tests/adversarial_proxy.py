@@ -187,6 +187,18 @@ class AdversarialProxy:
                             write_requests += 1
                         if len(payload) >= 64 and payload[12:14] == b"\x0e\x00":
                             query_requests += 1
+                            if (
+                                self.mode
+                                == "malformed-signed-directory-second-page"
+                                and query_requests > 2
+                            ):
+                                relay_error.append(
+                                    RuntimeError(
+                                        "unexpected extra QUERY_DIRECTORY request"
+                                    )
+                                )
+                                done.set()
+                                return
                         if self.mode in {
                             "malformed-signed-create",
                             "malformed-signed-directory-second-page",
@@ -351,6 +363,25 @@ class AdversarialProxy:
                             ).digest()[:16]
                             client.sendall(header + payload)
                             mutated = True
+                            if (
+                                self.mode
+                                == "malformed-signed-directory-second-page"
+                            ):
+                                upstream.join(timeout=11)
+                                if upstream.is_alive():
+                                    raise RuntimeError(
+                                        "client did not close after malformed "
+                                        "directory response"
+                                    )
+                                if (
+                                    not relay_error
+                                    or not isinstance(relay_error[0], EOFError)
+                                ):
+                                    raise RuntimeError(
+                                        "upstream did not exit because the client "
+                                        f"closed: {relay_error!r}"
+                                    )
+                                break
                             done.set()
                             break
                         elif self.mode == "unsigned":
@@ -403,6 +434,10 @@ class AdversarialProxy:
                         f"expected two client WRITE requests, got {write_requests}"
                     )
             if self.mode == "malformed-signed-directory-second-page":
+                if not relay_error or not isinstance(relay_error[0], EOFError):
+                    raise RuntimeError(
+                        "directory client connection did not close after mutation"
+                    )
                 if not first_query_had_data:
                     raise RuntimeError("first directory response had no data")
                 if query_requests != 2 or query_responses != 2:

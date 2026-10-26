@@ -64,6 +64,27 @@ is
       Access_Mode : Access_Kind;
       Is_Directory : Boolean) return Boolean
    with Ghost;
+   function Handle_Matches_Equivalent
+     (State : Engine_State;
+      Token : Handle_Token;
+      Left_File_Id, Right_File_Id : SMB.Bytes;
+      Access_Mode : Access_Kind;
+      Is_Directory : Boolean) return Boolean
+   with
+     Ghost,
+     Pre =>
+       Left_File_Id'Length = 16
+       and then Right_File_Id'Length = 16
+       and then
+         (for all Index in 0 .. 15 =>
+            Left_File_Id (Left_File_Id'First + Index) =
+              Right_File_Id (Right_File_Id'First + Index)),
+     Post =>
+       Handle_Matches_Equivalent'Result
+       and then Handle_Matches
+         (State, Token, Left_File_Id, Access_Mode, Is_Directory) =
+       Handle_Matches
+         (State, Token, Right_File_Id, Access_Mode, Is_Directory);
    function Has_Validated_Response (State : Engine_State) return Boolean;
    function Response_Receipt_Matches
      (State : Engine_State;

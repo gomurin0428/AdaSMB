@@ -689,7 +689,9 @@ is
       State : SMB.Engine.Engine_State) return Boolean
    with Post =>
      (if Directory_Context_Valid'Result then
-        Directory_Context_Matches (Value, State))
+        Directory_Context_Matches (Value, State)
+        and then SMB.Engine.Handle_Matches
+          (State, Value.Token, Value.File_Id, Value.Access_Mode, True))
    is
       File_Id : SMB.Bytes (0 .. 15) := (others => 0);
       Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
@@ -719,6 +721,16 @@ is
       pragma Assert
         (SMB.Engine.Handle_Matches
            (State, Value.Token, File_Id, Access_Mode, Is_Directory));
+      pragma Assert
+        (for all Index in Value.File_Id'Range =>
+           File_Id (Index) = Value.File_Id (Index));
+      pragma Assert
+        (SMB.Engine.Handle_Matches_Equivalent
+           (State, Value.Token, File_Id, Value.File_Id,
+            Access_Mode, Is_Directory));
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, Value.File_Id, Value.Access_Mode, True));
       return True;
    end Directory_Context_Valid;
 
@@ -821,6 +833,19 @@ is
          Status := SMB.Invalid_State_Status;
          return;
       end if;
+      pragma Assert
+        (for all Index in Value.File_Id'Range =>
+           File_Id (Index) = Value.File_Id (Index));
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, File_Id, Access_Mode, True));
+      pragma Assert
+        (SMB.Engine.Handle_Matches_Equivalent
+           (State, Value.Token, File_Id, Value.File_Id,
+            Access_Mode, True));
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, Value.File_Id, Value.Access_Mode, True));
       if Value.Page_Count >= SMB.Core_Protocol.Maximum_Directory_Pages
         or else Output'Length < Directory_Request_Size
       then
@@ -1729,7 +1754,7 @@ is
                  Value.Buffer
                    (Value.Completed + 1 .. Value.Completed + Amount);
             begin
-               pragma Assert
+               pragma Assert_And_Cut
                  (for all Index in 0 .. Amount - 1 =>
                     Payload (Payload'First + Index) =
                       Value.Buffer (Value.Completed + Index + 1));
@@ -1737,6 +1762,10 @@ is
                  (File_Id, Value.Position, Payload,
                   Body_Buffer, Body_Used, Field_Status);
                if Field_Status = SMB.Ok then
+                  pragma Assert_And_Cut
+                    (for all Index in 0 .. Amount - 1 =>
+                       Body_Buffer (Body_Buffer'First + 48 + Index) =
+                         Payload (Payload'First + Index));
                   pragma Assert
                     (for all Index in 0 .. Amount - 1 =>
                        Body_Buffer (Body_Buffer'First + 48 + Index) =

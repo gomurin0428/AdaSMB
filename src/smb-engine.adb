@@ -799,4 +799,12 @@ is
         and then (for all Byte_Index in 0 .. 15 =>
           State.Handles (Index).File_Id (Byte_Index) =
             File_Id (File_Id'First + Byte_Index))));
+
+   function Handle_Matches_Equivalent
+     (State : Engine_State;
+      Token : Handle_Token;
+      Left_File_Id, Right_File_Id : SMB.Bytes;
+      Access_Mode : Access_Kind;
+      Is_Directory : Boolean) return Boolean is
+     (True);
 end SMB.Engine;

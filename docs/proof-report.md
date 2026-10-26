@@ -15,11 +15,11 @@ units: `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Framing`,
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 455 | 455 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 1,835 | 0 | 1,835 |
-| Assertions | 194 | 0 | 194 |
-| Functional contracts | 732 | 0 | 732 |
-| Termination | 116 | 110 | 6 |
-| **Total** | **3,336** | **569** | **2,767** |
+| Run-time checks | 1,843 | 0 | 1,843 |
+| Assertions | 202 | 0 | 202 |
+| Functional contracts | 735 | 0 | 735 |
+| Termination | 119 | 113 | 6 |
+| **Total** | **3,358** | **572** | **2,786** |
 
 There were zero unproved and zero justified checks. GNATprove reported 52
 flow-analysis warnings (46 in `SMB.Core_Client` and 6 in `SMB.Core_Protocol`),
@@ -61,6 +61,10 @@ parsing uses only that snapshot and proves cursor progress, entry metadata and
 UTF-16 name correspondence, per-entry count bounds, and no progress on a short
 name buffer. Page and entry caps are enforced in the core; valid terminal
 statuses preserve their NTSTATUS and malformed pages invalidate the Engine.
+Successful query preparation binds the stored directory identity to
+`SMB.Engine.Handle_Matches` on the pre-call Engine state. The context predicate
+also proves the exact stored FileId/access/directory identity using byte-wise
+handle-match congruence.
 
 The proof does not establish the trusted socket/allocation/exception adapter,
 complete public-facade correctness, cryptographic hardness, server rollback, or
@@ -110,11 +114,15 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   responses. The client reported transport failure, rejected stale-handle
   operations, reconnected through the same public connection, and read back
   the complete deterministic 70,001-byte file. Normal directory enumeration
-  returned all 1,203 entries. The malformed signed second-page regression
-  verified positive first-page progress, exactly two QUERY_DIRECTORY
-  request/response pairs with no retry, Protocol_Error and disconnection, then
-  reconnected the same connection and successfully listed/read from the
-  backend.
+  returned all 1,203 entries. For the malformed signed second-page regression,
+  the proxy kept the client-facing connection open and continued observing
+  upstream after sending the mutated page; it required client EOF within its
+  bounded 11-second join. QUERY_DIRECTORY requests are counted before
+  forwarding, and any third request fails the test even if its response is not
+  relayed. The test verified positive first-page progress and exactly two
+  request/response pairs, followed by Protocol_Error, client-owned
+  disconnection, and successful list/read after reconnecting the same
+  connection to the backend.
 * `python3 -m py_compile tests/adversarial_proxy.py
   tests/samba_integration.py`: passed.
 

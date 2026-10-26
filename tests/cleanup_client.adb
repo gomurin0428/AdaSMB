@@ -143,9 +143,9 @@ begin
             SMB.Client.Close (Client, Reopened);
          end;
          SMB.Client.Remove_File (Client, Path);
-      SMB.Client.Disconnect (Client);
-      Ada.Text_IO.Put_Line
-        ("lost WRITE response after progress and same-connection reconnect passed");
+         SMB.Client.Disconnect (Client);
+         Ada.Text_IO.Put_Line
+           ("lost WRITE response after progress and same-connection reconnect passed");
       end;
    elsif Mode = "malformed-signed-directory-second-page" then
       declare
