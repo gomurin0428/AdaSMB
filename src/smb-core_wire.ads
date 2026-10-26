@@ -102,7 +102,10 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       (if Status = SMB.Ok then Value = Encoded_U64 (Data, Offset)
+       (if Status = SMB.Ok then
+          Offset <= Data'Length
+          and then Data'Length - Offset >= 8
+          and then Value = Encoded_U64 (Data, Offset)
         else Value = 0);
 
    procedure Write_U16

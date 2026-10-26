@@ -497,7 +497,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Put_Byte (Output, 3, (if Restart then 1 else 0), Status);
       end if;
       if Status = SMB.Ok then
-         Copy (Output, 8, File_Id, Status);
+         Output (Output'First + 8 .. Output'First + 23) := File_Id;
       end if;
       Put_U16 (Output, 24, 96, Status);
       Put_U16 (Output, 26, 2, Status);
@@ -616,7 +616,12 @@ package body SMB.Core_Protocol with SPARK_Mode is
    procedure Read_U64
      (Packet : SMB.Bytes; Offset : Natural; Value : out SMB.QWord;
       Status : in out SMB.Core_Status)
-   with Pre => Packet'Length <= SMB.Maximum_Frame_Size
+   with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+        Post =>
+          (if Status = SMB.Ok then
+             Offset <= Packet'Length
+             and then Packet'Length - Offset >= 8
+             and then Value = SMB.Core_Wire.Encoded_U64 (Packet, Offset))
    is
    begin
       Value := 0;
@@ -914,21 +919,21 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Read_U16 (Packet, 64, Structure, Header_Status);
-         Read_U16 (Packet, 66, Word_Value, Header_Status);
-         Read_U32 (Packet, 68, DWord_Value, Header_Status);
+         Word_Value := SMB.Core_Wire.Encoded_U16 (Packet, 66);
+         DWord_Value := SMB.Core_Wire.Encoded_U32 (Packet, 68);
          if Structure /= 60 or else (Word_Value and 16#FFFE#) /= 0
            or else DWord_Value /= 0
          then
             Status := SMB.Invalid_Protocol;
          end if;
-      elsif Command = Query_Directory_Command then
+      elsif Command = 14 then
          if Packet'Length < 72 then
             Status := SMB.Invalid_Length;
             return;
          end if;
          Read_U16 (Packet, 64, Structure, Header_Status);
-         Read_U16 (Packet, 66, Word_Value, Header_Status);
-         Read_U32 (Packet, 68, DWord_Value, Header_Status);
+         Word_Value := SMB.Core_Wire.Encoded_U16 (Packet, 66);
+         DWord_Value := SMB.Core_Wire.Encoded_U32 (Packet, 68);
          if Structure /= 9
            or else not Fits (DWord_Value, Maximum_IO_Chunk)
          then
@@ -944,8 +949,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
             Status := SMB.Invalid_Offset;
             return;
          end if;
-         Info.Data_Offset := Offset;
-         Info.Data_Length := Length;
+         Info.Data_Offset :=
+           Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66));
+         Info.Data_Length :=
+           Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68));
       elsif Command = Set_Info_Command then
          if Packet'Length < 66 then
             Status := SMB.Invalid_Length;
@@ -980,6 +987,14 @@ package body SMB.Core_Protocol with SPARK_Mode is
       then
          Status := SMB.Invalid_Offset;
       end if;
+      if Status = SMB.Ok and then Command = 14
+        and then Nt_Status = SMB.Success
+      then
+         Info.Data_Offset :=
+           Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66));
+         Info.Data_Length :=
+           Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68));
+      end if;
    end Parse_Response;
 
    procedure Parse_Directory_Entry
@@ -1009,9 +1024,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
          return;
       end if;
       Read_U32 (Buffer, Cursor, Next_Offset, Wire_Status);
-      Read_U64 (Buffer, Cursor + 40, Info.Size, Wire_Status);
-      Read_U32 (Buffer, Cursor + 56, Info.Attributes, Wire_Status);
-      Read_U32 (Buffer, Cursor + 60, Name_Length, Wire_Status);
+      Info.Size := SMB.Core_Wire.Encoded_U64 (Buffer, Cursor + 40);
+      Info.Attributes :=
+        SMB.Core_Wire.Encoded_U32 (Buffer, Cursor + 56);
+      Name_Length := SMB.Core_Wire.Encoded_U32 (Buffer, Cursor + 60);
       Short_Name_Length := Buffer (Buffer'First + Cursor + 68);
       if Wire_Status /= SMB.Ok
         or else not Fits (Name_Length, Remaining - 104)

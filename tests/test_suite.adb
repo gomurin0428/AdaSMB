@@ -956,7 +956,7 @@ procedure Test_Suite is
       Directory : SMB.Bytes (0 .. 105) := (others => 0);
       Cursor : Natural := 0;
       Directory_Info : SMB.Core_Protocol.Directory_Info;
-      Chunk : Natural;
+      Chunk, Pages, Entries : Natural;
    begin
       SMB.Core_Protocol.Build_Read
         (File_Id, 16#0102_0304_0506_0708#, 16#1234#,
@@ -1081,6 +1081,29 @@ procedure Test_Suite is
         (Directory, Cursor, Directory_Info, Status);
       Assert (Status /= SMB.Ok, "oversized directory next offset accepted");
 
+      Pages := SMB.Core_Protocol.Maximum_Directory_Pages - 1;
+      SMB.Core_Protocol.Count_Directory_Page (Pages, Status);
+      Assert
+        (Status = SMB.Ok
+         and then Pages = SMB.Core_Protocol.Maximum_Directory_Pages,
+         "directory page cap accepted final page");
+      SMB.Core_Protocol.Count_Directory_Page (Pages, Status);
+      Assert
+        (Status = SMB.Resource_Limit
+         and then Pages = SMB.Core_Protocol.Maximum_Directory_Pages,
+         "directory page cap exceeded");
+      Entries := SMB.Core_Protocol.Maximum_Directory_Entries - 1;
+      SMB.Core_Protocol.Count_Directory_Entry (Entries, Status);
+      Assert
+        (Status = SMB.Ok
+         and then Entries = SMB.Core_Protocol.Maximum_Directory_Entries,
+         "directory entry cap accepted final entry");
+      SMB.Core_Protocol.Count_Directory_Entry (Entries, Status);
+      Assert
+        (Status = SMB.Resource_Limit
+         and then Entries = SMB.Core_Protocol.Maximum_Directory_Entries,
+         "directory entry cap exceeded");
+
       SMB.Core_Protocol.Select_Transfer_Amount
         (65_536, 4_096, Chunk, Status);
       Assert
@@ -1094,17 +1117,23 @@ procedure Test_Suite is
    end Test_Core_Protocol;
 
    procedure Test_Engine_Receipts is
+      use type SMB.Core_Client.Directory_Stage;
       State : SMB.Engine.Engine_State;
+      Foreign_State : SMB.Engine.Engine_State;
       Status : SMB.Core_Status;
       Nt_Status : SMB.DWord;
       Message_Id : SMB.QWord;
       Expected : SMB.Engine.Request_Expectation;
       Token : SMB.Engine.Handle_Token := (others => 0);
+      Directory_Token : SMB.Engine.Handle_Token := (others => 0);
+      Foreign_Token : SMB.Engine.Handle_Token := (others => 0);
       File_Id : constant SMB.Bytes (0 .. 15) :=
         (16#10#, 16#21#, 16#32#, 16#43#, 16#54#, 16#65#, 16#76#, 16#87#,
          16#98#, 16#A9#, 16#BA#, 16#CB#, 16#DC#, 16#ED#, 16#FE#, 16#0F#);
       Wrong_File_Id : constant SMB.Bytes (0 .. 15) := (others => 1);
       Coordinator : SMB.Core_Client.Operation;
+      Directory_Create : SMB.Core_Client.Operation;
+      Foreign_Create : SMB.Core_Client.Operation;
       Close_Coordinator : SMB.Core_Client.Operation;
       Coordinator_Packet : SMB.Bytes (0 .. 121) := (others => 0);
       Close_Packet : SMB.Bytes (0 .. 87) := (others => 0);
@@ -1138,17 +1167,21 @@ procedure Test_Suite is
          SMB.Wire.Put_U32 (Packet, 16, (if Signed then 9 else 1));
       end Prepare_Response;
 
-      procedure Reconnect_Share is
+      procedure Reconnect_Share
+        (Target : in out SMB.Engine.Engine_State;
+         Initialize_State : Boolean := True) is
       begin
-         SMB.Engine.Initialize (State, Status);
-         Assert (Status = SMB.Ok, "reinitialize after coordinator abort");
-         SMB.Engine.Mark_Connected (State, Status);
+         if Initialize_State then
+            SMB.Engine.Initialize (Target, Status);
+            Assert (Status = SMB.Ok, "reinitialize after coordinator abort");
+         end if;
+         SMB.Engine.Mark_Connected (Target, Status);
          Assert (Status = SMB.Ok, "reconnect transport after coordinator abort");
          declare
             Response : SMB.Bytes (0 .. 127) := (others => 0);
          begin
             SMB.Engine.Begin_Request
-              (State, SMB.Core_Wire.Command_Code (0), False, False,
+              (Target, SMB.Core_Wire.Command_Code (0), False, False,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect negotiate request");
             Prepare_Response
@@ -1160,16 +1193,16 @@ procedure Test_Suite is
             Response (69) := 2;
             Response (98) := 1;
             Response (102) := 1;
-            SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+            SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
             Assert (Status = SMB.Ok, "reconnect negotiate response");
-            SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, Status);
+            SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, Status);
             Assert (Status = SMB.Ok, "reconnect negotiated phase");
          end;
          declare
             Response : SMB.Bytes (0 .. 71) := (others => 0);
          begin
             SMB.Engine.Begin_Request
-              (State, SMB.Core_Wire.Command_Code (1), False, False,
+              (Target, SMB.Core_Wire.Command_Code (1), False, False,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect challenge request");
             Prepare_Response
@@ -1178,16 +1211,16 @@ procedure Test_Suite is
             SMB.Wire.Put_U32
               (Response, 8, SMB.Status_More_Processing_Required);
             Response (64) := 9;
-            SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+            SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
             Assert (Status = SMB.Ok, "reconnect challenge response");
-            SMB.Engine.Install_Session_Key (State, Session_Id, Key, Status);
+            SMB.Engine.Install_Session_Key (Target, Session_Id, Key, Status);
             Assert (Status = SMB.Ok, "reconnect session key");
          end;
          declare
             Response : SMB.Bytes (0 .. 100) := (others => 0);
          begin
             SMB.Engine.Begin_Request
-              (State, SMB.Core_Wire.Command_Code (1), False, True,
+              (Target, SMB.Core_Wire.Command_Code (1), False, True,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect final session request");
             Prepare_Response
@@ -1200,16 +1233,16 @@ procedure Test_Suite is
                Response (72 + Index) := Final_Token (Index);
             end loop;
             SMB.Wire.Sign (Response, Key);
-            SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+            SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
             Assert (Status = SMB.Ok, "reconnect signed session response");
-            SMB.Engine.Mark_Authenticated (State, Status);
+            SMB.Engine.Mark_Authenticated (Target, Status);
             Assert (Status = SMB.Ok, "reconnect authenticated phase");
          end;
          declare
             Response : SMB.Bytes (0 .. 79) := (others => 0);
          begin
             SMB.Engine.Begin_Request
-              (State, SMB.Core_Wire.Command_Code (3), True, True,
+              (Target, SMB.Core_Wire.Command_Code (3), True, True,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect tree connect request");
             Prepare_Response
@@ -1218,12 +1251,382 @@ procedure Test_Suite is
             Response (64) := 16;
             Response (66) := 1;
             SMB.Wire.Sign (Response, Key);
-            SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+            SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
             Assert (Status = SMB.Ok, "reconnect tree connect response");
-            SMB.Engine.Mark_Share_Connected (State, Tree_Id, Status);
+            SMB.Engine.Mark_Share_Connected (Target, Tree_Id, Status);
             Assert (Status = SMB.Ok, "reconnect share-connected phase");
          end;
       end Reconnect_Share;
+
+      procedure Reconnect_Share is
+      begin
+         Reconnect_Share (State);
+      end Reconnect_Share;
+
+      procedure Create_Directory_Handle
+        (Target : in out SMB.Engine.Engine_State;
+         Create_Operation : in out SMB.Core_Client.Operation;
+         Result_Token : out SMB.Engine.Handle_Token)
+      is
+         Request : SMB.Bytes (0 .. 121) := (others => 0);
+         Response : SMB.Bytes (0 .. 151) := (others => 0);
+         Used : Natural;
+      begin
+         SMB.Core_Client.Prepare_Create
+           (Create_Operation, Target, SMB.Bytes'(0, 0),
+            SMB.Engine.Read_Only, False, 1, True, Request, Used, Status);
+         Assert (Status = SMB.Ok and then Used = Request'Length,
+                 "prepare directory test handle");
+         SMB.Core_Client.Send_Succeeded (Create_Operation, Target, Status);
+         Assert (Status = SMB.Ok, "acknowledge directory test CREATE");
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (5),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 89;
+         Response (128 .. 143) := File_Id;
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete
+           (Create_Operation, Target, Response, Nt_Status,
+            Result_Token, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Success,
+            "complete directory test CREATE");
+      end Create_Directory_Handle;
+
+      procedure Test_Directory_Coordinator is
+         Directory_A, Directory_B :
+           SMB.Core_Client.Directory_Enumeration;
+         Zero_Directory, Error_Directory, Malformed_Directory,
+           Bad_Signature_Directory :
+           SMB.Core_Client.Directory_Enumeration;
+         Query_A, Query_B : SMB.Bytes (0 .. 97) := (others => 0);
+         Response : SMB.Bytes (0 .. 291) := (others => 0);
+         Second_Response : SMB.Bytes (0 .. 177) := (others => 0);
+         Terminal_Response : SMB.Bytes (0 .. 71) := (others => 0);
+         Page_One : SMB.Bytes (0 .. 219) := (others => 0);
+         Page_Two : SMB.Bytes (0 .. 105) := (others => 0);
+         Bad_Page : SMB.Bytes (0 .. 105) := (others => 0);
+         Short_Name : SMB.Bytes (0 .. 0) := (others => 0);
+         Name : SMB.Bytes (0 .. 3) := (others => 0);
+         Entry_Info : SMB.Core_Protocol.Directory_Info;
+         Used, Name_Used : Natural;
+         Owner : SMB.QWord;
+         Epoch : SMB.QWord;
+
+         procedure Make_Response
+           (Target : SMB.Engine.Engine_State;
+            Packet : in out SMB.Bytes;
+            Request : SMB.Bytes;
+            Page : SMB.Bytes;
+            Response_Status : SMB.DWord := SMB.Success)
+         is
+            Key_Value : constant SMB.Bytes :=
+              SMB.Engine.Current_Signing_Key (Target);
+         begin
+            Prepare_Response
+              (Packet, SMB.Core_Wire.Command_Code (14),
+               SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+            SMB.Wire.Put_U32 (Packet, 8, Response_Status);
+            SMB.Wire.Put_U16 (Packet, 64, 9);
+            SMB.Wire.Put_U16
+              (Packet, 66, (if Page'Length = 0 then 0 else 72));
+            SMB.Wire.Put_U32 (Packet, 68, SMB.DWord (Page'Length));
+            if Page'Length > 0 then
+               Packet (72 .. 72 + Page'Length - 1) := Page;
+            end if;
+            SMB.Wire.Sign (Packet, Key_Value);
+         end Make_Response;
+
+         procedure Prepare_Directory_Request
+           (Value : in out SMB.Core_Client.Directory_Enumeration;
+            Target : in out SMB.Engine.Engine_State;
+            Packet : in out SMB.Bytes)
+         is
+         begin
+            SMB.Core_Client.Prepare_Directory_Query
+              (Value, Target, Packet, Used, Status);
+            Assert
+              (Status = SMB.Ok and then Used = 98
+               and then SMB.Wire.U16 (Packet, 12) = 14
+               and then SMB.Wire.U64 (Packet, 24) > 0
+               and then Packet (67) = 1
+               and then Packet (72 .. 87) = File_Id
+               and then SMB.Wire.U32 (Packet, 92) = 65_536
+               and then SMB.Wire.Verify_Signature
+                 (Packet, SMB.Engine.Current_Signing_Key (Target)),
+               "signed first QUERY_DIRECTORY request fields");
+         end Prepare_Directory_Request;
+      begin
+         Page_One (0 .. 3) := (112, 0, 0, 0);
+         Page_One (60 .. 63) := (2, 0, 0, 0);
+         Page_One (104 .. 105) := (97, 0);
+         Page_One (112 + 60 .. 112 + 63) := (4, 0, 0, 0);
+         Page_One (112 + 104 .. 112 + 107) := (98, 0, 99, 0);
+         SMB.Wire.Put_U64 (Page_One, 40, 123);
+         SMB.Wire.Put_U32 (Page_One, 56, 16#20#);
+         SMB.Wire.Put_U64 (Page_One, 112 + 40, 456);
+         SMB.Wire.Put_U32 (Page_One, 112 + 56, 16#10#);
+         Page_Two (60 .. 63) := (2, 0, 0, 0);
+         Page_Two (104 .. 105) := (100, 0);
+         SMB.Wire.Put_U64 (Page_Two, 40, 789);
+         SMB.Wire.Put_U32 (Page_Two, 56, 16#20#);
+         Reconnect_Share (State);
+         Reconnect_Share (Foreign_State);
+         Create_Directory_Handle (State, Directory_Create, Directory_Token);
+         Create_Directory_Handle
+           (Foreign_State, Foreign_Create, Foreign_Token);
+         SMB.Core_Client.Start_Directory
+           (Directory_A, State, Directory_Token, Status);
+         Assert (Status = SMB.Ok, "start first directory coordinator");
+         SMB.Core_Client.Start_Directory
+           (Directory_B, Foreign_State, Foreign_Token, Status);
+         Assert (Status = SMB.Ok, "start colliding directory coordinator");
+
+         Prepare_Directory_Request (Directory_A, State, Query_A);
+         Prepare_Directory_Request (Directory_B, Foreign_State, Query_B);
+         Assert (Query_A = Query_B, "directory expectations did not collide");
+         Make_Response (Foreign_State, Response, Query_B, Page_One);
+         SMB.Core_Client.Complete_Directory_Page
+           (Directory_A, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine.Has_Pending_Request (State)
+            and then SMB.Core_Client.Directory_Stage_Of (Directory_A) =
+              SMB.Core_Client.Query_Prepared,
+           "directory completion before send acknowledgement advanced");
+         SMB.Core_Client.Directory_Send_Succeeded
+           (Directory_A, State, Status);
+         Assert (Status = SMB.Ok, "acknowledge first directory query");
+         SMB.Core_Client.Directory_Send_Succeeded
+           (Directory_B, Foreign_State, Status);
+         Assert (Status = SMB.Ok, "acknowledge colliding directory query");
+         SMB.Core_Client.Complete_Directory_Page
+           (Directory_A, Foreign_State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine.Has_Pending_Request (Foreign_State)
+            and then SMB.Engine.Has_Signing_Key (Foreign_State)
+            and then SMB.Core_Client.Directory_Stage_Of (Directory_A) =
+              SMB.Core_Client.Query_Sent,
+           "foreign directory completion consumed colliding response");
+         SMB.Core_Client.Abort_Directory
+           (Directory_A, Foreign_State, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine.Has_Pending_Request (Foreign_State)
+            and then SMB.Engine.Has_Signing_Key (Foreign_State),
+           "foreign directory abort invalidated matching Engine");
+
+         SMB.Core_Client.Complete_Directory_Page
+           (Directory_A, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Directory_Stage_Of (Directory_A) =
+              SMB.Core_Client.Page_Ready,
+           "complete first directory page");
+         SMB.Core_Client.Complete_Directory_Page
+           (Directory_A, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Directory_Stage_Of (Directory_A) =
+              SMB.Core_Client.Page_Ready,
+           "duplicate directory page completion advanced");
+         SMB.Core_Client.Complete_Directory_Page
+           (Directory_B, Foreign_State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Directory_Stage_Of (Directory_B) =
+              SMB.Core_Client.Page_Ready,
+           "complete colliding directory page");
+         SMB.Core_Client.Prepare_Directory_Query
+           (Directory_A, State, Query_A, Used, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then not SMB.Engine.Has_Pending_Request (State),
+           "query prepared before page drain");
+         Response := (others => 0);
+
+         SMB.Core_Client.Next_Directory_Entry
+           (Directory_A, State, Name, Name_Used, Entry_Info, Status);
+         Assert
+           (Status = SMB.Ok and then Name (0 .. 1) = SMB.Bytes'(97, 0)
+            and then Entry_Info.Size = 123,
+           "owned page snapshot changed with caller packet");
+         SMB.Core_Client.Next_Directory_Entry
+           (Directory_B, State, Name, Name_Used, Entry_Info, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Directory_Cursor_Of (Directory_B) = 0
+            and then SMB.Engine.Has_Signing_Key (State),
+           "foreign directory entry extraction advanced");
+
+         SMB.Core_Client.Next_Directory_Entry
+           (Directory_B, Foreign_State, Short_Name, Name_Used,
+            Entry_Info, Status);
+         Assert
+           (Status = SMB.Resource_Limit
+            and then Name_Used = 0
+            and then SMB.Core_Client.Directory_Cursor_Of (Directory_B) = 0
+            and then SMB.Core_Client.Directory_Entry_Count_Of (Directory_B) = 0,
+           "short directory name buffer advanced page");
+         SMB.Core_Client.Next_Directory_Entry
+           (Directory_B, Foreign_State, Name, Name_Used, Entry_Info, Status);
+         Assert
+           (Status = SMB.Ok and then Name_Used = 2
+            and then Name (0 .. 1) = SMB.Bytes'(97, 0)
+            and then Entry_Info.Size = 123
+            and then Entry_Info.Attributes = 16#20#,
+           "directory snapshot first entry");
+         SMB.Core_Client.Next_Directory_Entry
+           (Directory_B, Foreign_State, Name, Name_Used, Entry_Info, Status);
+         Assert
+           (Status = SMB.Ok and then Name_Used = 4
+            and then Name = SMB.Bytes'(98, 0, 99, 0)
+            and then Entry_Info.Size = 456
+            and then Entry_Info.Attributes = 16#10#,
+           "directory snapshot second entry");
+         Assert
+           (SMB.Core_Client.Directory_Stage_Of (Directory_B) =
+              SMB.Core_Client.Query_Ready,
+           "directory page did not drain");
+         SMB.Core_Client.Prepare_Directory_Query
+           (Directory_B, Foreign_State, Query_B, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = 98 and then Query_B (67) = 0
+            and then SMB.Wire.Verify_Signature
+              (Query_B, SMB.Engine.Current_Signing_Key (Foreign_State)),
+           "second QUERY_DIRECTORY restart or signature");
+         SMB.Core_Client.Directory_Send_Succeeded
+           (Directory_B, Foreign_State, Status);
+         Assert (Status = SMB.Ok, "acknowledge second directory query");
+         Make_Response (Foreign_State, Second_Response, Query_B, Page_Two);
+         SMB.Core_Client.Complete_Directory_Page
+           (Directory_B, Foreign_State, Second_Response, Nt_Status, Status);
+         Assert (Status = SMB.Ok, "complete second directory page");
+         SMB.Core_Client.Next_Directory_Entry
+           (Directory_B, Foreign_State, Name, Name_Used, Entry_Info, Status);
+         Assert
+           (Status = SMB.Ok and then Name (0 .. 1) = SMB.Bytes'(100, 0)
+            and then Entry_Info.Size = 789,
+           "second-page directory entry");
+         SMB.Core_Client.Prepare_Directory_Query
+           (Directory_B, Foreign_State, Query_B, Used, Status);
+         Assert (Status = SMB.Ok and then Query_B (67) = 0,
+                 "terminal QUERY_DIRECTORY restart flag");
+         SMB.Core_Client.Directory_Send_Succeeded
+           (Directory_B, Foreign_State, Status);
+         Assert (Status = SMB.Ok, "acknowledge terminal directory query");
+         Make_Response
+           (Foreign_State, Terminal_Response, Query_B, Page_Two (1 .. 0),
+            SMB.Status_No_More_Files);
+         SMB.Core_Client.Complete_Directory_Page
+           (Directory_B, Foreign_State, Terminal_Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Status_No_More_Files
+            and then SMB.Core_Client.Directory_Stage_Of (Directory_B) =
+              SMB.Core_Client.Directory_Finished
+            and then not SMB.Engine.Has_Pending_Request (Foreign_State)
+            and then not SMB.Engine.Has_Validated_Response (Foreign_State),
+           "No_More_Files directory terminal");
+
+         SMB.Core_Client.Start_Directory
+           (Zero_Directory, Foreign_State, Foreign_Token, Status);
+         Assert (Status = SMB.Ok, "start zero-data directory enumeration");
+         SMB.Core_Client.Prepare_Directory_Query
+           (Zero_Directory, Foreign_State, Query_B, Used, Status);
+         SMB.Core_Client.Directory_Send_Succeeded
+           (Zero_Directory, Foreign_State, Status);
+         Make_Response
+           (Foreign_State, Terminal_Response, Query_B, Page_Two (1 .. 0));
+         SMB.Core_Client.Complete_Directory_Page
+           (Zero_Directory, Foreign_State, Terminal_Response,
+            Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Core_Client.Directory_Stage_Of (Zero_Directory) =
+              SMB.Core_Client.Directory_Finished,
+           "zero-data directory terminal");
+
+         SMB.Core_Client.Start_Directory
+           (Error_Directory, Foreign_State, Foreign_Token, Status);
+         SMB.Core_Client.Prepare_Directory_Query
+           (Error_Directory, Foreign_State, Query_B, Used, Status);
+         SMB.Core_Client.Directory_Send_Succeeded
+           (Error_Directory, Foreign_State, Status);
+         Make_Response
+           (Foreign_State, Terminal_Response, Query_B, Page_Two (1 .. 0),
+            16#C000_0022#);
+         SMB.Core_Client.Complete_Directory_Page
+           (Error_Directory, Foreign_State, Terminal_Response,
+            Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = 16#C000_0022#
+            and then SMB.Core_Client.Directory_Stage_Of (Error_Directory) =
+              SMB.Core_Client.Directory_Finished
+            and then SMB.Engine.Has_Signing_Key (Foreign_State)
+            and then not SMB.Engine.Has_Pending_Request (Foreign_State),
+           "valid directory NT error did not preserve healthy Engine");
+
+         SMB.Core_Client.Start_Directory
+           (Malformed_Directory, Foreign_State, Foreign_Token, Status);
+         SMB.Core_Client.Prepare_Directory_Query
+           (Malformed_Directory, Foreign_State, Query_B, Used, Status);
+         SMB.Core_Client.Directory_Send_Succeeded
+           (Malformed_Directory, Foreign_State, Status);
+         Bad_Page (0 .. 3) := (1, 0, 0, 0);
+         Bad_Page (60 .. 63) := (2, 0, 0, 0);
+         Bad_Page (104 .. 105) := (120, 0);
+         Make_Response (Foreign_State, Second_Response, Query_B, Bad_Page);
+         SMB.Core_Client.Complete_Directory_Page
+           (Malformed_Directory, Foreign_State, Second_Response,
+            Nt_Status, Status);
+         SMB.Core_Client.Next_Directory_Entry
+           (Malformed_Directory, Foreign_State, Name, Name_Used,
+            Entry_Info, Status);
+         Assert
+           (Status /= SMB.Ok
+            and then SMB.Engine.Current_Phase (Foreign_State) =
+              SMB.Engine.Disconnected
+            and then SMB.Engine.Signing_Key_Is_Zero (Foreign_State)
+            and then not SMB.Engine.Has_Pending_Request (Foreign_State)
+            and then not SMB.Engine.Has_Validated_Response (Foreign_State),
+           "malformed directory record did not invalidate Engine");
+
+         Owner := SMB.Engine.Current_Owner_Id (State);
+         Epoch := SMB.Engine.Current_Epoch (State);
+         SMB.Engine.Invalidate (State, Status);
+         Assert (Status = SMB.Ok, "invalidate stale directory context");
+         Reconnect_Share (State, Initialize_State => False);
+         Create_Directory_Handle (State, Directory_Create, Directory_Token);
+         SMB.Core_Client.Abort_Directory (Directory_A, State, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine.Current_Owner_Id (State) = Owner
+            and then SMB.Engine.Current_Epoch (State) /= Epoch
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Share_Connected
+            and then SMB.Engine.Has_Signing_Key (State),
+           "stale directory abort affected same-owner reconnected Engine");
+
+         SMB.Core_Client.Start_Directory
+           (Bad_Signature_Directory, State, Directory_Token, Status);
+         SMB.Core_Client.Prepare_Directory_Query
+           (Bad_Signature_Directory, State, Query_A, Used, Status);
+         SMB.Core_Client.Directory_Send_Succeeded
+           (Bad_Signature_Directory, State, Status);
+         Make_Response (State, Second_Response, Query_A, Page_Two);
+         Second_Response (48) := Second_Response (48) xor 1;
+         SMB.Core_Client.Complete_Directory_Page
+           (Bad_Signature_Directory, State, Second_Response,
+            Nt_Status, Status);
+         Assert
+           (Status = SMB.Signature_Error
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then SMB.Engine.Signing_Key_Is_Zero (State)
+            and then not SMB.Engine.Has_Pending_Request (State),
+           "tampered directory response did not invalidate Engine");
+      end Test_Directory_Coordinator;
 
       procedure Create_Transfer_Handle is
          Response : SMB.Bytes (0 .. 151) := (others => 0);
@@ -2092,6 +2495,7 @@ procedure Test_Suite is
             and then not SMB.Engine.Has_Pending_Request (State),
             "tampered transfer response advanced progress or kept the session");
       end;
+      Test_Directory_Coordinator;
    end Test_Engine_Receipts;
 
    procedure Test_Engine_Malformed_Close is

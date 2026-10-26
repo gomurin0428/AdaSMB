@@ -21,7 +21,7 @@ These are the implementations called by `SMB.Client`, not a parallel model.
 | `SMB.Core_Wire` | Bounded integer readers/writers, SMB header construction/correlation validation and signing |
 | `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, transfer arithmetic and pagination limits |
-| `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state, chunk construction/signing, send acknowledgement, validated completion, handle updates, immutable WRITE snapshot and bounded READ result extraction |
+| `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; packet construction/signing, send acknowledgement, validated completion and handle updates |
 | `SMB.Engine` | Phases, pending requests, signed response acceptance, single-use response receipts and handle identity/lifetime |
 
 Supported response bodies are parsed in the core after header/correlation and
@@ -44,8 +44,14 @@ partial WRITE counts advance only by the validated response count. An uncertain
 send/receive or malformed response aborts the Engine state without retry; the
 facade closes its transport. The adapter still owns socket I/O, forwarding the
 exact returned packet slice, allocation, exception translation and public
-container lifetime. Other public operation paths remain on the legacy
-`SMB.Client.Exchange` adapter and are not claimed as migrated by this stage.
+container lifetime. The directory coordinator owns the QUERY_DIRECTORY
+sequence, restart flag, bounded 64-KiB validated page snapshot, entry cursor,
+and page/entry limits. It validates and copies each page before parsing entries
+from the owned snapshot. `List_Directory` pumps socket frames and extracts
+owned UTF-16 names; decoding, dot-entry filtering, vector insertion, folder
+lifetime, and cleanup remain trusted facade responsibilities. Other public
+operation paths remain on the legacy `SMB.Client.Exchange` adapter and are not
+claimed as migrated by this stage.
 
 Proof covers language-defined run-time checks, initialization, flow analysis and
 the contracts actually written in the source. It does not prove that every
@@ -76,7 +82,8 @@ understate this boundary.
 | `SMB.Client` | `Create_Internal`, `Close_Internal` | Socket send/receive orchestration around the typed coordinator, exact returned packet slicing, status/exception translation and abort cleanup |
 | `SMB.Client` | `Read`, `Write` | I/O pump around the typed coordinator, exact returned packet forwarding, allocation, exception/NTSTATUS translation, and cleanup of invalidated transports |
 | `SMB.Client` | `Authenticate` | I/O pump for `SMB.Core_Client` authentication steps; caller/OS entropy, clock input, exception/NTSTATUS translation and transport cleanup |
-| `SMB.Client` | `Set_Disposition`, `Connect`, `Connect_Share`, `Open_File`, `Close`, `List_Directory`, `Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename`, `Disconnect` | Legacy operation sequencing, local object/collection lifetime and recovery. These paths remain unmigrated; their existing `Exchange` adapter is outside the authentication, CREATE/CLOSE and READ/WRITE proof scopes. |
+| `SMB.Client` | `List_Directory` | Trusted folder lifetime and cleanup, UTF-16 decoding, dot-entry filtering, vector allocation/insertion, exception translation and socket pumping around the typed directory coordinator. |
+| `SMB.Client` | `Set_Disposition`, `Connect`, `Connect_Share`, `Open_File`, `Close`, `Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename`, `Disconnect` | Legacy operation sequencing, local object lifetime and recovery. These paths remain unmigrated; their existing `Exchange` adapter is outside the authentication, CREATE/CLOSE, READ/WRITE and directory-enumeration proof scopes. |
 
 Tests and the example are outside the proof project. Their successful execution
 does not make the above bodies formally verified.

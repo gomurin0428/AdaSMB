@@ -214,7 +214,24 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => File_Id'Length = 16
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 34
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
+            and then Output (Output'First + 2) = 37
+            and then Output (Output'First + 3) =
+              (if Restart then 1 else 0)
+            and then SMB.Core_Wire.Encoded_U32 (Output, 4) = 0
+            and then Output (Output'First + 8 .. Output'First + 23) =
+              File_Id
+            and then SMB.Core_Wire.Encoded_U16 (Output, 24) = 96
+            and then SMB.Core_Wire.Encoded_U16 (Output, 26) = 2
+            and then SMB.Core_Wire.Encoded_U32 (Output, 28) =
+              SMB.DWord (Maximum_IO_Chunk)
+            and then Output (Output'First + 32) = 16#2A#
+            and then Output (Output'First + 33) = 0);
 
    procedure Build_Disposition
      (File_Id : SMB.Bytes;
@@ -276,6 +293,15 @@ package SMB.Core_Protocol is
           then Packet'Length >= 80
             and then Info.Count <= Maximum_IO_Chunk
             and then Info.Count = Natural
+              (SMB.Core_Wire.Encoded_U32 (Packet, 68))
+          elsif Command = 14 and then Nt_Status = SMB.Success
+          then Packet'Length >= 72
+            and then Info.Data_Offset = Natural
+              (SMB.Core_Wire.Encoded_U16 (Packet, 66))
+            and then
+              (Info.Data_Length = 0 or else Info.Data_Offset >= 72)
+            and then Info.Data_Length <= Maximum_IO_Chunk
+            and then Info.Data_Length = Natural
               (SMB.Core_Wire.Encoded_U32 (Packet, 68))));
 
    procedure Parse_Directory_Entry
@@ -289,8 +315,16 @@ package SMB.Core_Protocol is
        and then (if Status = SMB.Ok then
          Cursor > Cursor'Old
          and Info.Next_Cursor = Cursor
+         and Info.Name_Length > 0
          and Info.Name_Offset <= Buffer'Length
-         and Info.Name_Length <= Buffer'Length - Info.Name_Offset);
+         and Info.Name_Length <= Buffer'Length - Info.Name_Offset
+         and Info.Name_Offset = Cursor'Old + 104
+         and Info.Name_Length = Natural
+           (SMB.Core_Wire.Encoded_U32 (Buffer, Cursor'Old + 60))
+         and Info.Size =
+           SMB.Core_Wire.Encoded_U64 (Buffer, Cursor'Old + 40)
+         and Info.Attributes = SMB.Core_Wire.Encoded_U32
+           (Buffer, Cursor'Old + 56));
 
    procedure Advance_Transfer
      (Position : in out SMB.QWord;

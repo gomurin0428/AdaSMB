@@ -143,10 +143,52 @@ begin
             SMB.Client.Close (Client, Reopened);
          end;
          SMB.Client.Remove_File (Client, Path);
-         SMB.Client.Disconnect (Client);
-         Ada.Text_IO.Put_Line
-           ("lost WRITE response after progress and same-connection reconnect passed");
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line
+        ("lost WRITE response after progress and same-connection reconnect passed");
       end;
+   elsif Mode = "malformed-signed-directory-second-page" then
+      declare
+         Rejected : Boolean := False;
+      begin
+         begin
+            declare
+               Ignored : constant SMB.Client.Directory_Entry_Array :=
+                 SMB.Client.List_Directory (Client);
+               pragma Unreferenced (Ignored);
+            begin
+               raise Program_Error with
+                 "malformed second directory page was accepted";
+            end;
+         exception
+            when SMB.Protocol_Error =>
+               Rejected := True;
+         end;
+         if not Rejected or else SMB.Client.Is_Connected (Client) then
+            raise Program_Error with
+              "malformed directory page did not invalidate the client";
+         end if;
+      end;
+      SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+      SMB.Client.Authenticate (Client, User, Password);
+      SMB.Client.Connect_Share (Client, Share);
+      declare
+         Entries : constant SMB.Client.Directory_Entry_Array :=
+           SMB.Client.List_Directory (Client);
+         File : SMB.Client.Handle :=
+           SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+      begin
+         if Entries'Length < 2
+           or else SMB.Client.Read (Client, File, 0, 1)'Length /= 1
+         then
+            raise Program_Error with
+              "directory reconnect did not list and read from backend";
+         end if;
+         SMB.Client.Close (Client, File);
+      end;
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line
+        ("malformed signed directory page cleanup and reconnect passed");
    else
       Reached_Create := True;
       begin

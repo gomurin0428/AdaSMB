@@ -290,7 +290,27 @@ is
                     and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
                       SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
                     and then Current_Response_Info (State).Count =
-                      Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68)))));
+                      Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
+                  elsif Pending_Command (State'Old) = 14
+                    and then Nt_Status = SMB.Success
+                  then Packet'Length >= 72
+                    and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
+                      SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                    and then Current_Response_Info (State).Data_Offset =
+                      Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66))
+                    and then Current_Response_Info (State).Data_Length <=
+                      SMB.Core_Protocol.Maximum_IO_Chunk
+                    and then Current_Response_Info (State).Data_Length =
+                      Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
+                    and then
+                      (Current_Response_Info (State).Data_Length = 0
+                       or else Current_Response_Info (State).Data_Offset >= 72)
+                    and then Current_Response_Info (State).Data_Offset <=
+                      Packet'Length
+                    and then Current_Response_Info (State).Data_Length <=
+                      Packet'Length -
+                        Current_Response_Info (State).Data_Offset
+                    )));
    --  A failed wire/signature check invalidates the session and all handles.
 
    procedure Register_Handle
