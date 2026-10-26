@@ -53,6 +53,13 @@ package SMB.Core_Protocol is
        and then
          (if Status = SMB.Ok then
             Used = 24 + Token'Length
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 25
+            and then Output (Output'First + 2) = 0
+            and then Output (Output'First + 3) = 3
+            and then SMB.Core_Wire.Encoded_U16 (Output, 12) = 88
+            and then SMB.Core_Wire.Encoded_U16 (Output, 14) =
+              SMB.Word (Token'Length)
+            and then SMB.Core_Wire.Encoded_U64 (Output, 16) = 0
             and then
               (if Token'Length = 0 then True
                else

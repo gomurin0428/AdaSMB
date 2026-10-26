@@ -517,7 +517,9 @@ procedure Test_Suite is
 
       State : SMB.Engine.Engine_State;
       Value : SMB.Core_Client.Authentication;
-      Request : SMB.Bytes (0 .. 65_621) := (others => 0);
+      Request : SMB.Bytes
+        (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+          (others => 0);
       Response : SMB.Bytes (0 .. 100) := (others => 0);
       Status : SMB.Core_Status;
       Nt_Status : SMB.DWord;
@@ -595,9 +597,180 @@ procedure Test_Suite is
          "coordinator completed signed authentication");
 
       declare
+         State_A, State_B : SMB.Engine.Engine_State;
+         Value_A, Value_B : SMB.Core_Client.Authentication;
+         Request_A, Request_B : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
+         Response_A, Response_B : SMB.Bytes
+           (0 .. 71 + Challenge'Length) := (others => 0);
+         Final_A, Final_B : SMB.Bytes (0 .. 100) := (others => 0);
+         Used_A, Used_B : Natural;
+         Message_A, Message_B : SMB.QWord;
+         Fresh_Value : SMB.Core_Client.Authentication;
+         Fresh_Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
+         Fresh_Used : Natural;
+         Stale_State : SMB.Engine.Engine_State;
+         Stale_Value : SMB.Core_Client.Authentication;
+         Stale_Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
+         Stale_Used : Natural;
+         Stale_Response : SMB.Bytes
+           (0 .. 71 + Challenge'Length) := (others => 0);
+         Stale_Message : SMB.QWord;
+      begin
+         Prepare_Negotiated (State_A);
+         Prepare_Negotiated (State_B);
+         SMB.Core_Client.Prepare_Negotiate
+           (Value_A, State_A, Request_A, Used_A, Status);
+         Assert (Status = SMB.Ok, "prepare owner A negotiate");
+         SMB.Core_Client.Prepare_Negotiate
+           (Value_B, State_B, Request_B, Used_B, Status);
+         Assert (Status = SMB.Ok, "prepare owner B negotiate");
+         Message_A := SMB.Wire.U64 (Request_A, 24);
+         Message_B := SMB.Wire.U64 (Request_B, 24);
+         Assert (Message_A = Message_B, "owner context message collision");
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Value_A, State_A, Status);
+         Assert (Status = SMB.Ok, "acknowledge owner A negotiate");
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Value_B, State_B, Status);
+         Assert (Status = SMB.Ok, "acknowledge owner B negotiate");
+         Response_A := Challenge_Response
+           (Message_A, SMB.Status_More_Processing_Required, Challenge);
+         Response_B := Challenge_Response
+           (Message_B, SMB.Status_More_Processing_Required, Challenge);
+         SMB.Core_Client.Complete_Challenge
+           (Value_A, State_B, Response_A, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Authentication_Stage_Of (Value_A) =
+              SMB.Core_Client.Negotiate_Sent
+            and then SMB.Engine.Has_Pending_Request (State_B),
+           "foreign challenge consumed another engine");
+         SMB.Core_Client.Complete_Challenge
+           (Value_A, State_A, Response_A, Nt_Status, Status);
+         Assert (Status = SMB.Ok, "complete owner A challenge");
+         SMB.Core_Client.Complete_Challenge
+           (Value_B, State_B, Response_B, Nt_Status, Status);
+         Assert (Status = SMB.Ok, "complete owner B challenge");
+         SMB.Core_Client.Prepare_Negotiate
+           (Fresh_Value, State_A, Fresh_Request, Fresh_Used, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Authentication_Stage_Of (Fresh_Value) =
+              SMB.Core_Client.Authentication_Ready
+            and then SMB.Engine.Has_Validated_Response (State_A),
+           "second authentication consumed challenge receipt");
+         SMB.Core_Client.Prepare_Authenticate
+           (Value_A, State_B, "User", "Password", "Domain", Nonce, 0,
+            Request_A, Used_A, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Authentication_Stage_Of (Value_A) =
+              SMB.Core_Client.Challenge_Received
+            and then not SMB.Engine.Has_Signing_Key (State_B)
+            and then SMB.Engine.Has_Validated_Response (State_B),
+           "foreign authentication preparation mutated engine");
+         SMB.Core_Client.Prepare_Authenticate
+           (Value_A, State_A, "User", "Password", "Domain", Nonce, 0,
+            Request_A, Used_A, Status);
+         Assert (Status = SMB.Ok, "prepare owner A authenticate");
+         SMB.Core_Client.Prepare_Authenticate
+           (Value_B, State_B, "User", "Password", "Domain", Nonce, 0,
+            Request_B, Used_B, Status);
+         Assert (Status = SMB.Ok, "prepare owner B authenticate");
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Value_A, State_A, Status);
+         Assert (Status = SMB.Ok, "acknowledge owner A authenticate");
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Value_B, State_B, Status);
+         Assert (Status = SMB.Ok, "acknowledge owner B authenticate");
+         Message_A := SMB.Wire.U64 (Request_A, 24);
+         Message_B := SMB.Wire.U64 (Request_B, 24);
+         Assert
+           (Message_A = Message_B
+            and then SMB.Engine.Current_Session_Id (State_A) =
+              SMB.Engine.Current_Session_Id (State_B),
+            "owner context authentication collision");
+         Final_A := Final_Response (Message_A, SMB.Success, False, False);
+         Final_B := Final_Response (Message_B, SMB.Success, False, False);
+         SMB.Core_Client.Complete_Authenticate
+           (Value_A, State_B, Final_A, Nt_Status, Status);
+         Assert
+            (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Authentication_Stage_Of (Value_A) =
+              SMB.Core_Client.Authenticate_Sent
+            and then SMB.Engine.Has_Pending_Request (State_B)
+            and then SMB.Engine.Has_Signing_Key (State_B),
+           "foreign final response consumed another engine");
+         SMB.Core_Client.Abort_Authentication (Value_A, State_B, Status);
+         Assert
+            (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Authentication_Stage_Of (Value_A) =
+              SMB.Core_Client.Authenticate_Sent
+            and then SMB.Engine.Current_Phase (State_B) =
+              SMB.Engine.Negotiated
+            and then SMB.Engine.Has_Pending_Request (State_B)
+            and then SMB.Engine.Has_Signing_Key (State_B)
+            and then not SMB.Engine.Has_Validated_Response (State_B)
+            and then SMB.Engine.Current_Session_Id (State_B) =
+              SMB.Core_Client.Authentication_Session_Id_Of (Value_B),
+           "foreign abort invalidated another engine");
+         SMB.Core_Client.Complete_Authenticate
+           (Value_A, State_A, Final_A, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Engine.Current_Phase (State_A) =
+              SMB.Engine.Authenticated,
+           "owner A final response");
+         SMB.Core_Client.Complete_Authenticate
+           (Value_B, State_B, Final_B, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Engine.Current_Phase (State_B) =
+              SMB.Engine.Authenticated,
+           "owner B final response");
+
+         Prepare_Negotiated (Stale_State);
+         SMB.Core_Client.Prepare_Negotiate
+           (Stale_Value, Stale_State, Stale_Request, Stale_Used, Status);
+         Assert (Status = SMB.Ok, "prepare stale-epoch negotiate");
+         Stale_Message := SMB.Wire.U64 (Stale_Request, 24);
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Stale_Value, Stale_State, Status);
+         Assert (Status = SMB.Ok, "acknowledge stale-epoch negotiate");
+         SMB.Engine.Invalidate (Stale_State, Status);
+         Assert (Status = SMB.Ok, "invalidate stale-epoch owner");
+         SMB.Engine.Mark_Connected (Stale_State, Status);
+         Assert (Status = SMB.Ok, "reconnect stale-epoch owner");
+         Stale_Response := Challenge_Response
+           (Stale_Message, SMB.Status_More_Processing_Required, Challenge);
+         SMB.Core_Client.Complete_Challenge
+           (Stale_Value, Stale_State, Stale_Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Authentication_Stage_Of (Stale_Value) =
+              SMB.Core_Client.Negotiate_Sent,
+           "stale-epoch challenge was accepted");
+         SMB.Core_Client.Abort_Authentication
+           (Stale_Value, Stale_State, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine.Current_Phase (Stale_State) =
+              SMB.Engine.Transport_Connected,
+           "stale-epoch abort mutated state");
+      end;
+
+      declare
          Failed_State : SMB.Engine.Engine_State;
          Failed_Value : SMB.Core_Client.Authentication;
-         Failed_Request : SMB.Bytes (0 .. 65_621) := (others => 0);
+         Failed_Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
          Failed_Response : SMB.Bytes (0 .. Challenge'Length + 71) :=
            (others => 0);
          Failed_Used : Natural;
@@ -624,7 +797,9 @@ procedure Test_Suite is
       declare
          Failed_State : SMB.Engine.Engine_State;
          Failed_Value : SMB.Core_Client.Authentication;
-         Failed_Request : SMB.Bytes (0 .. 65_621) := (others => 0);
+         Failed_Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
          Malformed : constant SMB.Bytes := (0 => 0);
          Failed_Used : Natural;
       begin
@@ -659,7 +834,9 @@ procedure Test_Suite is
          declare
             Failed_State : SMB.Engine.Engine_State;
             Failed_Value : SMB.Core_Client.Authentication;
-            Failed_Request : SMB.Bytes (0 .. 65_621) := (others => 0);
+            Failed_Request : SMB.Bytes
+              (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+                (others => 0);
             Failed_Response : SMB.Bytes (0 .. 100) := (others => 0);
             Failed_Used : Natural;
          begin

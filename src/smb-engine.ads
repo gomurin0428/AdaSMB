@@ -140,7 +140,9 @@ is
    with
      Post =>
        (if Status = SMB.Ok then
-          Current_Phase (State'Old) = Negotiated
+          Current_Owner_Id (State) = Current_Owner_Id (State'Old)
+          and Current_Epoch (State) = Current_Epoch (State'Old)
+          and Current_Phase (State'Old) = Negotiated
           and not Has_Pending_Request (State'Old)
           and Response_Receipt_Matches
             (State'Old, 1, SMB.Status_More_Processing_Required, False, False)
@@ -161,7 +163,9 @@ is
    with
      Post =>
        (if Status = SMB.Ok then
-          Current_Phase (State'Old) = Negotiated
+          Current_Owner_Id (State) = Current_Owner_Id (State'Old)
+          and Current_Epoch (State) = Current_Epoch (State'Old)
+          and Current_Phase (State'Old) = Negotiated
           and Has_Signing_Key (State'Old)
           and not Has_Pending_Request (State'Old)
           and Response_Receipt_Matches (State'Old, 1, SMB.Success, True, True)
@@ -169,6 +173,7 @@ is
             Current_Session_Id (State'Old)
           and
           Current_Phase (State) = Authenticated
+          and Current_Session_Id (State) = Current_Session_Id (State'Old)
           and Has_Signing_Key (State)
           and not Has_Validated_Response (State));
 
@@ -234,6 +239,12 @@ is
           and not Has_Open_Handles (State)
           and Signing_Key_Is_Zero (State)
         else
+          (if Pending_Command (State'Old) = 2
+                and then Nt_Status = SMB.Success
+           then True
+           else Current_Owner_Id (State) = Current_Owner_Id (State'Old)
+             and then Current_Epoch (State) = Current_Epoch (State'Old))
+          and then
           not Has_Pending_Request (State)
           and then
             (if Pending_Command (State'Old) = 4

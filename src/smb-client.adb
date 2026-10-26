@@ -600,16 +600,20 @@ package body SMB.Client is
       User, Password : String;
       Domain : String := "") is
       Authentication : SMB.Core_Client.Authentication;
-      Request : SMB.Bytes (0 .. SMB.Maximum_Frame_Size - 1) := (others => 0);
+      Request : SMB.Bytes
+        (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+          (others => 0);
       Used : Natural;
       Engine_Status : SMB.Core_Status;
       Nt_Status : SMB.DWord;
       Nonce : SMB.Bytes (0 .. 7);
+      Started : Boolean := False;
    begin
       SMB.Core_Client.Prepare_Negotiate
         (Authentication, Client.Engine_Core, Request, Used, Engine_Status);
       Require_Authentication_Status
         (Engine_Status, "cannot prepare SMB authentication negotiate");
+      Started := True;
       SMB.Transport.Send_Frame
         (Client.Channel, Request (Request'First .. Request'First + Used - 1));
       SMB.Core_Client.Authentication_Send_Succeeded
@@ -668,10 +672,12 @@ package body SMB.Client is
    exception
       when E : others =>
          if Ada.Exceptions.Exception_Identity (E) = SMB.Invalid_State'Identity
+           and then not Started
          then
             raise;
          end if;
-         if SMB.Core_Client.Authentication_Stage_Of (Authentication) in
+         if Started
+           and then SMB.Core_Client.Authentication_Stage_Of (Authentication) in
               SMB.Core_Client.Negotiate_Prepared |
               SMB.Core_Client.Negotiate_Sent |
               SMB.Core_Client.Challenge_Received |
@@ -693,6 +699,7 @@ package body SMB.Client is
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Authentication_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
+           or else Ada.Exceptions.Exception_Identity (E) = SMB.Invalid_State'Identity
          then
             raise;
          end if;

@@ -1,6 +1,7 @@
 with Ada.Environment_Variables;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
+with Authentication_Test_Support;
 with SMB;
 with SMB.Client;
 with SMB.Engine;
@@ -51,6 +52,24 @@ begin
 
    declare
       Client : SMB.Client.Connection;
+   begin
+      Authentication_Test_Support.Reset_Entropy_Calls;
+      SMB.Client.Connect
+        (Client, Host, Port,
+         Entropy => Authentication_Test_Support.Fail_After_Negotiate'Access);
+      begin
+         SMB.Client.Authenticate (Client, User, Password);
+         raise Program_Error with "injected authentication unexpectedly succeeded";
+      exception
+         when SMB.Authentication_Error => null;
+      end;
+      Assert
+        (not SMB.Client.Is_Connected (Client),
+         "post-challenge authentication exception retained connection");
+   end;
+
+   declare
+      Client : SMB.Client.Connection;
 
       procedure Check_Handle_Capacity (Depth : Positive) is
          File : SMB.Client.Handle :=
@@ -92,6 +111,16 @@ begin
    begin
       SMB.Client.Connect (Client, Host, Port);
       SMB.Client.Authenticate (Client, User, Password);
+      begin
+         SMB.Client.Authenticate (Client, User, Password);
+         raise Program_Error with
+           "repeat authentication on authenticated connection succeeded";
+      exception
+         when SMB.Invalid_State =>
+            Assert
+              (SMB.Client.Is_Connected (Client),
+               "initial invalid-state authentication disconnected client");
+      end;
       SMB.Client.Connect_Share (Client, Share);
       Check_Handle_Capacity (1);
 
