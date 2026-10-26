@@ -179,6 +179,8 @@ package SMB.Core_Wire is
           and then Encoded_U64 (Data, 24) = Message_Id
           and then Encoded_U32 (Data, 36) = Tree_Id
           and then Encoded_U64 (Data, 40) = Session_Id
+          and then Encoded_U32 (Data, 16) = 0
+          and then Encoded_U32 (Data, 20) = 0
           and then
             (for all Index in Data'Range =>
                (if Index - Data'First >= Header_Size

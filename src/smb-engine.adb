@@ -107,6 +107,7 @@ is
       end if;
       State.Max_Read := Maximum_Read;
       State.Max_Write := Maximum_Write;
+      State.Session_Id := 0;
       State.Current := Negotiated;
       State.Receipt_Valid := False;
       Status := SMB.Ok;

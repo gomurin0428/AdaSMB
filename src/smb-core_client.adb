@@ -1,3 +1,5 @@
+with SMB.Crypto;
+
 package body SMB.Core_Client
   with SPARK_Mode
 is
@@ -67,6 +69,520 @@ is
          Output (Index) := 0;
       end loop;
    end Clear_Output;
+
+   procedure Clear_Authentication_Buffer (Value : in out Authentication)
+   with Post =>
+     Value.Stage = Value.Stage'Old
+     and then Value.Owner = Value.Owner'Old
+     and then Value.Epoch = Value.Epoch'Old
+     and then Value.Session_Id = Value.Session_Id'Old
+     and then SMB.Engine."=" (Value.Expected, Value.Expected'Old)
+     and then Value.Challenge_Length = 0
+     and then
+       (for all Index in Value.Challenge'Range =>
+          Value.Challenge (Index) = 0)
+   is
+   begin
+      for Index in Value.Challenge'Range loop
+         Value.Challenge (Index) := 0;
+         pragma Loop_Invariant
+           (for all Cleared in Value.Challenge'First .. Index =>
+              Value.Challenge (Cleared) = 0);
+      end loop;
+      Value.Challenge_Length := 0;
+   end Clear_Authentication_Buffer;
+
+   procedure Prepare_Unsigned_Header
+     (Packet : in out SMB.Bytes;
+      Expected : SMB.Engine.Request_Expectation;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       (if Status = SMB.Ok then
+          SMB.Core_Wire.Encoded_U16 (Packet, 12) =
+            SMB.Word (Expected.Command)
+          and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
+            Expected.Message_Id
+          and then SMB.Core_Wire.Encoded_U32 (Packet, 36) =
+            Expected.Tree_Id
+          and then SMB.Core_Wire.Encoded_U64 (Packet, 40) =
+            Expected.Session_Id
+          and then SMB.Core_Wire.Encoded_U32 (Packet, 16) = 0
+          and then
+            (for all Index in Packet'Range =>
+               (if Index - Packet'First >= Header_Length
+                then Packet (Index) = Packet'Old (Index)
+                else True)))
+   is
+   begin
+      if Packet'Length < Header_Length
+        or else Packet'Length > SMB.Maximum_Frame_Size
+      then
+         Status := SMB.Invalid_Length;
+         return;
+      end if;
+      SMB.Core_Wire.Initialize_Header
+        (Packet, Expected.Command, Expected.Message_Id,
+         Expected.Tree_Id, Expected.Session_Id, 1, Status);
+   end Prepare_Unsigned_Header;
+
+   function Authentication_Stage_Of
+     (Value : Authentication) return Authentication_Stage is
+     (Value.Stage);
+
+   function Authentication_Session_Id_Of
+     (Value : Authentication) return SMB.QWord is
+     (Value.Session_Id);
+
+   function Authentication_Challenge_Length_Of
+     (Value : Authentication) return Natural is
+     (Value.Challenge_Length);
+
+   function Authentication_Challenge_Byte_Of
+     (Value : Authentication; Index : Natural) return SMB.Byte is
+     (Value.Challenge (Index));
+
+   function Authentication_Buffer_Of
+     (Value : Authentication) return SMB.Bytes is
+     (Value.Challenge);
+
+   function Authentication_Expected_Of
+     (Value : Authentication)
+       return SMB.Engine.Request_Expectation is
+     (Value.Expected);
+
+   function Authentication_Owner_Of
+     (Value : Authentication) return SMB.QWord is
+     (Value.Owner);
+
+   function Authentication_Epoch_Of
+     (Value : Authentication) return SMB.QWord is
+     (Value.Epoch);
+
+   function Authentication_Context_Matches
+     (Value : Authentication;
+      State : SMB.Engine.Engine_State) return Boolean is
+     (Value.Owner = SMB.Engine.Current_Owner_Id (State)
+      and then Value.Epoch = SMB.Engine.Current_Epoch (State));
+
+   function Authentication_Packet_Matches
+     (Value : Authentication;
+      State : SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Used : Natural) return Boolean is
+     (Used >= Header_Length
+      and then Used <= Packet'Length
+      and then Used <=
+        Header_Length + 24 + SMB.Core_Auth.Maximum_Security_Token
+      and then Value.Owner = SMB.Engine.Current_Owner_Id (State)
+      and then Value.Epoch = SMB.Engine.Current_Epoch (State)
+      and then Value.Expected.Command = 1
+      and then not Value.Expected.Request_Signed
+      and then SMB.Engine.Pending_Request_Matches (State, Value.Expected)
+      and then SMB.Core_Wire.Encoded_U16 (Packet, 12) = 1
+      and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
+        Value.Expected.Message_Id
+      and then SMB.Core_Wire.Encoded_U32 (Packet, 36) =
+        Value.Expected.Tree_Id
+      and then SMB.Core_Wire.Encoded_U64 (Packet, 40) =
+        Value.Expected.Session_Id
+      and then SMB.Core_Wire.Encoded_U32 (Packet, 16) = 0
+      and then Used >= Header_Length + 24
+      and then SMB.Core_Wire.Encoded_U16 (Packet, Header_Length) = 25
+      and then Packet (Packet'First + Header_Length + 2) = 0
+      and then Packet (Packet'First + Header_Length + 3) = 3
+      and then SMB.Core_Wire.Encoded_U16
+        (Packet, Header_Length + 12) = 88
+      and then SMB.Core_Wire.Encoded_U16
+        (Packet, Header_Length + 14) =
+          SMB.Word (Used - Header_Length - 24)
+      and then SMB.Core_Wire.Encoded_U64
+        (Packet, Header_Length + 16) = 0
+      and then (if Value.Stage = Negotiate_Prepared then
+                  not Value.Expected.Signed
+                  and then Value.Expected.Session_Id = 0
+                else Value.Expected.Signed));
+
+   procedure Fail_Authentication
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Failure : SMB.Core_Status;
+      Status : out SMB.Core_Status)
+   is
+      Invalidate_Status : SMB.Core_Status;
+   begin
+      SMB.Engine.Invalidate (State, Invalidate_Status);
+      Clear_Authentication_Buffer (Value);
+      Value.Stage := Authentication_Failed;
+      Status := (if Invalidate_Status = SMB.Ok then Failure
+                 else Invalidate_Status);
+   end Fail_Authentication;
+
+   procedure Prepare_Negotiate
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status) is
+      Token : SMB.Bytes
+        (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
+      Token_Used : Natural := 0;
+      Message_Id : SMB.QWord;
+      Expected : SMB.Engine.Request_Expectation;
+      Field_Status : SMB.Core_Status;
+      Begin_Status : SMB.Core_Status;
+      Body_Used : Natural;
+   begin
+      Clear_Output (Output);
+      Used := 0;
+      if Value.Stage /= Authentication_Ready
+        or else SMB.Engine.Current_Phase (State) /= SMB.Engine.Negotiated
+        or else SMB.Engine.Current_Session_Id (State) /= 0
+        or else SMB.Engine.Has_Pending_Request (State)
+        or else SMB.Engine.Has_Validated_Response (State)
+        or else SMB.Engine.Has_Signing_Key (State)
+        or else Output'Length < Header_Length
+        or else Output'First > Natural'Last - Header_Length
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      SMB.Core_Auth.Build_Negotiate_Token (Token, Token_Used, Status);
+      if Status /= SMB.Ok then
+         Value.Stage := Authentication_Failed;
+         return;
+      end if;
+      if Token_Used = 0 or else Output'Length < Header_Length + 24 + Token_Used
+      then
+         Value.Stage := Authentication_Failed;
+         Status := SMB.Resource_Limit;
+         return;
+      end if;
+      SMB.Core_Protocol.Build_Session_Setup
+        (Token (Token'First .. Token'First + Token_Used - 1),
+         Output (Output'First + Header_Length .. Output'Last),
+         Body_Used, Status);
+      if Status /= SMB.Ok then
+         Value.Stage := Authentication_Failed;
+         return;
+      end if;
+      SMB.Engine.Begin_Request
+        (State, 1, False, False, Message_Id, Expected, Begin_Status);
+      if Begin_Status /= SMB.Ok then
+         Value.Stage := Authentication_Failed;
+         Status := Begin_Status;
+         return;
+      end if;
+      pragma Assert (Message_Id = Expected.Message_Id);
+      Value.Stage := Negotiate_Prepared;
+      Value.Owner := SMB.Engine.Current_Owner_Id (State);
+      Value.Epoch := SMB.Engine.Current_Epoch (State);
+      Value.Expected := Expected;
+      Value.Session_Id := 0;
+      Value.Challenge_Length := 0;
+      Prepare_Unsigned_Header (Output, Expected, Field_Status);
+      if Field_Status /= SMB.Ok then
+         Fail_Authentication (Value, State, Field_Status, Status);
+         return;
+      end if;
+      pragma Assert (Body_Used = 24 + Token_Used);
+      pragma Assert
+        (for all Index in 0 .. Token_Used - 1 =>
+           Output
+             (Output'First + Header_Length + 24 + Index) =
+               Token (Token'First + Index));
+      Used := Header_Length + Body_Used;
+      Status := SMB.Ok;
+      pragma Assert (Value.Stage = Negotiate_Prepared);
+      pragma Assert (Value.Expected.Session_Id = 0);
+      pragma Assert
+        (SMB.Engine.Pending_Request_Matches (State, Value.Expected));
+      pragma Assert (SMB.Core_Wire.Encoded_U16 (Output, 12) = 1);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U64 (Output, 24) =
+           Value.Expected.Message_Id);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U32 (Output, 36) =
+           Value.Expected.Tree_Id);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U64 (Output, 40) =
+           Value.Expected.Session_Id);
+      pragma Assert (SMB.Core_Wire.Encoded_U32 (Output, 16) = 0);
+   end Prepare_Negotiate;
+
+   procedure Authentication_Send_Succeeded
+     (Value : in out Authentication;
+      State : SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status) is
+   begin
+      if Value.Owner /= SMB.Engine.Current_Owner_Id (State)
+        or else Value.Epoch /= SMB.Engine.Current_Epoch (State)
+        or else not SMB.Engine.Pending_Request_Matches (State, Value.Expected)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      elsif Value.Stage = Negotiate_Prepared then
+         Value.Stage := Negotiate_Sent;
+      elsif Value.Stage = Authenticate_Prepared then
+         Value.Stage := Authenticate_Sent;
+      else
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      Status := SMB.Ok;
+   end Authentication_Send_Succeeded;
+
+   procedure Complete_Challenge
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Nt_Status : out SMB.DWord;
+      Status : out SMB.Core_Status) is
+      Accept_Status : SMB.Core_Status;
+      Receipt_Status : SMB.Core_Status;
+      Info : SMB.Core_Protocol.Response_Info;
+   begin
+      Nt_Status := 0;
+      if Value.Stage /= Negotiate_Sent
+        or else not Authentication_Context_Matches (Value, State)
+        or else Value.Expected.Command /= 1
+        or else Value.Expected.Request_Signed
+        or else Value.Expected.Signed
+        or else Value.Expected.Session_Id /= 0
+        or else not SMB.Engine.Pending_Request_Matches (State, Value.Expected)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      pragma Assert (Value.Expected.Command = 1);
+      pragma Assert (not Value.Expected.Signed);
+      pragma Assert (SMB.Engine.Pending_Command (State) = 1);
+      pragma Assert (not SMB.Engine.Pending_Response_Is_Signed (State));
+      SMB.Engine.Accept_Response (State, Packet, Nt_Status, Accept_Status);
+      if Accept_Status /= SMB.Ok then
+         Value.Stage := Authentication_Failed;
+         Clear_Authentication_Buffer (Value);
+         Status := Accept_Status;
+         return;
+      end if;
+      Info := SMB.Engine.Current_Response_Info (State);
+      if Nt_Status /= SMB.Status_More_Processing_Required then
+         SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         if Receipt_Status /= SMB.Ok then
+            Fail_Authentication (Value, State, Receipt_Status, Status);
+         else
+            SMB.Engine.Invalidate (State, Receipt_Status);
+            Clear_Authentication_Buffer (Value);
+            Value.Stage := Authentication_Failed;
+            Status := (if Nt_Status = SMB.Success
+                       then SMB.Unsupported_Feature else SMB.Ok);
+         end if;
+         return;
+      end if;
+      if Info.Session_Id = 0
+        or else Info.Data_Length > SMB.Core_Auth.Maximum_Security_Token
+        or else Info.Data_Offset > Packet'Length
+        or else Info.Data_Length > Packet'Length - Info.Data_Offset
+      then
+         Fail_Authentication (Value, State, SMB.Invalid_Protocol, Status);
+         return;
+      end if;
+      if Info.Data_Length > 0 then
+         Value.Challenge (0 .. Info.Data_Length - 1) :=
+           Packet
+             (Packet'First + Info.Data_Offset ..
+              Packet'First + (Info.Data_Offset + Info.Data_Length - 1));
+      end if;
+      Value.Challenge_Length := Info.Data_Length;
+      Value.Session_Id := Info.Session_Id;
+      Value.Stage := Challenge_Received;
+      Status := SMB.Ok;
+   end Complete_Challenge;
+
+   procedure Prepare_Authenticate
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      User, Password, Domain : String;
+      Nonce : SMB.Bytes;
+      Current_Filetime : SMB.QWord;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status) is
+      Token : SMB.Bytes
+        (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
+      Key : SMB.Crypto.Digest_128 := (others => 0);
+      Token_Used : Natural := 0;
+      Body_Used : Natural;
+      Message_Id : SMB.QWord;
+      Expected : SMB.Engine.Request_Expectation;
+      Engine_Status : SMB.Core_Status;
+      Field_Status : SMB.Core_Status;
+      Empty : constant SMB.Bytes := (1 .. 0 => 0);
+   begin
+      Clear_Output (Output);
+      Used := 0;
+      if Value.Stage /= Challenge_Received
+        or else not Authentication_Context_Matches (Value, State)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      if Value.Challenge_Length >
+          SMB.Core_Auth.Maximum_Security_Token
+        or else User'Length > SMB.Core_Auth.Maximum_Credential_Bytes
+        or else Password'Length > SMB.Core_Auth.Maximum_Credential_Bytes
+        or else Domain'Length > SMB.Core_Auth.Maximum_Credential_Bytes
+        or else Nonce'Length /= 8
+        or else Output'Length < Header_Length
+        or else Output'First > Natural'Last - Header_Length
+      then
+         Fail_Authentication (Value, State, SMB.Resource_Limit, Status);
+         return;
+      end if;
+      if Value.Challenge_Length = 0 then
+         SMB.Core_Auth.Authenticate
+           (User, Password, Domain, Nonce, Empty, Current_Filetime,
+            Token, Token_Used, Key, Status);
+      else
+         SMB.Core_Auth.Authenticate
+           (User, Password, Domain, Nonce,
+            Value.Challenge (0 .. Value.Challenge_Length - 1),
+            Current_Filetime, Token, Token_Used, Key, Status);
+      end if;
+      if Status /= SMB.Ok or else Token_Used = 0 then
+         if Status = SMB.Ok then
+            Status := SMB.Resource_Limit;
+         end if;
+         declare
+            Failure : constant SMB.Core_Status := Status;
+         begin
+            Clear_Output (Key);
+            Clear_Output (Token);
+            Fail_Authentication (Value, State, Failure, Status);
+         end;
+         return;
+      end if;
+      if Output'Length < Header_Length + 24 + Token_Used then
+         Clear_Output (Key);
+         Clear_Output (Token);
+         Fail_Authentication (Value, State, SMB.Resource_Limit, Status);
+         return;
+      end if;
+      SMB.Core_Protocol.Build_Session_Setup
+        (Token (Token'First .. Token'First + Token_Used - 1),
+         Output (Output'First + Header_Length .. Output'Last),
+         Body_Used, Engine_Status);
+      if Engine_Status /= SMB.Ok then
+         Clear_Output (Key);
+         Clear_Output (Token);
+         Fail_Authentication (Value, State, Engine_Status, Status);
+         return;
+      end if;
+      SMB.Engine.Install_Session_Key
+        (State, Value.Session_Id, Key, Engine_Status);
+      if Engine_Status /= SMB.Ok then
+         Clear_Output (Key);
+         Clear_Output (Token);
+         Fail_Authentication (Value, State, Engine_Status, Status);
+         return;
+      end if;
+      SMB.Engine.Begin_Request
+        (State, 1, False, True, Message_Id, Expected, Engine_Status);
+      if Engine_Status /= SMB.Ok then
+         Clear_Output (Key);
+         Clear_Output (Token);
+         Fail_Authentication (Value, State, Engine_Status, Status);
+         return;
+      end if;
+      Value.Expected := Expected;
+      Value.Stage := Authenticate_Prepared;
+      Prepare_Unsigned_Header (Output, Expected, Field_Status);
+      if Field_Status /= SMB.Ok then
+         Clear_Output (Key);
+         Clear_Output (Token);
+         Fail_Authentication (Value, State, Field_Status, Status);
+         return;
+      end if;
+      pragma Assert (Body_Used = 24 + Token_Used);
+      pragma Assert
+        (for all Index in 0 .. Token_Used - 1 =>
+           Output
+             (Output'First + Header_Length + 24 + Index) =
+               Token (Token'First + Index));
+      Used := Header_Length + Body_Used;
+      Clear_Output (Key);
+      Clear_Output (Token);
+      Status := SMB.Ok;
+   end Prepare_Authenticate;
+
+   procedure Complete_Authenticate
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Nt_Status : out SMB.DWord;
+      Status : out SMB.Core_Status) is
+      Accept_Status : SMB.Core_Status;
+      Receipt_Status : SMB.Core_Status;
+      Invalidate_Status : SMB.Core_Status;
+      Failure_Status : SMB.Core_Status;
+   begin
+      Nt_Status := 0;
+      if Value.Stage /= Authenticate_Sent
+        or else not Authentication_Context_Matches (Value, State)
+        or else not SMB.Engine.Pending_Request_Matches (State, Value.Expected)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      SMB.Engine.Accept_Response (State, Packet, Nt_Status, Accept_Status);
+      if Accept_Status /= SMB.Ok then
+         Value.Stage := Authentication_Failed;
+         Clear_Authentication_Buffer (Value);
+         Status := Accept_Status;
+         return;
+      end if;
+      if Nt_Status /= SMB.Success then
+         SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         SMB.Engine.Invalidate (State, Invalidate_Status);
+         Clear_Authentication_Buffer (Value);
+         Value.Stage := Authentication_Failed;
+         Status := SMB.Ok;
+         return;
+      end if;
+      SMB.Engine.Mark_Authenticated (State, Status);
+      if Status = SMB.Ok then
+         Clear_Authentication_Buffer (Value);
+         Value.Stage := Authentication_Finished;
+         pragma Assert (Value.Stage = Authentication_Finished);
+      else
+         Failure_Status := Status;
+         SMB.Engine.Invalidate (State, Invalidate_Status);
+         Clear_Authentication_Buffer (Value);
+         Value.Stage := Authentication_Failed;
+         Status := (if Invalidate_Status = SMB.Ok then Failure_Status
+                    else Invalidate_Status);
+      end if;
+   end Complete_Authenticate;
+
+   procedure Abort_Authentication
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status) is
+      Invalidate_Status : SMB.Core_Status;
+   begin
+      if not Authentication_Context_Matches (Value, State)
+        or else Value.Stage in Authentication_Ready |
+        Authentication_Finished | Authentication_Failed
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      SMB.Engine.Invalidate (State, Invalidate_Status);
+      Clear_Authentication_Buffer (Value);
+      Value.Stage := Authentication_Failed;
+      Status := Invalidate_Status;
+   end Abort_Authentication;
 
    procedure Copy_Read_Chunk
      (Value : in out Transfer;
@@ -295,6 +811,8 @@ is
       pragma Assert
         (SMB.Core_Wire.Encoded_U32 (Output, 16) = 8);
       pragma Assert
+        (SMB.Core_Wire.Encoded_U32 (Output, 36) = Expected.Tree_Id);
+      pragma Assert
         (SMB.Core_Wire.Encoded_U64 (Output, 24) = Expected.Message_Id);
       pragma Assert
         (SMB.Core_Wire.Encoded_U64 (Output, 40) = Expected.Session_Id);
@@ -400,6 +918,10 @@ is
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U64 (Output, 24) = Expected.Message_Id);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U32 (Output, 36) = Expected.Tree_Id);
       pragma Assert
         (SMB.Core_Wire.Encoded_U64 (Output, 40) = Expected.Session_Id);
       pragma Assert
