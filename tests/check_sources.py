@@ -42,6 +42,8 @@ PROOF_UNITS = {
     "smb-core_framing.adb",
     "smb-core_protocol.ads",
     "smb-core_protocol.adb",
+    "smb-core_client.ads",
+    "smb-core_client.adb",
     "smb-engine.ads",
     "smb-engine.adb",
 }
@@ -57,6 +59,7 @@ PROOF_BODIES = {
     "smb-core_ntlm.adb",
     "smb-core_auth.adb",
     "smb-core_protocol.adb",
+    "smb-core_client.adb",
     "smb-engine.adb",
 }
 for body in PROOF_BODIES:

@@ -1,10 +1,6 @@
 with SMB.Core_Text;
 
 package body SMB.Core_Protocol with SPARK_Mode is
-   use type SMB.Byte;
-   use type SMB.DWord;
-   use type SMB.QWord;
-   use type SMB.Word;
    use type SMB.Core_Wire.Command_Code;
 
    Negotiate_Command : constant SMB.Core_Wire.Command_Code := 0;
@@ -19,12 +15,44 @@ package body SMB.Core_Protocol with SPARK_Mode is
    Query_Directory_Command : constant SMB.Core_Wire.Command_Code := 14;
    Set_Info_Command : constant SMB.Core_Wire.Command_Code := 17;
 
-   procedure Clear (Output : out SMB.Bytes) is
+   procedure Clear (Output : out SMB.Bytes)
+   with Post =>
+     (for all Index in Output'Range => Output (Index) = 0)
+   is
    begin
-      for I in Output'Range loop
-         Output (I) := 0;
-      end loop;
+      Output := (others => 0);
    end Clear;
+
+   procedure Put_Byte
+     (Output : in out SMB.Bytes;
+      Position : Natural;
+      Value : SMB.Byte;
+      Status : in out SMB.Core_Status)
+   with Pre => Output'Length <= SMB.Maximum_Frame_Size,
+        Post =>
+          (if Status = SMB.Ok then
+             Position < Output'Length
+             and then Output (Output'First + Position) = Value
+             and then
+               (for all Index in Output'Range =>
+                  (if Index - Output'First /= Position
+                   then Output (Index) = Output'Old (Index)))
+           else Output = Output'Old);
+
+   procedure Put_Byte
+     (Output : in out SMB.Bytes;
+      Position : Natural;
+      Value : SMB.Byte;
+      Status : in out SMB.Core_Status) is
+   begin
+      if Status = SMB.Ok then
+         if Position >= Output'Length then
+            Status := SMB.Resource_Limit;
+         else
+            Output (Output'First + Position) := Value;
+         end if;
+      end if;
+   end Put_Byte;
 
    procedure Copy
      (Output : in out SMB.Bytes;
@@ -33,7 +61,21 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Status : out SMB.Core_Status)
    with Pre =>
      Output'Length <= SMB.Maximum_Frame_Size
-     and then Value'Length <= SMB.Maximum_Frame_Size;
+     and then Value'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       (if Status = SMB.Ok then
+          (if Value'Length > 0 then
+             (for all Index in 0 .. Value'Length - 1 =>
+                Output (Output'First + Position + Index) =
+                  Value (Value'First + Index))
+           else Position <= Output'Length)
+          and then
+            (for all Index in Output'Range =>
+               (if Value'Length = 0
+                  or else Index - Output'First < Position
+                  or else Index - Output'First >= Position + Value'Length
+                then Output (Index) = Output'Old (Index)))
+        else Output = Output'Old);
 
    procedure Copy
      (Output : in out SMB.Bytes;
@@ -59,7 +101,18 @@ package body SMB.Core_Protocol with SPARK_Mode is
      (Output : in out SMB.Bytes;
       Position : Natural;
       Value : SMB.Word;
-      Status : in out SMB.Core_Status) is
+      Status : in out SMB.Core_Status)
+   with Pre => Output'Length <= SMB.Maximum_Frame_Size,
+        Post =>
+          (if Status = SMB.Ok then
+             SMB.Core_Wire.Encoded_U16 (Output, Position) = Value
+             and then
+               (for all Index in Output'Range =>
+                  (if Index - Output'First < Position
+                     or else Index - Output'First >= Position + 2
+                   then Output (Index) = Output'Old (Index)))
+           else Output = Output'Old)
+   is
    begin
       if Status = SMB.Ok then
          SMB.Core_Wire.Write_U16 (Output, Position, Value, Status);
@@ -70,7 +123,23 @@ package body SMB.Core_Protocol with SPARK_Mode is
      (Output : in out SMB.Bytes;
       Position : Natural;
       Value : SMB.DWord;
-      Status : in out SMB.Core_Status) is
+      Status : in out SMB.Core_Status)
+   with Pre => Output'Length <= SMB.Maximum_Frame_Size,
+        Post =>
+          (if Status = SMB.Ok then
+             SMB.Core_Wire.Encoded_U32 (Output, Position) = Value
+             and then
+               (for all Byte_Index in 0 .. 3 =>
+                  Output
+                    (Output'First + Position + Byte_Index) =
+                    SMB.Core_Wire.U32_Byte (Value, Byte_Index))
+             and then
+               (for all Index in Output'Range =>
+                  (if Index - Output'First < Position
+                     or else Index - Output'First >= Position + 4
+                   then Output (Index) = Output'Old (Index)))
+           else Output = Output'Old)
+   is
    begin
       if Status = SMB.Ok then
          SMB.Core_Wire.Write_U32 (Output, Position, Value, Status);
@@ -81,7 +150,18 @@ package body SMB.Core_Protocol with SPARK_Mode is
      (Output : in out SMB.Bytes;
       Position : Natural;
       Value : SMB.QWord;
-      Status : in out SMB.Core_Status) is
+      Status : in out SMB.Core_Status)
+   with Pre => Output'Length <= SMB.Maximum_Frame_Size,
+        Post =>
+          (if Status = SMB.Ok then
+             SMB.Core_Wire.Encoded_U64 (Output, Position) = Value
+             and then
+               (for all Index in Output'Range =>
+                  (if Index - Output'First < Position
+                     or else Index - Output'First >= Position + 8
+                   then Output (Index) = Output'Old (Index)))
+           else Output = Output'Old)
+   is
    begin
       if Status = SMB.Ok then
          SMB.Core_Wire.Write_U64 (Output, Position, Value, Status);
@@ -91,7 +171,15 @@ package body SMB.Core_Protocol with SPARK_Mode is
    procedure Begin_Build
      (Output : out SMB.Bytes;
       Required : Natural;
-      Status : out SMB.Core_Status) is
+      Status : out SMB.Core_Status)
+   with Pre => Output'Length <= SMB.Maximum_Frame_Size,
+        Post =>
+          (if Status = SMB.Ok then
+             Required <= Output'Length
+             and then
+               (for all Index in Output'Range => Output (Index) = 0)
+           else Required > Output'Length)
+   is
    begin
       Status := SMB.Ok;
       Clear (Output);
@@ -102,12 +190,24 @@ package body SMB.Core_Protocol with SPARK_Mode is
 
    procedure Finish
      (Required : Natural;
+      Capacity : Natural;
       Used : out Natural;
-      Status : SMB.Core_Status) is
+      Status : in out SMB.Core_Status)
+   with Pre => Capacity <= SMB.Maximum_Frame_Size,
+        Post =>
+          Used <= Capacity
+          and then
+            (if Status = SMB.Ok
+             then Used = Required and then Required <= Capacity
+             else Used = 0)
+   is
    begin
-      if Status = SMB.Ok then
+      if Status = SMB.Ok and then Required <= Capacity then
          Used := Required;
       else
+         if Status = SMB.Ok then
+            Status := SMB.Resource_Limit;
+         end if;
          Used := 0;
       end if;
    end Finish;
@@ -128,7 +228,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
       end if;
       Put_U64 (Output, 28, 0, Status);
       Put_U16 (Output, 36, SMB.SMB2_Dialect_0210, Status);
-      Finish (38, Used, Status);
+      Finish (38, Output'Length, Used, Status);
    end Build_Negotiate;
 
    procedure Build_Session_Setup
@@ -141,8 +241,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 25, Status);
       if Status = SMB.Ok then
-         Output (Output'First + 2) := 0;
-         Output (Output'First + 3) := 3;
+         Put_Byte (Output, 2, 0, Status);
+         Put_Byte (Output, 3, 3, Status);
       end if;
       Put_U16 (Output, 12, 88, Status);
       if Token'Length > SMB.Word'Last then
@@ -153,7 +253,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             Copy (Output, 24, Token, Status);
          end if;
       end if;
-      Finish (Required, Used, Status);
+      Finish (Required, Output'Length, Used, Status);
    end Build_Session_Setup;
 
    procedure Build_Tree_Connect
@@ -176,7 +276,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             Copy (Output, 8, Name, Status);
          end if;
       end if;
-      Finish (Required, Used, Status);
+      Finish (Required, Output'Length, Used, Status);
    end Build_Tree_Connect;
 
    procedure Build_Create
@@ -192,10 +292,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 57, Status);
       Put_U32 (Output, 4, 2, Status);
-      Put_U32 (Output, 24, Access_Mask, Status);
       Put_U32 (Output, 28, (if Directory then 16#10# else 0), Status);
       Put_U32 (Output, 32, 7, Status);
-      Put_U32 (Output, 36, Disposition, Status);
       Put_U32 (Output, 40, (if Directory then 1 else 16#40#), Status);
       Put_U16 (Output, 44, 120, Status);
       if Name'Length mod 2 /= 0 then
@@ -203,12 +301,34 @@ package body SMB.Core_Protocol with SPARK_Mode is
       elsif Name'Length > SMB.Word'Last then
          Status := SMB.Resource_Limit;
       else
-         Put_U16 (Output, 46, SMB.Word (Name'Length), Status);
          if Status = SMB.Ok and then Name'Length > 0 then
             Copy (Output, 56, Name, Status);
          end if;
       end if;
-      Finish (Required, Used, Status);
+      Finish (Required, Output'Length, Used, Status);
+      if Status = SMB.Ok then
+         Output (Output'First + 24 .. Output'First + 31) :=
+           (SMB.Core_Wire.U32_Byte (Access_Mask, 0),
+            SMB.Core_Wire.U32_Byte (Access_Mask, 1),
+            SMB.Core_Wire.U32_Byte (Access_Mask, 2),
+            SMB.Core_Wire.U32_Byte (Access_Mask, 3),
+            SMB.Core_Wire.U32_Byte
+              ((if Directory then 16#10# else 0), 0),
+            SMB.Core_Wire.U32_Byte
+              ((if Directory then 16#10# else 0), 1),
+            SMB.Core_Wire.U32_Byte
+              ((if Directory then 16#10# else 0), 2),
+            SMB.Core_Wire.U32_Byte
+              ((if Directory then 16#10# else 0), 3));
+         Output (Output'First + 36 .. Output'First + 39) :=
+           (SMB.Core_Wire.U32_Byte (Disposition, 0),
+            SMB.Core_Wire.U32_Byte (Disposition, 1),
+            SMB.Core_Wire.U32_Byte (Disposition, 2),
+            SMB.Core_Wire.U32_Byte (Disposition, 3));
+         Output (Output'First + 46 .. Output'First + 47) :=
+           (SMB.Core_Wire.U16_Byte (SMB.Word (Name'Length), 0),
+            SMB.Core_Wire.U16_Byte (SMB.Word (Name'Length), 1));
+      end if;
    end Build_Create;
 
    procedure Build_Read
@@ -228,9 +348,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
       end if;
       Put_U32 (Output, 32, 0, Status);
       if Status = SMB.Ok then
-         Output (Output'First + 48) := 1;
+         Put_Byte (Output, 48, 1, Status);
       end if;
-      Finish (49, Used, Status);
+      Finish (49, Output'Length, Used, Status);
    end Build_Read;
 
    procedure Build_Write
@@ -254,7 +374,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
       if Status = SMB.Ok then
          Copy (Output, 48, Data, Status);
       end if;
-      Finish (Required, Used, Status);
+      Finish (Required, Output'Length, Used, Status);
    end Build_Write;
 
    procedure Build_Close
@@ -263,12 +383,18 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Used : out Natural;
       Status : out SMB.Core_Status) is
    begin
+      if Output'Length < 24 then
+         Clear (Output);
+         Used := 0;
+         Status := SMB.Resource_Limit;
+         return;
+      end if;
       Begin_Build (Output, 24, Status);
       Put_U16 (Output, 0, 24, Status);
+      Finish (24, Output'Length, Used, Status);
       if Status = SMB.Ok then
-         Copy (Output, 8, File_Id, Status);
+         Output (Output'First + 8 .. Output'First + 23) := File_Id;
       end if;
-      Finish (24, Used, Status);
    end Build_Close;
 
    procedure Build_Query_Directory
@@ -282,8 +408,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 33, Status);
       if Status = SMB.Ok then
-         Output (Output'First + 2) := 37;
-         Output (Output'First + 3) := (if Restart then 1 else 0);
+         Put_Byte (Output, 2, 37, Status);
+         Put_Byte (Output, 3, (if Restart then 1 else 0), Status);
       end if;
       if Status = SMB.Ok then
          Copy (Output, 8, File_Id, Status);
@@ -292,10 +418,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Put_U16 (Output, 26, 2, Status);
       Put_U32 (Output, 28, Maximum_IO_Chunk, Status);
       if Status = SMB.Ok then
-         Output (Output'First + 32) := 16#2A#;
-         Output (Output'First + 33) := 0;
+         Put_Byte (Output, 32, 16#2A#, Status);
+         Put_Byte (Output, 33, 0, Status);
       end if;
-      Finish (Required, Used, Status);
+      Finish (Required, Output'Length, Used, Status);
    end Build_Query_Directory;
 
    procedure Build_Disposition
@@ -308,16 +434,17 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Begin_Build (Output, 33, Status);
       Put_U16 (Output, 0, 33, Status);
       if Status = SMB.Ok then
-         Output (Output'First + 2) := 1;
-         Output (Output'First + 3) := 13;
+         Put_Byte (Output, 2, 1, Status);
+         Put_Byte (Output, 3, 13, Status);
       end if;
       Put_U32 (Output, 4, 1, Status);
       Put_U16 (Output, 8, 96, Status);
       if Status = SMB.Ok then
          Copy (Output, 16, File_Id, Status);
-         Output (Output'First + 32) := (if Delete_File then 1 else 0);
+         Put_Byte
+           (Output, 32, (if Delete_File then 1 else 0), Status);
       end if;
-      Finish (33, Used, Status);
+      Finish (33, Output'Length, Used, Status);
    end Build_Disposition;
 
    procedure Build_Rename
@@ -331,8 +458,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 33, Status);
       if Status = SMB.Ok then
-         Output (Output'First + 2) := 1;
-         Output (Output'First + 3) := 10;
+         Put_Byte (Output, 2, 1, Status);
+         Put_Byte (Output, 3, 10, Status);
       end if;
       if Name'Length mod 2 /= 0 then
          Status := SMB.Invalid_Length;
@@ -349,7 +476,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
       if Status = SMB.Ok then
          Copy (Output, 52, Name, Status);
       end if;
-      Finish (Required, Used, Status);
+      Finish (Required, Output'Length, Used, Status);
    end Build_Rename;
 
    procedure Build_Simple
@@ -359,7 +486,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
    begin
       Begin_Build (Output, 4, Status);
       Put_U16 (Output, 0, 4, Status);
-      Finish (4, Used, Status);
+      Finish (4, Output'Length, Used, Status);
    end Build_Simple;
 
    function Fits

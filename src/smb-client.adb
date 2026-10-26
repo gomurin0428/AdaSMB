@@ -3,6 +3,7 @@ with Ada.Exceptions;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
 with SMB.Clock;
+with SMB.Core_Client;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
 with SMB.Core_Wire;
@@ -12,16 +13,12 @@ with SMB.Wire;
 package body SMB.Client is
    use type Ada.Exceptions.Exception_Id;
    use type SMB.Engine.Phase;
+   use type SMB.Core_Client.Operation_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
    use type SMB.Word;
 
-   File_Read_Data        : constant SMB.DWord := 16#0000_0001#;
-   File_Write_Data       : constant SMB.DWord := 16#0000_0002#;
-   File_Append_Data      : constant SMB.DWord := 16#0000_0004#;
-   File_Read_Attributes  : constant SMB.DWord := 16#0000_0080#;
    File_Delete           : constant SMB.DWord := 16#0001_0000#;
-   Synchronize           : constant SMB.DWord := 16#0010_0000#;
    Disconnected : constant SMB.Engine.Phase := SMB.Engine.Disconnected;
    Authenticated : constant SMB.Engine.Phase := SMB.Engine.Authenticated;
    Share_Connected : constant SMB.Engine.Phase := SMB.Engine.Share_Connected;
@@ -323,13 +320,6 @@ package body SMB.Client is
         when Truncate_Existing => 4,
         when Create_Or_Truncate => 5);
 
-   function Desired_Access (Mode : Access_Mode) return SMB.DWord is
-     ((case Mode is
-         when Read_Only => File_Read_Data,
-         when Write_Only => File_Write_Data or File_Append_Data,
-         when Read_Write => File_Read_Data or File_Write_Data or File_Append_Data)
-      or File_Read_Attributes or Synchronize);
-
    function Create_Internal
      (Client : in out Connection;
       Path : String;
@@ -338,87 +328,108 @@ package body SMB.Client is
       Is_Directory : Boolean;
       Additional_Access : SMB.DWord := 0) return Handle is
       UTF16_Name : constant SMB.Bytes := Encode_Name (Path);
-      Payload : SMB.Bytes (0 .. 55 + Natural'Max (1, UTF16_Name'Length)) :=
-        (others => 0);
+      Packet : SMB.Bytes
+        (0 .. SMB.Core_Wire.Header_Size + 56
+          + Natural'Max (1, UTF16_Name'Length) - 1) := (others => 0);
       Used : Natural;
-      Access_Mask : constant SMB.DWord := Desired_Access (Mode) or Additional_Access;
-      File_Id : SMB.Bytes (0 .. 15) := (others => 0);
       Token : SMB.Engine.Handle_Token;
-      Engine_Status : SMB.Core_Status;
-      Response_Info : SMB.Core_Protocol.Response_Info;
+      Core_Status : SMB.Core_Status;
+      Operation : SMB.Core_Client.Operation;
       Engine_Access : constant SMB.Engine.Access_Kind :=
         (case Mode is
            when Read_Only => SMB.Engine.Read_Only,
            when Write_Only => SMB.Engine.Write_Only,
            when Read_Write => SMB.Engine.Read_Write);
    begin
-      SMB.Core_Protocol.Build_Create
-        (UTF16_Name, Access_Mask, Disposition_Value (Disposition),
-         Is_Directory, Payload, Used, Engine_Status);
-      if Engine_Status /= SMB.Ok then
+      if Additional_Access /= 0 and then Additional_Access /= File_Delete then
+         raise SMB.Protocol_Error with "unsupported SMB CREATE access extension";
+      end if;
+      SMB.Core_Client.Prepare_Create
+        (Operation, Client.Engine_Core, UTF16_Name, Engine_Access,
+         Additional_Access = File_Delete, Disposition_Value (Disposition),
+         Is_Directory, Packet, Used, Core_Status);
+      if Core_Status /= SMB.Ok then
          raise SMB.Protocol_Error with "SMB CREATE request exceeds limits";
       end if;
+      SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
+      SMB.Core_Client.Send_Succeeded
+        (Operation, Client.Engine_Core, Core_Status);
+      if Core_Status /= SMB.Ok then
+         raise SMB.Protocol_Error with "SMB CREATE send was not acknowledged";
+      end if;
       declare
-         Response : constant SMB.Bytes := Exchange
-           (Client, SMB.Wire.Create_Command, Payload (0 .. Used - 1),
-            Sign_Request => True, Require_Signed_Response => True,
-            Request_Session => Session_Identifier (Client),
-            Response_Session => Session_Identifier (Client),
-            Request_Tree => Tree_Identifier (Client),
-            Response_Tree => Tree_Identifier (Client));
+         Response : constant SMB.Bytes :=
+           SMB.Transport.Receive_Frame (Client.Channel);
       begin
-         pragma Unreferenced (Response);
+         SMB.Core_Client.Complete
+           (Operation, Client.Engine_Core, Response, Client.Last_Status,
+            Token, Core_Status);
+         if Core_Status /= SMB.Ok then
+            raise SMB.Protocol_Error with "SMB CREATE response was rejected";
+         end if;
          Require_Status (Client, Client.Last_Status);
       end;
-      Response_Info := SMB.Engine.Current_Response_Info (Client.Engine_Core);
-      File_Id := Response_Info.File_Id;
-      SMB.Engine.Register_Handle
-        (Client.Engine_Core, File_Id, Engine_Access, Is_Directory,
-         Token, Engine_Status);
-      if Engine_Status /= SMB.Ok then
-         Clear_State (Client);
-         raise SMB.Invalid_State with
-           "SMB CREATE response could not be registered: "
-           & SMB.Core_Status'Image (Engine_Status);
-      end if;
       return Result : Handle do
          Result.Engine_Token := Token;
       end return;
+   exception
+      when others =>
+         if SMB.Core_Client.Stage_Of (Operation) = SMB.Core_Client.Prepared
+           or else SMB.Core_Client.Stage_Of (Operation) =
+             SMB.Core_Client.Sent
+         then
+            SMB.Core_Client.Abort_Operation
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         raise;
    end Create_Internal;
 
    procedure Close_Internal (Client : in out Connection; File : in out Handle) is
-      Payload : SMB.Bytes (0 .. 23) := (others => 0);
-      File_Id : SMB.Bytes (0 .. 15);
-      Directory : Boolean;
+      Packet : SMB.Bytes (0 .. SMB.Core_Wire.Header_Size + 24 - 1) :=
+        (others => 0);
       Used : Natural;
-      Engine_Status : SMB.Core_Status;
+      Core_Status : SMB.Core_Status;
+      Operation : SMB.Core_Client.Operation;
    begin
-      Check_Handle (Client, File, False, False, File_Id, Directory);
-      SMB.Core_Protocol.Build_Close (File_Id, Payload, Used, Engine_Status);
-      if Engine_Status /= SMB.Ok then
-         raise SMB.Protocol_Error with "cannot build SMB CLOSE request";
+      SMB.Core_Client.Prepare_Close
+        (Operation, Client.Engine_Core, File.Engine_Token,
+         Packet, Used, Core_Status);
+      if Core_Status /= SMB.Ok then
+         raise SMB.Invalid_State with "SMB handle rejected for CLOSE";
+      end if;
+      SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
+      SMB.Core_Client.Send_Succeeded
+        (Operation, Client.Engine_Core, Core_Status);
+      if Core_Status /= SMB.Ok then
+         raise SMB.Protocol_Error with "SMB CLOSE send was not acknowledged";
       end if;
       declare
-         Response : constant SMB.Bytes := Exchange
-           (Client, SMB.Wire.Close_Command, Payload (0 .. Used - 1),
-            Sign_Request => True, Require_Signed_Response => True,
-            Request_Session => Session_Identifier (Client),
-            Response_Session => Session_Identifier (Client),
-            Request_Tree => Tree_Identifier (Client),
-            Response_Tree => Tree_Identifier (Client),
-            Close_Token => File.Engine_Token);
+         Response : constant SMB.Bytes :=
+           SMB.Transport.Receive_Frame (Client.Channel);
       begin
-         pragma Unreferenced (Response);
+         declare
+            Ignored_Token : SMB.Engine.Handle_Token;
+         begin
+            SMB.Core_Client.Complete
+              (Operation, Client.Engine_Core, Response, Client.Last_Status,
+               Ignored_Token, Core_Status);
+         end;
+         if Core_Status /= SMB.Ok then
+            raise SMB.Protocol_Error with "SMB CLOSE response was rejected";
+         end if;
          Require_Status (Client, Client.Last_Status);
       end;
-      SMB.Engine.Close_Handle
-        (Client.Engine_Core, File.Engine_Token, Engine_Status,
-         Close_Token => File.Engine_Token);
-      if Engine_Status /= SMB.Ok then
-         Clear_State (Client);
-         raise SMB.Invalid_State with "session engine failed to close handle";
-      end if;
       File.Engine_Token := (others => 0);
+   exception
+      when others =>
+         if SMB.Core_Client.Stage_Of (Operation) = SMB.Core_Client.Prepared
+           or else SMB.Core_Client.Stage_Of (Operation) =
+             SMB.Core_Client.Sent
+         then
+            SMB.Core_Client.Abort_Operation
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         raise;
    end Close_Internal;
 
    procedure Cleanup_Close

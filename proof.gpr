@@ -18,6 +18,8 @@ project Proof is
       "smb-core_framing.adb",
       "smb-core_protocol.ads",
       "smb-core_protocol.adb",
+      "smb-core_client.ads",
+      "smb-core_client.adb",
       "smb-engine.ads",
       "smb-engine.adb");
 

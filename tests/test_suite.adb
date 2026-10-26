@@ -1,6 +1,7 @@
 with Ada.Text_IO;
 with SMB;
 with SMB.Core_Auth;
+with SMB.Core_Client;
 with SMB.Core_Framing;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
@@ -54,6 +55,39 @@ procedure Test_Suite is
       Assert (Status = SMB.Unsupported_Feature and then Length = 0,
               "unsupported NetBIOS frame decoded");
    end Test_Framing;
+
+   procedure Test_Core_Wire is
+      Data : SMB.Bytes (10 .. 25) := (others => 16#A5#);
+      Empty : SMB.Bytes (1 .. 0) := (others => 0);
+      Signed : SMB.Bytes (100 .. 179) := (others => 16#A5#);
+      Key : constant SMB.Bytes (0 .. 15) := (others => 0);
+      Value_16 : SMB.Word;
+      Value_32 : SMB.DWord;
+      Status : SMB.Core_Status;
+   begin
+      SMB.Core_Wire.Write_U32
+        (Data, 4, 16#7856_3412#, Status);
+      Assert (Status = SMB.Ok, "nonzero-bound U32 write");
+      Assert
+        (Data (10) = 16#A5# and then Data (25) = 16#A5#
+         and then Data (14) = 16#12# and then Data (17) = 16#78#,
+         "U32 write preserved outside range");
+      SMB.Core_Wire.Read_U32 (Data, 4, Value_32, Status);
+      Assert (Status = SMB.Ok and then Value_32 = 16#7856_3412#,
+              "nonzero-bound U32 round trip");
+      SMB.Core_Wire.Write_U16 (Data, 9, 16#BEEF#, Status);
+      Assert (Status = SMB.Ok, "nonzero-bound U16 write");
+      SMB.Core_Wire.Read_U16 (Data, 9, Value_16, Status);
+      Assert (Status = SMB.Ok and then Value_16 = 16#BEEF#,
+              "nonzero-bound U16 round trip");
+      SMB.Core_Wire.Write_U32 (Empty, 0, 0, Status);
+      Assert (Status /= SMB.Ok, "empty U32 write accepted");
+      SMB.Core_Wire.Sign (Signed, Key, Status);
+      Assert
+        (Status = SMB.Ok and then Signed (100) = 16#A5#
+         and then Signed (164) = 16#A5#,
+         "signature preserved bytes outside signature field");
+   end Test_Core_Wire;
 
    function ASCII (Value : String) return SMB.Bytes is
    begin
@@ -538,6 +572,13 @@ procedure Test_Suite is
       Token : SMB.Engine.Handle_Token := (others => 0);
       File_Id : constant SMB.Bytes (0 .. 15) := (others => 0);
       Wrong_File_Id : constant SMB.Bytes (0 .. 15) := (others => 1);
+      Coordinator : SMB.Core_Client.Operation;
+      Close_Coordinator : SMB.Core_Client.Operation;
+      Coordinator_Packet : SMB.Bytes (0 .. 121) := (others => 0);
+      Close_Packet : SMB.Bytes (0 .. 87) := (others => 0);
+      Coordinator_Used : Natural;
+      Coordinator_Token : SMB.Engine.Handle_Token := (others => 0);
+      Rejected_Token : SMB.Engine.Handle_Token := (others => 0);
       Session_Id : constant SMB.QWord := 16#1234#;
       Tree_Id : constant SMB.DWord := 16#1020_3040#;
       Key : SMB.Bytes (0 .. 15) := (others => 0);
@@ -561,6 +602,93 @@ procedure Test_Suite is
             Reply_Session_Id);
          SMB.Wire.Put_U32 (Packet, 16, (if Signed then 9 else 1));
       end Prepare_Response;
+
+      procedure Reconnect_Share is
+      begin
+         SMB.Engine.Initialize (State, Status);
+         Assert (Status = SMB.Ok, "reinitialize after coordinator abort");
+         SMB.Engine.Mark_Connected (State, Status);
+         Assert (Status = SMB.Ok, "reconnect transport after coordinator abort");
+         declare
+            Response : SMB.Bytes (0 .. 127) := (others => 0);
+         begin
+            SMB.Engine.Begin_Request
+              (State, SMB.Core_Wire.Command_Code (0), False, False,
+               Message_Id, Expected, Status);
+            Assert (Status = SMB.Ok, "reconnect negotiate request");
+            Prepare_Response
+              (Response, SMB.Core_Wire.Command_Code (0), Message_Id, 0, 0,
+               False);
+            Response (64) := 65;
+            Response (66) := 1;
+            Response (68) := 16#10#;
+            Response (69) := 2;
+            Response (98) := 1;
+            Response (102) := 1;
+            SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+            Assert (Status = SMB.Ok, "reconnect negotiate response");
+            SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, Status);
+            Assert (Status = SMB.Ok, "reconnect negotiated phase");
+         end;
+         declare
+            Response : SMB.Bytes (0 .. 71) := (others => 0);
+         begin
+            SMB.Engine.Begin_Request
+              (State, SMB.Core_Wire.Command_Code (1), False, False,
+               Message_Id, Expected, Status);
+            Assert (Status = SMB.Ok, "reconnect challenge request");
+            Prepare_Response
+              (Response, SMB.Core_Wire.Command_Code (1), Message_Id,
+               0, Session_Id, False);
+            SMB.Wire.Put_U32
+              (Response, 8, SMB.Status_More_Processing_Required);
+            Response (64) := 9;
+            SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+            Assert (Status = SMB.Ok, "reconnect challenge response");
+            SMB.Engine.Install_Session_Key (State, Session_Id, Key, Status);
+            Assert (Status = SMB.Ok, "reconnect session key");
+         end;
+         declare
+            Response : SMB.Bytes (0 .. 100) := (others => 0);
+         begin
+            SMB.Engine.Begin_Request
+              (State, SMB.Core_Wire.Command_Code (1), False, True,
+               Message_Id, Expected, Status);
+            Assert (Status = SMB.Ok, "reconnect final session request");
+            Prepare_Response
+              (Response, SMB.Core_Wire.Command_Code (1), Message_Id,
+               0, Session_Id, True);
+            Response (64) := 9;
+            SMB.Wire.Put_U16 (Response, 68, 72);
+            SMB.Wire.Put_U16 (Response, 70, Final_Token'Length);
+            for Index in Final_Token'Range loop
+               Response (72 + Index) := Final_Token (Index);
+            end loop;
+            SMB.Wire.Sign (Response, Key);
+            SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+            Assert (Status = SMB.Ok, "reconnect signed session response");
+            SMB.Engine.Mark_Authenticated (State, Status);
+            Assert (Status = SMB.Ok, "reconnect authenticated phase");
+         end;
+         declare
+            Response : SMB.Bytes (0 .. 79) := (others => 0);
+         begin
+            SMB.Engine.Begin_Request
+              (State, SMB.Core_Wire.Command_Code (3), True, True,
+               Message_Id, Expected, Status);
+            Assert (Status = SMB.Ok, "reconnect tree connect request");
+            Prepare_Response
+              (Response, SMB.Core_Wire.Command_Code (3), Message_Id,
+               Tree_Id, Session_Id, True);
+            Response (64) := 16;
+            Response (66) := 1;
+            SMB.Wire.Sign (Response, Key);
+            SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+            Assert (Status = SMB.Ok, "reconnect tree connect response");
+            SMB.Engine.Mark_Share_Connected (State, Tree_Id, Status);
+            Assert (Status = SMB.Ok, "reconnect share-connected phase");
+         end;
+      end Reconnect_Share;
 
       function Rejects_Negotiation return Boolean is
       begin
@@ -591,6 +719,20 @@ procedure Test_Suite is
       Assert (Status = SMB.Ok, "engine initialization");
       SMB.Engine.Mark_Connected (State, Status);
       Assert (Status = SMB.Ok, "engine transport transition");
+      SMB.Core_Client.Prepare_Close
+        (Coordinator, State, (Owner => 0, Epoch => 0, Ticket => 1),
+         Coordinator_Packet, Coordinator_Used, Status);
+      Assert
+        (Status /= SMB.Ok and then not SMB.Engine.Has_Pending_Request (State),
+         "stale coordinator CLOSE token accepted");
+      SMB.Core_Client.Prepare_Close
+        (Coordinator, State,
+         (Owner => SMB.Engine.Current_Owner_Id (State) + 1,
+          Epoch => SMB.Engine.Current_Epoch (State), Ticket => 1),
+         Coordinator_Packet, Coordinator_Used, Status);
+      Assert
+        (Status /= SMB.Ok and then not SMB.Engine.Has_Pending_Request (State),
+         "foreign coordinator CLOSE token accepted");
       SMB.Engine.Install_Session_Key (State, Session_Id, Key, Status);
       Assert (Status /= SMB.Ok, "session key installed without a receipt");
       SMB.Engine.Close_Handle (State, Token, Status);
@@ -712,6 +854,66 @@ procedure Test_Suite is
       declare
          Response : SMB.Bytes (0 .. 151) := (others => 0);
       begin
+         SMB.Core_Client.Prepare_Create
+           (Coordinator, State, SMB.Bytes'(0, 0), SMB.Engine.Read_Only,
+            False, 1, False, Coordinator_Packet, Coordinator_Used, Status);
+         Assert (Status = SMB.Ok, "coordinator CREATE preparation");
+         SMB.Core_Client.Send_Succeeded (Coordinator, State, Status);
+         Assert (Status = SMB.Ok, "coordinator CREATE send acknowledgement");
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (5),
+            SMB.Wire.U64 (Coordinator_Packet, 24),
+            Tree_Id, Session_Id, True);
+         Response (64) := 89;
+         Response (128 .. 143) := File_Id;
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete
+           (Coordinator, State, Response, Nt_Status,
+            Coordinator_Token, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Engine.Has_Open_Handles (State),
+            "coordinator CREATE completion and handle registration");
+         SMB.Core_Client.Complete
+           (Coordinator, State, Response, Nt_Status,
+            Rejected_Token, Status);
+         Assert (Status /= SMB.Ok, "duplicate coordinator completion accepted");
+         SMB.Core_Client.Prepare_Close
+           (Close_Coordinator, State, Coordinator_Token,
+            Close_Packet, Coordinator_Used, Status);
+         Assert
+           (Status = SMB.Ok,
+            "coordinator CLOSE preparation " & SMB.Core_Status'Image (Status));
+         Assert
+           (Close_Packet (72 .. 87) = File_Id,
+            "coordinator CLOSE encoded validated FileId");
+         SMB.Core_Client.Complete
+           (Close_Coordinator, State, Response, Nt_Status,
+            Rejected_Token, Status);
+         Assert (Status /= SMB.Ok, "coordinator response-before-send accepted");
+         SMB.Core_Client.Send_Succeeded (Close_Coordinator, State, Status);
+         Assert (Status = SMB.Ok, "coordinator CLOSE send acknowledgement");
+         declare
+            Close_Response : SMB.Bytes (0 .. 123) := (others => 0);
+         begin
+            Prepare_Response
+              (Close_Response, SMB.Core_Wire.Command_Code (6),
+               SMB.Wire.U64 (Close_Packet, 24),
+               Tree_Id, Session_Id, True);
+            Close_Response (64) := 60;
+            SMB.Wire.Sign (Close_Response, Key);
+            SMB.Core_Client.Complete
+              (Close_Coordinator, State, Close_Response, Nt_Status,
+               Coordinator_Token, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status = SMB.Success
+               and then not SMB.Engine.Has_Open_Handles (State),
+               "coordinator CLOSE completion");
+            SMB.Core_Client.Complete
+              (Close_Coordinator, State, Close_Response, Nt_Status,
+               Coordinator_Token, Status);
+            Assert (Status /= SMB.Ok, "duplicate CLOSE completion accepted");
+         end;
          SMB.Engine.Begin_Request
            (State, SMB.Core_Wire.Command_Code (5), True, True,
             Message_Id, Expected, Status);
@@ -763,6 +965,28 @@ procedure Test_Suite is
             and then not SMB.Engine.Has_Open_Handles (State),
             "tampered response did not invalidate session and handles");
       end;
+
+      Reconnect_Share;
+      SMB.Core_Client.Prepare_Create
+        (Coordinator, State, SMB.Bytes'(0, 0), SMB.Engine.Read_Only,
+         False, 1, False, Coordinator_Packet, Coordinator_Used, Status);
+      Assert (Status = SMB.Ok, "coordinator prepare before abort");
+      SMB.Core_Client.Abort_Operation (Coordinator, State, Status);
+      Assert
+        (Status = SMB.Ok
+         and then not SMB.Engine.Has_Pending_Request (State)
+         and then not SMB.Engine.Has_Signing_Key (State)
+         and then SMB.Engine.Current_Phase (State) = SMB.Engine.Disconnected,
+         "coordinator abort left request or session state");
+      Reconnect_Share;
+      SMB.Core_Client.Prepare_Create
+        (Coordinator, State, SMB.Bytes'(0, 0), SMB.Engine.Read_Only,
+         False, 1, False, Coordinator_Packet, Coordinator_Used, Status);
+      Assert
+        (Status = SMB.Ok and then SMB.Engine.Has_Pending_Request (State),
+         "coordinator was not reusable after abort and reconnect");
+      SMB.Core_Client.Abort_Operation (Coordinator, State, Status);
+      Assert (Status = SMB.Ok, "abort reused coordinator request");
    end Test_Engine_Receipts;
 
    procedure Test_Engine_Malformed_Close is
@@ -1051,6 +1275,7 @@ procedure Test_Suite is
 begin
    Test_Crypto;
    Test_Framing;
+   Test_Core_Wire;
    Test_NTLM_Authenticate;
    Test_Final_Spnego;
    Test_Core_Protocol;
