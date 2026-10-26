@@ -1,0 +1,28 @@
+project Proof is
+   for Languages use ("Ada");
+   for Source_Dirs use ("src");
+   for Object_Dir use "build/proof-obj";
+   for Source_Files use
+     ("smb.ads",
+      "smb-crypto.ads",
+      "smb-crypto.adb",
+      "smb-core_wire.ads",
+      "smb-core_wire.adb",
+      "smb-core_text.ads",
+      "smb-core_text.adb",
+      "smb-core_ntlm.ads",
+      "smb-core_ntlm.adb",
+      "smb-core_auth.ads",
+      "smb-core_auth.adb",
+      "smb-core_framing.ads",
+      "smb-core_framing.adb",
+      "smb-core_protocol.ads",
+      "smb-core_protocol.adb",
+      "smb-engine.ads",
+      "smb-engine.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        ("-gnat2022", "-gnatW8", "-gnata", "-gnatwa");
+   end Compiler;
+end Proof;

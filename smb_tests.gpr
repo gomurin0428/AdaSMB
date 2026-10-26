@@ -1,0 +1,16 @@
+with "smb.gpr";
+
+project SMB_Tests is
+   for Source_Dirs use ("tests");
+   for Object_Dir use "build/test-obj";
+   for Exec_Dir use "build/bin";
+   for Main use
+     ("test_suite.adb", "integration_client.adb", "adversarial_client.adb",
+      "transport_client.adb");
+   for Languages use ("Ada");
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        ("-gnat2012", "-gnatW8", "-gnata", "-gnatwa");
+   end Compiler;
+end SMB_Tests;
