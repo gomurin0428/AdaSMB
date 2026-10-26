@@ -13,16 +13,16 @@ units: `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Framing`,
 | --- | ---: | ---: | ---: |
 | Data dependencies | 1 | 1 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
-| Initialization | 413 | 413 | 0 |
+| Initialization | 455 | 455 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 1,708 | 0 | 1,708 |
-| Assertions | 160 | 0 | 160 |
-| Functional contracts | 662 | 0 | 662 |
-| Termination | 97 | 91 | 6 |
-| **Total** | **3,044** | **508** | **2,536** |
+| Run-time checks | 1,843 | 0 | 1,843 |
+| Assertions | 202 | 0 | 202 |
+| Functional contracts | 735 | 0 | 735 |
+| Termination | 119 | 113 | 6 |
+| **Total** | **3,358** | **572** | **2,786** |
 
-There were zero unproved and zero justified checks. GNATprove reported 41
-flow-analysis warnings (35 in `SMB.Core_Client` and 6 in `SMB.Core_Protocol`),
+There were zero unproved and zero justified checks. GNATprove reported 52
+flow-analysis warnings (46 in `SMB.Core_Client` and 6 in `SMB.Core_Protocol`),
 primarily unused local assignments, resets, and status outputs; these are
 reported rather than treated as proof results. The forced `-gnatwe` build
 passed. All configured units were analyzed, no skipped units or subprograms
@@ -51,6 +51,21 @@ transport outcomes abort the transfer and invalidate Engine state without
 automatic retry. Existing CREATE/CLOSE packet, receipt, and handle contracts
 remain included.
 
+The proof also covers bounded directory enumeration. The coordinator captures
+the directory handle identity and owner/epoch at start; every continuation
+revalidates the readable directory handle before progressing. It binds each
+signed command-14 query to the 64-KiB request limit and first-page restart
+behavior, requires send acknowledgement and a matching validated response,
+and copies validated nonempty page data into its fixed-size snapshot. Entry
+parsing uses only that snapshot and proves cursor progress, entry metadata and
+UTF-16 name correspondence, per-entry count bounds, and no progress on a short
+name buffer. Page and entry caps are enforced in the core; valid terminal
+statuses preserve their NTSTATUS and malformed pages invalidate the Engine.
+Successful query preparation binds the stored directory identity to
+`SMB.Engine.Handle_Matches` on the pre-call Engine state. The context predicate
+also proves the exact stored FileId/access/directory identity using byte-wise
+handle-match congruence.
+
 The proof does not establish the trusted socket/allocation/exception adapter,
 complete public-facade correctness, cryptographic hardness, server rollback, or
 exactly-once behavior after an uncertain write.
@@ -72,7 +87,12 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   Engine/key cleanup. Transfer fixtures cover partial WRITE continuation and
   payload snapshot preservation, empty WRITE, response-receipt misuse,
   NTSTATUS after partial WRITE, short/zero/EOF READ, multi-chunk READ prefix
-  preservation, and invalid/overflowing transfer inputs.
+  preservation, and invalid/overflowing transfer inputs. Directory fixtures
+  cover signed multi-page enumeration and exact query fields, independent page
+  snapshots, `No_More_Files` and successful zero-data termination, wrong-stage
+  and duplicate completion, premature queries, short-buffer retry without
+  progress, foreign/stale context, malformed records, signature failure, and
+  page/entry caps.
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check
   GPRBUILD="gprbuild -f"`: passed. The library, test suite, and example were
   forcibly rebuilt with warnings treated as errors; the runtime dependency
@@ -93,7 +113,18 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   exactly two client WRITE requests and two positive successful WRITE
   responses. The client reported transport failure, rejected stale-handle
   operations, reconnected through the same public connection, and read back
-  the complete deterministic 70,001-byte file.
+  the complete deterministic 70,001-byte file. Normal directory enumeration
+  returned all 1,203 entries. For the malformed signed second-page regression,
+  the proxy kept the client-facing connection open and continued observing
+  upstream after sending the mutated page; it required client EOF within its
+  bounded 11-second join. QUERY_DIRECTORY requests are counted before
+  forwarding, and any third request fails the test even if its response is not
+  relayed. The test verified positive first-page progress and exactly two
+  request/response pairs, followed by Protocol_Error, client-owned
+  disconnection, and successful list/read after reconnecting the same
+  connection to the backend.
+* `python3 -m py_compile tests/adversarial_proxy.py
+  tests/samba_integration.py`: passed.
 
 The separate transport-backpressure test was not rerun; earlier passing
 evidence is not part of these current results. CI and Windows-native testing

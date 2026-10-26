@@ -23,6 +23,12 @@ is
              (if Index < Packet'First + 48
                 or else Index > Packet'First + 63
               then Packet (Index) = Packet'Old (Index)))
+          and then
+            SMB.Core_Wire.Encoded_U32 (Packet, 36) =
+              SMB.Core_Wire.Encoded_U32 (Packet'Old, 36)
+          and then
+            SMB.Core_Wire.Encoded_U64 (Packet, 40) =
+              SMB.Core_Wire.Encoded_U64 (Packet'Old, 40)
         else Packet = Packet'Old)
    is
    begin
@@ -678,6 +684,491 @@ is
       Status := SMB.Ok;
    end Prepare_Header;
 
+   function Directory_Context_Valid
+     (Value : Directory_Enumeration;
+      State : SMB.Engine.Engine_State) return Boolean
+   with Post =>
+     (if Directory_Context_Valid'Result then
+        Directory_Context_Matches (Value, State)
+        and then SMB.Engine.Handle_Matches
+          (State, Value.Token, Value.File_Id, Value.Access_Mode, True))
+   is
+      File_Id : SMB.Bytes (0 .. 15) := (others => 0);
+      Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      Is_Directory : Boolean := False;
+      Handle_Status : SMB.Core_Status;
+   begin
+      if Value.Owner /= SMB.Engine.Current_Owner_Id (State)
+        or else Value.Epoch /= SMB.Engine.Current_Epoch (State)
+        or else SMB.Engine.Current_Phase (State) /=
+          SMB.Engine.Share_Connected
+      then
+         return False;
+      end if;
+      SMB.Engine.Validate_Handle
+        (State, Value.Token, True, False, File_Id, Access_Mode,
+         Is_Directory, Handle_Status);
+      if Handle_Status /= SMB.Ok
+        or else not Is_Directory
+        or else File_Id /= Value.File_Id
+        or else Access_Mode /= Value.Access_Mode
+      then
+         return False;
+      end if;
+      pragma Assert (Is_Directory);
+      pragma Assert (File_Id = Value.File_Id);
+      pragma Assert (Access_Mode = Value.Access_Mode);
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, File_Id, Access_Mode, Is_Directory));
+      pragma Assert
+        (for all Index in Value.File_Id'Range =>
+           File_Id (Index) = Value.File_Id (Index));
+      pragma Assert
+        (SMB.Engine.Handle_Matches_Equivalent
+           (State, Value.Token, File_Id, Value.File_Id,
+            Access_Mode, Is_Directory));
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, Value.File_Id, Value.Access_Mode, True));
+      return True;
+   end Directory_Context_Valid;
+
+   procedure Fail_Directory
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Failure : SMB.Core_Status;
+      Status : out SMB.Core_Status)
+   is
+      Invalidate_Status : SMB.Core_Status;
+   begin
+      SMB.Engine.Invalidate (State, Invalidate_Status);
+      Value.Stage := Directory_Failed;
+      Status :=
+        (if Invalidate_Status = SMB.Ok then Failure else Invalidate_Status);
+   end Fail_Directory;
+
+   procedure Start_Directory
+     (Value : in out Directory_Enumeration;
+      State : SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token;
+      Status : out SMB.Core_Status)
+   is
+      File_Id : SMB.Bytes (0 .. 15) := (others => 0);
+      Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      Is_Directory : Boolean := False;
+      Handle_Status : SMB.Core_Status;
+   begin
+      if Value.Stage /= Directory_Idle
+        or else SMB.Engine.Current_Phase (State) /= SMB.Engine.Share_Connected
+        or else SMB.Engine.Has_Pending_Request (State)
+        or else SMB.Engine.Has_Validated_Response (State)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      SMB.Engine.Validate_Handle
+        (State, Token, True, False, File_Id, Access_Mode,
+         Is_Directory, Handle_Status);
+      if Handle_Status /= SMB.Ok or else not Is_Directory then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      Value.Owner := SMB.Engine.Current_Owner_Id (State);
+      Value.Epoch := SMB.Engine.Current_Epoch (State);
+      Value.Token := Token;
+      Value.File_Id := File_Id;
+      Value.Access_Mode := Access_Mode;
+      Value.Expected := (others => <>);
+      Value.Page_Length := 0;
+      Value.Cursor := 0;
+      Value.Page_Count := 0;
+      Value.Entry_Count := 0;
+      Value.Stage := Query_Ready;
+      Status := SMB.Ok;
+      pragma Assert (Directory_Invariant (Value));
+      pragma Assert (Directory_Context_Matches (Value, State));
+   end Start_Directory;
+
+   procedure Prepare_Directory_Query
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   is
+      Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      File_Id : SMB.Bytes (0 .. 15) := (others => 0);
+      Is_Directory : Boolean := False;
+      Validate_Status : SMB.Core_Status;
+      Field_Status : SMB.Core_Status;
+      Begin_Status : SMB.Core_Status;
+      Count_Status : SMB.Core_Status;
+      Sign_Status : SMB.Core_Status;
+      Body_Used : Natural := 0;
+      Message_Id : SMB.QWord := 0;
+      Expected : SMB.Engine.Request_Expectation;
+   begin
+      Clear_Output (Output);
+      Used := 0;
+      if Value.Stage /= Query_Ready
+        or else not Directory_Invariant (Value)
+        or else not Directory_Context_Valid (Value, State)
+        or else SMB.Engine.Current_Phase (State) /=
+          SMB.Engine.Share_Connected
+        or else SMB.Engine.Has_Pending_Request (State)
+        or else SMB.Engine.Has_Validated_Response (State)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      SMB.Engine.Validate_Handle
+        (State, Value.Token, True, False, File_Id, Access_Mode,
+         Is_Directory, Validate_Status);
+      if Validate_Status /= SMB.Ok
+        or else not Is_Directory
+        or else File_Id /= Value.File_Id
+        or else Access_Mode /= Value.Access_Mode
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      pragma Assert
+        (for all Index in Value.File_Id'Range =>
+           File_Id (Index) = Value.File_Id (Index));
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, File_Id, Access_Mode, True));
+      pragma Assert
+        (SMB.Engine.Handle_Matches_Equivalent
+           (State, Value.Token, File_Id, Value.File_Id,
+            Access_Mode, True));
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, Value.File_Id, Value.Access_Mode, True));
+      if Value.Page_Count >= SMB.Core_Protocol.Maximum_Directory_Pages
+        or else Output'Length < Directory_Request_Size
+      then
+         Fail_Directory
+           (Value, State, SMB.Resource_Limit, Status);
+         return;
+      end if;
+      SMB.Core_Protocol.Build_Query_Directory
+        (File_Id, Value.Page_Count = 0,
+         Output (Output'First + Header_Length .. Output'Last),
+         Body_Used, Field_Status);
+      if Field_Status /= SMB.Ok or else Body_Used /= 34 then
+         Fail_Directory
+           (Value,
+            State,
+            (if Field_Status = SMB.Ok then SMB.Invalid_Protocol
+             else Field_Status),
+            Status);
+         return;
+      end if;
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U16
+           (Output, Header_Length) = 33);
+      pragma Assert
+        (Output (Output'First + Header_Length + 2) = 37);
+      pragma Assert
+        (Output (Output'First + Header_Length + 3) =
+           (if Value.Page_Count = 0 then 1 else 0));
+      pragma Assert
+        (for all Index in 0 .. 15 =>
+           Output
+             (Output'First + Header_Length + 8 + Index) =
+               File_Id (File_Id'First + Index));
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U32
+           (Output, Header_Length + 28) =
+             SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk));
+      SMB.Engine.Begin_Request
+        (State, 14, True, True, Message_Id, Expected, Begin_Status,
+         Request_Amount => SMB.Core_Protocol.Maximum_IO_Chunk);
+      if Begin_Status /= SMB.Ok then
+         Fail_Directory (Value, State, Begin_Status, Status);
+         return;
+      end if;
+      Value.Expected := Expected;
+      pragma Assert (Value.Expected.Tree_Id = Expected.Tree_Id);
+      Value.Stage := Query_Prepared;
+      Used := Header_Length + Body_Used;
+      Prepare_Header (Output, Expected, Field_Status);
+      if Field_Status /= SMB.Ok then
+         Fail_Directory (Value, State, Field_Status, Status);
+         Used := 0;
+         return;
+      end if;
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U32 (Output, 36) = Expected.Tree_Id);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U64 (Output, 40) = Expected.Session_Id);
+      pragma Assert (Message_Id = Expected.Message_Id);
+      pragma Assert (Expected.Command = 14);
+      pragma Assert (Expected.Request_Signed and Expected.Signed);
+      pragma Assert
+        (Expected.Request_Amount = SMB.Core_Protocol.Maximum_IO_Chunk);
+      pragma Assert (Body_Used = 34);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U16 (Output, Header_Length) = 33);
+      pragma Assert
+        (for all Index in 0 .. 15 =>
+           Output
+             (Output'First + Header_Length + 8 + Index) =
+               Value.File_Id (Value.File_Id'First + Index));
+      declare
+         Key : constant SMB.Bytes :=
+           SMB.Engine.Current_Signing_Key (State);
+      begin
+         Sign_Packet (Output, Used, Key, Sign_Status);
+      end;
+      if Sign_Status /= SMB.Ok then
+         Fail_Directory (Value, State, Sign_Status, Status);
+         Used := 0;
+         return;
+      end if;
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U32 (Output, 36) = Expected.Tree_Id);
+      SMB.Core_Protocol.Count_Directory_Page
+        (Value.Page_Count, Count_Status);
+      if Count_Status /= SMB.Ok then
+         Fail_Directory (Value, State, Count_Status, Status);
+         Used := 0;
+         return;
+      end if;
+      pragma Assert (Value.Expected.Tree_Id = Expected.Tree_Id);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U32 (Output, 36) =
+           Value.Expected.Tree_Id);
+      pragma Assert (Directory_Invariant (Value));
+      pragma Assert
+        (Directory_Packet_Matches (Value, State, Output, Used));
+      Status := SMB.Ok;
+   end Prepare_Directory_Query;
+
+   procedure Directory_Send_Succeeded
+     (Value : in out Directory_Enumeration;
+      State : SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status)
+   is
+   begin
+      if Value.Stage /= Query_Prepared
+        or else not Directory_Invariant (Value)
+        or else not Directory_Context_Valid (Value, State)
+        or else not SMB.Engine.Pending_Request_Matches
+          (State, Value.Expected)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      Value.Stage := Query_Sent;
+      Status := SMB.Ok;
+   end Directory_Send_Succeeded;
+
+   procedure Complete_Directory_Page
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Nt_Status : out SMB.DWord;
+      Status : out SMB.Core_Status)
+   is
+      Accept_Status : SMB.Core_Status;
+      Receipt_Status : SMB.Core_Status;
+      Info : SMB.Core_Protocol.Response_Info;
+   begin
+      Nt_Status := 0;
+      if Value.Stage /= Query_Sent
+        or else not Directory_Invariant (Value)
+        or else not Directory_Context_Valid (Value, State)
+        or else not SMB.Engine.Pending_Request_Matches
+          (State, Value.Expected)
+        or else SMB.Engine.Has_Validated_Response (State)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      if Packet'Length < 72 then
+         Fail_Directory (Value, State, SMB.Invalid_Length, Status);
+         return;
+      end if;
+      SMB.Engine.Accept_Response (State, Packet, Nt_Status, Accept_Status);
+      if Accept_Status /= SMB.Ok then
+         Value.Stage := Directory_Failed;
+         Status := Accept_Status;
+         return;
+      end if;
+      Info := SMB.Engine.Current_Response_Info (State);
+      if Nt_Status /= SMB.Success
+        or else Nt_Status = SMB.Status_No_More_Files
+        or else Info.Data_Length = 0
+      then
+         Value.Page_Length := 0;
+         Value.Cursor := 0;
+         Value.Stage := Directory_Finished;
+         SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         if Receipt_Status /= SMB.Ok then
+            Fail_Directory (Value, State, Receipt_Status, Status);
+            return;
+         end if;
+         Status := SMB.Ok;
+         return;
+      end if;
+      pragma Assert (Packet'Length >= 72);
+      declare
+         Response_Offset : constant Natural :=
+           Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66));
+         Response_Length_Value : constant SMB.DWord :=
+           SMB.Core_Wire.Encoded_U32 (Packet, 68);
+      begin
+         if Response_Length_Value = 0
+           or else Response_Length_Value >
+             SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+           or else Response_Offset > Packet'Length
+           or else Natural (Response_Length_Value) >
+             Packet'Length - Response_Offset
+           or else Response_Offset < 72
+           or else Info.Data_Offset /= Response_Offset
+           or else Info.Data_Length /= Natural (Response_Length_Value)
+         then
+            Fail_Directory (Value, State, SMB.Invalid_Protocol, Status);
+            return;
+         end if;
+         Value.Page
+           (0 .. Natural (Response_Length_Value) - 1) :=
+             Packet
+               (Packet'First + Response_Offset ..
+                Packet'First +
+                  (Response_Offset + (Natural (Response_Length_Value) - 1)));
+         Value.Page_Length := Natural (Response_Length_Value);
+         pragma Assert
+           (Directory_Page_Length_Of (Value) =
+              Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68)));
+         pragma Assert
+           (Directory_Page_Matches
+              (Value, Packet,
+               Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66)),
+               Directory_Page_Length_Of (Value)));
+      end;
+      Value.Cursor := 0;
+      Value.Stage := Page_Ready;
+      SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+      if Receipt_Status /= SMB.Ok then
+         Fail_Directory (Value, State, Receipt_Status, Status);
+         return;
+      end if;
+      pragma Assert (Directory_Invariant (Value));
+      pragma Assert
+        (Directory_Page_Matches
+           (Value, Packet, Info.Data_Offset, Info.Data_Length));
+      Status := SMB.Ok;
+   end Complete_Directory_Page;
+
+   procedure Next_Directory_Entry
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Name : in out SMB.Bytes;
+      Used : out Natural;
+      Info : out SMB.Core_Protocol.Directory_Info;
+      Status : out SMB.Core_Status)
+   is
+      Cursor : Natural;
+      New_Entry_Count : Natural;
+      Parse_Status : SMB.Core_Status;
+      Count_Status : SMB.Core_Status;
+      Parsed : SMB.Core_Protocol.Directory_Info;
+   begin
+      Used := 0;
+      Info :=
+        (Name_Offset => 0, Name_Length => 0, Size => 0,
+         Attributes => 0, Next_Cursor => 0);
+      if Value.Stage /= Page_Ready
+        or else not Directory_Invariant (Value)
+        or else not Directory_Context_Valid (Value, State)
+        or else SMB.Engine.Has_Pending_Request (State)
+        or else SMB.Engine.Has_Validated_Response (State)
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      Cursor := Value.Cursor;
+      SMB.Core_Protocol.Parse_Directory_Entry
+        (Value.Page (0 .. Value.Page_Length - 1), Cursor, Parsed,
+         Parse_Status);
+      if Parse_Status /= SMB.Ok then
+         Fail_Directory (Value, State, Parse_Status, Status);
+         return;
+      end if;
+      pragma Assert
+        (Parsed.Name_Length =
+           Natural
+             (SMB.Core_Wire.Encoded_U32 (Value.Page, Value.Cursor + 60)));
+      New_Entry_Count := Value.Entry_Count;
+      SMB.Core_Protocol.Count_Directory_Entry
+        (New_Entry_Count, Count_Status);
+      if Count_Status /= SMB.Ok then
+         Fail_Directory (Value, State, Count_Status, Status);
+         return;
+      end if;
+      Info := Parsed;
+      if Parsed.Name_Length > Name'Length then
+         Status := SMB.Resource_Limit;
+         return;
+      end if;
+      pragma Assert (Parsed.Name_Length > 0);
+      pragma Assert (Parsed.Name_Offset + Parsed.Name_Length <=
+        Value.Page_Length);
+      Name
+        (Name'First .. Name'First + (Parsed.Name_Length - 1)) :=
+          Value.Page
+            (Parsed.Name_Offset ..
+             Parsed.Name_Offset + Parsed.Name_Length - 1);
+      Used := Parsed.Name_Length;
+      Value.Cursor := Cursor;
+      Value.Entry_Count := New_Entry_Count;
+      if Cursor = Value.Page_Length then
+         Value.Stage := Query_Ready;
+      else
+         Value.Stage := Page_Ready;
+      end if;
+      pragma Assert (Directory_Invariant (Value));
+      Status := SMB.Ok;
+   end Next_Directory_Entry;
+
+   procedure Abort_Directory
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status)
+   is
+      Invalidate_Status : SMB.Core_Status;
+      Reserved : constant Boolean :=
+        Value.Stage in Query_Prepared | Query_Sent;
+   begin
+      if Value.Stage not in Query_Ready | Query_Prepared |
+          Query_Sent | Page_Ready
+        or else not Directory_Context_Valid (Value, State)
+        or else
+          (if Reserved then
+             not SMB.Engine.Pending_Request_Matches
+               (State, Value.Expected)
+             or else SMB.Engine.Has_Validated_Response (State)
+           else
+             SMB.Engine.Has_Pending_Request (State)
+             or else SMB.Engine.Has_Validated_Response (State))
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      if Reserved then
+         SMB.Engine.Invalidate (State, Invalidate_Status);
+         Value.Stage := Directory_Failed;
+         Status := Invalidate_Status;
+      else
+         Value.Stage := Directory_Failed;
+         Status := SMB.Ok;
+      end if;
+   end Abort_Directory;
+
    function Stage_Of (Value : Operation) return Operation_Stage is
      (Value.Stage);
 
@@ -1263,7 +1754,7 @@ is
                  Value.Buffer
                    (Value.Completed + 1 .. Value.Completed + Amount);
             begin
-               pragma Assert
+               pragma Assert_And_Cut
                  (for all Index in 0 .. Amount - 1 =>
                     Payload (Payload'First + Index) =
                       Value.Buffer (Value.Completed + Index + 1));
@@ -1271,9 +1762,13 @@ is
                  (File_Id, Value.Position, Payload,
                   Body_Buffer, Body_Used, Field_Status);
                if Field_Status = SMB.Ok then
+                  pragma Assert_And_Cut
+                    (for all Index in 0 .. Amount - 1 =>
+                       Body_Buffer (Body_Buffer'First + 48 + Index) =
+                         Payload (Payload'First + Index));
                   pragma Assert
                     (for all Index in 0 .. Amount - 1 =>
-                       Body_Buffer (48 + Index) =
+                       Body_Buffer (Body_Buffer'First + 48 + Index) =
                          Value.Buffer (Value.Completed + Index + 1));
                end if;
             end;
@@ -1287,7 +1782,7 @@ is
               (for all Byte_Index in 0 .. 7 =>
                  Output
                    (Output'First + Header_Length + 8 + Byte_Index) =
-                 SMB.Core_Wire.U64_Byte (Value.Position, Byte_Index));
+                   SMB.Core_Wire.U64_Byte (Value.Position, Byte_Index));
             if Value.Kind = Write_Transfer then
                pragma Assert
                  (for all Index in 0 .. Amount - 1 =>
@@ -1356,11 +1851,6 @@ is
       Value.Stage := Transfer_Prepared;
       pragma Assert (Transfer_Invariant (Value));
       pragma Assert (Value.Requested = Amount);
-      pragma Assert
-        (for all Byte_Index in 0 .. 3 =>
-           Output
-             (Output'First + Header_Length + 4 + Byte_Index) =
-           SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), Byte_Index));
       pragma Assert
         (Transfer_Packet_Matches (Value, State, Output, Used));
       pragma Assert

@@ -14,6 +14,7 @@ is
    use type SMB.Engine.Access_Kind;
    use type SMB.Engine.Phase;
    use type SMB.Core_Protocol.Response_Info;
+   use type SMB.Engine.Engine_State;
    pragma Unevaluated_Use_Of_Old (Allow);
    type Operation_Kind is (No_Operation, Create_Operation, Close_Operation);
    type Operation_Stage is (Idle, Prepared, Sent, Finished, Failed);
@@ -27,6 +28,27 @@ is
      Natural range 0 .. SMB.Maximum_Frame_Size;
    type Transfer
      (Capacity : Transfer_Capacity) is limited private;
+
+   type Directory_Stage is
+     (Directory_Idle,
+      Query_Ready,
+      Query_Prepared,
+      Query_Sent,
+      Page_Ready,
+      Directory_Finished,
+      Directory_Failed);
+   type Directory_Enumeration is limited private;
+   Directory_Request_Size : constant Natural :=
+     SMB.Core_Wire.Header_Size + 34;
+   type Directory_State_Snapshot is record
+      Stage : Directory_Stage;
+      Owner, Epoch : SMB.QWord;
+      Token : SMB.Engine.Handle_Token;
+      File_Id : SMB.Bytes (0 .. 15);
+      Access_Mode : SMB.Engine.Access_Kind;
+      Expected : SMB.Engine.Request_Expectation;
+      Page_Length, Cursor, Page_Count, Entry_Count : Natural;
+   end record;
 
    type Authentication_Stage is
      (Authentication_Ready,
@@ -453,6 +475,71 @@ is
    with Pre =>
      Data'Length <= SMB.Maximum_Frame_Size
      and then Length <= Value.Capacity;
+   type Directory_Identity is private;
+   function Identity_Of
+     (Value : Directory_Enumeration) return Directory_Identity
+   with Ghost;
+   function Directory_Stage_Of
+     (Value : Directory_Enumeration) return Directory_Stage;
+   function Directory_Page_Length_Of
+     (Value : Directory_Enumeration) return Natural;
+   function Directory_Cursor_Of
+     (Value : Directory_Enumeration) return Natural;
+   function Directory_Page_Count_Of
+     (Value : Directory_Enumeration) return Natural;
+   function Directory_Entry_Count_Of
+     (Value : Directory_Enumeration) return Natural;
+   function Directory_Token_Of
+     (Value : Directory_Enumeration) return SMB.Engine.Handle_Token;
+   function Directory_File_Id_Of
+     (Value : Directory_Enumeration) return SMB.Bytes;
+   function Directory_Access_Of
+     (Value : Directory_Enumeration) return SMB.Engine.Access_Kind;
+   function Directory_Owner_Of
+     (Value : Directory_Enumeration) return SMB.QWord
+   with Ghost;
+   function Directory_Epoch_Of
+     (Value : Directory_Enumeration) return SMB.QWord
+   with Ghost;
+   function Directory_Expected_Of
+     (Value : Directory_Enumeration)
+       return SMB.Engine.Request_Expectation
+   with Ghost;
+   function Directory_Snapshot_Of
+     (Value : Directory_Enumeration) return Directory_State_Snapshot
+   with Ghost;
+   function Directory_Snapshot_Context_Matches
+     (Snapshot : Directory_State_Snapshot;
+      State : SMB.Engine.Engine_State) return Boolean
+   with Ghost;
+   function Directory_Invariant
+     (Value : Directory_Enumeration) return Boolean;
+   function Directory_Context_Matches
+     (Value : Directory_Enumeration;
+      State : SMB.Engine.Engine_State) return Boolean
+   with Ghost;
+   function Directory_Page_Of
+     (Value : Directory_Enumeration) return SMB.Bytes
+   with Ghost;
+   function Directory_Page_Byte_Of
+     (Value : Directory_Enumeration; Index : Natural) return SMB.Byte
+   with Pre => Index < SMB.Core_Protocol.Maximum_IO_Chunk;
+   function Directory_Page_Matches
+     (Value : Directory_Enumeration;
+      Packet : SMB.Bytes;
+      Offset, Length : Natural) return Boolean
+   with Pre =>
+     Packet'Length <= SMB.Maximum_Frame_Size
+     and then Offset <= Packet'Length
+     and then Length <= Packet'Length - Offset
+     and then Length <= SMB.Core_Protocol.Maximum_IO_Chunk;
+   function Directory_Packet_Matches
+     (Value : Directory_Enumeration;
+      State : SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Used : Natural) return Boolean
+   with Ghost,
+     Pre => Packet'Length <= SMB.Maximum_Frame_Size;
    function Transfer_Packet_Matches
      (Value : Transfer;
       State : SMB.Engine.Engine_State;
@@ -704,6 +791,276 @@ is
           and then not SMB.Engine.Has_Open_Handles (State)
           and then not SMB.Engine.Has_Validated_Response (State));
 
+   procedure Start_Directory
+     (Value : in out Directory_Enumeration;
+      State : SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token;
+      Status : out SMB.Core_Status)
+   with
+     Post =>
+       (if Status = SMB.Ok then
+          Directory_Stage_Of (Value) = Query_Ready
+          and then Directory_Invariant (Value)
+          and then Directory_Owner_Of (Value) =
+            SMB.Engine.Current_Owner_Id (State)
+          and then Directory_Epoch_Of (Value) =
+            SMB.Engine.Current_Epoch (State)
+          and then Directory_Token_Of (Value).Owner = Token.Owner
+          and then Directory_Token_Of (Value).Epoch = Token.Epoch
+          and then Directory_Token_Of (Value).Ticket = Token.Ticket
+          and then SMB.Engine.Handle_Matches
+            (State, Token, Directory_File_Id_Of (Value),
+             Directory_Access_Of (Value), True)
+          and then Directory_Page_Count_Of (Value) = 0
+          and then Directory_Entry_Count_Of (Value) = 0)
+       and then
+         (if Status = SMB.Invalid_State_Status then
+            Directory_Snapshot_Of (Value) =
+              Directory_Snapshot_Of (Value)'Old
+            and then Directory_Page_Of (Value) =
+              Directory_Page_Of (Value)'Old);
+
+   procedure Prepare_Directory_Query
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Output'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Identity_Of (Value) = Identity_Of (Value)'Old
+       and then Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Directory_Stage_Of (Value) = Query_Prepared
+            and then Directory_Stage_Of (Value)'Old = Query_Ready
+            and then Directory_Invariant (Value)
+            and then Directory_Packet_Matches (Value, State, Output, Used)
+            and then SMB.Engine.Handle_Matches
+              (State'Old, Directory_Token_Of (Value),
+               Directory_File_Id_Of (Value),
+               Directory_Access_Of (Value), True)
+            and then Directory_Page_Count_Of (Value) =
+              Directory_Page_Count_Of (Value)'Old + 1
+            and then Directory_Entry_Count_Of (Value) =
+              Directory_Entry_Count_Of (Value)'Old
+            and then Directory_Page_Length_Of (Value) =
+              Directory_Page_Length_Of (Value)'Old
+            and then Directory_Cursor_Of (Value) =
+              Directory_Cursor_Of (Value)'Old)
+       and then
+         (if Status = SMB.Invalid_State_Status
+            and then
+              (Directory_Stage_Of (Value)'Old /= Query_Ready
+               or else not Directory_Invariant (Value)'Old
+               or else not Directory_Snapshot_Context_Matches
+                 (Directory_Snapshot_Of (Value)'Old, State'Old)
+               or else SMB.Engine.Current_Phase (State'Old) /=
+                 SMB.Engine.Share_Connected
+               or else SMB.Engine.Has_Pending_Request (State'Old)
+               or else SMB.Engine.Has_Validated_Response (State'Old))
+          then Directory_Snapshot_Of (Value) =
+            Directory_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Directory_Page_Of (Value) =
+              Directory_Page_Of (Value)'Old);
+
+   procedure Directory_Send_Succeeded
+     (Value : in out Directory_Enumeration;
+      State : SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status)
+   with
+     Post =>
+       Identity_Of (Value) = Identity_Of (Value)'Old
+       and then
+       Directory_Page_Count_Of (Value) =
+         Directory_Page_Count_Of (Value)'Old
+       and then Directory_Entry_Count_Of (Value) =
+         Directory_Entry_Count_Of (Value)'Old
+       and then
+       (if Status = SMB.Ok then
+            Directory_Stage_Of (Value) = Query_Sent
+            and then Directory_Stage_Of (Value)'Old = Query_Prepared
+            and then Directory_Context_Matches (Value, State)
+            and then SMB.Engine.Pending_Request_Matches
+              (State, Directory_Expected_Of (Value)))
+       and then
+         (if Status = SMB.Invalid_State_Status then
+            Directory_Snapshot_Of (Value) =
+              Directory_Snapshot_Of (Value)'Old
+            and then Directory_Page_Of (Value) =
+              Directory_Page_Of (Value)'Old);
+
+   procedure Complete_Directory_Page
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Nt_Status : out SMB.DWord;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Identity_Of (Value) = Identity_Of (Value)'Old
+       and then
+       Directory_Page_Count_Of (Value) =
+         Directory_Page_Count_Of (Value)'Old
+       and then Directory_Entry_Count_Of (Value) =
+         Directory_Entry_Count_Of (Value)'Old
+       and then
+        (if Status = SMB.Ok then
+            Directory_Stage_Of (Value)'Old = Query_Sent
+            and then Directory_Stage_Of (Value) in
+              Page_Ready | Directory_Finished
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State)
+            and then Directory_Entry_Count_Of (Value) =
+              Directory_Entry_Count_Of (Value)'Old
+            and then
+             (if Directory_Stage_Of (Value) = Page_Ready then
+                 Nt_Status = SMB.Success
+                 and then Packet'Length >= 72
+                 and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
+                   SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                 and then Directory_Page_Length_Of (Value) =
+                   Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
+                 and then Directory_Cursor_Of (Value) = 0
+                 and then Natural
+                   (SMB.Core_Wire.Encoded_U16 (Packet, 66)) <=
+                     Packet'Length
+                 and then Directory_Page_Length_Of (Value) <=
+                   Packet'Length - Natural
+                     (SMB.Core_Wire.Encoded_U16 (Packet, 66))
+                 and then Directory_Page_Matches
+                   (Value, Packet,
+                    Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66)),
+                    Directory_Page_Length_Of (Value))
+               else Directory_Page_Length_Of (Value) = 0))
+       and then
+         (if Status = SMB.Invalid_State_Status
+            and then
+              (Directory_Stage_Of (Value)'Old /= Query_Sent
+               or else not Directory_Invariant (Value)'Old
+               or else not Directory_Snapshot_Context_Matches
+                 (Directory_Snapshot_Of (Value)'Old, State'Old)
+               or else not SMB.Engine.Pending_Request_Matches
+                 (State'Old, Directory_Expected_Of (Value)'Old)
+               or else SMB.Engine.Has_Validated_Response (State'Old))
+          then Directory_Snapshot_Of (Value) =
+            Directory_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Directory_Page_Of (Value) =
+              Directory_Page_Of (Value)'Old);
+
+   procedure Next_Directory_Entry
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Name : in out SMB.Bytes;
+      Used : out Natural;
+      Info : out SMB.Core_Protocol.Directory_Info;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Name'Length <= SMB.Core_Protocol.Maximum_Name_Bytes,
+     Post =>
+       Identity_Of (Value) = Identity_Of (Value)'Old
+       and then Directory_Page_Of (Value) =
+         Directory_Page_Of (Value)'Old
+       and then Directory_Page_Count_Of (Value) =
+         Directory_Page_Count_Of (Value)'Old
+       and then Used <= Name'Length
+       and then
+         (if Status = SMB.Ok then
+            Directory_Invariant (Value)
+            and then
+            Directory_Stage_Of (Value)'Old = Page_Ready
+            and then Directory_Stage_Of (Value) in Page_Ready | Query_Ready
+            and then Directory_Cursor_Of (Value) = Info.Next_Cursor
+            and then Directory_Cursor_Of (Value) >
+              Directory_Cursor_Of (Value)'Old
+            and then Directory_Entry_Count_Of (Value) =
+              Directory_Entry_Count_Of (Value)'Old + 1
+            and then Used > 0
+            and then Used = Info.Name_Length
+            and then Directory_Page_Length_Of (Value) =
+              Directory_Page_Length_Of (Value)'Old
+            and then Directory_Entry_Count_Of (Value) <=
+              SMB.Core_Protocol.Maximum_Directory_Entries
+            and then Info.Name_Offset =
+              Directory_Cursor_Of (Value)'Old + 104
+            and then Info.Name_Length = Natural
+              (SMB.Core_Wire.Encoded_U32
+                 (Directory_Page_Of (Value)'Old,
+                  Directory_Cursor_Of (Value)'Old + 60))
+            and then Info.Size = SMB.Core_Wire.Encoded_U64
+              (Directory_Page_Of (Value)'Old,
+               Directory_Cursor_Of (Value)'Old + 40)
+            and then Info.Attributes = SMB.Core_Wire.Encoded_U32
+              (Directory_Page_Of (Value)'Old,
+               Directory_Cursor_Of (Value)'Old + 56)
+            and then Name
+              (Name'First .. Name'First + (Used - 1)) =
+                Directory_Page_Of (Value)'Old
+                  (Info.Name_Offset .. Info.Name_Offset + Used - 1))
+       and then
+         (if Status = SMB.Resource_Limit
+            and then Directory_Stage_Of (Value) = Page_Ready
+          then Directory_Snapshot_Of (Value) =
+            Directory_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Name = Name'Old
+            and then Used = 0)
+       and then
+         (if Status = SMB.Invalid_State_Status
+            and then
+              (Directory_Stage_Of (Value)'Old /= Page_Ready
+               or else not Directory_Invariant (Value)'Old
+               or else not Directory_Snapshot_Context_Matches
+                 (Directory_Snapshot_Of (Value)'Old, State'Old)
+               or else SMB.Engine.Has_Pending_Request (State'Old)
+               or else SMB.Engine.Has_Validated_Response (State'Old))
+          then Directory_Snapshot_Of (Value) =
+            Directory_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Directory_Page_Of (Value) =
+              Directory_Page_Of (Value)'Old
+            and then Name = Name'Old
+            and then Used = 0);
+
+   procedure Abort_Directory
+     (Value : in out Directory_Enumeration;
+      State : in out SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status)
+   with
+     Post =>
+       Identity_Of (Value) = Identity_Of (Value)'Old
+       and then
+       (if Status = SMB.Invalid_State_Status
+            and then
+              (Directory_Stage_Of (Value)'Old not in
+                 Query_Ready | Query_Prepared | Query_Sent | Page_Ready
+               or else not Directory_Snapshot_Context_Matches
+                 (Directory_Snapshot_Of (Value)'Old, State'Old)
+               or else
+                 (if Directory_Stage_Of (Value)'Old in
+                       Query_Prepared | Query_Sent
+                  then
+                    not SMB.Engine.Pending_Request_Matches
+                      (State'Old, Directory_Expected_Of (Value)'Old)
+                    or else SMB.Engine.Has_Validated_Response (State'Old)
+                  else
+                    SMB.Engine.Has_Pending_Request (State'Old)
+                    or else SMB.Engine.Has_Validated_Response (State'Old)))
+          then Directory_Snapshot_Of (Value) =
+            Directory_Snapshot_Of (Value)'Old
+            and then Directory_Page_Of (Value) =
+              Directory_Page_Of (Value)'Old
+            and then State = State'Old)
+       and then
+         (if Status = SMB.Ok then
+            Directory_Stage_Of (Value) = Directory_Failed
+            and then Directory_Stage_Of (Value)'Old in
+              Query_Ready | Query_Prepared | Query_Sent | Page_Ready);
+
    function Access_Mask
      (Mode : SMB.Engine.Access_Kind;
       Delete_Access : Boolean) return SMB.DWord is
@@ -828,6 +1185,28 @@ is
             SMB.Engine.Disconnected);
 
 private
+   type Directory_Identity is record
+      Owner, Epoch : SMB.QWord;
+      Token : SMB.Engine.Handle_Token;
+      File_Id : SMB.Bytes (0 .. 15);
+      Access_Mode : SMB.Engine.Access_Kind;
+   end record;
+
+   type Directory_Enumeration is limited record
+      Stage : Directory_Stage := Directory_Idle;
+      Owner, Epoch : SMB.QWord := 0;
+      Token : SMB.Engine.Handle_Token := (others => 0);
+      File_Id : SMB.Bytes (0 .. 15) := (others => 0);
+      Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      Expected : SMB.Engine.Request_Expectation;
+      Page_Length : Natural := 0;
+      Cursor : Natural := 0;
+      Page_Count : Natural := 0;
+      Entry_Count : Natural := 0;
+      Page : SMB.Bytes
+        (0 .. SMB.Core_Protocol.Maximum_IO_Chunk - 1) := (others => 0);
+   end record;
+
    type Authentication is limited record
       Stage : Authentication_Stage := Authentication_Ready;
       Owner, Epoch : SMB.QWord := 0;
@@ -837,6 +1216,152 @@ private
       Challenge : SMB.Bytes
         (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
    end record;
+
+   function Identity_Of
+     (Value : Directory_Enumeration) return Directory_Identity is
+     ((Owner => Value.Owner, Epoch => Value.Epoch, Token => Value.Token,
+       File_Id => Value.File_Id, Access_Mode => Value.Access_Mode));
+
+   function Directory_Snapshot_Of
+     (Value : Directory_Enumeration) return Directory_State_Snapshot is
+     ((Stage => Value.Stage,
+       Owner => Value.Owner,
+       Epoch => Value.Epoch,
+       Token => Value.Token,
+       File_Id => Value.File_Id,
+       Access_Mode => Value.Access_Mode,
+       Expected => Value.Expected,
+       Page_Length => Value.Page_Length,
+       Cursor => Value.Cursor,
+       Page_Count => Value.Page_Count,
+       Entry_Count => Value.Entry_Count));
+   function Directory_Snapshot_Context_Matches
+     (Snapshot : Directory_State_Snapshot;
+      State : SMB.Engine.Engine_State) return Boolean is
+     (Snapshot.Owner = SMB.Engine.Current_Owner_Id (State)
+      and then Snapshot.Epoch = SMB.Engine.Current_Epoch (State)
+      and then SMB.Engine.Handle_Matches
+        (State, Snapshot.Token, Snapshot.File_Id, Snapshot.Access_Mode, True));
+
+   function Directory_Stage_Of
+     (Value : Directory_Enumeration) return Directory_Stage is
+     (Value.Stage);
+   function Directory_Page_Length_Of
+     (Value : Directory_Enumeration) return Natural is
+     (Value.Page_Length);
+   function Directory_Cursor_Of
+     (Value : Directory_Enumeration) return Natural is
+     (Value.Cursor);
+   function Directory_Page_Count_Of
+     (Value : Directory_Enumeration) return Natural is
+     (Value.Page_Count);
+   function Directory_Entry_Count_Of
+     (Value : Directory_Enumeration) return Natural is
+     (Value.Entry_Count);
+   function Directory_Token_Of
+     (Value : Directory_Enumeration) return SMB.Engine.Handle_Token is
+     (Value.Token);
+   function Directory_File_Id_Of
+     (Value : Directory_Enumeration) return SMB.Bytes is
+     (Value.File_Id);
+   function Directory_Access_Of
+     (Value : Directory_Enumeration) return SMB.Engine.Access_Kind is
+     (Value.Access_Mode);
+   function Directory_Owner_Of
+     (Value : Directory_Enumeration) return SMB.QWord is
+     (Value.Owner);
+   function Directory_Epoch_Of
+     (Value : Directory_Enumeration) return SMB.QWord is
+     (Value.Epoch);
+   function Directory_Expected_Of
+     (Value : Directory_Enumeration)
+       return SMB.Engine.Request_Expectation is
+     (Value.Expected);
+   function Directory_Invariant
+     (Value : Directory_Enumeration) return Boolean is
+     (Value.Page_Length <= SMB.Core_Protocol.Maximum_IO_Chunk
+      and then Value.Cursor <= Value.Page_Length
+      and then Value.Page_Count <=
+        SMB.Core_Protocol.Maximum_Directory_Pages
+      and then Value.Entry_Count <=
+        SMB.Core_Protocol.Maximum_Directory_Entries
+      and then
+        (if Value.Stage = Page_Ready then
+           Value.Cursor < Value.Page_Length
+           and then Value.Page_Length > 0)
+      and then
+        (if Value.Stage in Query_Prepared | Query_Sent then
+           Value.Page_Count > 0));
+   function Directory_Context_Matches
+     (Value : Directory_Enumeration;
+      State : SMB.Engine.Engine_State) return Boolean is
+     (Value.Owner = SMB.Engine.Current_Owner_Id (State)
+      and then Value.Epoch = SMB.Engine.Current_Epoch (State)
+      and then SMB.Engine.Valid_Handle
+        (State, Value.Token, True, False));
+   function Directory_Page_Of
+     (Value : Directory_Enumeration) return SMB.Bytes is
+     (Value.Page);
+   function Directory_Page_Byte_Of
+     (Value : Directory_Enumeration; Index : Natural) return SMB.Byte is
+     (Value.Page (Index));
+   function Directory_Page_Matches
+     (Value : Directory_Enumeration;
+      Packet : SMB.Bytes;
+      Offset, Length : Natural) return Boolean is
+     (Value.Page_Length = Length
+      and then
+        (if Length = 0 then True
+         else
+           (for all Index in 0 .. Length - 1 =>
+              Value.Page (Index) =
+                Packet (Packet'First + (Offset + Index)))));
+   function Directory_Packet_Matches
+     (Value : Directory_Enumeration;
+      State : SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Used : Natural) return Boolean is
+     (Value.Stage = Query_Prepared
+      and then Directory_Invariant (Value)
+      and then Value.Owner = SMB.Engine.Current_Owner_Id (State)
+      and then Value.Epoch = SMB.Engine.Current_Epoch (State)
+      and then SMB.Engine.Pending_Request_Matches (State, Value.Expected)
+      and then Value.Expected.Command = 14
+      and then Value.Expected.Request_Signed
+      and then Value.Expected.Signed
+      and then Value.Expected.Request_Amount =
+        SMB.Core_Protocol.Maximum_IO_Chunk
+      and then Used = Directory_Request_Size
+      and then Used <= Packet'Length
+      and then SMB.Core_Wire.Encoded_U16 (Packet, 12) = 14
+      and then SMB.Core_Wire.Encoded_U32 (Packet, 16) = 8
+      and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
+        Value.Expected.Message_Id
+      and then SMB.Core_Wire.Encoded_U32 (Packet, 36) =
+        Value.Expected.Tree_Id
+      and then SMB.Core_Wire.Encoded_U64 (Packet, 40) =
+        Value.Expected.Session_Id
+      and then SMB.Core_Wire.Encoded_U16
+        (Packet, SMB.Core_Wire.Header_Size) = 33
+      and then Packet (Packet'First + SMB.Core_Wire.Header_Size + 2) = 37
+      and then Packet (Packet'First + SMB.Core_Wire.Header_Size + 3) =
+        (if Value.Page_Count = 1 then 1 else 0)
+      and then SMB.Core_Wire.Encoded_U32
+        (Packet, SMB.Core_Wire.Header_Size + 4) = 0
+      and then
+        (for all Index in 0 .. 15 =>
+           Packet (Packet'First + SMB.Core_Wire.Header_Size + 8 + Index) =
+             Value.File_Id (Value.File_Id'First + Index))
+      and then SMB.Core_Wire.Encoded_U16
+        (Packet, SMB.Core_Wire.Header_Size + 24) = 96
+      and then SMB.Core_Wire.Encoded_U16
+        (Packet, SMB.Core_Wire.Header_Size + 26) = 2
+      and then SMB.Core_Wire.Encoded_U32
+        (Packet, SMB.Core_Wire.Header_Size + 28) =
+          SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+      and then Packet (Packet'First + SMB.Core_Wire.Header_Size + 32) =
+        16#2A#
+      and then Packet (Packet'First + SMB.Core_Wire.Header_Size + 33) = 0);
 
    type Transfer_Identity is record
       Kind : Transfer_Kind;

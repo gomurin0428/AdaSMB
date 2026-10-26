@@ -173,16 +173,36 @@ class AdversarialProxy:
             read_responses = 0
             write_requests = 0
             write_responses = 0
+            query_requests = 0
+            query_responses = 0
+            first_query_had_data = False
 
             def client_to_server() -> None:
-                nonlocal session_key, write_requests
+                nonlocal session_key, write_requests, query_requests
                 try:
                     while not done.is_set():
                         header = recv_exact(client, 4)
                         payload = recv_exact(client, int.from_bytes(header[1:4], "big"))
                         if len(payload) >= 64 and payload[12:14] == b"\x09\x00":
                             write_requests += 1
-                        if self.mode == "malformed-signed-create":
+                        if len(payload) >= 64 and payload[12:14] == b"\x0e\x00":
+                            query_requests += 1
+                            if (
+                                self.mode
+                                == "malformed-signed-directory-second-page"
+                                and query_requests > 2
+                            ):
+                                relay_error.append(
+                                    RuntimeError(
+                                        "unexpected extra QUERY_DIRECTORY request"
+                                    )
+                                )
+                                done.set()
+                                return
+                        if self.mode in {
+                            "malformed-signed-create",
+                            "malformed-signed-directory-second-page",
+                        }:
                             session_key = (
                                 session_key_from_type3(
                                     payload, self.user, self.password
@@ -215,6 +235,10 @@ class AdversarialProxy:
                         or (
                             self.mode == "lost-write-response-after-progress"
                             and payload[12:14] == b"\x09\x00"
+                        )
+                        or (
+                            self.mode == "malformed-signed-directory-second-page"
+                            and payload[12:14] == b"\x0e\x00"
                         )
                     ):
                         if self.mode == "lost-write-response-after-progress":
@@ -285,6 +309,81 @@ class AdversarialProxy:
                             payload[48:64] = hmac.new(
                                 session_key, payload, hashlib.sha256
                             ).digest()[:16]
+                        elif self.mode == "malformed-signed-directory-second-page":
+                            if payload[12:14] != b"\x0e\x00":
+                                client.sendall(header + payload)
+                                continue
+                            query_responses += 1
+                            status = struct.unpack_from("<I", payload, 8)[0]
+                            data_offset = struct.unpack_from("<H", payload, 66)[0]
+                            data_length = struct.unpack_from("<I", payload, 68)[0]
+                            if status != 0 or data_length == 0:
+                                raise RuntimeError(
+                                    "directory response did not contain successful data"
+                                )
+                            if query_responses == 1:
+                                first_query_had_data = True
+                                client.sendall(header + payload)
+                                continue
+                            if query_responses != 2:
+                                raise RuntimeError(
+                                    "unexpected extra QUERY_DIRECTORY response"
+                                )
+                            if session_key is None:
+                                raise RuntimeError("could not derive SMB signing key")
+                            if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                                raise RuntimeError(
+                                    "server QUERY_DIRECTORY response was unsigned"
+                                )
+                            if (
+                                data_offset < 72
+                                or data_offset > len(payload)
+                                or data_length > len(payload) - data_offset
+                                or data_length < 104
+                            ):
+                                raise RuntimeError(
+                                    "second directory page has invalid data bounds"
+                                )
+                            original_signature = bytes(payload[48:64])
+                            signed_payload = bytearray(payload)
+                            signed_payload[48:64] = b"\x00" * 16
+                            expected_signature = hmac.new(
+                                session_key, signed_payload, hashlib.sha256
+                            ).digest()[:16]
+                            if not hmac.compare_digest(
+                                original_signature, expected_signature
+                            ):
+                                raise RuntimeError(
+                                    "derived key did not validate QUERY_DIRECTORY signature"
+                                )
+                            struct.pack_into("<I", payload, data_offset, 1)
+                            payload[48:64] = b"\x00" * 16
+                            payload[48:64] = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            client.sendall(header + payload)
+                            mutated = True
+                            if (
+                                self.mode
+                                == "malformed-signed-directory-second-page"
+                            ):
+                                upstream.join(timeout=11)
+                                if upstream.is_alive():
+                                    raise RuntimeError(
+                                        "client did not close after malformed "
+                                        "directory response"
+                                    )
+                                if (
+                                    not relay_error
+                                    or not isinstance(relay_error[0], EOFError)
+                                ):
+                                    raise RuntimeError(
+                                        "upstream did not exit because the client "
+                                        f"closed: {relay_error!r}"
+                                    )
+                                break
+                            done.set()
+                            break
                         elif self.mode == "unsigned":
                             flags = struct.unpack_from("<I", payload, 16)[0]
                             struct.pack_into("<I", payload, 16, flags & ~8)
@@ -333,4 +432,16 @@ class AdversarialProxy:
                 if write_requests != 2:
                     raise RuntimeError(
                         f"expected two client WRITE requests, got {write_requests}"
+                    )
+            if self.mode == "malformed-signed-directory-second-page":
+                if not relay_error or not isinstance(relay_error[0], EOFError):
+                    raise RuntimeError(
+                        "directory client connection did not close after mutation"
+                    )
+                if not first_query_had_data:
+                    raise RuntimeError("first directory response had no data")
+                if query_requests != 2 or query_responses != 2:
+                    raise RuntimeError(
+                        "expected exactly two QUERY_DIRECTORY request/response pairs "
+                        f"(requests={query_requests}, responses={query_responses})"
                     )

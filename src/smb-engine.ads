@@ -64,6 +64,27 @@ is
       Access_Mode : Access_Kind;
       Is_Directory : Boolean) return Boolean
    with Ghost;
+   function Handle_Matches_Equivalent
+     (State : Engine_State;
+      Token : Handle_Token;
+      Left_File_Id, Right_File_Id : SMB.Bytes;
+      Access_Mode : Access_Kind;
+      Is_Directory : Boolean) return Boolean
+   with
+     Ghost,
+     Pre =>
+       Left_File_Id'Length = 16
+       and then Right_File_Id'Length = 16
+       and then
+         (for all Index in 0 .. 15 =>
+            Left_File_Id (Left_File_Id'First + Index) =
+              Right_File_Id (Right_File_Id'First + Index)),
+     Post =>
+       Handle_Matches_Equivalent'Result
+       and then Handle_Matches
+         (State, Token, Left_File_Id, Access_Mode, Is_Directory) =
+       Handle_Matches
+         (State, Token, Right_File_Id, Access_Mode, Is_Directory);
    function Has_Validated_Response (State : Engine_State) return Boolean;
    function Response_Receipt_Matches
      (State : Engine_State;
@@ -290,7 +311,27 @@ is
                     and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
                       SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
                     and then Current_Response_Info (State).Count =
-                      Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68)))));
+                      Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
+                  elsif Pending_Command (State'Old) = 14
+                    and then Nt_Status = SMB.Success
+                  then Packet'Length >= 72
+                    and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
+                      SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                    and then Current_Response_Info (State).Data_Offset =
+                      Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66))
+                    and then Current_Response_Info (State).Data_Length <=
+                      SMB.Core_Protocol.Maximum_IO_Chunk
+                    and then Current_Response_Info (State).Data_Length =
+                      Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
+                    and then
+                      (Current_Response_Info (State).Data_Length = 0
+                       or else Current_Response_Info (State).Data_Offset >= 72)
+                    and then Current_Response_Info (State).Data_Offset <=
+                      Packet'Length
+                    and then Current_Response_Info (State).Data_Length <=
+                      Packet'Length -
+                        Current_Response_Info (State).Data_Offset
+                    )));
    --  A failed wire/signature check invalidates the session and all handles.
 
    procedure Register_Handle

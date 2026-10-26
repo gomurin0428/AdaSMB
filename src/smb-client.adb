@@ -15,6 +15,7 @@ package body SMB.Client is
    use type SMB.Core_Client.Operation_Stage;
    use type SMB.Core_Client.Transfer_Stage;
    use type SMB.Core_Client.Authentication_Stage;
+   use type SMB.Core_Client.Directory_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
    use type SMB.Word;
@@ -915,111 +916,124 @@ package body SMB.Client is
       Path : String := "") return Directory_Entry_Array is
       Safe_Path : constant String := Validated_Path (Path, Allow_Empty => True);
       Entries : Entry_Vectors.Vector;
-      Finished : Boolean := False;
-      Restart : Boolean := True;
-      Page_Count : Natural := 0;
-      Entry_Count : Natural := 0;
       Core_Status : SMB.Core_Status;
    begin
       declare
          Folder : Handle := Create_Internal
            (Client, Safe_Path, Read_Only, Open_Existing, True);
-         Folder_Id : SMB.Bytes (0 .. 15);
-         Is_Directory : Boolean;
+         Enumeration : SMB.Core_Client.Directory_Enumeration;
+         Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Directory_Request_Size - 1) :=
+             (others => 0);
+         Name_Buffer : SMB.Bytes
+           (0 .. SMB.Core_Protocol.Maximum_Name_Bytes - 1) :=
+             (others => 0);
+         Used : Natural := 0;
+         Nt_Status : SMB.DWord := 0;
+         Started : Boolean := False;
       begin
-       Check_Handle (Client, Folder, False, False, Folder_Id, Is_Directory);
-       pragma Unreferenced (Is_Directory);
-       while not Finished loop
-         SMB.Core_Protocol.Count_Directory_Page (Page_Count, Core_Status);
-         if Core_Status /= SMB.Ok then
-            raise SMB.Protocol_Error with "SMB directory pagination limit exceeded";
-         end if;
-         declare
-            Payload : SMB.Bytes (0 .. 33) := (others => 0);
-            Used : Natural;
-         begin
-            SMB.Core_Protocol.Build_Query_Directory
-              (Folder_Id, Restart, Payload, Used, Core_Status);
-            if Core_Status /= SMB.Ok then
-               raise SMB.Protocol_Error with "cannot build SMB directory query";
-            end if;
-            declare
-               Response : constant SMB.Bytes := Exchange
-                 (Client, SMB.Wire.Query_Directory_Command,
-                  Payload (0 .. Used - 1),
-                  Sign_Request => True, Require_Signed_Response => True,
-                  Request_Session => Session_Identifier (Client),
-                  Response_Session => Session_Identifier (Client),
-                  Request_Tree => Tree_Identifier (Client),
-                  Response_Tree => Tree_Identifier (Client),
-                  Request_Amount => SMB.Core_Protocol.Maximum_IO_Chunk);
-            begin
-               Restart := False;
-               if Client.Last_Status = SMB.Status_No_More_Files then
-                  Finished := True;
-               else
-                  Require_Status (Client, Client.Last_Status);
+         SMB.Core_Client.Start_Directory
+           (Enumeration, Client.Engine_Core, Folder.Engine_Token, Core_Status);
+         Require_Transfer_Status
+           (Core_Status, "cannot start SMB directory enumeration");
+         Started := True;
+         loop
+            case SMB.Core_Client.Directory_Stage_Of (Enumeration) is
+               when SMB.Core_Client.Query_Ready =>
+                  SMB.Core_Client.Prepare_Directory_Query
+                    (Enumeration, Client.Engine_Core, Request, Used,
+                     Core_Status);
+                  Require_Transfer_Status
+                    (Core_Status, "cannot prepare SMB directory query");
+                  SMB.Transport.Send_Frame
+                    (Client.Channel,
+                     Request (Request'First .. Request'First + Used - 1));
+                  SMB.Core_Client.Directory_Send_Succeeded
+                    (Enumeration, Client.Engine_Core, Core_Status);
+                  Require_Transfer_Status
+                    (Core_Status, "directory query send was not acknowledged");
                   declare
-                     Response_Info : constant SMB.Core_Protocol.Response_Info :=
-                       SMB.Engine.Current_Response_Info (Client.Engine_Core);
-                     Data : constant SMB.Bytes :=
-                       Slice (Response, Response_Info.Data_Offset,
-                              Response_Info.Data_Length);
-                     Cursor : Natural := 0;
+                     Response : constant SMB.Bytes :=
+                       SMB.Transport.Receive_Frame (Client.Channel);
                   begin
-                     while Cursor < Data'Length loop
-                        declare
-                           Entry_Info : SMB.Core_Protocol.Directory_Info;
-                           Item : Directory_Entry;
-                        begin
-                           SMB.Core_Protocol.Parse_Directory_Entry
-                             (Data, Cursor, Entry_Info, Core_Status);
-                           if Core_Status /= SMB.Ok then
-                              raise SMB.Protocol_Error with
-                                "malformed SMB directory entry";
-                           end if;
-                           SMB.Core_Protocol.Count_Directory_Entry
-                             (Entry_Count, Core_Status);
-                           if Core_Status /= SMB.Ok then
-                              raise SMB.Protocol_Error with
-                                "directory entry limit exceeded";
-                           end if;
-                           declare
-                              Name : constant String := Decode_Name
-                                (Slice (Data, Entry_Info.Name_Offset,
-                                        Entry_Info.Name_Length));
-                           begin
-                              if Name /= "." and then Name /= ".." then
-                                 Item.Name :=
-                                   Ada.Strings.Unbounded.To_Unbounded_String (Name);
-                                 Item.Size := Entry_Info.Size;
-                                 Item.Attributes := Entry_Info.Attributes;
-                                 Entries.Append (Item);
-                              end if;
-                           end;
-                        end;
-                     end loop;
-                     if Data'Length = 0 then
-                        Finished := True;
-                     end if;
+                     SMB.Core_Client.Complete_Directory_Page
+                       (Enumeration, Client.Engine_Core, Response,
+                        Nt_Status, Core_Status);
+                     Client.Last_Status := Nt_Status;
                   end;
+                  Require_Transfer_Status
+                    (Core_Status, "server returned an invalid directory page");
+                  if Client.Last_Status /= SMB.Status_No_More_Files then
+                     Require_Status (Client, Client.Last_Status);
+                  end if;
+                  if SMB.Core_Client.Directory_Stage_Of (Enumeration) =
+                    SMB.Core_Client.Directory_Finished
+                  then
+                     exit;
+                  end if;
+               when SMB.Core_Client.Page_Ready =>
+                  declare
+                     Entry_Info : SMB.Core_Protocol.Directory_Info;
+                     Item : Directory_Entry;
+                     Name_Bytes_Used : Natural;
+                  begin
+                     SMB.Core_Client.Next_Directory_Entry
+                       (Enumeration, Client.Engine_Core, Name_Buffer,
+                        Name_Bytes_Used, Entry_Info, Core_Status);
+                     Require_Transfer_Status
+                       (Core_Status, "cannot extract SMB directory entry");
+                     declare
+                        Name : constant String := Decode_Name
+                          (Slice (Name_Buffer, 0, Name_Bytes_Used));
+                     begin
+                        if Name /= "." and then Name /= ".." then
+                           Item.Name :=
+                             Ada.Strings.Unbounded.To_Unbounded_String (Name);
+                           Item.Size := Entry_Info.Size;
+                           Item.Attributes := Entry_Info.Attributes;
+                           Entries.Append (Item);
+                        end if;
+                     end;
+                  end;
+               when SMB.Core_Client.Directory_Finished =>
+                  exit;
+               when others =>
+                  raise SMB.Invalid_State with
+                    "SMB directory enumeration entered an invalid stage";
+         end case;
+         end loop;
+         Close_Internal (Client, Folder);
+      exception
+         when others =>
+            declare
+               Original_Status : constant SMB.DWord := Client.Last_Status;
+               File_Id : SMB.Bytes (0 .. 15);
+               Access_Mode : SMB.Engine.Access_Kind;
+               Is_Directory : Boolean;
+               Handle_Status : SMB.Core_Status;
+            begin
+               if Started
+                 and then SMB.Core_Client.Directory_Stage_Of (Enumeration) in
+                   SMB.Core_Client.Query_Prepared |
+                   SMB.Core_Client.Query_Sent |
+                   SMB.Core_Client.Query_Ready |
+                   SMB.Core_Client.Page_Ready
+               then
+                  SMB.Core_Client.Abort_Directory
+                    (Enumeration, Client.Engine_Core, Core_Status);
+               end if;
+               if Folder.Engine_Token.Ticket /= 0
+                 and then SMB.Engine.Current_Phase (Client.Engine_Core) =
+                   Share_Connected
+               then
+                  SMB.Engine.Validate_Handle
+                    (Client.Engine_Core, Folder.Engine_Token, False, False,
+                     File_Id, Access_Mode, Is_Directory, Handle_Status);
+                  if Handle_Status = SMB.Ok then
+                     Cleanup_Close (Client, Folder, Original_Status);
+                  end if;
                end if;
             end;
-         end;
-       end loop;
-       Close_Internal (Client, Folder);
-       exception
-         when others =>
-            if Folder.Engine_Token.Ticket /= 0
-              and then SMB.Engine.Current_Phase (Client.Engine_Core) =
-                Share_Connected
-            then
-               declare
-                  Original_Status : constant SMB.DWord := Client.Last_Status;
-               begin
-                  Cleanup_Close (Client, Folder, Original_Status);
-               end;
-            end if;
             raise;
       end;
       declare
@@ -1039,11 +1053,17 @@ package body SMB.Client is
       end;
    exception
       when E : others =>
-         if Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
+         if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected
+           or else Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Authentication_Error'Identity
-         then
-            Clear_State (Client);
+        then
+            if Ada.Exceptions.Exception_Identity (E) = SMB.NT_Status_Error'Identity
+            then
+               Clear_State_Preserving_Status (Client);
+            else
+               Clear_State (Client);
+            end if;
          end if;
          raise;
    end List_Directory;
