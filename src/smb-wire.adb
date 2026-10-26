@@ -78,6 +78,9 @@ package body SMB.Wire is
         (Data, SMB.Core_Wire.Command_Code (Command), Message_Id,
          Tree_Id, Session_Id, Credit, Status);
       Check (Status);
+      if Data'Length > SMB2_Header_Size then
+         Data (Data'First + SMB2_Header_Size .. Data'Last) := (others => 0);
+      end if;
    end Initialize_Header;
 
    function Validate_Header

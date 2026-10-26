@@ -88,6 +88,18 @@ procedure Test_Suite is
         (Status = SMB.Ok and then Signed (100) = 16#A5#
          and then Signed (164) = 16#A5#,
          "signature preserved bytes outside signature field");
+      Signed := (others => 16#A5#);
+      SMB.Core_Wire.Initialize_Header
+        (Signed, 8, 123, 0, 0, 1, Status);
+      Assert
+        (Status = SMB.Ok
+         and then (for all Index in 164 .. 179 => Signed (Index) = 16#A5#),
+         "core header initialization must preserve an assembled body");
+      SMB.Wire.Initialize_Header (Signed, SMB.Wire.Read_Command, 124);
+      Assert
+        (SMB.Wire.U64 (Signed, 24) = 124
+         and then (for all Index in 164 .. 179 => Signed (Index) = 0),
+         "public header initialization must clear a reused packet body");
    end Test_Core_Wire;
 
    function ASCII (Value : String) return SMB.Bytes is

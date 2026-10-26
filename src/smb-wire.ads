@@ -27,6 +27,7 @@ package SMB.Wire is
    procedure Put_U64 (Data : in out SMB.Bytes; Offset : Natural;
                       Value : SMB.QWord);
 
+   --  Initializes the header and clears the rest of the packet.
    procedure Initialize_Header
      (Data       : in out SMB.Bytes;
       Command    : Command_Code;
