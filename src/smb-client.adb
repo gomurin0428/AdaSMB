@@ -349,8 +349,11 @@ package body SMB.Client is
          Additional_Access = File_Delete, Disposition_Value (Disposition),
          Is_Directory, Packet, Used, Core_Status);
       if Core_Status /= SMB.Ok then
-         if Core_Status = SMB.Invalid_State_Status then
-            raise SMB.Invalid_State with "SMB CREATE is not valid in this state";
+         if Core_Status in SMB.Invalid_State_Status | SMB.Resource_Limit
+           | SMB.Counter_Exhausted
+         then
+            raise SMB.Invalid_State with
+              "SMB CREATE cannot start: " & SMB.Core_Status'Image (Core_Status);
          end if;
          raise SMB.Protocol_Error with "SMB CREATE request exceeds limits";
       end if;

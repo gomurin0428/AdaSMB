@@ -3,6 +3,7 @@ with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with SMB;
 with SMB.Client;
+with SMB.Engine;
 
 procedure Integration_Client is
    use type SMB.Byte;
@@ -50,10 +51,49 @@ begin
 
    declare
       Client : SMB.Client.Connection;
+
+      procedure Check_Handle_Capacity (Depth : Positive) is
+         File : SMB.Client.Handle :=
+           SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+
+         procedure Check_Still_Usable is
+            Data : constant SMB.Bytes := SMB.Client.Read (Client, File, 0, 1);
+         begin
+            Assert (SMB.Client.Is_Connected (Client), "capacity error disconnected");
+            Assert (Data'Length = 1, "capacity error invalidated an existing handle");
+         end Check_Still_Usable;
+      begin
+         if Depth < SMB.Engine.Maximum_Handles then
+            Check_Handle_Capacity (Depth + 1);
+         else
+            begin
+               declare
+                  Entries : constant SMB.Client.Directory_Entry_Array :=
+                    SMB.Client.List_Directory (Client);
+                  pragma Unreferenced (Entries);
+               begin
+                  raise Program_Error with "directory CREATE exceeded handle limit";
+               end;
+            exception
+               when SMB.Invalid_State => null;
+            end;
+            Check_Still_Usable;
+            begin
+               SMB.Client.Rename
+                 (Client, "fixture.txt", "capacity-should-not-rename.txt");
+               raise Program_Error with "rename CREATE exceeded handle limit";
+            exception
+               when SMB.Invalid_State => null;
+            end;
+            Check_Still_Usable;
+         end if;
+         SMB.Client.Close (Client, File);
+      end Check_Handle_Capacity;
    begin
       SMB.Client.Connect (Client, Host, Port);
       SMB.Client.Authenticate (Client, User, Password);
       SMB.Client.Connect_Share (Client, Share);
+      Check_Handle_Capacity (1);
 
       begin
          declare

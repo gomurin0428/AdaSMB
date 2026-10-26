@@ -27,8 +27,8 @@ typed operation lifecycle, and Engine handle metadata contracts are included.
 GNATprove reported six non-fatal "initialization ... has no effect" warnings on
 local parser variables in `SMB.Core_Protocol`; they do not correspond to
 unproved checks. The full raw run is at
-`/home/ubuntu/repos/AdaSMB/gnatprove.out`, with the GNATprove summary at
-`/home/ubuntu/repos/AdaSMB/build/proof-obj/gnatprove/gnatprove.out`.
+`gnatprove.out`, with the GNATprove summary at
+`build/proof-obj/gnatprove/gnatprove.out`, relative to the checkout root.
 
 ### Executed tests
 
