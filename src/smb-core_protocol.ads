@@ -2,6 +2,7 @@ with SMB.Core_Wire;
 
 package SMB.Core_Protocol is
    pragma SPARK_Mode (On);
+   use type SMB.Core_Wire.Command_Code;
    use type SMB.Byte;
    use type SMB.Word;
    use type SMB.DWord;
@@ -106,7 +107,30 @@ package SMB.Core_Protocol is
    with Pre => File_Id'Length = 16
      and then Amount <= Maximum_IO_Chunk
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 49
+            and then
+              Output (Output'First + 4) =
+                SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 0)
+            and then Output (Output'First + 5) =
+              SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 1)
+            and then Output (Output'First + 6) =
+              SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 2)
+            and then Output (Output'First + 7) =
+              SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 3)
+            and then
+              SMB.Core_Wire.Encoded_U64 (Output, 8) = Offset
+            and then
+              (for all Byte_Index in 0 .. 7 =>
+                 Output (Output'First + 8 + Byte_Index) =
+                   SMB.Core_Wire.U64_Byte (Offset, Byte_Index))
+            and then
+              (for all Byte_Index in 0 .. 15 =>
+                 Output (Output'First + 16 + Byte_Index) =
+                   File_Id (File_Id'First + Byte_Index)));
 
    procedure Build_Write
      (File_Id : SMB.Bytes;
@@ -118,7 +142,37 @@ package SMB.Core_Protocol is
    with Pre => File_Id'Length = 16
      and then Data'Length <= Maximum_IO_Chunk
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 48 + Data'Length
+            and then
+              Output (Output'First + 4) =
+                SMB.Core_Wire.U32_Byte
+                  (SMB.DWord (Data'Length), 0)
+            and then Output (Output'First + 5) =
+              SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 1)
+            and then Output (Output'First + 6) =
+              SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 2)
+            and then Output (Output'First + 7) =
+              SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 3)
+            and then
+              SMB.Core_Wire.Encoded_U64 (Output, 8) = Offset
+            and then
+              (for all Byte_Index in 0 .. 7 =>
+                 Output (Output'First + 8 + Byte_Index) =
+                   SMB.Core_Wire.U64_Byte (Offset, Byte_Index))
+            and then
+              (for all Byte_Index in 0 .. 15 =>
+                 Output (Output'First + 16 + Byte_Index) =
+                   File_Id (File_Id'First + Byte_Index))
+            and then
+              (Data'Length = 0
+               or else
+                 (for all Byte_Index in 0 .. Data'Length - 1 =>
+                    Output (Output'First + 48 + Byte_Index) =
+                      Data (Data'First + Byte_Index))));
 
    procedure Build_Close
      (File_Id : SMB.Bytes;
@@ -182,7 +236,22 @@ package SMB.Core_Protocol is
    with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post => (if Status = SMB.Ok then
        Info.Data_Offset <= Packet'Length
-       and then Info.Data_Length <= Packet'Length - Info.Data_Offset);
+       and then Info.Data_Length <= Packet'Length - Info.Data_Offset
+       and then
+         (if Command = 8 and then Nt_Status = SMB.Success then
+            Packet'Length >= 80
+            and then Natural (Packet (Packet'First + 66)) =
+              Info.Data_Offset
+            and then Packet (Packet'First + 67) = 0
+                and then Info.Data_Length <= Maximum_IO_Chunk
+            and then Info.Data_Length = Natural
+              (SMB.Core_Wire.Encoded_U32 (Packet, 68))
+          elsif Command = 9
+            and then Nt_Status = SMB.Success
+          then Packet'Length >= 80
+            and then Info.Count <= Maximum_IO_Chunk
+            and then Info.Count = Natural
+              (SMB.Core_Wire.Encoded_U32 (Packet, 68))));
 
    procedure Parse_Directory_Entry
      (Buffer : SMB.Bytes;
@@ -209,7 +278,10 @@ package SMB.Core_Protocol is
      and then Remaining <= SMB.Maximum_Frame_Size,
      Post => Remaining <= Remaining'Old
        and then (if Status = SMB.Ok then
-          Remaining = Remaining'Old - Count);
+          Remaining = Remaining'Old - Count
+          and then Position = Position'Old + SMB.QWord (Count)
+        else Position = Position'Old
+          and then Remaining = Remaining'Old);
 
    procedure Select_Transfer_Amount
      (Remaining, Limit : Natural;
@@ -220,14 +292,17 @@ package SMB.Core_Protocol is
      Post => Amount <= Remaining
        and then Amount <= Limit
        and then (if Status = SMB.Ok
-         then Remaining = 0 or else Amount > 0
+         then Amount = Natural'Min (Remaining, Limit)
          else Amount = 0);
 
    procedure Check_Transfer_Range
      (Base_Offset : SMB.QWord;
       Total : Natural;
       Status : out SMB.Core_Status)
-   with Pre => Total <= SMB.Maximum_Frame_Size;
+   with Pre => Total <= SMB.Maximum_Frame_Size,
+     Post =>
+       (if Status = SMB.Ok then
+          SMB.QWord (Total) <= SMB.QWord'Last - Base_Offset);
 
    procedure Count_Directory_Page
      (Pages : in out Natural;

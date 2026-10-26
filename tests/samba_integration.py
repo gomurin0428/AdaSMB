@@ -43,6 +43,9 @@ def main() -> int:
         share.mkdir()
         share.chmod(0o777)
         (share / "fixture.txt").write_text("AdaSMB integration fixture\n", encoding="utf-8")
+        (share / "interrupted-read.bin").write_bytes(
+            bytes(index % 251 for index in range(70_001))
+        )
         readonly = share / "readonly.txt"
         readonly.write_text("read-only test fixture\n", encoding="utf-8")
         readonly.chmod(0o444)
@@ -179,6 +182,38 @@ def main() -> int:
                 )
                 try:
                     run([str(ROOT / "build/bin/cleanup_client")], env=cleanup_env)
+                finally:
+                    proxy.join()
+                proxy_port = PORT + 9
+                proxy = AdversarialProxy(
+                    "interrupted-read-after-progress", proxy_port, PORT
+                )
+                proxy.start()
+                interrupted_env = env.copy()
+                interrupted_env.update(
+                    SMB_TEST_HOST="127.0.0.1",
+                    SMB_TEST_PORT=str(proxy_port),
+                    SMB_TEST_BACKEND_PORT=str(PORT),
+                    SMB_TEST_MODE="interrupted-read-after-progress",
+                )
+                try:
+                    run([str(ROOT / "build/bin/cleanup_client")], env=interrupted_env)
+                finally:
+                    proxy.join()
+                proxy_port = PORT + 10
+                proxy = AdversarialProxy(
+                    "lost-write-response-after-progress", proxy_port, PORT
+                )
+                proxy.start()
+                lost_write_env = env.copy()
+                lost_write_env.update(
+                    SMB_TEST_HOST="127.0.0.1",
+                    SMB_TEST_PORT=str(proxy_port),
+                    SMB_TEST_BACKEND_PORT=str(PORT),
+                    SMB_TEST_MODE="lost-write-response-after-progress",
+                )
+                try:
+                    run([str(ROOT / "build/bin/cleanup_client")], env=lost_write_env)
                 finally:
                     proxy.join()
             finally:

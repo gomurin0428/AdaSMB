@@ -16,6 +16,7 @@ procedure Test_Suite is
    use type SMB.Core_Status;
    use type SMB.Engine.Access_Kind;
    use type SMB.Engine.Phase;
+   use type SMB.Core_Client.Transfer_Stage;
    use type SMB.Bytes;
 
    use type SMB.Byte;
@@ -709,6 +710,30 @@ procedure Test_Suite is
          end;
       end Reconnect_Share;
 
+      procedure Create_Transfer_Handle is
+         Response : SMB.Bytes (0 .. 151) := (others => 0);
+      begin
+         SMB.Core_Client.Prepare_Create
+           (Coordinator, State, SMB.Bytes'(0, 0), SMB.Engine.Read_Write,
+            False, 1, False, Coordinator_Packet, Coordinator_Used, Status);
+         Assert (Status = SMB.Ok, "prepare transfer test handle");
+         SMB.Core_Client.Send_Succeeded (Coordinator, State, Status);
+         Assert (Status = SMB.Ok, "acknowledge transfer test CREATE");
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (5),
+            SMB.Wire.U64 (Coordinator_Packet, 24),
+            Tree_Id, Session_Id, True);
+         Response (64) := 89;
+         Response (128 .. 143) := File_Id;
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete
+           (Coordinator, State, Response, Nt_Status,
+            Coordinator_Token, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Success,
+            "complete transfer test CREATE");
+      end Create_Transfer_Handle;
+
       function Rejects_Negotiation return Boolean is
       begin
          SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, Status);
@@ -881,7 +906,7 @@ procedure Test_Suite is
       begin
          SMB.Core_Client.Prepare_Create
            (Coordinator, State, SMB.Bytes'(0, 0), SMB.Engine.Read_Write,
-            True, 3, True, Coordinator_Packet, Coordinator_Used, Status);
+            True, 3, False, Coordinator_Packet, Coordinator_Used, Status);
          Assert (Status = SMB.Ok, "coordinator CREATE preparation");
          Assert
            (Coordinator_Packet (88 .. 91) =
@@ -898,7 +923,7 @@ procedure Test_Suite is
                  SMB.Core_Wire.U32_Byte
                    (SMB.Core_Client.Access_Mask
                       (SMB.Engine.Read_Write, True), 3))
-            and then Coordinator_Packet (104) = 1
+            and then Coordinator_Packet (104) = 16#40#
             and then Coordinator_Packet (100) = 3
             and then SMB.Core_Client.Create_Delete_Access_Of
               (Coordinator)
@@ -928,8 +953,388 @@ procedure Test_Suite is
            (Status = SMB.Ok
             and then Validated_File_Id = File_Id
             and then Validated_Access = SMB.Engine.Read_Write
-            and then Validated_Directory,
+            and then not Validated_Directory,
             "CREATE input metadata registered on returned handle");
+         declare
+            Original : constant SMB.Bytes (1 .. 5) :=
+              (16#11#, 16#22#, 16#33#, 16#44#, 16#55#);
+            Mutable_Data : SMB.Bytes (1 .. 5) := Original;
+            Write_Transfer : SMB.Core_Client.Transfer (5);
+            Read_Transfer : SMB.Core_Client.Transfer (5);
+            Boundary_Transfer : SMB.Core_Client.Transfer (1);
+            Empty_Transfer : SMB.Core_Client.Transfer (0);
+            Write_Packet : SMB.Bytes (0 .. 116) := (others => 0);
+            Read_Packet : SMB.Bytes (0 .. 112) := (others => 0);
+            Write_Response : SMB.Bytes (0 .. 79) := (others => 0);
+            Read_Response : SMB.Bytes (0 .. 84) := (others => 0);
+            Result : SMB.Bytes (0 .. 4) := (others => 0);
+            Invalid_Token : constant SMB.Engine.Handle_Token :=
+              (Owner => 0, Epoch => 0, Ticket => 0);
+            Used : Natural;
+         begin
+            SMB.Core_Client.Start_Read
+              (Boundary_Transfer, State, Invalid_Token, 0, 1, Status);
+            Assert
+              (Status = SMB.Invalid_Handle_Status
+               and then not SMB.Engine.Has_Pending_Request (State),
+               "invalid transfer token reserved a request");
+            SMB.Core_Client.Start_Write
+              (Boundary_Transfer, State, Coordinator_Token,
+               SMB.QWord'Last, SMB.Bytes'(1 => 16#AA#), Status);
+            Assert
+              (Status = SMB.Invalid_Offset
+               and then not SMB.Engine.Has_Pending_Request (State),
+               "overflowing transfer range reserved a request");
+
+            SMB.Core_Client.Start_Write
+              (Empty_Transfer, State, Coordinator_Token, 0,
+               SMB.Bytes'(1 .. 0 => 0), Status);
+            Assert
+              (Status = SMB.Ok
+               and then SMB.Core_Client.Transfer_Stage_Of (Empty_Transfer) =
+                 SMB.Core_Client.Transfer_Finished
+               and then SMB.Core_Client.Transfer_Completed_Of (Empty_Transfer) = 0
+               and then not SMB.Engine.Has_Pending_Request (State),
+               "empty WRITE must finish without reserving a request");
+
+            SMB.Core_Client.Start_Write
+              (Write_Transfer, State, Coordinator_Token, 100,
+               Mutable_Data, Status);
+            Assert (Status = SMB.Ok, "transfer WRITE start");
+            Mutable_Data := (others => 0);
+            SMB.Core_Client.Prepare_Next
+              (Write_Transfer, State, Write_Packet, Used, Status);
+            Assert
+              (Status = SMB.Ok and then Used = 117
+               and then Write_Packet (72 .. 79) =
+                 SMB.Bytes'(100, 0, 0, 0, 0, 0, 0, 0)
+               and then Write_Packet (112 .. 116) = Original,
+               "WRITE snapshot and encoded initial offset");
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Write_Transfer, State, Status);
+            Assert (Status = SMB.Ok, "transfer WRITE send acknowledgement");
+            Prepare_Response
+              (Write_Response, SMB.Core_Wire.Command_Code (9),
+               SMB.Wire.U64 (Write_Packet, 24), Tree_Id, Session_Id, True);
+            Write_Response (64) := 17;
+            SMB.Wire.Put_U16 (Write_Response, 66, 1);
+            SMB.Wire.Put_U32 (Write_Response, 68, 3);
+            SMB.Wire.Put_U32 (Write_Response, 72, 1);
+            SMB.Wire.Put_U16 (Write_Response, 76, 1);
+            SMB.Wire.Put_U16 (Write_Response, 78, 1);
+            SMB.Wire.Sign (Write_Response, Key);
+            SMB.Core_Client.Complete_Write
+              (Write_Transfer, State, Write_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status = SMB.Success
+               and then SMB.Core_Client.Transfer_Completed_Of
+                 (Write_Transfer) = 3,
+               "reserved WRITE response fields were not ignored");
+            SMB.Core_Client.Complete_Write
+              (Write_Transfer, State, Write_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status
+               and then SMB.Core_Client.Transfer_Completed_Of
+                 (Write_Transfer) = 3,
+               "duplicate WRITE completion advanced progress");
+            SMB.Core_Client.Prepare_Next
+              (Write_Transfer, State, Write_Packet, Used, Status);
+            Assert
+              (Status = SMB.Ok
+               and then SMB.Core_Wire.Encoded_U64 (Write_Packet, 72) = 103
+               and then Write_Packet (112 .. 113) =
+                 SMB.Bytes'(16#44#, 16#55#),
+               "partial WRITE continuation offset and original payload");
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Write_Transfer, State, Status);
+            Prepare_Response
+              (Write_Response, SMB.Core_Wire.Command_Code (9),
+               SMB.Wire.U64 (Write_Packet, 24), Tree_Id, Session_Id, True);
+            Write_Response (64) := 17;
+            SMB.Wire.Put_U32 (Write_Response, 68, 2);
+            SMB.Wire.Sign (Write_Response, Key);
+            SMB.Core_Client.Complete_Write
+              (Write_Transfer, State, Write_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok
+               and then SMB.Core_Client.Transfer_Stage_Of (Write_Transfer) =
+                 SMB.Core_Client.Transfer_Finished,
+               "WRITE transfer completion");
+
+            SMB.Core_Client.Start_Write
+              (Write_Transfer, State, Coordinator_Token, 100, Original, Status);
+            SMB.Core_Client.Prepare_Next
+              (Write_Transfer, State, Write_Packet, Used, Status);
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Write_Transfer, State, Status);
+            Prepare_Response
+              (Write_Response, SMB.Core_Wire.Command_Code (9),
+               SMB.Wire.U64 (Write_Packet, 24), Tree_Id, Session_Id, True);
+            Write_Response (64) := 17;
+            SMB.Wire.Put_U32 (Write_Response, 68, 3);
+            SMB.Wire.Sign (Write_Response, Key);
+            SMB.Core_Client.Complete_Write
+              (Write_Transfer, State, Write_Response, Nt_Status, Status);
+            Assert (Status = SMB.Ok, "WRITE progress before NTSTATUS error");
+            SMB.Core_Client.Prepare_Next
+              (Write_Transfer, State, Write_Packet, Used, Status);
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Write_Transfer, State, Status);
+            Prepare_Response
+              (Write_Response, SMB.Core_Wire.Command_Code (9),
+               SMB.Wire.U64 (Write_Packet, 24), Tree_Id, Session_Id, True);
+            Write_Response (64) := 9;
+            SMB.Wire.Put_U32 (Write_Response, 8, SMB.Status_Access_Denied);
+            SMB.Wire.Sign (Write_Response, Key);
+            SMB.Core_Client.Complete_Write
+              (Write_Transfer, State, Write_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status = SMB.Status_Access_Denied
+               and then SMB.Core_Client.Transfer_Completed_Of (Write_Transfer) = 3
+               and then SMB.Core_Client.Transfer_Remaining_Of (Write_Transfer) = 2
+               and then SMB.Core_Client.Transfer_Stage_Of (Write_Transfer) =
+                 SMB.Core_Client.Transfer_Finished
+               and then SMB.Engine.Current_Phase (State) =
+                 SMB.Engine.Share_Connected
+               and then not SMB.Engine.Has_Validated_Response (State)
+               and then not SMB.Engine.Has_Pending_Request (State),
+               "NTSTATUS after partial WRITE advanced progress or kept receipt");
+
+            SMB.Core_Client.Start_Read
+              (Read_Transfer, State, Coordinator_Token, 200, 5, Status);
+            Assert (Status = SMB.Ok, "transfer READ start");
+            SMB.Core_Client.Prepare_Next
+              (Read_Transfer, State, Read_Packet, Used, Status);
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Read_Transfer, State, Status);
+            Prepare_Response
+              (Read_Response, SMB.Core_Wire.Command_Code (8),
+               SMB.Wire.U64 (Read_Packet, 24), Tree_Id, Session_Id, True);
+            Read_Response (64) := 17;
+            Read_Response (66) := 80;
+            SMB.Wire.Put_U32 (Read_Response, 68, 5);
+            Read_Response (80 .. 84) := Original;
+            SMB.Wire.Sign (Read_Response, Key);
+            SMB.Core_Client.Complete_Read
+              (Read_Transfer, State, Read_Response, Nt_Status, Status);
+            SMB.Core_Client.Copy_Read_Result
+              (Read_Transfer, Result, Used, Status);
+            Assert
+              (Status = SMB.Ok and then Used = 5
+               and then Result = Original,
+               "validated READ bytes copied from transfer buffer");
+
+            SMB.Core_Client.Start_Read
+              (Read_Transfer, State, Coordinator_Token, 300, 5, Status);
+            SMB.Core_Client.Prepare_Next
+              (Read_Transfer, State, Read_Packet, Used, Status);
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Read_Transfer, State, Status);
+            Read_Response := (others => 0);
+            Prepare_Response
+              (Read_Response, SMB.Core_Wire.Command_Code (8),
+               SMB.Wire.U64 (Read_Packet, 24), Tree_Id, Session_Id, True);
+            Read_Response (64) := 17;
+            SMB.Wire.Put_U16 (Read_Response, 66, 80);
+            SMB.Wire.Put_U32 (Read_Response, 68, 2);
+            Read_Response (80 .. 81) := Original (1 .. 2);
+            SMB.Wire.Sign (Read_Response, Key);
+            SMB.Core_Client.Complete_Read
+              (Read_Transfer, State, Read_Response, Nt_Status, Status);
+            SMB.Core_Client.Copy_Read_Result
+              (Read_Transfer, Result, Used, Status);
+            Assert
+              (Status = SMB.Ok and then Used = 2
+               and then Result (0 .. 1) = Original (1 .. 2)
+               and then SMB.Core_Client.Transfer_Stage_Of (Read_Transfer) =
+                 SMB.Core_Client.Transfer_Finished,
+               "short READ terminates with validated prefix");
+
+            SMB.Core_Client.Start_Read
+              (Read_Transfer, State, Coordinator_Token, 400, 5, Status);
+            SMB.Core_Client.Prepare_Next
+              (Read_Transfer, State, Read_Packet, Used, Status);
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Read_Transfer, State, Status);
+            Read_Response := (others => 0);
+            Prepare_Response
+              (Read_Response, SMB.Core_Wire.Command_Code (8),
+               SMB.Wire.U64 (Read_Packet, 24), Tree_Id, Session_Id, True);
+            Read_Response (64) := 17;
+            SMB.Wire.Put_U16 (Read_Response, 66, 80);
+            SMB.Wire.Sign (Read_Response, Key);
+            SMB.Core_Client.Complete_Read
+              (Read_Transfer, State, Read_Response, Nt_Status, Status);
+            SMB.Core_Client.Copy_Read_Result
+              (Read_Transfer, Result, Used, Status);
+            Assert
+              (Status = SMB.Ok and then Used = 0
+               and then SMB.Core_Client.Transfer_Stage_Of (Read_Transfer) =
+                 SMB.Core_Client.Transfer_Finished,
+               "zero-length READ terminates without retry");
+
+            SMB.Core_Client.Start_Read
+              (Read_Transfer, State, Coordinator_Token, 500, 5, Status);
+            SMB.Core_Client.Prepare_Next
+              (Read_Transfer, State, Read_Packet, Used, Status);
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Read_Transfer, State, Status);
+            Read_Response := (others => 0);
+            Prepare_Response
+              (Read_Response, SMB.Core_Wire.Command_Code (8),
+               SMB.Wire.U64 (Read_Packet, 24), Tree_Id, Session_Id, True);
+            SMB.Wire.Put_U32 (Read_Response, 8, SMB.Status_End_Of_File);
+            Read_Response (64) := 9;
+            SMB.Wire.Sign (Read_Response, Key);
+            SMB.Core_Client.Complete_Read
+              (Read_Transfer, State, Read_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status = SMB.Status_End_Of_File
+               and then SMB.Core_Client.Transfer_Completed_Of (Read_Transfer)
+                 = 0
+               and then SMB.Core_Client.Transfer_Stage_Of (Read_Transfer) =
+                 SMB.Core_Client.Transfer_Finished
+               and then SMB.Engine.Current_Phase (State) =
+                 SMB.Engine.Share_Connected
+               and then not SMB.Engine.Has_Pending_Request (State),
+               "EOF READ finishes without progress or invalidation");
+
+            SMB.Core_Client.Start_Read
+              (Read_Transfer, State, Coordinator_Token, 550, 5, Status);
+            SMB.Core_Client.Prepare_Next
+              (Read_Transfer, State, Read_Packet, Used, Status);
+            SMB.Core_Client.Transfer_Send_Succeeded
+              (Read_Transfer, State, Status);
+            Read_Response := (others => 0);
+            Prepare_Response
+              (Read_Response, SMB.Core_Wire.Command_Code (8),
+               SMB.Wire.U64 (Read_Packet, 24), Tree_Id, Session_Id, True);
+            SMB.Wire.Put_U32 (Read_Response, 8, SMB.Status_Access_Denied);
+            Read_Response (64) := 9;
+            SMB.Wire.Sign (Read_Response, Key);
+            SMB.Core_Client.Complete_Read
+              (Read_Transfer, State, Read_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status = SMB.Status_Access_Denied
+               and then SMB.Core_Client.Transfer_Completed_Of (Read_Transfer)
+                 = 0
+               and then SMB.Core_Client.Transfer_Stage_Of (Read_Transfer) =
+                 SMB.Core_Client.Transfer_Finished
+               and then SMB.Engine.Current_Phase (State) =
+                 SMB.Engine.Share_Connected
+               and then not SMB.Engine.Has_Pending_Request (State),
+               "signed NTSTATUS READ error advanced or invalidated state");
+
+            declare
+               Large_Transfer : SMB.Core_Client.Transfer
+                 (SMB.Core_Protocol.Maximum_IO_Chunk + 1);
+               Large_Response : SMB.Bytes
+                 (0 .. 79 + SMB.Core_Protocol.Maximum_IO_Chunk);
+               Final_Response : SMB.Bytes (0 .. 80) := (others => 0);
+               Large_Result : SMB.Bytes
+                 (0 .. SMB.Core_Protocol.Maximum_IO_Chunk);
+            begin
+               SMB.Core_Client.Start_Read
+                 (Large_Transfer, State, Coordinator_Token, 600,
+                  SMB.Core_Protocol.Maximum_IO_Chunk + 1, Status);
+               SMB.Core_Client.Prepare_Next
+                 (Large_Transfer, State, Read_Packet, Used, Status);
+               SMB.Core_Client.Transfer_Send_Succeeded
+                 (Large_Transfer, State, Status);
+               Large_Response := (others => 0);
+               Prepare_Response
+                 (Large_Response, SMB.Core_Wire.Command_Code (8),
+                  SMB.Wire.U64 (Read_Packet, 24), Tree_Id, Session_Id, True);
+               Large_Response (64) := 17;
+               SMB.Wire.Put_U16 (Large_Response, 66, 80);
+               SMB.Wire.Put_U32
+                 (Large_Response, 68,
+                  SMB.Core_Protocol.Maximum_IO_Chunk);
+               for Index in 0 .. SMB.Core_Protocol.Maximum_IO_Chunk - 1 loop
+                  Large_Response (80 + Index) := SMB.Byte (Index mod 256);
+               end loop;
+               SMB.Wire.Sign (Large_Response, Key);
+               SMB.Core_Client.Complete_Read
+                 (Large_Transfer, State, Large_Response, Nt_Status, Status);
+               Assert
+                 (Status = SMB.Ok
+                  and then SMB.Core_Client.Transfer_Completed_Of
+                    (Large_Transfer) =
+                      SMB.Core_Protocol.Maximum_IO_Chunk
+                  and then SMB.Core_Client.Transfer_Stage_Of
+                    (Large_Transfer) = SMB.Core_Client.Ready,
+                  "full READ chunk preserves remaining transfer");
+               SMB.Core_Client.Prepare_Next
+                 (Large_Transfer, State, Read_Packet, Used, Status);
+               Assert
+                 (Status = SMB.Ok
+                  and then SMB.Core_Wire.Encoded_U64 (Read_Packet, 72) =
+                    600 + SMB.Core_Protocol.Maximum_IO_Chunk,
+                  "READ chunk continuation advances validated offset");
+               SMB.Core_Client.Transfer_Send_Succeeded
+                 (Large_Transfer, State, Status);
+               Prepare_Response
+                 (Final_Response, SMB.Core_Wire.Command_Code (8),
+                  SMB.Wire.U64 (Read_Packet, 24), Tree_Id, Session_Id, True);
+               Final_Response (64) := 17;
+               SMB.Wire.Put_U16 (Final_Response, 66, 80);
+               SMB.Wire.Put_U32 (Final_Response, 68, 1);
+               Final_Response (80) := 16#AA#;
+               SMB.Wire.Sign (Final_Response, Key);
+               SMB.Core_Client.Complete_Read
+                 (Large_Transfer, State, Final_Response, Nt_Status, Status);
+               SMB.Core_Client.Copy_Read_Result
+                 (Large_Transfer, Large_Result, Used, Status);
+               Assert
+                 (Status = SMB.Ok
+                  and then Used =
+                    SMB.Core_Protocol.Maximum_IO_Chunk + 1
+                  and then Large_Result (0) = 0
+                  and then Large_Result (255) = 255
+                  and then Large_Result (SMB.Core_Protocol.Maximum_IO_Chunk)
+                    = 16#AA#,
+                  "multi-chunk READ result preserves accumulated prefix");
+
+               SMB.Core_Client.Start_Read
+                 (Large_Transfer, State, Coordinator_Token, 600,
+                  SMB.Core_Protocol.Maximum_IO_Chunk + 1, Status);
+               SMB.Core_Client.Prepare_Next
+                 (Large_Transfer, State, Read_Packet, Used, Status);
+               SMB.Core_Client.Transfer_Send_Succeeded
+                 (Large_Transfer, State, Status);
+               SMB.Wire.Put_U64
+                 (Large_Response, 24, SMB.Wire.U64 (Read_Packet, 24));
+               SMB.Wire.Sign (Large_Response, Key);
+               SMB.Core_Client.Complete_Read
+                 (Large_Transfer, State, Large_Response, Nt_Status, Status);
+               Assert (Status = SMB.Ok, "READ progress before EOF");
+               SMB.Core_Client.Prepare_Next
+                 (Large_Transfer, State, Read_Packet, Used, Status);
+               SMB.Core_Client.Transfer_Send_Succeeded
+                 (Large_Transfer, State, Status);
+               Prepare_Response
+                 (Final_Response, SMB.Core_Wire.Command_Code (8),
+                  SMB.Wire.U64 (Read_Packet, 24), Tree_Id, Session_Id, True);
+               Final_Response (64) := 9;
+               SMB.Wire.Put_U32 (Final_Response, 8, SMB.Status_End_Of_File);
+               SMB.Wire.Sign (Final_Response, Key);
+               SMB.Core_Client.Complete_Read
+                 (Large_Transfer, State, Final_Response, Nt_Status, Status);
+               Assert
+                 (Status = SMB.Ok and then Nt_Status = SMB.Status_End_Of_File,
+                  "EOF after a full READ chunk");
+               SMB.Core_Client.Copy_Read_Result
+                 (Large_Transfer, Large_Result, Used, Status);
+               Assert
+                 (Status = SMB.Ok
+                  and then Used = SMB.Core_Protocol.Maximum_IO_Chunk
+                  and then (for all Index in 0 .. Used - 1 =>
+                    Large_Result (Index) = SMB.Byte (Index mod 256))
+                  and then not SMB.Engine.Has_Pending_Request (State)
+                  and then not SMB.Engine.Has_Validated_Response (State),
+                  "EOF after progress lost the validated READ prefix");
+            end;
+         end;
          SMB.Core_Client.Complete
            (Coordinator, State, Response, Nt_Status,
             Rejected_Token, Status);
@@ -1043,6 +1448,135 @@ procedure Test_Suite is
          "coordinator was not reusable after abort and reconnect");
       SMB.Core_Client.Abort_Operation (Coordinator, State, Status);
       Assert (Status = SMB.Ok, "abort reused coordinator request");
+
+      Reconnect_Share;
+      Create_Transfer_Handle;
+      declare
+         Transfer : SMB.Core_Client.Transfer (1);
+         Packet : SMB.Bytes (0 .. 112) := (others => 0);
+         Used : Natural;
+      begin
+         SMB.Core_Client.Start_Write
+           (Transfer, State, Coordinator_Token, 0,
+            SMB.Bytes'(0 => 16#AA#), Status);
+         SMB.Core_Client.Prepare_Next
+           (Transfer, State, Packet, Used, Status);
+         Assert (Status = SMB.Ok, "prepare transfer for abort");
+         SMB.Core_Client.Abort_Transfer (Transfer, State, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Transfer_Stage_Of (Transfer) =
+              SMB.Core_Client.Transfer_Failed
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected,
+            "transfer abort retained request or session");
+      end;
+
+      Reconnect_Share;
+      Create_Transfer_Handle;
+      declare
+         Transfer : SMB.Core_Client.Transfer (1);
+         Packet : SMB.Bytes (0 .. 112) := (others => 0);
+         Response : SMB.Bytes (0 .. 79) := (others => 0);
+         Used : Natural;
+      begin
+         SMB.Core_Client.Start_Write
+           (Transfer, State, Coordinator_Token, 0,
+            SMB.Bytes'(0 => 16#AA#), Status);
+         SMB.Core_Client.Prepare_Next
+           (Transfer, State, Packet, Used, Status);
+         SMB.Core_Client.Transfer_Send_Succeeded
+           (Transfer, State, Status);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (9),
+            SMB.Wire.U64 (Packet, 24), Tree_Id, Session_Id, True);
+         Response (64) := 17;
+         SMB.Wire.Put_U32 (Response, 68, 0);
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete_Write
+           (Transfer, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_Protocol
+            and then Nt_Status = SMB.Success
+            and then SMB.Core_Client.Transfer_Completed_Of (Transfer) = 0
+            and then SMB.Core_Client.Transfer_Stage_Of (Transfer) =
+              SMB.Core_Client.Transfer_Failed
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then not SMB.Engine.Has_Open_Handles (State),
+            "zero-count WRITE did not invalidate transfer state");
+      end;
+
+      Reconnect_Share;
+      Create_Transfer_Handle;
+      declare
+         Transfer : SMB.Core_Client.Transfer (1);
+         Packet : SMB.Bytes (0 .. 112) := (others => 0);
+         Response : SMB.Bytes (0 .. 79) := (others => 0);
+         Used : Natural;
+      begin
+         SMB.Core_Client.Start_Write
+           (Transfer, State, Coordinator_Token, 0,
+            SMB.Bytes'(0 => 16#AA#), Status);
+         SMB.Core_Client.Prepare_Next
+           (Transfer, State, Packet, Used, Status);
+         SMB.Core_Client.Transfer_Send_Succeeded
+           (Transfer, State, Status);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (9),
+            SMB.Wire.U64 (Packet, 24), Tree_Id, Session_Id, True);
+         Response (64) := 17;
+         SMB.Wire.Put_U32 (Response, 68, 2);
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete_Write
+           (Transfer, State, Response, Nt_Status, Status);
+         Assert
+           (Status /= SMB.Ok
+            and then SMB.Core_Client.Transfer_Completed_Of (Transfer) = 0
+            and then SMB.Core_Client.Transfer_Stage_Of (Transfer) =
+              SMB.Core_Client.Transfer_Failed
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then not SMB.Engine.Has_Pending_Request (State),
+            "over-count WRITE response advanced or kept the session");
+      end;
+
+      Reconnect_Share;
+      Create_Transfer_Handle;
+      declare
+         Transfer : SMB.Core_Client.Transfer (1);
+         Packet : SMB.Bytes (0 .. 112) := (others => 0);
+         Response : SMB.Bytes (0 .. 80) := (others => 0);
+         Used : Natural;
+      begin
+         SMB.Core_Client.Start_Read
+           (Transfer, State, Coordinator_Token, 0, 1, Status);
+         SMB.Core_Client.Prepare_Next
+           (Transfer, State, Packet, Used, Status);
+         SMB.Core_Client.Transfer_Send_Succeeded
+           (Transfer, State, Status);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (8),
+            SMB.Wire.U64 (Packet, 24), Tree_Id, Session_Id, True);
+         Response (64) := 17;
+         SMB.Wire.Put_U16 (Response, 66, 80);
+         SMB.Wire.Put_U32 (Response, 68, 1);
+         Response (80) := 16#AA#;
+         SMB.Wire.Sign (Response, Key);
+         Response (48) := Response (48) xor 1;
+         SMB.Core_Client.Complete_Read
+           (Transfer, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Signature_Error
+            and then SMB.Core_Client.Transfer_Completed_Of (Transfer) = 0
+            and then SMB.Core_Client.Transfer_Stage_Of (Transfer) =
+              SMB.Core_Client.Transfer_Failed
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then not SMB.Engine.Has_Pending_Request (State),
+            "tampered transfer response advanced progress or kept the session");
+      end;
    end Test_Engine_Receipts;
 
    procedure Test_Engine_Malformed_Close is

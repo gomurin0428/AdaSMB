@@ -170,13 +170,18 @@ class AdversarialProxy:
             relay_error: list[BaseException] = []
             mutated = False
             session_key: bytes | None = None
+            read_responses = 0
+            write_requests = 0
+            write_responses = 0
 
             def client_to_server() -> None:
-                nonlocal session_key
+                nonlocal session_key, write_requests
                 try:
                     while not done.is_set():
                         header = recv_exact(client, 4)
                         payload = recv_exact(client, int.from_bytes(header[1:4], "big"))
+                        if len(payload) >= 64 and payload[12:14] == b"\x09\x00":
+                            write_requests += 1
                         if self.mode == "malformed-signed-create":
                             session_key = (
                                 session_key_from_type3(
@@ -203,8 +208,59 @@ class AdversarialProxy:
                             self.mode == "malformed-signed-create"
                             and payload[12:14] == b"\x05\x00"
                         )
+                        or (
+                            self.mode == "interrupted-read-after-progress"
+                            and payload[12:14] == b"\x08\x00"
+                        )
+                        or (
+                            self.mode == "lost-write-response-after-progress"
+                            and payload[12:14] == b"\x09\x00"
+                        )
                     ):
-                        if self.mode == "malformed-signed-create":
+                        if self.mode == "lost-write-response-after-progress":
+                            if payload[12:14] != b"\x09\x00":
+                                client.sendall(header + payload)
+                                continue
+                            write_responses += 1
+                            if len(payload) < 72:
+                                raise RuntimeError("short WRITE response")
+                            status = struct.unpack_from("<I", payload, 8)[0]
+                            count = struct.unpack_from("<I", payload, 68)[0]
+                            if status != 0 or count == 0:
+                                raise RuntimeError(
+                                    "WRITE response was not successful with progress"
+                                )
+                            if write_responses == 1:
+                                client.sendall(header + payload)
+                                continue
+                            if write_responses != 2:
+                                raise RuntimeError("unexpected extra WRITE response")
+                            mutated = True
+                            done.set()
+                            break
+                        elif self.mode == "interrupted-read-after-progress":
+                            if payload[12:14] != b"\x08\x00":
+                                client.sendall(header + payload)
+                                continue
+                            read_responses += 1
+                            count = struct.unpack_from("<I", payload, 68)[0]
+                            if read_responses == 1:
+                                if count == 0:
+                                    status = struct.unpack_from("<I", payload, 8)[0]
+                                    raise RuntimeError(
+                                        "first READ response made no progress "
+                                        f"(status=0x{status:08x})"
+                                    )
+                                client.sendall(header + payload)
+                                continue
+                            if read_responses != 2:
+                                raise RuntimeError("unexpected extra READ response")
+                            if count == 0:
+                                raise RuntimeError(
+                                    "second READ response unexpectedly made no progress"
+                                )
+                            payload[48] ^= 1
+                        elif self.mode == "malformed-signed-create":
                             if payload[12:14] != b"\x05\x00":
                                 client.sendall(header + payload)
                                 continue
@@ -255,10 +311,26 @@ class AdversarialProxy:
                         connection.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
+                    connection.close()
                 upstream.join(timeout=1)
             if upstream.is_alive():
                 raise RuntimeError("upstream relay did not stop")
             if not mutated:
                 if relay_error:
+                    if self.mode == "lost-write-response-after-progress":
+                        raise RuntimeError(
+                            "lost-WRITE injection did not complete "
+                            f"(requests={write_requests}, "
+                            f"responses={write_responses}): {relay_error[0]}"
+                        )
                     raise relay_error[0]
                 raise RuntimeError(f"proxy {self.mode} did not inject its fault")
+            if self.mode == "lost-write-response-after-progress":
+                if write_responses != 2:
+                    raise RuntimeError(
+                        f"expected two successful WRITE responses, got {write_responses}"
+                    )
+                if write_requests != 2:
+                    raise RuntimeError(
+                        f"expected two client WRITE requests, got {write_requests}"
+                    )
