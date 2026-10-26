@@ -75,6 +75,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
                   or else Index - Output'First < Position
                   or else Index - Output'First >= Position + Value'Length
                 then Output (Index) = Output'Old (Index)))
+          and then
+            (if Position > 0 then
+               (for all Index in 0 .. Position - 1 =>
+                  Output (Output'First + Index) =
+                    Output'Old (Output'First + Index)))
         else Output = Output'Old);
 
    procedure Copy
@@ -387,7 +392,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
              SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 3));
       Put_U64 (Output, 8, Offset, Status);
       if Status = SMB.Ok then
-         Copy (Output, 16, File_Id, Status);
+         Output (Output'First + 16 .. Output'First + 31) := File_Id;
       end if;
       pragma Assert
         (if Status = SMB.Ok then
@@ -786,14 +791,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
             Status := SMB.Invalid_Protocol;
             return;
          end if;
-         Read_U16 (Packet, 68, Word_Value, Header_Status);
-         Read_U16 (Packet, 70, Structure, Header_Status);
-         if Header_Status /= SMB.Ok then
-            Status := Header_Status;
-            return;
-         end if;
-         Offset := Natural (Word_Value);
-         Length := Natural (Structure);
+         Offset := Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68));
+         Length := Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70));
          if Length > 0 and then Offset < 72 then
             Status := SMB.Invalid_Offset;
             return;

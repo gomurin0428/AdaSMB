@@ -48,7 +48,17 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => Token'Length <= 65_535
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 24 + Token'Length
+            and then
+              (if Token'Length = 0 then True
+               else
+                 (for all Index in 0 .. Token'Length - 1 =>
+                    Output (Output'First + 24 + Index) =
+                      Token (Token'First + Index))));
 
    procedure Build_Tree_Connect
      (Name : SMB.Bytes;
@@ -237,6 +247,14 @@ package SMB.Core_Protocol is
      Post => (if Status = SMB.Ok then
        Info.Data_Offset <= Packet'Length
        and then Info.Data_Length <= Packet'Length - Info.Data_Offset
+       and then
+         (if Command = 1
+            and then Nt_Status = SMB.Status_More_Processing_Required
+          then Packet'Length >= 72
+            and then Info.Data_Offset =
+              Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68))
+            and then Info.Data_Length =
+              Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70)))
        and then
          (if Command = 8 and then Nt_Status = SMB.Success then
             Packet'Length >= 80

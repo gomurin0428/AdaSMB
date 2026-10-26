@@ -70,9 +70,19 @@ is
       Command : SMB.Core_Wire.Command_Code;
       Nt_Status : SMB.DWord;
       Signed, MIC_Valid : Boolean) return Boolean;
+   function Pending_Command
+     (State : Engine_State) return SMB.Core_Wire.Command_Code
+   with Ghost;
+   function Pending_Response_Is_Signed
+     (State : Engine_State) return Boolean
+   with Ghost;
    function Pending_Request_Matches
      (State : Engine_State;
-      Expected : Request_Expectation) return Boolean;
+      Expected : Request_Expectation) return Boolean
+   with Post =>
+     (if Pending_Request_Matches'Result then
+        Pending_Command (State) = Expected.Command
+        and then Pending_Response_Is_Signed (State) = Expected.Signed);
    function Create_Receipt_Matches_File_Id
      (State : Engine_State;
       File_Id : SMB.Bytes) return Boolean
@@ -81,13 +91,6 @@ is
      (State : Engine_State;
       Token : Handle_Token) return Boolean
    with Ghost;
-   function Pending_Command
-     (State : Engine_State) return SMB.Core_Wire.Command_Code
-   with Ghost;
-   function Pending_Response_Is_Signed
-     (State : Engine_State) return Boolean
-   with Ghost;
-
    procedure Initialize
      (State : in out Engine_State;
       Status : out SMB.Core_Status)
@@ -126,6 +129,7 @@ is
           Current_Phase (State) = Negotiated
           and Current_Max_Read (State) = Maximum_Read
           and Current_Max_Write (State) = Maximum_Write
+          and Current_Session_Id (State) = 0
           and not Has_Validated_Response (State));
 
    procedure Install_Session_Key
@@ -208,6 +212,9 @@ is
           and Expected.Request_Signed = Request_Signed
           and Expected.Signed = Response_Signed
           and Expected.Request_Amount = Request_Amount
+          and Expected.Session_Id = Current_Session_Id (State)
+          and Current_Session_Id (State) = Current_Session_Id (State'Old)
+          and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
           and Pending_Request_Matches (State, Expected)
         else Message_Id = 0);
 
@@ -246,6 +253,15 @@ is
                 Pending_Response_Is_Signed (State'Old),
                 Pending_Command (State'Old) = 1
                   and then Nt_Status = SMB.Success)
+               and then
+                 (if Pending_Command (State'Old) = 1
+                    and then Nt_Status =
+                      SMB.Status_More_Processing_Required
+                  then Packet'Length >= 72
+                    and then Current_Response_Info (State).Data_Offset =
+                      Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68))
+                    and then Current_Response_Info (State).Data_Length =
+                      Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70)))
                and then
                  (if Pending_Command (State'Old) = 8
                     and then Nt_Status = SMB.Success

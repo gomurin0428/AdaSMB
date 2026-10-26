@@ -12,20 +12,28 @@ units: `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Framing`,
 | --- | ---: | ---: | ---: |
 | Data dependencies | 1 | 1 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
-| Initialization | 372 | 372 | 0 |
+| Initialization | 413 | 413 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 1,620 | 0 | 1,620 |
-| Assertions | 137 | 0 | 137 |
-| Functional contracts | 606 | 0 | 606 |
-| Termination | 87 | 81 | 6 |
-| **Total** | **2,826** | **457** | **2,369** |
+| Run-time checks | 1,679 | 0 | 1,679 |
+| Assertions | 156 | 0 | 156 |
+| Functional contracts | 654 | 0 | 654 |
+| Termination | 94 | 88 | 6 |
+| **Total** | **3,000** | **505** | **2,495** |
 
-There were zero unproved or justified checks. All configured subprograms were
-analyzed; no core subprograms were skipped and no `pragma Assume` statements
-were reported. Six non-fatal “initialization ... has no effect” warnings remain
-on local parser variables in `SMB.Core_Protocol`.
+There were zero unproved, justified, or GNATprove-warning checks. All configured
+subprograms were analyzed; no core subprograms were skipped and no `pragma
+Assume` statements were reported.
 
-The proof includes the bounded READ/WRITE transfer state and lifecycle:
+The proof includes the typed SESSION_SETUP authentication lifecycle: negotiate
+preparation and send acknowledgement, bounded challenge ownership and
+correspondence to the validated response, Type 3 construction from that
+challenge, key installation in the Engine, and completion only after an
+acknowledged signed response with valid SPNEGO MIC. Authentication ordering
+errors make no progress; failed completion invalidates the Engine, preserving
+the received NTSTATUS where applicable. The coordinator stores neither
+credentials nor the session key.
+
+The proof also includes the bounded READ/WRITE transfer state and lifecycle:
 capacity and chunk bounds, owner/epoch/token validation, actual prepared packet
 fields tied to the validated handle and Engine request expectation, immutable
 WRITE snapshot preservation, and READ accumulation/copying from validated
@@ -52,6 +60,11 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   partial WRITE continuation and payload snapshot preservation, empty WRITE,
   response-receipt misuse, NTSTATUS after partial WRITE, short/zero/EOF READ,
   multi-chunk READ prefix preservation, and invalid/overflowing transfer inputs.
+  Authentication fixtures verify the expected NTLM Type 3 vector and key,
+  reject challenge/final completion before send acknowledgement and duplicate
+  challenge completion, reject Success instead of MORE_PROCESSING_REQUIRED,
+  distinguish malformed challenges, and reject tampered final signatures,
+  bad MICs, and signed ACCESS_DENIED while checking Engine/key cleanup.
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check`:
   passed, including warnings-as-errors builds of the library, tests and example,
   plus the runtime dependency audit.
@@ -61,8 +74,9 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   passed.
 * `sudo -n env PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
   python3 tests/samba_integration.py`: passed against local Samba on
-  `127.0.0.1:1445`. The normal public integration and all seven existing
-  adversarial cases passed. Malformed signed CREATE and interrupted READ
+  `127.0.0.1:1445`. Normal public authentication/integration and all seven
+  existing adversarial cases passed, including wrong-correlation authentication.
+  Malformed signed CREATE and interrupted READ
   invalidation/reconnect regressions passed. In the lost-WRITE-response-after-
   progress regression, the proxy relayed the first positive successful WRITE
   response and dropped the second; it verified exactly two client WRITE

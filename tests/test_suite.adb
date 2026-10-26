@@ -17,6 +17,7 @@ procedure Test_Suite is
    use type SMB.Engine.Access_Kind;
    use type SMB.Engine.Phase;
    use type SMB.Core_Client.Transfer_Stage;
+   use type SMB.Core_Client.Authentication_Stage;
    use type SMB.Bytes;
 
    use type SMB.Byte;
@@ -369,6 +370,343 @@ procedure Test_Suite is
             "short authentication output buffer was accepted");
       end;
    end Test_NTLM_Authenticate;
+
+   procedure Test_Core_Client_Authentication is
+      Challenge : constant SMB.Bytes := Hex
+        ("a1818e30818ba0030a0101a10c060a2b06010401823702020aa27604744e544c"
+         & "4d53535000020000000c000c0030000000158288200123456789abcdef000000"
+         & "0000000000380038003c00000044006f006d00610069006e0001000c00530065"
+         & "00720076006500720002000c0044006f006d00610069006e0007000800080706"
+         & "0504030201060004000200000000000000");
+      Expected_Token : constant SMB.Bytes := Hex
+        ("a182010a30820106a281ef0481ec4e544c4d5353500003000000180018005800"
+         & "000068006800700000000c000c00d800000008000800e400000000000000ec00"
+         & "000000000000ec0000001582882000000000000000003909823c8592086081bb"
+         & "35de5f578366000000000000000000000000000000000000000000000000a3e8"
+         & "7cafaf3a8c12a0bec29d2d579a5101010000000000000807060504030201ffff"
+         & "ff00112233440000000001000c0053006500720076006500720002000c004400"
+         & "6f006d00610069006e0007000800080706050403020106000400020000000000"
+         & "00000000000044006f006d00610069006e005500530045005200a31204100100"
+         & "0000dc73cbb3b8b19e6200000000");
+      Session_Key : constant SMB.Bytes :=
+        Hex ("e711de05352dfa50de477e818cffec55");
+      Nonce : constant SMB.Bytes (0 .. 7) :=
+        (16#FF#, 16#FF#, 16#FF#, 0, 16#11#, 16#22#, 16#33#, 16#44#);
+      Session_Id : constant SMB.QWord := 16#1234#;
+
+      procedure Prepare_Negotiated (State : in out SMB.Engine.Engine_State) is
+         Status : SMB.Core_Status;
+         Nt_Status : SMB.DWord;
+         Message_Id : SMB.QWord;
+         Expected : SMB.Engine.Request_Expectation;
+         Response : SMB.Bytes (0 .. 127) := (others => 0);
+      begin
+         SMB.Engine.Initialize (State, Status);
+         Assert (Status = SMB.Ok, "authentication engine initialize");
+         SMB.Engine.Mark_Connected (State, Status);
+         Assert (Status = SMB.Ok, "authentication transport connect");
+         SMB.Engine.Begin_Request
+           (State, 0, False, False, Message_Id, Expected, Status);
+         Assert (Status = SMB.Ok, "authentication negotiate reservation");
+         SMB.Wire.Initialize_Header (Response, 0, Message_Id, 0, 0);
+         SMB.Wire.Put_U32 (Response, 16, 1);
+         Response (64) := 65;
+         Response (66) := 1;
+         Response (68) := 16#10#;
+         Response (69) := 2;
+         Response (98) := 1;
+         Response (102) := 1;
+         SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
+         Assert (Status = SMB.Ok, "authentication negotiate response");
+         SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, Status);
+         Assert (Status = SMB.Ok, "authentication negotiated state");
+      end Prepare_Negotiated;
+
+      function Challenge_Response
+        (Message_Id : SMB.QWord;
+         Reply_Status : SMB.DWord;
+         Token : SMB.Bytes) return SMB.Bytes
+      is
+         Packet : SMB.Bytes (0 .. 71 + Token'Length) := (others => 0);
+      begin
+         SMB.Wire.Initialize_Header
+           (Packet, 1, Message_Id, 0, Session_Id);
+         SMB.Wire.Put_U32 (Packet, 8, Reply_Status);
+         SMB.Wire.Put_U32 (Packet, 16, 1);
+         SMB.Wire.Put_U16 (Packet, 64, 9);
+         SMB.Wire.Put_U16 (Packet, 68, 72);
+         SMB.Wire.Put_U16 (Packet, 70, SMB.Word (Token'Length));
+         if Token'Length > 0 then
+            Packet (72 .. 71 + Token'Length) := Token;
+         end if;
+         return Packet;
+      end Challenge_Response;
+
+      function Final_Response
+        (Message_Id : SMB.QWord;
+         Reply_Status : SMB.DWord;
+         Tamper_Signature, Tamper_MIC : Boolean) return SMB.Bytes
+      is
+         Packet : SMB.Bytes (0 .. 100) := (others => 0);
+         Final_Token : SMB.Bytes (0 .. 28) :=
+           (16#A1#, 16#1B#, 16#30#, 16#19#,
+            16#A0#, 16#03#, 16#0A#, 16#01#, 0,
+            16#A3#, 16#12#, 16#04#, 16#10#,
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+         Server_MIC : constant SMB.Bytes :=
+           SMB.Core_NTLM.Mechanism_List_MIC (Session_Key, True);
+      begin
+         for Index in 0 .. 15 loop
+            Final_Token (13 + Index) := Server_MIC (Index);
+         end loop;
+         if Tamper_MIC then
+            Final_Token (17) := Final_Token (17) xor 1;
+         end if;
+         SMB.Wire.Initialize_Header
+           (Packet, 1, Message_Id, 0, Session_Id);
+         SMB.Wire.Put_U32 (Packet, 8, Reply_Status);
+         SMB.Wire.Put_U32 (Packet, 16, 9);
+         SMB.Wire.Put_U16 (Packet, 64, 9);
+         if Reply_Status = SMB.Success then
+            SMB.Wire.Put_U16 (Packet, 68, 72);
+            SMB.Wire.Put_U16 (Packet, 70, SMB.Word (Final_Token'Length));
+            Packet (72 .. 100) := Final_Token;
+         else
+            SMB.Wire.Put_U32 (Packet, 68, 0);
+         end if;
+         SMB.Wire.Sign (Packet, Session_Key);
+         if Tamper_Signature then
+            Packet (48) := Packet (48) xor 1;
+         end if;
+         return Packet;
+      end Final_Response;
+
+      procedure Prepare_Final_Request
+        (State : in out SMB.Engine.Engine_State;
+         Value : in out SMB.Core_Client.Authentication;
+         Output : in out SMB.Bytes;
+         Used : out Natural) is
+         Status : SMB.Core_Status;
+         Nt_Status : SMB.DWord;
+         Message_Id : SMB.QWord;
+      begin
+         SMB.Core_Client.Prepare_Negotiate
+           (Value, State, Output, Used, Status);
+         Assert (Status = SMB.Ok, "prepare coordinator negotiate");
+         Message_Id := SMB.Wire.U64 (Output, 24);
+         SMB.Core_Client.Authentication_Send_Succeeded (Value, State, Status);
+         Assert (Status = SMB.Ok, "acknowledge coordinator negotiate");
+         declare
+            Response : constant SMB.Bytes := Challenge_Response
+              (Message_Id, SMB.Status_More_Processing_Required, Challenge);
+         begin
+            SMB.Core_Client.Complete_Challenge
+              (Value, State, Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status =
+                 SMB.Status_More_Processing_Required,
+               "complete coordinator challenge");
+         end;
+         SMB.Core_Client.Prepare_Authenticate
+           (Value, State, "User", "Password", "Domain", Nonce, 0,
+            Output, Used, Status);
+         Assert (Status = SMB.Ok, "prepare coordinator authenticate");
+         SMB.Core_Client.Authentication_Send_Succeeded (Value, State, Status);
+         Assert (Status = SMB.Ok, "acknowledge coordinator authenticate");
+      end Prepare_Final_Request;
+
+      State : SMB.Engine.Engine_State;
+      Value : SMB.Core_Client.Authentication;
+      Request : SMB.Bytes (0 .. 65_621) := (others => 0);
+      Response : SMB.Bytes (0 .. 100) := (others => 0);
+      Status : SMB.Core_Status;
+      Nt_Status : SMB.DWord;
+      Used : Natural;
+      Message_Id : SMB.QWord;
+   begin
+      Prepare_Negotiated (State);
+      SMB.Core_Client.Prepare_Negotiate
+        (Value, State, Request, Used, Status);
+      Assert (Status = SMB.Ok, "prepare authentication negotiate");
+      Message_Id := SMB.Wire.U64 (Request, 24);
+      declare
+         Response : constant SMB.Bytes := Challenge_Response
+           (Message_Id, SMB.Status_More_Processing_Required, Challenge);
+      begin
+         SMB.Core_Client.Complete_Challenge
+           (Value, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Authentication_Stage_Of (Value) =
+              SMB.Core_Client.Negotiate_Prepared,
+            "challenge completed before send acknowledgement");
+      end;
+      SMB.Core_Client.Authentication_Send_Succeeded (Value, State, Status);
+      Assert (Status = SMB.Ok, "authentication negotiate acknowledgement");
+      declare
+         Response : constant SMB.Bytes := Challenge_Response
+           (Message_Id, SMB.Status_More_Processing_Required, Challenge);
+      begin
+         SMB.Core_Client.Complete_Challenge
+           (Value, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status =
+              SMB.Status_More_Processing_Required
+            and then SMB.Core_Client.Authentication_Challenge_Length_Of (Value) =
+              Challenge'Length,
+            "coordinator challenge accepted");
+         SMB.Core_Client.Complete_Challenge
+           (Value, State, Response, Nt_Status, Status);
+      end;
+      Assert
+        (Status = SMB.Invalid_State_Status
+         and then SMB.Core_Client.Authentication_Stage_Of (Value) =
+           SMB.Core_Client.Challenge_Received,
+         "duplicate challenge completion advanced authentication");
+      SMB.Core_Client.Prepare_Authenticate
+        (Value, State, "User", "Password", "Domain", Nonce, 0,
+         Request, Used, Status);
+      Assert (Status = SMB.Ok, "prepare authentication token");
+      Assert
+        (Used = 64 + 24 + Expected_Token'Length
+         and then Request (88 .. Used - 1) = Expected_Token,
+         "coordinator produced the expected NTLM Type 3 token");
+      Message_Id := SMB.Wire.U64 (Request, 24);
+      Response := Final_Response (Message_Id, SMB.Success, False, False);
+      SMB.Core_Client.Complete_Authenticate
+        (Value, State, Response, Nt_Status, Status);
+      Assert
+        (Status = SMB.Invalid_State_Status
+         and then Nt_Status = 0
+         and then SMB.Core_Client.Authentication_Stage_Of (Value) =
+           SMB.Core_Client.Authenticate_Prepared
+         and then SMB.Engine.Has_Pending_Request (State)
+         and then SMB.Engine.Has_Signing_Key (State),
+         "final authentication completed before send acknowledgement");
+      SMB.Core_Client.Authentication_Send_Succeeded (Value, State, Status);
+      Assert (Status = SMB.Ok, "authentication token acknowledgement");
+      SMB.Core_Client.Complete_Authenticate
+        (Value, State, Response, Nt_Status, Status);
+      Assert
+        (Status = SMB.Ok and then Nt_Status = SMB.Success
+         and then SMB.Engine.Current_Phase (State) = SMB.Engine.Authenticated
+         and then SMB.Core_Client.Authentication_Stage_Of (Value) =
+           SMB.Core_Client.Authentication_Finished,
+         "coordinator completed signed authentication");
+
+      declare
+         Failed_State : SMB.Engine.Engine_State;
+         Failed_Value : SMB.Core_Client.Authentication;
+         Failed_Request : SMB.Bytes (0 .. 65_621) := (others => 0);
+         Failed_Response : SMB.Bytes (0 .. Challenge'Length + 71) :=
+           (others => 0);
+         Failed_Used : Natural;
+      begin
+         Prepare_Negotiated (Failed_State);
+         SMB.Core_Client.Prepare_Negotiate
+           (Failed_Value, Failed_State, Failed_Request, Failed_Used, Status);
+         Message_Id := SMB.Wire.U64 (Failed_Request, 24);
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Failed_Value, Failed_State, Status);
+         Failed_Response := Challenge_Response
+           (Message_Id, SMB.Success, Challenge);
+         SMB.Core_Client.Complete_Challenge
+           (Failed_Value, Failed_State, Failed_Response, Nt_Status, Status);
+         Assert
+           (Status /= SMB.Ok
+            and then Nt_Status = SMB.Success
+            and then not SMB.Engine.Has_Signing_Key (Failed_State)
+            and then not SMB.Engine.Has_Pending_Request (Failed_State)
+            and then SMB.Engine.Signing_Key_Is_Zero (Failed_State),
+            "successful challenge status installed a key or advanced");
+      end;
+
+      declare
+         Failed_State : SMB.Engine.Engine_State;
+         Failed_Value : SMB.Core_Client.Authentication;
+         Failed_Request : SMB.Bytes (0 .. 65_621) := (others => 0);
+         Malformed : constant SMB.Bytes := (0 => 0);
+         Failed_Used : Natural;
+      begin
+         Prepare_Negotiated (Failed_State);
+         SMB.Core_Client.Prepare_Negotiate
+           (Failed_Value, Failed_State, Failed_Request, Failed_Used, Status);
+         Message_Id := SMB.Wire.U64 (Failed_Request, 24);
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Failed_Value, Failed_State, Status);
+         declare
+            Failed_Response : constant SMB.Bytes := Challenge_Response
+              (Message_Id, SMB.Status_More_Processing_Required, Malformed);
+         begin
+            SMB.Core_Client.Complete_Challenge
+              (Failed_Value, Failed_State, Failed_Response, Nt_Status, Status);
+         end;
+         SMB.Core_Client.Prepare_Authenticate
+           (Failed_Value, Failed_State, "User", "Password", "Domain", Nonce,
+            0, Failed_Request, Failed_Used, Status);
+         Assert
+           (Status in SMB.Invalid_Encoding | SMB.Invalid_Protocol
+            and then SMB.Core_Client.Authentication_Stage_Of (Failed_Value) =
+              SMB.Core_Client.Authentication_Failed
+            and then SMB.Engine.Current_Phase (Failed_State) =
+              SMB.Engine.Disconnected
+            and then SMB.Engine.Signing_Key_Is_Zero (Failed_State)
+            and then not SMB.Engine.Has_Pending_Request (Failed_State),
+            "malformed challenge was not distinguished and invalidated");
+      end;
+
+      for Fault in 1 .. 3 loop
+         declare
+            Failed_State : SMB.Engine.Engine_State;
+            Failed_Value : SMB.Core_Client.Authentication;
+            Failed_Request : SMB.Bytes (0 .. 65_621) := (others => 0);
+            Failed_Response : SMB.Bytes (0 .. 100) := (others => 0);
+            Failed_Used : Natural;
+         begin
+            Prepare_Negotiated (Failed_State);
+            Prepare_Final_Request
+              (Failed_State, Failed_Value, Failed_Request, Failed_Used);
+            Message_Id := SMB.Wire.U64 (Failed_Request, 24);
+            if Fault = 3 then
+               Failed_Response := Final_Response
+                 (Message_Id, SMB.Status_Access_Denied, False, False);
+            else
+               Failed_Response := Final_Response
+                 (Message_Id, SMB.Success, Fault = 1, Fault = 2);
+            end if;
+            SMB.Core_Client.Complete_Authenticate
+              (Failed_Value, Failed_State, Failed_Response, Nt_Status, Status);
+            Assert
+              (SMB.Engine.Current_Phase (Failed_State) =
+                 SMB.Engine.Disconnected
+               and then SMB.Engine.Signing_Key_Is_Zero (Failed_State)
+               and then not SMB.Engine.Has_Pending_Request (Failed_State),
+               "rejected final authentication retained session state");
+            if Fault = 3 then
+               Assert
+                 (Status = SMB.Ok
+                  and then Nt_Status = SMB.Status_Access_Denied
+                 and then SMB.Core_Client.Authentication_Stage_Of
+                    (Failed_Value) = SMB.Core_Client.Authentication_Failed,
+                 "signed authentication NT status was not preserved");
+            elsif Fault = 1 then
+               Assert
+                 (Status = SMB.Signature_Error
+                  and then Nt_Status = 0
+                  and then SMB.Core_Client.Authentication_Stage_Of
+                    (Failed_Value) = SMB.Core_Client.Authentication_Failed,
+                  "bad final signature was accepted");
+            else
+               Assert
+                 (Status = SMB.Invalid_Protocol
+                  and then Nt_Status = 0
+                  and then SMB.Core_Client.Authentication_Stage_Of
+                    (Failed_Value) = SMB.Core_Client.Authentication_Failed,
+                  "bad final MIC was accepted");
+            end if;
+         end;
+      end loop;
+   end Test_Core_Client_Authentication;
 
    procedure Test_Final_Spnego is
       Accept_Completed : constant SMB.Bytes :=
@@ -1867,6 +2205,7 @@ begin
    Test_Framing;
    Test_Core_Wire;
    Test_NTLM_Authenticate;
+   Test_Core_Client_Authentication;
    Test_Final_Spnego;
    Test_Core_Protocol;
    Test_Engine_Malformed_Close;

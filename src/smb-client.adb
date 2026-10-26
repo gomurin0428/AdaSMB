@@ -7,7 +7,6 @@ with SMB.Core_Client;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
 with SMB.Core_Wire;
-with SMB.NTLM;
 with SMB.Wire;
 
 package body SMB.Client is
@@ -15,6 +14,7 @@ package body SMB.Client is
    use type SMB.Engine.Phase;
    use type SMB.Core_Client.Operation_Stage;
    use type SMB.Core_Client.Transfer_Stage;
+   use type SMB.Core_Client.Authentication_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
    use type SMB.Word;
@@ -140,6 +140,21 @@ package body SMB.Client is
            Context & ": " & SMB.Core_Status'Image (Status);
       end if;
    end Require_Transfer_Status;
+
+   procedure Require_Authentication_Status
+     (Status : SMB.Core_Status;
+      Context : String) is
+   begin
+      if Status = SMB.Ok then
+         return;
+      elsif Status = SMB.Invalid_State_Status then
+         raise SMB.Invalid_State with Context;
+      elsif Status in SMB.Resource_Limit | SMB.Unsupported_Feature then
+         raise SMB.Authentication_Error with Context;
+      else
+         raise SMB.Protocol_Error with Context;
+      end if;
+   end Require_Authentication_Status;
 
    function Exchange
      (Client : in out Connection;
@@ -584,89 +599,89 @@ package body SMB.Client is
      (Client : in out Connection;
       User, Password : String;
       Domain : String := "") is
-      Initial_Token : constant SMB.Bytes := SMB.NTLM.Negotiate_Token;
-      First_Body : SMB.Bytes (0 .. 23 + Initial_Token'Length) :=
-        (others => 0);
-      First_Used : Natural;
+      Authentication : SMB.Core_Client.Authentication;
+      Request : SMB.Bytes (0 .. SMB.Maximum_Frame_Size - 1) := (others => 0);
+      Used : Natural;
       Engine_Status : SMB.Core_Status;
+      Nt_Status : SMB.DWord;
+      Nonce : SMB.Bytes (0 .. 7);
    begin
-      SMB.Core_Protocol.Build_Session_Setup
-        (Initial_Token, First_Body, First_Used, Engine_Status);
-      if Engine_Status /= SMB.Ok then
-         raise SMB.Authentication_Error with "initial SMB token exceeds limits";
-      end if;
+      SMB.Core_Client.Prepare_Negotiate
+        (Authentication, Client.Engine_Core, Request, Used, Engine_Status);
+      Require_Authentication_Status
+        (Engine_Status, "cannot prepare SMB authentication negotiate");
+      SMB.Transport.Send_Frame
+        (Client.Channel, Request (Request'First .. Request'First + Used - 1));
+      SMB.Core_Client.Authentication_Send_Succeeded
+        (Authentication, Client.Engine_Core, Engine_Status);
+      Require_Authentication_Status
+        (Engine_Status, "authentication negotiate send was not acknowledged");
       declare
-         First_Response : constant SMB.Bytes := Exchange
-           (Client, SMB.Wire.Session_Setup_Command,
-            First_Body (0 .. First_Used - 1),
-            Request_Session => 0, Response_Session => 0);
+         Response : constant SMB.Bytes :=
+           SMB.Transport.Receive_Frame (Client.Channel);
       begin
-         if Client.Last_Status /= SMB.Status_More_Processing_Required then
-            Require_Status (Client, Client.Last_Status);
-            raise SMB.Authentication_Error with
-              "server did not issue an NTLM challenge";
-         end if;
-         declare
-            Response_Info : constant SMB.Core_Protocol.Response_Info :=
-              SMB.Engine.Current_Response_Info (Client.Engine_Core);
-            Challenge_Session_Id : constant SMB.QWord :=
-              Response_Info.Session_Id;
-         begin
-            declare
-               Challenge_Token : constant SMB.Bytes :=
-                 Slice (First_Response, Response_Info.Data_Offset,
-                        Response_Info.Data_Length);
-               Nonce : SMB.Bytes (0 .. 7);
-            begin
-               Get_Entropy (Client, Nonce);
-               declare
-                  Auth : constant SMB.NTLM.Authentication_Result :=
-                    SMB.NTLM.Authenticate
-                      (User, Password, Domain, Nonce, Challenge_Token,
-                       SMB.Clock.Current_Filetime);
-                  Second_Body : SMB.Bytes
-                    (0 .. 23 + Auth.Security_Token'Length) := (others => 0);
-                  Second_Used : Natural;
-               begin
-                  SMB.Core_Protocol.Build_Session_Setup
-                    (Auth.Security_Token, Second_Body, Second_Used,
-                     Engine_Status);
-                  if Engine_Status /= SMB.Ok then
-                     raise SMB.Authentication_Error with
-                       "authenticated SMB token exceeds limits";
-                  end if;
-                  SMB.Engine.Install_Session_Key
-                    (Client.Engine_Core, Challenge_Session_Id,
-                     Auth.Session_Key, Engine_Status);
-                  if Engine_Status /= SMB.Ok then
-                     raise SMB.Authentication_Error with
-                       "session engine rejected authenticated session key";
-                  end if;
-                  declare
-                     Second_Response : constant SMB.Bytes := Exchange
-                       (Client, SMB.Wire.Session_Setup_Command,
-                        Second_Body (0 .. Second_Used - 1),
-                        Sign_Request => False, Require_Signed_Response => True,
-                        Request_Session => Session_Identifier (Client),
-                        Response_Session => Session_Identifier (Client));
-                  begin
-                     pragma Unreferenced (Second_Response);
-                     Require_Status (Client, Client.Last_Status);
-                  end;
-               end;
-            end;
-         end;
+         SMB.Core_Client.Complete_Challenge
+           (Authentication, Client.Engine_Core, Response, Nt_Status,
+            Engine_Status);
+         Client.Last_Status := Nt_Status;
       end;
-      SMB.Engine.Mark_Authenticated (Client.Engine_Core, Engine_Status);
+      if Engine_Status = SMB.Unsupported_Feature
+        and then Nt_Status = SMB.Success
+      then
+         Require_Status (Client, Nt_Status);
+         raise SMB.Authentication_Error with
+           "server did not issue an NTLM challenge";
+      end if;
+      Require_Authentication_Status
+        (Engine_Status, "server returned a malformed NTLM challenge");
+      if Nt_Status /= SMB.Status_More_Processing_Required then
+         Require_Status (Client, Nt_Status);
+         raise SMB.Authentication_Error with
+           "server did not issue an NTLM challenge";
+      end if;
+      Get_Entropy (Client, Nonce);
+      SMB.Core_Client.Prepare_Authenticate
+        (Authentication, Client.Engine_Core, User, Password, Domain, Nonce,
+         SMB.Clock.Current_Filetime, Request, Used, Engine_Status);
+      Require_Authentication_Status
+        (Engine_Status, "cannot construct NTLM authentication token");
+      SMB.Transport.Send_Frame
+        (Client.Channel, Request (Request'First .. Request'First + Used - 1));
+      SMB.Core_Client.Authentication_Send_Succeeded
+        (Authentication, Client.Engine_Core, Engine_Status);
+      Require_Authentication_Status
+        (Engine_Status, "authentication token send was not acknowledged");
+      declare
+         Response : constant SMB.Bytes :=
+           SMB.Transport.Receive_Frame (Client.Channel);
+      begin
+         SMB.Core_Client.Complete_Authenticate
+           (Authentication, Client.Engine_Core, Response, Nt_Status,
+            Engine_Status);
+         Client.Last_Status := Nt_Status;
+      end;
       if Engine_Status /= SMB.Ok then
          raise SMB.Authentication_Error with
-           "session engine rejected authenticated session state";
+           "server did not complete signed SMB authentication";
       end if;
+      Require_Status (Client, Nt_Status);
    exception
       when E : others =>
          if Ada.Exceptions.Exception_Identity (E) = SMB.Invalid_State'Identity
          then
             raise;
+         end if;
+         if SMB.Core_Client.Authentication_Stage_Of (Authentication) in
+              SMB.Core_Client.Negotiate_Prepared |
+              SMB.Core_Client.Negotiate_Sent |
+              SMB.Core_Client.Challenge_Received |
+              SMB.Core_Client.Authenticate_Prepared |
+              SMB.Core_Client.Authenticate_Sent
+           and then SMB.Engine.Current_Phase (Client.Engine_Core) /=
+             Disconnected
+         then
+            SMB.Core_Client.Abort_Authentication
+              (Authentication, Client.Engine_Core, Engine_Status);
          end if;
          if Ada.Exceptions.Exception_Identity (E) = SMB.NT_Status_Error'Identity
          then

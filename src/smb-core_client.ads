@@ -1,3 +1,4 @@
+with SMB.Core_Auth;
 with SMB.Core_Protocol;
 with SMB.Core_Wire;
 with SMB.Engine;
@@ -25,6 +26,177 @@ is
      Natural range 0 .. SMB.Maximum_Frame_Size;
    type Transfer
      (Capacity : Transfer_Capacity) is limited private;
+
+   type Authentication_Stage is
+     (Authentication_Ready,
+      Negotiate_Prepared,
+      Negotiate_Sent,
+      Challenge_Received,
+      Authenticate_Prepared,
+      Authenticate_Sent,
+      Authentication_Finished,
+      Authentication_Failed);
+   type Authentication is limited private;
+
+   function Authentication_Stage_Of
+     (Value : Authentication) return Authentication_Stage;
+   function Authentication_Session_Id_Of
+     (Value : Authentication) return SMB.QWord;
+   function Authentication_Challenge_Length_Of
+     (Value : Authentication) return Natural;
+   function Authentication_Challenge_Byte_Of
+     (Value : Authentication; Index : Natural) return SMB.Byte
+   with Pre => Index < Authentication_Challenge_Length_Of (Value)
+       and then Index < SMB.Core_Auth.Maximum_Security_Token;
+   function Authentication_Buffer_Of
+     (Value : Authentication) return SMB.Bytes
+   with Ghost;
+   function Authentication_Expected_Of
+     (Value : Authentication)
+       return SMB.Engine.Request_Expectation
+   with Ghost;
+   function Authentication_Packet_Matches
+     (Value : Authentication;
+      State : SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Used : Natural) return Boolean
+   with Pre => Packet'Length <= SMB.Maximum_Frame_Size;
+
+   procedure Prepare_Negotiate
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Output'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Used <= Output'Length
+       and then
+         (Status /= SMB.Ok
+          or else
+            (Authentication_Stage_Of (Value) = Negotiate_Prepared
+             and then Authentication_Packet_Matches (Value, State, Output, Used)));
+
+   procedure Authentication_Send_Succeeded
+     (Value : in out Authentication;
+      State : SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status)
+   with
+     Post =>
+     (if Status = SMB.Ok then
+          (Authentication_Stage_Of (Value) in
+             Negotiate_Sent | Authenticate_Sent
+           and then Authentication_Stage_Of (Value)'Old in
+             Negotiate_Prepared | Authenticate_Prepared
+           and then SMB.Engine."=" (Authentication_Expected_Of (Value),
+             Authentication_Expected_Of (Value)'Old)));
+
+   procedure Complete_Challenge
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Nt_Status : out SMB.DWord;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       (if Status = SMB.Ok and then
+           Nt_Status = SMB.Status_More_Processing_Required
+        then
+          Authentication_Stage_Of (Value) = Challenge_Received
+          and then Authentication_Challenge_Length_Of (Value) <=
+            SMB.Core_Auth.Maximum_Security_Token
+          and then Authentication_Session_Id_Of (Value) /= 0
+          and then not SMB.Engine.Has_Pending_Request (State)
+          and then SMB.Engine.Response_Receipt_Matches
+            (State, 1, Nt_Status, False, False)
+          and then
+            (if Authentication_Challenge_Length_Of (Value) = 0
+             then True
+             else
+               Packet'Length >= 72
+               and then SMB.Engine.Current_Response_Info (State).Data_Offset =
+                 Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68))
+               and then SMB.Engine.Current_Response_Info (State).Data_Length =
+                 Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70))
+               and then
+               (for all Index in
+                  0 .. Authentication_Challenge_Length_Of (Value) - 1 =>
+                    Authentication_Challenge_Byte_Of (Value, Index) =
+                      Packet
+                        (Packet'First
+                         + (Natural
+                           (SMB.Core_Wire.Encoded_U16 (Packet, 68))
+                            + Index)))));
+
+   procedure Prepare_Authenticate
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      User, Password, Domain : String;
+      Nonce : SMB.Bytes;
+      Current_Filetime : SMB.QWord;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Output'Length <= SMB.Maximum_Frame_Size
+       and then Nonce'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Used <= Output'Length
+       and then
+         (Status /= SMB.Ok
+          or else
+            (Authentication_Stage_Of (Value) = Authenticate_Prepared
+             and then SMB.Engine.Has_Signing_Key (State)
+             and then SMB.Engine.Current_Session_Id (State) =
+               Authentication_Session_Id_Of (Value)
+             and then Authentication_Packet_Matches
+               (Value, State, Output, Used)));
+
+   procedure Complete_Authenticate
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Nt_Status : out SMB.DWord;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+        (if Status = SMB.Ok and then Nt_Status = SMB.Success then
+          Authentication_Stage_Of (Value) = Authentication_Finished
+          and then SMB.Engine.Current_Phase (State) = SMB.Engine.Authenticated
+          and then SMB.Engine.Has_Signing_Key (State)
+        elsif Authentication_Stage_Of (Value)'Old = Authenticate_Sent
+          and then SMB.Engine.Pending_Request_Matches
+            (State'Old, Authentication_Expected_Of (Value)'Old)
+        then
+          Authentication_Stage_Of (Value) = Authentication_Failed
+          and then SMB.Engine.Current_Phase (State) =
+            SMB.Engine.Disconnected
+        else
+          Authentication_Stage_Of (Value) =
+            Authentication_Stage_Of (Value)'Old
+          and then SMB.Engine.Current_Phase (State) =
+            SMB.Engine.Current_Phase (State)'Old
+          and then SMB.Engine.Has_Pending_Request (State) =
+            SMB.Engine.Has_Pending_Request (State)'Old
+          and then SMB.Engine.Has_Signing_Key (State) =
+            SMB.Engine.Has_Signing_Key (State)'Old);
+
+   procedure Abort_Authentication
+     (Value : in out Authentication;
+      State : in out SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status)
+   with
+     Post =>
+       (if Status = SMB.Ok then
+          Authentication_Stage_Of (Value) = Authentication_Failed
+          and then SMB.Engine.Current_Phase (State) =
+            SMB.Engine.Disconnected
+          and then not SMB.Engine.Has_Pending_Request (State)
+          and then not SMB.Engine.Has_Validated_Response (State)
+          and then SMB.Engine.Signing_Key_Is_Zero (State));
 
    type Transfer_Identity is private;
    function Identity_Of (Value : Transfer) return Transfer_Identity with Ghost;
@@ -432,6 +604,16 @@ is
             SMB.Engine.Disconnected);
 
 private
+   type Authentication is limited record
+      Stage : Authentication_Stage := Authentication_Ready;
+      Owner, Epoch : SMB.QWord := 0;
+      Session_Id : SMB.QWord := 0;
+      Expected : SMB.Engine.Request_Expectation;
+      Challenge_Length : Natural := 0;
+      Challenge : SMB.Bytes
+        (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
+   end record;
+
    type Transfer_Identity is record
       Kind : Transfer_Kind;
       Owner, Epoch : SMB.QWord;
