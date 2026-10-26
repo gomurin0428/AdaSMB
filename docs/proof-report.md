@@ -1,88 +1,104 @@
-# GNATprove report
+# GNATprove and test report
 
-## Result (2026-10-26)
+## Final clean proof
 
-The complete `make prove` run passed with **2,168 checks and zero unproved**:
-382 flow checks and 1,786 prover checks. All ten configured units were analyzed,
-with no skipped core subprograms, justified checks or `pragma Assume` statements.
+The complete `make prove` run passed after clearing generated proof intermediates
+with `gnatprove -P proof.gpr --clean`. GNATprove analyzed all ten configured
+units: `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Framing`,
+`SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Wire`,
+`SMB.Crypto` and `SMB.Engine`.
 
 | Category | Total | Flow | Proved by provers |
 | --- | ---: | ---: | ---: |
 | Data dependencies | 1 | 1 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
-| Initialization | 320 | 320 | 0 |
-| Run-time checks | 1,254 | 0 | 1,254 |
-| Assertions | 55 | 0 | 55 |
-| Functional contracts | 471 | 0 | 471 |
-| Termination | 66 | 60 | 6 |
-| **Total** | **2,168** | **382** | **1,786** |
+| Initialization | 372 | 372 | 0 |
+| Non-aliasing | 2 | 2 | 0 |
+| Run-time checks | 1,620 | 0 | 1,620 |
+| Assertions | 137 | 0 | 137 |
+| Functional contracts | 606 | 0 | 606 |
+| Termination | 87 | 81 | 6 |
+| **Total** | **2,826** | **457** | **2,369** |
 
-The units were `SMB`, `SMB.Crypto`, `SMB.Core_Wire`, `SMB.Core_Text`,
-`SMB.Core_NTLM`, `SMB.Core_Auth`, `SMB.Core_Framing`, `SMB.Core_Protocol`,
-`SMB.Core_Client` and `SMB.Engine`. Receipt-based transitions prove that success
-requires the matching old-state receipt; they do not assume that receipt as a
-semantic precondition. CREATE/CLOSE packet correspondence, signing preservation,
-typed operation lifecycle, and Engine handle metadata contracts are included.
+There were zero unproved or justified checks. All configured subprograms were
+analyzed; no core subprograms were skipped and no `pragma Assume` statements
+were reported. Six non-fatal “initialization ... has no effect” warnings remain
+on local parser variables in `SMB.Core_Protocol`.
 
-GNATprove reported six non-fatal "initialization ... has no effect" warnings on
-local parser variables in `SMB.Core_Protocol`; they do not correspond to
-unproved checks. The full raw run is at
-`gnatprove.out`, with the GNATprove summary at
-`build/proof-obj/gnatprove/gnatprove.out`, relative to the checkout root.
+The proof includes the bounded READ/WRITE transfer state and lifecycle:
+capacity and chunk bounds, owner/epoch/token validation, actual prepared packet
+fields tied to the validated handle and Engine request expectation, immutable
+WRITE snapshot preservation, and READ accumulation/copying from validated
+response bytes while preserving the prior prefix. Completion consumes a
+matching sent-stage response receipt once; WRITE progress uses the validated
+positive acknowledgement count. Empty WRITE performs no I/O, and short,
+zero-length and EOF READ responses finish without retry. Zero-count and
+over-count WRITE responses fail rather than advancing progress. Uncertain
+transport outcomes abort the transfer and invalidate Engine state without
+automatic retry. Existing CREATE/CLOSE packet, receipt, and handle contracts
+remain included.
 
-### Executed tests
+The proof does not establish the trusted socket/allocation/exception adapter,
+complete public-facade correctness, cryptographic hardness, server rollback, or
+exactly-once behavior after an uncertain write.
 
-* `make test`, `make build`, `make example`, `make check`: passed. Checks include
-  warnings-as-errors compilation and the source dependency/proof-scope audit.
-* Crypto/NTLM frozen vectors, DER/UTF rejection, nonzero-bound wire preservation,
-  request-layout and response-body tests, coordinator CREATE/CLOSE packet and
-  receipt lifecycle, receipt misuse, and signed-malformed-body invalidation: passed.
-* `make transport-test`: passed against a real TCP peer that never reads. The
-  0.5-second stalled-write deadline closed the connection and prevented reuse.
-* Python syntax check for the transport harness: passed.
-* Local Samba at `127.0.0.1:1445`, mandatory signing, SMB2.1: passed. Includes
-  authentication, 70,001-byte I/O, Unicode names, directory pagination,
-  rename/delete, error and stale/foreign-handle cases.
-* Seven adversarial proxy modes: truncated, oversized,
-  wrong-correlation-negotiate, dribble-timeout, unsigned, tampered-signature,
-  wrong-correlation-auth: all rejected as expected. A malformed signed CREATE
-  response was also rejected, after which the same public connection object
-  reconnected and completed a successful file operation.
+Raw GNATprove output is `gnatprove.out`; its summary is
+`build/proof-obj/gnatprove/gnatprove.out`, both relative to the checkout root.
 
-CI was not run. These results do not include a Windows-native client/server run.
+## Executed tests
+
+* `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make test`:
+  passed (`AdaSMB unit tests passed`), including bounded transfer fixtures for
+  partial WRITE continuation and payload snapshot preservation, empty WRITE,
+  response-receipt misuse, NTSTATUS after partial WRITE, short/zero/EOF READ,
+  multi-chunk READ prefix preservation, and invalid/overflowing transfer inputs.
+* `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check`:
+  passed, including warnings-as-errors builds of the library, tests and example,
+  plus the runtime dependency audit.
+* `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make prove`:
+  passed with the clean full-project result above.
+* `python3 -m py_compile tests/adversarial_proxy.py tests/samba_integration.py`:
+  passed.
+* `sudo -n env PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
+  python3 tests/samba_integration.py`: passed against local Samba on
+  `127.0.0.1:1445`. The normal public integration and all seven existing
+  adversarial cases passed. Malformed signed CREATE and interrupted READ
+  invalidation/reconnect regressions passed. In the lost-WRITE-response-after-
+  progress regression, the proxy relayed the first positive successful WRITE
+  response and dropped the second; it verified exactly two client WRITE
+  requests and two positive successful WRITE responses. The client reported
+  transport failure, rejected stale-handle operations, reconnected through the
+  same public connection, and read back the complete deterministic 70,001-byte
+  file.
+
+The unchanged transport-backpressure test was not rerun for this migration; its
+previous passing result is baseline evidence, not part of these current test
+results. CI and Windows-native testing were not performed.
 
 ## Reproduction
 
-With GNATprove, GPRbuild, cvc5 and z3 on PATH:
+With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:
 
 ```sh
 make build
 make test
-make example
 make check
+gnatprove -P proof.gpr --clean
 make prove
-make transport-test
+python3 -m py_compile tests/adversarial_proxy.py tests/samba_integration.py
 # Requires local Linux, Samba tools and root privileges:
 sudo env "PATH=$PATH" python3 tests/samba_integration.py
 ```
 
-The session's toolchain is in
-`/home/ubuntu/.local/share/ada/candidate-14/bin`; prepend it to PATH in this
-environment. That local installation path is not an installer or a portable
-toolchain lockfile. Reported versions: GNATprove `0.0w`, Why3 `1.6.0+git`,
-cvc5 `1.1.2`, z3 `4.13.0`.
-
-`make prove` runs the complete explicitly enumerated `proof.gpr` (no `-u`
-selection):
+`make prove` analyzes the complete explicitly enumerated `proof.gpr` project:
 
 ```sh
 gnatprove -P proof.gpr --mode=all --level=2 --report=all \
   --checks-as-errors=on --prover=cvc5,z3 --timeout=10 -j4
 ```
 
-Raw output is retained locally as `gnatprove.out`; the GNATprove summary is
-`build/proof-obj/gnatprove/gnatprove.out`. Generated proof/build files are ignored
-by Git. [assurance.md](assurance.md) lists the scope and every non-SPARK adapter
-subprogram. A successful proof covers the stated core contracts under their
-bounds and trust assumptions, not the entire public facade, OS, or cryptographic
+Generated proof/build files are ignored by Git. [assurance.md](assurance.md)
+lists the proved scope and non-SPARK adapter inventory. A successful proof
+covers the stated core contracts under their bounds and trust assumptions; it
+does not prove the entire public facade, operating system, or cryptographic
 security.

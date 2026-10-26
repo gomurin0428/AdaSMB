@@ -231,8 +231,9 @@ begin
            SMB.Client.List_Directory (Client);
          Found_Fixture : Boolean := False;
          Found_Readonly : Boolean := False;
+         Found_Interrupted_Read : Boolean := False;
       begin
-         Assert (Entries'Length = 1_202, "directory membership count mismatch");
+         Assert (Entries'Length = 1_203, "directory membership count mismatch");
          for Item of Entries loop
             declare
                Name : constant String :=
@@ -242,6 +243,8 @@ begin
                   Found_Fixture := True;
                elsif Name = "readonly.txt" then
                   Found_Readonly := True;
+               elsif Name = "interrupted-read.bin" then
+                  Found_Interrupted_Read := True;
                elsif Name'Length = 19
                  and then Name (1 .. 11) = "pagination-"
                  and then Name (12 .. 15) >= "0000"
@@ -254,7 +257,8 @@ begin
                end if;
             end;
          end loop;
-         Assert (Found_Fixture and Found_Readonly,
+         Assert
+           (Found_Fixture and Found_Readonly and Found_Interrupted_Read,
                  "required directory members are missing");
       end;
       declare

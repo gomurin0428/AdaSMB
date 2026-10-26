@@ -45,6 +45,11 @@ package SMB.Core_Wire is
      (SMB.Byte (Interfaces.Shift_Right (Value, Position * 8) and 16#FF#))
    with Pre => Position < 4;
 
+   function U64_Byte (Value : SMB.QWord; Position : Natural)
+     return SMB.Byte is
+     (SMB.Byte (Interfaces.Shift_Right (Value, Position * 8) and 16#FF#))
+   with Pre => Position < 8;
+
    function Encoded_U64 (Data : SMB.Bytes; Offset : Natural) return SMB.QWord is
      (SMB.QWord (Data (Data'First + Offset))
       or Interfaces.Shift_Left
@@ -148,6 +153,10 @@ package SMB.Core_Wire is
           and then Data'Length - Offset >= 8
           and then
           Encoded_U64 (Data, Offset) = Value
+          and then
+            (for all Byte_Index in 0 .. 7 =>
+               Data (Data'First + Offset + Byte_Index) =
+                 U64_Byte (Value, Byte_Index))
           and then
             (for all Index in Data'Range =>
                (if Index < Data'First + Offset

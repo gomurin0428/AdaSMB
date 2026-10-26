@@ -197,6 +197,9 @@ is
       Close_Token : Handle_Token := (others => 0))
    with
      Post =>
+       Current_Owner_Id (State) = Current_Owner_Id (State'Old)
+       and then Current_Epoch (State) = Current_Epoch (State'Old)
+       and then
        (if Status = SMB.Ok then
           Has_Pending_Request (State)
           and not Has_Validated_Response (State)
@@ -204,6 +207,7 @@ is
           and Message_Id = Expected.Message_Id
           and Expected.Request_Signed = Request_Signed
           and Expected.Signed = Response_Signed
+          and Expected.Request_Amount = Request_Amount
           and Pending_Request_Matches (State, Expected)
         else Message_Id = 0);
 
@@ -241,8 +245,25 @@ is
                (State, Pending_Command (State'Old), Nt_Status,
                 Pending_Response_Is_Signed (State'Old),
                 Pending_Command (State'Old) = 1
-                  and then Nt_Status = SMB.Success))
-        );
+                  and then Nt_Status = SMB.Success)
+               and then
+                 (if Pending_Command (State'Old) = 8
+                    and then Nt_Status = SMB.Success
+                  then Packet'Length >= 80
+                    and then Current_Response_Info (State).Data_Offset =
+                      Natural (Packet (Packet'First + 66))
+                    and then Packet (Packet'First + 67) = 0
+                    and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
+                      SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                    and then Current_Response_Info (State).Data_Length =
+                      Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
+                  elsif Pending_Command (State'Old) = 9
+                    and then Nt_Status = SMB.Success
+                  then Packet'Length >= 80
+                    and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
+                      SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                    and then Current_Response_Info (State).Count =
+                      Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68)))));
    --  A failed wire/signature check invalidates the session and all handles.
 
    procedure Register_Handle
@@ -362,4 +383,39 @@ private
       Receipt_Info : SMB.Core_Protocol.Response_Info;
       Handles : Handle_Table;
    end record;
+
+   function Has_Pending_Request (State : Engine_State) return Boolean is
+     (State.Pending);
+
+   function Has_Validated_Response (State : Engine_State) return Boolean is
+     (State.Receipt_Valid);
+
+   function Pending_Request_Matches
+     (State : Engine_State;
+      Expected : Request_Expectation) return Boolean is
+     (State.Pending
+      and then State.Pending_Expected.Command = Expected.Command
+      and then State.Pending_Expected.Message_Id = Expected.Message_Id
+      and then State.Pending_Expected.Session_Id = Expected.Session_Id
+      and then State.Pending_Expected.Tree_Id = Expected.Tree_Id
+      and then State.Pending_Expected.Request_Signed =
+        Expected.Request_Signed
+      and then State.Pending_Expected.Signed = Expected.Signed
+      and then State.Pending_Expected.Request_Amount =
+        Expected.Request_Amount
+      and then State.Pending_Expected.Close_Token.Owner =
+        Expected.Close_Token.Owner
+      and then State.Pending_Expected.Close_Token.Epoch =
+        Expected.Close_Token.Epoch
+      and then State.Pending_Expected.Close_Token.Ticket =
+        Expected.Close_Token.Ticket);
+
+   function Pending_Command
+     (State : Engine_State) return SMB.Core_Wire.Command_Code is
+     (State.Pending_Expected.Command);
+
+   function Pending_Response_Is_Signed
+     (State : Engine_State) return Boolean is
+     (State.Pending_Expected.Signed);
+
 end SMB.Engine;

@@ -14,6 +14,7 @@ package body SMB.Client is
    use type Ada.Exceptions.Exception_Id;
    use type SMB.Engine.Phase;
    use type SMB.Core_Client.Operation_Stage;
+   use type SMB.Core_Client.Transfer_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
    use type SMB.Word;
@@ -59,12 +60,6 @@ package body SMB.Client is
 
    function Tree_Identifier (Client : Connection) return SMB.DWord is
      (SMB.Engine.Current_Tree_Id (Client.Engine_Core));
-
-   function Read_Limit (Client : Connection) return Natural is
-     (SMB.Engine.Current_Max_Read (Client.Engine_Core));
-
-   function Write_Limit (Client : Connection) return Natural is
-     (SMB.Engine.Current_Max_Write (Client.Engine_Core));
 
    procedure Generate_Entropy (Output : out SMB.Bytes) is
       use Ada.Streams;
@@ -130,6 +125,21 @@ package body SMB.Client is
            "server returned NTSTATUS" & SMB.DWord'Image (Status);
       end if;
    end Require_Status;
+
+   procedure Require_Transfer_Status
+     (Status : SMB.Core_Status;
+      Context : String) is
+   begin
+      if Status = SMB.Ok then
+         return;
+      elsif Status in SMB.Invalid_State_Status | SMB.Invalid_Handle_Status then
+         raise SMB.Invalid_State with
+           Context & ": " & SMB.Core_Status'Image (Status);
+      else
+         raise SMB.Protocol_Error with
+           Context & ": " & SMB.Core_Status'Image (Status);
+      end if;
+   end Require_Transfer_Status;
 
    function Exchange
      (Client : in out Connection;
@@ -746,87 +756,63 @@ package body SMB.Client is
          end if;
          return Length;
       end Checked_Length;
-      Output : SMB.Bytes (0 .. Checked_Length - 1);
-      Position : SMB.QWord := Offset;
-      Remaining : Natural := Length;
-      File_Id : SMB.Bytes (0 .. 15);
-      Directory : Boolean;
+      Capacity : constant Natural := Checked_Length;
+      Transfer : SMB.Core_Client.Transfer (Capacity);
+      Output : SMB.Bytes (0 .. Capacity - 1);
+      Packet : SMB.Bytes
+        (0 .. SMB.Core_Wire.Header_Size + 48
+           + SMB.Core_Protocol.Maximum_IO_Chunk - 1);
+      Used : Natural;
+      Completed : Natural;
+      Nt_Status : SMB.DWord;
       Core_Status : SMB.Core_Status;
    begin
-      Check_Handle (Client, File, True, False, File_Id, Directory);
-      if Directory then
-         raise SMB.Protocol_Error with "invalid SMB read request";
-      end if;
-      SMB.Core_Protocol.Check_Transfer_Range (Offset, Length, Core_Status);
-      if Core_Status /= SMB.Ok then
-         raise SMB.Protocol_Error with "SMB read offset overflow";
-      end if;
-      while Remaining > 0 loop
+      SMB.Core_Client.Start_Read
+        (Transfer, Client.Engine_Core, File.Engine_Token, Offset, Capacity,
+         Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB READ start");
+      while SMB.Core_Client.Transfer_Stage_Of (Transfer) /=
+        SMB.Core_Client.Transfer_Finished
+      loop
+         SMB.Core_Client.Prepare_Next
+           (Transfer, Client.Engine_Core, Packet, Used, Core_Status);
+         Require_Transfer_Status (Core_Status, "SMB READ preparation");
+         SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
+         SMB.Core_Client.Transfer_Send_Succeeded
+           (Transfer, Client.Engine_Core, Core_Status);
+         Require_Transfer_Status (Core_Status, "SMB READ send acknowledgement");
          declare
-            Amount : Natural;
-            Payload : SMB.Bytes (0 .. 48) := (others => 0);
-            Used : Natural;
+            Response : constant SMB.Bytes :=
+              SMB.Transport.Receive_Frame (Client.Channel);
          begin
-            SMB.Core_Protocol.Select_Transfer_Amount
-              (Remaining, Read_Limit (Client), Amount, Core_Status);
-            if Core_Status /= SMB.Ok then
-               raise SMB.Protocol_Error with "invalid SMB read limit";
+            SMB.Core_Client.Complete_Read
+              (Transfer, Client.Engine_Core, Response, Nt_Status, Core_Status);
+            Require_Transfer_Status (Core_Status, "SMB READ response");
+            Client.Last_Status := Nt_Status;
+            if Nt_Status /= SMB.Status_End_Of_File then
+               Require_Status (Client, Nt_Status);
             end if;
-            SMB.Core_Protocol.Build_Read
-              (File_Id, Position, Amount, Payload, Used, Core_Status);
-            if Core_Status /= SMB.Ok or else Amount = 0 then
-               raise SMB.Protocol_Error with "invalid SMB READ request bounds";
-            end if;
-            declare
-               Response : constant SMB.Bytes := Exchange
-                 (Client, SMB.Wire.Read_Command, Payload (0 .. Used - 1),
-                  Sign_Request => True, Require_Signed_Response => True,
-                  Request_Session => Session_Identifier (Client),
-                  Response_Session => Session_Identifier (Client),
-                  Request_Tree => Tree_Identifier (Client),
-                  Response_Tree => Tree_Identifier (Client),
-                  Request_Amount => Amount);
-            begin
-               if Client.Last_Status = SMB.Status_End_Of_File then
-                  exit;
-               end if;
-               Require_Status (Client, Client.Last_Status);
-               declare
-                  Info : constant SMB.Core_Protocol.Response_Info :=
-                    SMB.Engine.Current_Response_Info (Client.Engine_Core);
-                  Completed : constant Natural := Length - Remaining;
-               begin
-                  Copy_Bytes
-                    (Output, Completed,
-                     Slice (Response, Info.Data_Offset, Info.Data_Length));
-                  SMB.Core_Protocol.Advance_Transfer
-                    (Position, Remaining, Amount, Info.Data_Length,
-                     Core_Status, Require_Progress => False);
-                  if Core_Status /= SMB.Ok then
-                     raise SMB.Protocol_Error with "invalid SMB read progress";
-                  end if;
-                  if Info.Data_Length = 0 or else Info.Data_Length < Amount then
-                     exit;
-                  end if;
-               end;
-            end;
          end;
       end loop;
-      declare
-         Completed : constant Natural := Length - Remaining;
-      begin
+      SMB.Core_Client.Copy_Read_Result
+        (Transfer, Output, Completed, Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB READ result");
       if Completed = 0 then
          return SMB.Bytes'(1 .. 0 => 0);
       end if;
       return Output (0 .. Completed - 1);
-      end;
    exception
-      when E : others =>
-         if Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
-           or else Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
-           or else Ada.Exceptions.Exception_Identity (E) = SMB.Authentication_Error'Identity
+      when others =>
+         if SMB.Core_Client.Transfer_Stage_Of (Transfer) =
+              SMB.Core_Client.Transfer_Prepared
+           or else SMB.Core_Client.Transfer_Stage_Of (Transfer) =
+             SMB.Core_Client.Transfer_Sent
          then
-            Clear_State (Client);
+            SMB.Core_Client.Abort_Transfer
+              (Transfer, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
+            Clear_State_Preserving_Status (Client);
          end if;
          raise;
    end Read;
@@ -836,77 +822,60 @@ package body SMB.Client is
       File : Handle;
       Offset : SMB.QWord;
       Data : SMB.Bytes) is
-      Position : SMB.QWord := Offset;
-      Remaining : Natural := Data'Length;
-      File_Id : SMB.Bytes (0 .. 15);
-      Directory : Boolean;
+      function Checked_Length return Natural is
+      begin
+         if Data'Length > SMB.Maximum_Frame_Size then
+            raise SMB.Protocol_Error with "invalid SMB write request";
+         end if;
+         return Data'Length;
+      end Checked_Length;
+      Capacity : constant Natural := Checked_Length;
+      Transfer : SMB.Core_Client.Transfer (Capacity);
+      Packet : SMB.Bytes
+        (0 .. SMB.Core_Wire.Header_Size + 48
+           + SMB.Core_Protocol.Maximum_IO_Chunk - 1);
+      Used : Natural;
+      Nt_Status : SMB.DWord;
       Core_Status : SMB.Core_Status;
    begin
-      Check_Handle (Client, File, False, True, File_Id, Directory);
-      if Directory or else Data'Length > SMB.Maximum_Frame_Size then
-         raise SMB.Protocol_Error with "invalid SMB write request";
-      end if;
-      SMB.Core_Protocol.Check_Transfer_Range
-        (Offset, Data'Length, Core_Status);
-      if Core_Status /= SMB.Ok then
-         raise SMB.Protocol_Error with "SMB write offset overflow";
-      end if;
-      while Remaining > 0 loop
+      SMB.Core_Client.Start_Write
+        (Transfer, Client.Engine_Core, File.Engine_Token, Offset, Data,
+         Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB WRITE start");
+      while SMB.Core_Client.Transfer_Stage_Of (Transfer) /=
+        SMB.Core_Client.Transfer_Finished
+      loop
+         SMB.Core_Client.Prepare_Next
+           (Transfer, Client.Engine_Core, Packet, Used, Core_Status);
+         Require_Transfer_Status (Core_Status, "SMB WRITE preparation");
+         SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
+         SMB.Core_Client.Transfer_Send_Succeeded
+           (Transfer, Client.Engine_Core, Core_Status);
+         Require_Transfer_Status
+           (Core_Status, "SMB WRITE send acknowledgement");
          declare
-            Amount : Natural;
+            Response : constant SMB.Bytes :=
+              SMB.Transport.Receive_Frame (Client.Channel);
          begin
-            SMB.Core_Protocol.Select_Transfer_Amount
-              (Remaining, Write_Limit (Client), Amount, Core_Status);
-            if Core_Status /= SMB.Ok then
-               raise SMB.Protocol_Error with "invalid SMB write limit";
-            end if;
-            declare
-               Sent : constant Natural := Data'Length - Remaining;
-               Payload : SMB.Bytes (0 .. 47 + Amount) := (others => 0);
-               Used : Natural;
-            begin
-               SMB.Core_Protocol.Build_Write
-                 (File_Id, Position, Slice (Data, Sent, Amount),
-                  Payload, Used, Core_Status);
-               if Core_Status /= SMB.Ok then
-                  raise SMB.Protocol_Error with
-                    "cannot build SMB WRITE request";
-               end if;
-               declare
-                  Response : constant SMB.Bytes := Exchange
-                    (Client, SMB.Wire.Write_Command,
-                     Payload (0 .. Used - 1),
-                     Sign_Request => True, Require_Signed_Response => True,
-                     Request_Session => Session_Identifier (Client),
-                     Response_Session => Session_Identifier (Client),
-                     Request_Tree => Tree_Identifier (Client),
-                     Response_Tree => Tree_Identifier (Client),
-                     Request_Amount => Amount);
-               begin
-                  pragma Unreferenced (Response);
-                  Require_Status (Client, Client.Last_Status);
-                  declare
-                     Info : constant SMB.Core_Protocol.Response_Info :=
-                       SMB.Engine.Current_Response_Info (Client.Engine_Core);
-                  begin
-                     SMB.Core_Protocol.Advance_Transfer
-                       (Position, Remaining, Amount, Info.Count, Core_Status);
-                     if Core_Status /= SMB.Ok then
-                        raise SMB.Protocol_Error with
-                          "invalid SMB write progress";
-                     end if;
-                  end;
-               end;
-            end;
+            SMB.Core_Client.Complete_Write
+              (Transfer, Client.Engine_Core, Response, Nt_Status, Core_Status);
+            Require_Transfer_Status (Core_Status, "SMB WRITE response");
+            Client.Last_Status := Nt_Status;
+            Require_Status (Client, Nt_Status);
          end;
       end loop;
    exception
-      when E : others =>
-         if Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
-           or else Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
-           or else Ada.Exceptions.Exception_Identity (E) = SMB.Authentication_Error'Identity
+      when others =>
+         if SMB.Core_Client.Transfer_Stage_Of (Transfer) =
+              SMB.Core_Client.Transfer_Prepared
+           or else SMB.Core_Client.Transfer_Stage_Of (Transfer) =
+             SMB.Core_Client.Transfer_Sent
          then
-            Clear_State (Client);
+            SMB.Core_Client.Abort_Transfer
+              (Transfer, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
+            Clear_State_Preserving_Status (Client);
          end if;
          raise;
    end Write;

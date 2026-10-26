@@ -712,18 +712,12 @@ is
    function Has_Open_Handles (State : Engine_State) return Boolean is
      (for some Item of State.Handles => Item.Active);
 
-   function Has_Pending_Request (State : Engine_State) return Boolean is
-     (State.Pending);
-
    function Has_Signing_Key (State : Engine_State) return Boolean is
      (State.Has_Key);
 
    function Current_Response_Info (State : Engine_State)
      return SMB.Core_Protocol.Response_Info is
      (State.Receipt_Info);
-
-   function Has_Validated_Response (State : Engine_State) return Boolean is
-     (State.Receipt_Valid);
 
    function Response_Receipt_Matches
      (State : Engine_State;
@@ -735,26 +729,6 @@ is
       and then State.Receipt_Status = Nt_Status
       and then State.Receipt_Signed = Signed
       and then State.Receipt_MIC_Valid = MIC_Valid);
-
-   function Pending_Request_Matches
-     (State : Engine_State;
-      Expected : Request_Expectation) return Boolean is
-     (State.Pending
-      and then State.Pending_Expected.Command = Expected.Command
-      and then State.Pending_Expected.Signed = Expected.Signed
-      and then State.Pending_Expected.Message_Id = Expected.Message_Id
-      and then State.Pending_Expected.Session_Id = Expected.Session_Id
-      and then State.Pending_Expected.Tree_Id = Expected.Tree_Id
-      and then State.Pending_Expected.Request_Signed =
-        Expected.Request_Signed
-      and then State.Pending_Expected.Request_Amount =
-        Expected.Request_Amount
-      and then State.Pending_Expected.Close_Token.Owner =
-        Expected.Close_Token.Owner
-      and then State.Pending_Expected.Close_Token.Epoch =
-        Expected.Close_Token.Epoch
-      and then State.Pending_Expected.Close_Token.Ticket =
-        Expected.Close_Token.Ticket);
 
    function Create_Receipt_Matches_File_Id
      (State : Engine_State;
@@ -778,14 +752,6 @@ is
       and then State.Receipt_Close_Token.Owner = Token.Owner
       and then State.Receipt_Close_Token.Epoch = Token.Epoch
       and then State.Receipt_Close_Token.Ticket = Token.Ticket);
-
-   function Pending_Command
-     (State : Engine_State) return SMB.Core_Wire.Command_Code is
-     (State.Pending_Expected.Command);
-
-   function Pending_Response_Is_Signed
-     (State : Engine_State) return Boolean is
-     (State.Pending_Expected.Signed);
 
    function Signing_Key_Is_Zero (State : Engine_State) return Boolean is
      (for all Key_Byte of State.Signing_Key => Key_Byte = 0);
