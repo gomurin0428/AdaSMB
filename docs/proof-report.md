@@ -2,32 +2,41 @@
 
 ## Result (2026-10-26)
 
-The complete `make prove` run passed with **1,717 checks and zero unproved**:
-321 flow checks and 1,396 prover checks. All nine configured units were analyzed,
+The complete `make prove` run passed with **2,168 checks and zero unproved**:
+382 flow checks and 1,786 prover checks. All ten configured units were analyzed,
 with no skipped core subprograms, justified checks or `pragma Assume` statements.
 
 | Category | Total | Flow | Proved by provers |
 | --- | ---: | ---: | ---: |
 | Data dependencies | 1 | 1 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
-| Initialization | 276 | 276 | 0 |
-| Run-time checks | 997 | 0 | 997 |
-| Assertions | 48 | 0 | 48 |
-| Functional contracts | 345 | 0 | 345 |
-| Termination | 49 | 43 | 6 |
-| **Total** | **1,717** | **321** | **1,396** |
+| Initialization | 320 | 320 | 0 |
+| Run-time checks | 1,254 | 0 | 1,254 |
+| Assertions | 55 | 0 | 55 |
+| Functional contracts | 471 | 0 | 471 |
+| Termination | 66 | 60 | 6 |
+| **Total** | **2,168** | **382** | **1,786** |
 
 The units were `SMB`, `SMB.Crypto`, `SMB.Core_Wire`, `SMB.Core_Text`,
-`SMB.Core_NTLM`, `SMB.Core_Auth`, `SMB.Core_Framing`, `SMB.Core_Protocol` and
-`SMB.Engine`. Receipt-based transitions prove that success requires the matching
-old-state receipt; they do not assume that receipt as a semantic precondition.
+`SMB.Core_NTLM`, `SMB.Core_Auth`, `SMB.Core_Framing`, `SMB.Core_Protocol`,
+`SMB.Core_Client` and `SMB.Engine`. Receipt-based transitions prove that success
+requires the matching old-state receipt; they do not assume that receipt as a
+semantic precondition. CREATE/CLOSE packet correspondence, signing preservation,
+typed operation lifecycle, and Engine handle metadata contracts are included.
+
+GNATprove reported six non-fatal "initialization ... has no effect" warnings on
+local parser variables in `SMB.Core_Protocol`; they do not correspond to
+unproved checks. The full raw run is at
+`/home/ubuntu/repos/AdaSMB/gnatprove.out`, with the GNATprove summary at
+`/home/ubuntu/repos/AdaSMB/build/proof-obj/gnatprove/gnatprove.out`.
 
 ### Executed tests
 
 * `make test`, `make build`, `make example`, `make check`: passed. Checks include
   warnings-as-errors compilation and the source dependency/proof-scope audit.
-* Crypto/NTLM frozen vectors, DER/UTF rejection, request-layout and response-body
-  tests, receipt misuse, signed-malformed-body invalidation: passed.
+* Crypto/NTLM frozen vectors, DER/UTF rejection, nonzero-bound wire preservation,
+  request-layout and response-body tests, coordinator CREATE/CLOSE packet and
+  receipt lifecycle, receipt misuse, and signed-malformed-body invalidation: passed.
 * `make transport-test`: passed against a real TCP peer that never reads. The
   0.5-second stalled-write deadline closed the connection and prevented reuse.
 * Python syntax check for the transport harness: passed.
@@ -36,7 +45,9 @@ old-state receipt; they do not assume that receipt as a semantic precondition.
   rename/delete, error and stale/foreign-handle cases.
 * Seven adversarial proxy modes: truncated, oversized,
   wrong-correlation-negotiate, dribble-timeout, unsigned, tampered-signature,
-  wrong-correlation-auth: all rejected as expected.
+  wrong-correlation-auth: all rejected as expected. A malformed signed CREATE
+  response was also rejected, after which the same public connection object
+  reconnected and completed a successful file operation.
 
 CI was not run. These results do not include a Windows-native client/server run.
 

@@ -2,6 +2,10 @@ with SMB.Core_Wire;
 
 package SMB.Core_Protocol is
    pragma SPARK_Mode (On);
+   use type SMB.Byte;
+   use type SMB.Word;
+   use type SMB.DWord;
+   use type SMB.QWord;
 
    Maximum_IO_Chunk : constant := 65_536;
    Maximum_Name_Bytes : constant := 65_534;
@@ -63,7 +67,34 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => Name'Length <= Maximum_Name_Bytes
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 56 + Natural'Max (1, Name'Length)
+            and then
+              (for all Byte_Index in 0 .. 3 =>
+                 Output (Output'First + 24 + Byte_Index) =
+                   SMB.Core_Wire.U32_Byte (Access_Mask, Byte_Index))
+            and then
+              (for all Byte_Index in 0 .. 3 =>
+                 Output (Output'First + 28 + Byte_Index) =
+                   SMB.Core_Wire.U32_Byte
+                     ((if Directory then 16#10# else 0), Byte_Index))
+            and then
+              (for all Byte_Index in 0 .. 3 =>
+                 Output (Output'First + 40 + Byte_Index) =
+                   SMB.Core_Wire.U32_Byte
+                     ((if Directory then 1 else 16#40#), Byte_Index))
+            and then
+              (for all Byte_Index in 0 .. 3 =>
+                 Output (Output'First + 36 + Byte_Index) =
+                   SMB.Core_Wire.U32_Byte (Disposition, Byte_Index))
+            and then
+              (for all Byte_Index in 0 .. 1 =>
+                 Output (Output'First + 46 + Byte_Index) =
+                   SMB.Core_Wire.U16_Byte
+                     (SMB.Word (Name'Length), Byte_Index)));
 
    procedure Build_Read
      (File_Id : SMB.Bytes;
@@ -96,7 +127,13 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => File_Id'Length = 16
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 24
+            and then
+              Output (Output'First + 8 .. Output'First + 23) = File_Id);
 
    procedure Build_Query_Directory
      (File_Id : SMB.Bytes;

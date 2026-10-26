@@ -1,11 +1,6 @@
-with Interfaces;
 with SMB.Crypto;
 
 package body SMB.Core_Wire with SPARK_Mode is
-   use type SMB.Byte;
-   use type SMB.QWord;
-   use type SMB.Word;
-
    procedure Read_U16
      (Data : SMB.Bytes; Offset : Natural; Value : out SMB.Word;
       Status : out SMB.Core_Status) is
@@ -136,9 +131,8 @@ package body SMB.Core_Wire with SPARK_Mode is
          Status := SMB.Invalid_Length;
          return;
       end if;
-      for Index in Data'Range loop
-         Data (Index) := 0;
-      end loop;
+      Data (Data'First .. Data'Last - (Data'Length - Header_Size)) :=
+        (others => 0);
       Data (Data'First .. Data'First + 3) :=
         (16#FE#, 16#53#, 16#4D#, 16#42#);
       Write_U16 (Data, 4, Header_Size, Field_Status);

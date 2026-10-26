@@ -8,7 +8,7 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes nine units (eight bodies plus `SMB`'s types).
+`proof.gpr` explicitly includes ten units (nine bodies plus `SMB`'s types).
 These are the implementations called by `SMB.Client`, not a parallel model.
 
 | Unit | Runtime responsibility |
@@ -21,6 +21,7 @@ These are the implementations called by `SMB.Client`, not a parallel model.
 | `SMB.Core_Wire` | Bounded integer readers/writers, SMB header construction/correlation validation and signing |
 | `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, transfer arithmetic and pagination limits |
+| `SMB.Core_Client` | Typed, receipt-gated CREATE/CLOSE preparation, signing, send acknowledgement, completion, handle registration and close-token consumption |
 | `SMB.Engine` | Phases, pending requests, signed response acceptance, single-use response receipts and handle identity/lifetime |
 
 Supported response bodies are parsed in the core after header/correlation and
@@ -30,7 +31,11 @@ connection. CREATE and CLOSE state updates are coupled to the matching receipt;
 malformed responses invalidate the engine and its handles. Core procedures return
 status values for malformed input. Inputs must meet documented **resource/array
 bounds**, not an assumption that a peer packet is well formed. The transport caps
-received allocations before invoking the core.
+received allocations before invoking the core. The CREATE/CLOSE facade path now
+uses `SMB.Core_Client` for the complete bounded packet and lifecycle; the adapter
+still owns socket I/O, exact-slice forwarding, allocation, exception translation
+and container lifetime. Other public operation paths remain on the legacy
+`SMB.Client.Exchange` adapter and are not claimed as migrated by this stage.
 
 Proof covers language-defined run-time checks, initialization, flow analysis and
 the contracts actually written in the source. It does not prove that every
@@ -57,8 +62,9 @@ understate this boundary.
 | `SMB.Client` | `Generate_Entropy`, `Get_Entropy` | OS CSPRNG or caller-provided entropy callback; no deterministic fallback |
 | `SMB.Client` | `Clear_State`, `Clear_State_Preserving_Status`, `Require_Status`, `Cleanup_Close`, `Finalize` | Cleanup and exception/NTSTATUS translation; finalization cannot report exceptions |
 | `SMB.Client` | `Exchange`, `Check_Handle`, `Validated_Path`, `Require_Relative_Share` | Core dispatch, frame assembly/copying, socket invocation and error translation |
-| `SMB.Client` | `Disposition_Value`, `Desired_Access` | Public enum/access-mask mapping |
-| `SMB.Client` | `Create_Internal`, `Close_Internal`, `Set_Disposition`, `Connect`, `Authenticate`, `Connect_Share`, `Open_File`, `Read`, `Write`, `Close`, `List_Directory`, `Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename`, `Disconnect` | Operation sequencing, local object/collection lifetime and recovery. Builders, parsers, path rules, transfer progress and state/handle decisions are delegated to the core. |
+| `SMB.Client` | `Disposition_Value` | Public enum mapping |
+| `SMB.Client` | `Create_Internal`, `Close_Internal` | Socket send/receive orchestration around the typed coordinator, exact returned packet slicing, status/exception translation and abort cleanup |
+| `SMB.Client` | `Set_Disposition`, `Connect`, `Authenticate`, `Connect_Share`, `Open_File`, `Read`, `Write`, `Close`, `List_Directory`, `Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename`, `Disconnect` | Legacy operation sequencing, local object/collection lifetime and recovery. These paths remain unmigrated; their existing `Exchange` adapter is outside this CREATE/CLOSE proof scope. |
 
 Tests and the example are outside the proof project. Their successful execution
 does not make the above bodies formally verified.

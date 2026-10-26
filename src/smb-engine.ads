@@ -31,6 +31,7 @@ is
       Session_Id : SMB.QWord := 0;
       Match_Tree : Boolean := False;
       Match_Session : Boolean := False;
+      Request_Signed : Boolean := False;
       Signed : Boolean := False;
       Request_Amount : Natural := 0;
       Close_Token : Handle_Token := (others => 0);
@@ -49,22 +50,29 @@ is
    function Current_Response_Info (State : Engine_State)
      return SMB.Core_Protocol.Response_Info;
    function Signing_Key_Is_Zero (State : Engine_State) return Boolean;
-   function Current_Owner_Id (State : Engine_State) return SMB.QWord
-     with Ghost;
-   function Current_Epoch (State : Engine_State) return SMB.QWord
-     with Ghost;
+   function Current_Owner_Id (State : Engine_State) return SMB.QWord;
+   function Current_Epoch (State : Engine_State) return SMB.QWord;
    function Valid_Handle
      (State : Engine_State;
       Token : Handle_Token;
       Need_Read, Need_Write : Boolean) return Boolean
+   with Ghost;
+   function Handle_Matches
+     (State : Engine_State;
+      Token : Handle_Token;
+      File_Id : SMB.Bytes;
+      Access_Mode : Access_Kind;
+      Is_Directory : Boolean) return Boolean
    with Ghost;
    function Has_Validated_Response (State : Engine_State) return Boolean;
    function Response_Receipt_Matches
      (State : Engine_State;
       Command : SMB.Core_Wire.Command_Code;
       Nt_Status : SMB.DWord;
-      Signed, MIC_Valid : Boolean) return Boolean
-   with Ghost;
+      Signed, MIC_Valid : Boolean) return Boolean;
+   function Pending_Request_Matches
+     (State : Engine_State;
+      Expected : Request_Expectation) return Boolean;
    function Create_Receipt_Matches_File_Id
      (State : Engine_State;
       File_Id : SMB.Bytes) return Boolean
@@ -192,7 +200,11 @@ is
        (if Status = SMB.Ok then
           Has_Pending_Request (State)
           and not Has_Validated_Response (State)
+          and Expected.Command = Command
           and Message_Id = Expected.Message_Id
+          and Expected.Request_Signed = Request_Signed
+          and Expected.Signed = Response_Signed
+          and Pending_Request_Matches (State, Expected)
         else Message_Id = 0);
 
    procedure Accept_Response
@@ -241,13 +253,13 @@ is
       Token : out Handle_Token;
       Status : out SMB.Core_Status)
    with
-     Post =>
+      Post =>
        (if Status = SMB.Ok then
           Current_Phase (State'Old) = Share_Connected
           and not Has_Pending_Request (State'Old)
           and Create_Receipt_Matches_File_Id (State'Old, File_Id)
           and
-          Valid_Handle (State, Token, False, False)
+          Handle_Matches (State, Token, File_Id, Access_Mode, Is_Directory)
           and not Has_Validated_Response (State)
         else Token.Owner = 0 and Token.Epoch = 0 and Token.Ticket = 0);
 
@@ -264,7 +276,19 @@ is
        (if File_Id'Length = 16 then
           (Status = SMB.Ok) =
             Valid_Handle (State, Token, Need_Read, Need_Write)
+          and then
+            (if Status = SMB.Ok then
+               Handle_Matches (State, Token, File_Id, Access_Mode, Is_Directory))
         else Status = SMB.Invalid_Length);
+
+   procedure Discard_Response_Receipt
+     (State : in out Engine_State;
+      Status : out SMB.Core_Status)
+   with
+     Post =>
+       (if Status = SMB.Ok then
+          not Has_Validated_Response (State)
+          and not Has_Pending_Request (State));
 
    procedure Close_Handle
      (State : in out Engine_State;
@@ -299,7 +323,8 @@ is
          (Current_Epoch (State) > Current_Epoch (State)'Old
           or Current_Owner_Id (State) = 0);
 
-   function Current_Signing_Key (State : Engine_State) return SMB.Bytes;
+   function Current_Signing_Key (State : Engine_State) return SMB.Bytes
+   with Post => Current_Signing_Key'Result'Length = 16;
 
 private
    type Handle_Record is record

@@ -162,6 +162,25 @@ def main() -> int:
                         )
                     finally:
                         proxy.join()
+                proxy_port = PORT + 8
+                proxy = AdversarialProxy(
+                    "malformed-signed-create",
+                    proxy_port,
+                    PORT,
+                    user=USER,
+                    password=PASSWORD,
+                )
+                proxy.start()
+                cleanup_env = env.copy()
+                cleanup_env.update(
+                    SMB_TEST_HOST="127.0.0.1",
+                    SMB_TEST_PORT=str(proxy_port),
+                    SMB_TEST_BACKEND_PORT=str(PORT),
+                )
+                try:
+                    run([str(ROOT / "build/bin/cleanup_client")], env=cleanup_env)
+                finally:
+                    proxy.join()
             finally:
                 try:
                     os.killpg(daemon.pid, signal.SIGTERM)

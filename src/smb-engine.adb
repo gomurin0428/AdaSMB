@@ -311,6 +311,7 @@ is
          Session_Id => State.Session_Id,
          Match_Tree => Tree_Match,
          Match_Session => Session_Match,
+         Request_Signed => Request_Signed,
          Signed => Response_Signed,
          Request_Amount => Request_Amount,
          Close_Token => Close_Token);
@@ -678,6 +679,24 @@ is
       end if;
    end Close_Handle;
 
+   procedure Discard_Response_Receipt
+     (State : in out Engine_State;
+      Status : out SMB.Core_Status) is
+   begin
+      if State.Pending then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      State.Receipt_Valid := False;
+      State.Receipt_Command := 0;
+      State.Receipt_Status := 0;
+      State.Receipt_Signed := False;
+      State.Receipt_MIC_Valid := False;
+      State.Receipt_Close_Token := (others => 0);
+      State.Receipt_Info := (others => <>);
+      Status := SMB.Ok;
+   end Discard_Response_Receipt;
+
    function Current_Phase (State : Engine_State) return Phase is
      (State.Current);
    function Current_Session_Id (State : Engine_State) return SMB.QWord is
@@ -716,6 +735,26 @@ is
       and then State.Receipt_Status = Nt_Status
       and then State.Receipt_Signed = Signed
       and then State.Receipt_MIC_Valid = MIC_Valid);
+
+   function Pending_Request_Matches
+     (State : Engine_State;
+      Expected : Request_Expectation) return Boolean is
+     (State.Pending
+      and then State.Pending_Expected.Command = Expected.Command
+      and then State.Pending_Expected.Signed = Expected.Signed
+      and then State.Pending_Expected.Message_Id = Expected.Message_Id
+      and then State.Pending_Expected.Session_Id = Expected.Session_Id
+      and then State.Pending_Expected.Tree_Id = Expected.Tree_Id
+      and then State.Pending_Expected.Request_Signed =
+        Expected.Request_Signed
+      and then State.Pending_Expected.Request_Amount =
+        Expected.Request_Amount
+      and then State.Pending_Expected.Close_Token.Owner =
+        Expected.Close_Token.Owner
+      and then State.Pending_Expected.Close_Token.Epoch =
+        Expected.Close_Token.Epoch
+      and then State.Pending_Expected.Close_Token.Ticket =
+        Expected.Close_Token.Ticket);
 
    function Create_Receipt_Matches_File_Id
      (State : Engine_State;
@@ -773,4 +812,24 @@ is
                   or else State.Handles (Index).Access_Mode /= Write_Only)
         and then (not Need_Write
                   or else State.Handles (Index).Access_Mode /= Read_Only)));
+
+   function Handle_Matches
+     (State : Engine_State;
+      Token : Handle_Token;
+      File_Id : SMB.Bytes;
+      Access_Mode : Access_Kind;
+      Is_Directory : Boolean) return Boolean is
+     (State.Current = Share_Connected
+      and then Token.Owner = State.Owner_Id
+      and then Token.Epoch = State.Epoch
+      and then Token.Ticket /= 0
+      and then File_Id'Length = 16
+      and then (for some Index in State.Handles'Range =>
+        State.Handles (Index).Active
+        and then State.Handles (Index).Ticket = Token.Ticket
+        and then State.Handles (Index).Access_Mode = Access_Mode
+        and then State.Handles (Index).Is_Directory = Is_Directory
+        and then (for all Byte_Index in 0 .. 15 =>
+          State.Handles (Index).File_Id (Byte_Index) =
+            File_Id (File_Id'First + Byte_Index))));
 end SMB.Engine;
