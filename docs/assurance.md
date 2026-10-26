@@ -62,7 +62,7 @@ understate this boundary.
 | `SMB.Client` | `Generate_Entropy`, `Get_Entropy` | OS CSPRNG or caller-provided entropy callback; no deterministic fallback |
 | `SMB.Client` | `Clear_State`, `Clear_State_Preserving_Status`, `Require_Status`, `Cleanup_Close`, `Finalize` | Cleanup and exception/NTSTATUS translation; finalization cannot report exceptions |
 | `SMB.Client` | `Exchange`, `Check_Handle`, `Validated_Path`, `Require_Relative_Share` | Core dispatch, frame assembly/copying, socket invocation and error translation |
-| `SMB.Client` | `Disposition_Value`, `Desired_Access` | Public enum/access-mask mapping |
+| `SMB.Client` | `Disposition_Value` | Public enum mapping |
 | `SMB.Client` | `Create_Internal`, `Close_Internal` | Socket send/receive orchestration around the typed coordinator, exact returned packet slicing, status/exception translation and abort cleanup |
 | `SMB.Client` | `Set_Disposition`, `Connect`, `Authenticate`, `Connect_Share`, `Open_File`, `Read`, `Write`, `Close`, `List_Directory`, `Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename`, `Disconnect` | Legacy operation sequencing, local object/collection lifetime and recovery. These paths remain unmigrated; their existing `Exchange` adapter is outside this CREATE/CLOSE proof scope. |
 

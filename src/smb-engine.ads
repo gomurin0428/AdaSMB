@@ -50,10 +50,8 @@ is
    function Current_Response_Info (State : Engine_State)
      return SMB.Core_Protocol.Response_Info;
    function Signing_Key_Is_Zero (State : Engine_State) return Boolean;
-   function Current_Owner_Id (State : Engine_State) return SMB.QWord
-     ;
-   function Current_Epoch (State : Engine_State) return SMB.QWord
-     ;
+   function Current_Owner_Id (State : Engine_State) return SMB.QWord;
+   function Current_Epoch (State : Engine_State) return SMB.QWord;
    function Valid_Handle
      (State : Engine_State;
       Token : Handle_Token;
@@ -71,8 +69,7 @@ is
      (State : Engine_State;
       Command : SMB.Core_Wire.Command_Code;
       Nt_Status : SMB.DWord;
-      Signed, MIC_Valid : Boolean) return Boolean
-     ;
+      Signed, MIC_Valid : Boolean) return Boolean;
    function Pending_Request_Matches
      (State : Engine_State;
       Expected : Request_Expectation) return Boolean;

@@ -294,7 +294,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Put_U32 (Output, 4, 2, Status);
       Put_U32 (Output, 28, (if Directory then 16#10# else 0), Status);
       Put_U32 (Output, 32, 7, Status);
-      Put_U32 (Output, 40, (if Directory then 1 else 16#40#), Status);
       Put_U16 (Output, 44, 120, Status);
       if Name'Length mod 2 /= 0 then
          Status := SMB.Invalid_Length;
@@ -325,6 +324,15 @@ package body SMB.Core_Protocol with SPARK_Mode is
             SMB.Core_Wire.U32_Byte (Disposition, 1),
             SMB.Core_Wire.U32_Byte (Disposition, 2),
             SMB.Core_Wire.U32_Byte (Disposition, 3));
+         Output (Output'First + 40 .. Output'First + 43) :=
+           (SMB.Core_Wire.U32_Byte
+              ((if Directory then 1 else 16#40#), 0),
+            SMB.Core_Wire.U32_Byte
+              ((if Directory then 1 else 16#40#), 1),
+            SMB.Core_Wire.U32_Byte
+              ((if Directory then 1 else 16#40#), 2),
+            SMB.Core_Wire.U32_Byte
+              ((if Directory then 1 else 16#40#), 3));
          Output (Output'First + 46 .. Output'First + 47) :=
            (SMB.Core_Wire.U16_Byte (SMB.Word (Name'Length), 0),
             SMB.Core_Wire.U16_Byte (SMB.Word (Name'Length), 1));

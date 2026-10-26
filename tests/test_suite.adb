@@ -14,6 +14,7 @@ with SMB.Wire;
 
 procedure Test_Suite is
    use type SMB.Core_Status;
+   use type SMB.Engine.Access_Kind;
    use type SMB.Engine.Phase;
    use type SMB.Bytes;
 
@@ -449,6 +450,7 @@ procedure Test_Suite is
         (Status = SMB.Ok and then Used = 57
          and then Create_Body (0) = 57
          and then Create_Body (46) = 0 and then Create_Body (47) = 0
+         and then Create_Body (40) = 16#40#
          and then Create_Body (56) = 0,
          "empty CREATE name padding");
 
@@ -570,7 +572,9 @@ procedure Test_Suite is
       Message_Id : SMB.QWord;
       Expected : SMB.Engine.Request_Expectation;
       Token : SMB.Engine.Handle_Token := (others => 0);
-      File_Id : constant SMB.Bytes (0 .. 15) := (others => 0);
+      File_Id : constant SMB.Bytes (0 .. 15) :=
+        (16#10#, 16#21#, 16#32#, 16#43#, 16#54#, 16#65#, 16#76#, 16#87#,
+         16#98#, 16#A9#, 16#BA#, 16#CB#, 16#DC#, 16#ED#, 16#FE#, 16#0F#);
       Wrong_File_Id : constant SMB.Bytes (0 .. 15) := (others => 1);
       Coordinator : SMB.Core_Client.Operation;
       Close_Coordinator : SMB.Core_Client.Operation;
@@ -579,6 +583,9 @@ procedure Test_Suite is
       Coordinator_Used : Natural;
       Coordinator_Token : SMB.Engine.Handle_Token := (others => 0);
       Rejected_Token : SMB.Engine.Handle_Token := (others => 0);
+      Validated_File_Id : SMB.Bytes (0 .. 15) := (others => 0);
+      Validated_Access : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      Validated_Directory : Boolean := False;
       Session_Id : constant SMB.QWord := 16#1234#;
       Tree_Id : constant SMB.DWord := 16#1020_3040#;
       Key : SMB.Bytes (0 .. 15) := (others => 0);
@@ -797,6 +804,12 @@ procedure Test_Suite is
            (Status = SMB.Ok
             and then Nt_Status = SMB.Status_More_Processing_Required,
             "accept session challenge receipt");
+         SMB.Engine.Install_Session_Key
+           (State, Session_Id + 1, Key, Status);
+         Assert
+           (Status /= SMB.Ok
+            and then SMB.Engine.Has_Validated_Response (State),
+            "challenge receipt accepted with a different session id");
          SMB.Engine.Install_Session_Key (State, Session_Id, Key, Status);
          Assert (Status = SMB.Ok, "consume challenge receipt");
       end;
@@ -855,9 +868,31 @@ procedure Test_Suite is
          Response : SMB.Bytes (0 .. 151) := (others => 0);
       begin
          SMB.Core_Client.Prepare_Create
-           (Coordinator, State, SMB.Bytes'(0, 0), SMB.Engine.Read_Only,
-            False, 1, False, Coordinator_Packet, Coordinator_Used, Status);
+           (Coordinator, State, SMB.Bytes'(0, 0), SMB.Engine.Read_Write,
+            True, 3, True, Coordinator_Packet, Coordinator_Used, Status);
          Assert (Status = SMB.Ok, "coordinator CREATE preparation");
+         Assert
+           (Coordinator_Packet (88 .. 91) =
+              SMB.Bytes'
+                (SMB.Core_Wire.U32_Byte
+                   (SMB.Core_Client.Access_Mask
+                      (SMB.Engine.Read_Write, True), 0),
+                 SMB.Core_Wire.U32_Byte
+                   (SMB.Core_Client.Access_Mask
+                      (SMB.Engine.Read_Write, True), 1),
+                 SMB.Core_Wire.U32_Byte
+                   (SMB.Core_Client.Access_Mask
+                      (SMB.Engine.Read_Write, True), 2),
+                 SMB.Core_Wire.U32_Byte
+                   (SMB.Core_Client.Access_Mask
+                      (SMB.Engine.Read_Write, True), 3))
+            and then Coordinator_Packet (104) = 1
+            and then Coordinator_Packet (100) = 3
+            and then SMB.Core_Client.Create_Delete_Access_Of
+              (Coordinator)
+            and then SMB.Core_Client.Create_Disposition_Of
+              (Coordinator) = 3,
+            "CREATE wire mask, options, and input metadata");
          SMB.Core_Client.Send_Succeeded (Coordinator, State, Status);
          Assert (Status = SMB.Ok, "coordinator CREATE send acknowledgement");
          Prepare_Response
@@ -874,6 +909,15 @@ procedure Test_Suite is
            (Status = SMB.Ok and then Nt_Status = SMB.Success
             and then SMB.Engine.Has_Open_Handles (State),
             "coordinator CREATE completion and handle registration");
+         SMB.Engine.Validate_Handle
+           (State, Coordinator_Token, False, False, Validated_File_Id,
+            Validated_Access, Validated_Directory, Status);
+         Assert
+           (Status = SMB.Ok
+            and then Validated_File_Id = File_Id
+            and then Validated_Access = SMB.Engine.Read_Write
+            and then Validated_Directory,
+            "CREATE input metadata registered on returned handle");
          SMB.Core_Client.Complete
            (Coordinator, State, Response, Nt_Status,
             Rejected_Token, Status);
@@ -885,7 +929,7 @@ procedure Test_Suite is
            (Status = SMB.Ok,
             "coordinator CLOSE preparation " & SMB.Core_Status'Image (Status));
          Assert
-           (Close_Packet (72 .. 87) = File_Id,
+           (Close_Packet (72 .. 87) = Validated_File_Id,
             "coordinator CLOSE encoded validated FileId");
          SMB.Core_Client.Complete
            (Close_Coordinator, State, Response, Nt_Status,

@@ -3,25 +3,6 @@ package body SMB.Core_Client
 is
    Header_Length : constant Natural := SMB.Core_Wire.Header_Size;
 
-   function Access_Mask
-     (Mode : SMB.Engine.Access_Kind;
-      Delete_Access : Boolean) return SMB.DWord is
-      Result : SMB.DWord := 16#80# or 16#100000#;
-   begin
-      case Mode is
-         when SMB.Engine.Read_Only =>
-            Result := Result or 1;
-         when SMB.Engine.Write_Only =>
-            Result := Result or 2 or 4;
-         when SMB.Engine.Read_Write =>
-            Result := Result or 1 or 2 or 4;
-      end case;
-      if Delete_Access then
-         Result := Result or 16#10000#;
-      end if;
-      return Result;
-   end Access_Mask;
-
    procedure Clear_Output (Output : out SMB.Bytes) is
    begin
       for Index in Output'Range loop
@@ -58,7 +39,11 @@ is
             Expected.Tree_Id
           and then SMB.Core_Wire.Encoded_U64 (Packet, 40) =
             Expected.Session_Id
-          and then SMB.Core_Wire.Encoded_U32 (Packet, 16) = 8)
+          and then SMB.Core_Wire.Encoded_U32 (Packet, 16) = 8
+          and then
+            (for all Index in Packet'Range =>
+               (if Index - Packet'First >= Header_Length
+                then Packet (Index) = Packet'Old (Index))))
    is
       Field_Status : SMB.Core_Status;
    begin
@@ -93,6 +78,12 @@ is
 
    function Create_Directory_Of (Value : Operation) return Boolean is
      (Value.Directory);
+
+   function Create_Delete_Access_Of (Value : Operation) return Boolean is
+     (Value.Delete_Access);
+
+   function Create_Disposition_Of (Value : Operation) return SMB.DWord is
+     (Value.Disposition);
 
    function Close_Token_Of (Value : Operation)
      return SMB.Engine.Handle_Token is
@@ -293,10 +284,7 @@ is
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
-      Value.File_Id :=
-        Output
-          (Output'First + Header_Length + 8
-             .. Output'First + Header_Length + 23);
+      Value.File_Id := File_Id;
       pragma Assert
         (SMB.Core_Wire.Encoded_U16 (Output, 12) =
            SMB.Word (Value.Expected.Command));
@@ -341,6 +329,7 @@ is
       Nt_Status := 0;
       Token := (others => 0);
       if Value.Stage /= Sent
+        or else Value.Kind not in Create_Operation | Close_Operation
         or else Value.Owner /= SMB.Engine.Current_Owner_Id (State)
         or else Value.Epoch /= SMB.Engine.Current_Epoch (State)
         or else not SMB.Engine.Pending_Request_Matches (State, Value.Expected)

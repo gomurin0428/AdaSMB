@@ -2,8 +2,8 @@
 
 ## Result (2026-10-26)
 
-The complete `make prove` run passed with **2,146 checks and zero unproved**:
-380 flow checks and 1,766 prover checks. All ten configured units were analyzed,
+The complete `make prove` run passed with **2,168 checks and zero unproved**:
+382 flow checks and 1,786 prover checks. All ten configured units were analyzed,
 with no skipped core subprograms, justified checks or `pragma Assume` statements.
 
 | Category | Total | Flow | Proved by provers |
@@ -11,11 +11,11 @@ with no skipped core subprograms, justified checks or `pragma Assume` statements
 | Data dependencies | 1 | 1 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 320 | 320 | 0 |
-| Run-time checks | 1,239 | 0 | 1,239 |
+| Run-time checks | 1,254 | 0 | 1,254 |
 | Assertions | 55 | 0 | 55 |
-| Functional contracts | 466 | 0 | 466 |
-| Termination | 64 | 58 | 6 |
-| **Total** | **2,146** | **380** | **1,766** |
+| Functional contracts | 471 | 0 | 471 |
+| Termination | 66 | 60 | 6 |
+| **Total** | **2,168** | **382** | **1,786** |
 
 The units were `SMB`, `SMB.Crypto`, `SMB.Core_Wire`, `SMB.Core_Text`,
 `SMB.Core_NTLM`, `SMB.Core_Auth`, `SMB.Core_Framing`, `SMB.Core_Protocol`,
@@ -45,7 +45,9 @@ unproved checks. The full raw run is at
   rename/delete, error and stale/foreign-handle cases.
 * Seven adversarial proxy modes: truncated, oversized,
   wrong-correlation-negotiate, dribble-timeout, unsigned, tampered-signature,
-  wrong-correlation-auth: all rejected as expected.
+  wrong-correlation-auth: all rejected as expected. A malformed signed CREATE
+  response was also rejected, after which the same public connection object
+  reconnected and completed a successful file operation.
 
 CI was not run. These results do not include a Windows-native client/server run.
 

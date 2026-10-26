@@ -83,6 +83,11 @@ package SMB.Core_Protocol is
                      ((if Directory then 16#10# else 0), Byte_Index))
             and then
               (for all Byte_Index in 0 .. 3 =>
+                 Output (Output'First + 40 + Byte_Index) =
+                   SMB.Core_Wire.U32_Byte
+                     ((if Directory then 1 else 16#40#), Byte_Index))
+            and then
+              (for all Byte_Index in 0 .. 3 =>
                  Output (Output'First + 36 + Byte_Index) =
                    SMB.Core_Wire.U32_Byte (Disposition, Byte_Index))
             and then

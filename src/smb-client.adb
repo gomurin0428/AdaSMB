@@ -349,6 +349,9 @@ package body SMB.Client is
          Additional_Access = File_Delete, Disposition_Value (Disposition),
          Is_Directory, Packet, Used, Core_Status);
       if Core_Status /= SMB.Ok then
+         if Core_Status = SMB.Invalid_State_Status then
+            raise SMB.Invalid_State with "SMB CREATE is not valid in this state";
+         end if;
          raise SMB.Protocol_Error with "SMB CREATE request exceeds limits";
       end if;
       SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
@@ -380,6 +383,11 @@ package body SMB.Client is
          then
             SMB.Core_Client.Abort_Operation
               (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) =
+           SMB.Engine.Disconnected
+         then
+            Clear_State_Preserving_Status (Client);
          end if;
          raise;
    end Create_Internal;
@@ -428,6 +436,11 @@ package body SMB.Client is
          then
             SMB.Core_Client.Abort_Operation
               (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) =
+           SMB.Engine.Disconnected
+         then
+            Clear_State_Preserving_Status (Client);
          end if;
          raise;
    end Close_Internal;

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import socket
 import struct
 import threading
@@ -19,16 +21,89 @@ def recv_exact(connection: socket.socket, length: int) -> bytes:
     return bytes(result)
 
 
+def md4(data: bytes) -> bytes:
+    message = bytearray(data)
+    bit_length = len(message) * 8
+    message.append(0x80)
+    message.extend(b"\x00" * ((56 - len(message) % 64) % 64))
+    message.extend(struct.pack("<Q", bit_length))
+    a, b, c, d = 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476
+    mask = 0xFFFFFFFF
+
+    def rotate(value: int, amount: int) -> int:
+        return ((value << amount) | (value >> (32 - amount))) & mask
+
+    for offset in range(0, len(message), 64):
+        words = struct.unpack_from("<16I", message, offset)
+        aa, bb, cc, dd = a, b, c, d
+        for index in range(16):
+            value = (a + ((b & c) | (~b & d)) + words[index]) & mask
+            a, d, c, b = d, c, b, rotate(value, (3, 7, 11, 19)[index % 4])
+        order = (0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15)
+        for index, word_index in enumerate(order):
+            value = (
+                a
+                + ((b & c) | (b & d) | (c & d))
+                + words[word_index]
+                + 0x5A827999
+            ) & mask
+            a, d, c, b = d, c, b, rotate(value, (3, 5, 9, 13)[index % 4])
+        order = (0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15)
+        for index, word_index in enumerate(order):
+            value = (a + (b ^ c ^ d) + words[word_index] + 0x6ED9EBA1) & mask
+            a, d, c, b = d, c, b, rotate(value, (3, 9, 11, 15)[index % 4])
+        a = (a + aa) & mask
+        b = (b + bb) & mask
+        c = (c + cc) & mask
+        d = (d + dd) & mask
+    return struct.pack("<4I", a, b, c, d)
+
+
+def session_key_from_type3(packet: bytes, user: str, password: str) -> bytes | None:
+    marker = b"NTLMSSP\x00\x03\x00\x00\x00"
+    start = packet.find(marker)
+    if start < 0 or len(packet) - start < 88:
+        return None
+    token = packet[start:]
+    nt_length, _, nt_offset = struct.unpack_from("<HHI", token, 20)
+    user_length, _, user_offset = struct.unpack_from("<HHI", token, 36)
+    domain_length, _, domain_offset = struct.unpack_from("<HHI", token, 28)
+    if (
+        nt_length < 16
+        or nt_offset > len(token)
+        or nt_length > len(token) - nt_offset
+        or user_offset > len(token)
+        or user_length > len(token) - user_offset
+        or domain_offset > len(token)
+        or domain_length > len(token) - domain_offset
+    ):
+        return None
+    wire_user = token[user_offset : user_offset + user_length].decode("utf-16le")
+    wire_domain = token[domain_offset : domain_offset + domain_length].decode(
+        "utf-16le"
+    )
+    identity = (wire_user.upper() + wire_domain).encode("utf-16le")
+    response_key = hmac.new(
+        md4(password.encode("utf-16le")), identity, hashlib.md5
+    ).digest()
+    proof = token[nt_offset : nt_offset + 16]
+    return hmac.new(response_key, proof, hashlib.md5).digest()
+
+
 class AdversarialProxy:
     def __init__(
         self,
         mode: str,
         listen_port: int,
         backend_port: int,
+        user: str = "",
+        password: str = "",
     ) -> None:
         self.mode = mode
         self.listen_port = listen_port
         self.backend_port = backend_port
+        self.user = user
+        self.password = password
         self.listener = socket.socket()
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.listener.bind(("127.0.0.1", listen_port))
@@ -94,12 +169,21 @@ class AdversarialProxy:
             done = threading.Event()
             relay_error: list[BaseException] = []
             mutated = False
+            session_key: bytes | None = None
 
             def client_to_server() -> None:
+                nonlocal session_key
                 try:
                     while not done.is_set():
                         header = recv_exact(client, 4)
                         payload = recv_exact(client, int.from_bytes(header[1:4], "big"))
+                        if self.mode == "malformed-signed-create":
+                            session_key = (
+                                session_key_from_type3(
+                                    payload, self.user, self.password
+                                )
+                                or session_key
+                            )
                         backend.sendall(header + payload)
                 except (EOFError, OSError) as error:
                     relay_error.append(error)
@@ -113,8 +197,39 @@ class AdversarialProxy:
                     payload = bytearray(
                         recv_exact(backend, int.from_bytes(header[1:4], "big"))
                     )
-                    if len(payload) >= 64 and payload[12:14] == b"\x03\x00":
-                        if self.mode == "unsigned":
+                    if len(payload) >= 64 and (
+                        payload[12:14] == b"\x03\x00"
+                        or (
+                            self.mode == "malformed-signed-create"
+                            and payload[12:14] == b"\x05\x00"
+                        )
+                    ):
+                        if self.mode == "malformed-signed-create":
+                            if payload[12:14] != b"\x05\x00":
+                                client.sendall(header + payload)
+                                continue
+                            if session_key is None:
+                                raise RuntimeError("could not derive SMB signing key")
+                            if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                                raise RuntimeError("server CREATE response was unsigned")
+                            original_signature = bytes(payload[48:64])
+                            signed_payload = bytearray(payload)
+                            signed_payload[48:64] = b"\x00" * 16
+                            expected_signature = hmac.new(
+                                session_key, signed_payload, hashlib.sha256
+                            ).digest()[:16]
+                            if not hmac.compare_digest(
+                                original_signature, expected_signature
+                            ):
+                                raise RuntimeError(
+                                    "derived key did not validate server CREATE signature"
+                                )
+                            payload[66] = 1
+                            payload[48:64] = b"\x00" * 16
+                            payload[48:64] = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                        elif self.mode == "unsigned":
                             flags = struct.unpack_from("<I", payload, 16)[0]
                             struct.pack_into("<I", payload, 16, flags & ~8)
                             payload[48:64] = b"\x00" * 16

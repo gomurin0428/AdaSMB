@@ -16,11 +16,23 @@ is
 
    type Operation is limited private;
 
+   function Access_Mask
+     (Mode : SMB.Engine.Access_Kind;
+      Delete_Access : Boolean) return SMB.DWord is
+     (16#80# or 16#100000#
+      or (case Mode is
+            when SMB.Engine.Read_Only => 1,
+            when SMB.Engine.Write_Only => 2 or 4,
+            when SMB.Engine.Read_Write => 1 or 2 or 4)
+      or (if Delete_Access then 16#10000# else 0));
+
    function Stage_Of (Value : Operation) return Operation_Stage;
    function Kind_Of (Value : Operation) return Operation_Kind;
    function Create_Access_Of (Value : Operation)
      return SMB.Engine.Access_Kind;
    function Create_Directory_Of (Value : Operation) return Boolean;
+   function Create_Delete_Access_Of (Value : Operation) return Boolean;
+   function Create_Disposition_Of (Value : Operation) return SMB.DWord;
    function Close_Token_Of (Value : Operation)
      return SMB.Engine.Handle_Token;
    function File_Id_Of (Value : Operation) return SMB.Bytes;
@@ -54,7 +66,9 @@ is
             and then Used >= SMB.Core_Wire.Header_Size
             and then Packet_Matches_Prepared (Value, State, Output, Used)
             and then Create_Access_Of (Value) = Access_Mode
-            and then Create_Directory_Of (Value) = Directory);
+            and then Create_Directory_Of (Value) = Directory
+            and then Create_Delete_Access_Of (Value) = Delete_Access
+            and then Create_Disposition_Of (Value) = Disposition);
 
    procedure Prepare_Close
      (Value : in out Operation;
@@ -73,6 +87,9 @@ is
             and then Kind_Of (Value) = Close_Operation
             and then Used >= SMB.Core_Wire.Header_Size
             and then Packet_Matches_Prepared (Value, State, Output, Used)
+            and then SMB.Engine.Handle_Matches
+              (State'Old, Token, File_Id_Of (Value),
+               Create_Access_Of (Value), Create_Directory_Of (Value))
             and then Close_Token_Of (Value).Owner = Token.Owner
             and then Close_Token_Of (Value).Epoch = Token.Epoch
             and then Close_Token_Of (Value).Ticket = Token.Ticket);
@@ -83,7 +100,9 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       (if Status = SMB.Ok then Stage_Of (Value) = Sent);
+       Status /= SMB.Ok
+       or (Stage_Of (Value) = Sent
+           and Stage_Of (Value)'Old = Prepared);
 
    procedure Complete
      (Value : in out Operation;
@@ -95,19 +114,19 @@ is
    with
      Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       (if Status = SMB.Ok then
-          Stage_Of (Value) = Finished
-          and then
-            (if Nt_Status = SMB.Success
-             then
-               (if Kind_Of (Value) = Create_Operation then
-                  SMB.Engine.Handle_Matches
-                    (State, Token, File_Id_Of (Value),
-                     Create_Access_Of (Value),
-                     Create_Directory_Of (Value))
-                else
-                  not SMB.Engine.Valid_Handle
-                    (State, Close_Token_Of (Value), False, False))));
+       Status /= SMB.Ok
+       or (Stage_Of (Value) = Finished
+           and Stage_Of (Value)'Old = Sent
+           and Kind_Of (Value) = Kind_Of (Value)'Old
+           and (Nt_Status /= SMB.Success
+                or (Kind_Of (Value)'Old = Create_Operation
+                    and SMB.Engine.Handle_Matches
+                      (State, Token, File_Id_Of (Value),
+                       Create_Access_Of (Value)'Old,
+                       Create_Directory_Of (Value)'Old))
+                or (Kind_Of (Value)'Old = Close_Operation
+                    and not SMB.Engine.Valid_Handle
+                      (State, Close_Token_Of (Value)'Old, False, False))));
 
    procedure Abort_Operation
      (Value : in out Operation;
@@ -164,7 +183,7 @@ private
                 Packet
                   (Packet'First + SMB.Core_Wire.Header_Size + 24 + Index) =
                 SMB.Core_Wire.U32_Byte (Value.Wire_Access, Index))
-           and then
+            and then
              (for all Index in 0 .. 3 =>
                 Packet
                   (Packet'First + SMB.Core_Wire.Header_Size + 28 + Index) =
@@ -173,8 +192,16 @@ private
            and then
              (for all Index in 0 .. 3 =>
                 Packet
+                  (Packet'First + SMB.Core_Wire.Header_Size + 40 + Index) =
+                SMB.Core_Wire.U32_Byte
+                  ((if Value.Directory then 1 else 16#40#), Index))
+           and then
+             (for all Index in 0 .. 3 =>
+                Packet
                   (Packet'First + SMB.Core_Wire.Header_Size + 36 + Index) =
                 SMB.Core_Wire.U32_Byte (Value.Disposition, Index))
+           and then Value.Wire_Access =
+             Access_Mask (Value.Access_Mode, Value.Delete_Access)
          elsif Value.Kind = Close_Operation then
            (for all Index in 0 .. 15 =>
               Packet
