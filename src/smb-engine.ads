@@ -39,6 +39,9 @@ is
 
    type Engine_State is private;
 
+   function Handle_Table_Equivalent
+     (Left, Right : Engine_State) return Boolean
+   with Ghost;
    function Current_Phase (State : Engine_State) return Phase;
    function Current_Session_Id (State : Engine_State) return SMB.QWord;
    function Current_Tree_Id (State : Engine_State) return SMB.DWord;
@@ -64,6 +67,27 @@ is
       Access_Mode : Access_Kind;
       Is_Directory : Boolean) return Boolean
    with Ghost;
+   function Handle_Matches_In_States
+     (Before, After : Engine_State;
+      Token : Handle_Token;
+      File_Id : SMB.Bytes;
+      Access_Mode : Access_Kind;
+      Is_Directory : Boolean) return Boolean
+   with
+     Ghost,
+     Pre => File_Id'Length = 16,
+     Post =>
+       Handle_Matches_In_States'Result =
+         (Handle_Table_Equivalent (Before, After)
+          and then Current_Phase (Before) = Current_Phase (After)
+          and then Current_Owner_Id (Before) = Current_Owner_Id (After)
+          and then Current_Epoch (Before) = Current_Epoch (After))
+       and then
+         (if Handle_Matches_In_States'Result then
+            Handle_Matches
+              (Before, Token, File_Id, Access_Mode, Is_Directory) =
+            Handle_Matches
+              (After, Token, File_Id, Access_Mode, Is_Directory));
    function Handle_Matches_Equivalent
      (State : Engine_State;
       Token : Handle_Token;
@@ -230,6 +254,9 @@ is
        Current_Owner_Id (State) = Current_Owner_Id (State'Old)
        and then Current_Epoch (State) = Current_Epoch (State'Old)
        and then
+         (if Status /= SMB.Ok and then not Has_Validated_Response (State'Old)
+          then State = State'Old)
+       and then
        (if Status = SMB.Ok then
           Has_Pending_Request (State)
           and not Has_Validated_Response (State)
@@ -240,7 +267,9 @@ is
           and Expected.Request_Amount = Request_Amount
           and Expected.Session_Id = Current_Session_Id (State)
           and Current_Session_Id (State) = Current_Session_Id (State'Old)
+          and Current_Phase (State) = Current_Phase (State'Old)
           and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
+          and Handle_Table_Equivalent (State'Old, State)
           and Pending_Request_Matches (State, Expected)
         else Message_Id = 0);
 
@@ -331,7 +360,11 @@ is
                     and then Current_Response_Info (State).Data_Length <=
                       Packet'Length -
                         Current_Response_Info (State).Data_Offset
-                    )));
+                    ))
+               and then
+                 (if Pending_Command (State'Old) = 17 then
+                    Current_Phase (State) = Current_Phase (State'Old)
+                    and then Handle_Table_Equivalent (State'Old, State)));
    --  A failed wire/signature check invalidates the session and all handles.
 
    procedure Register_Handle
@@ -375,7 +408,11 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       (if Status = SMB.Ok then
+       Current_Phase (State) = Current_Phase (State'Old)
+       and then Current_Owner_Id (State) = Current_Owner_Id (State'Old)
+       and then Current_Epoch (State) = Current_Epoch (State'Old)
+       and then Handle_Table_Equivalent (State'Old, State)
+       and then (if Status = SMB.Ok then
           not Has_Validated_Response (State)
           and not Has_Pending_Request (State));
 
@@ -408,6 +445,10 @@ is
        and not Has_Pending_Request (State)
        and not Has_Validated_Response (State)
        and Signing_Key_Is_Zero (State)
+       and Status =
+         (if Current_Epoch (State)'Old = SMB.QWord'Last
+          then SMB.Counter_Exhausted
+          else SMB.Ok)
        and
          (Current_Epoch (State) > Current_Epoch (State)'Old
           or Current_Owner_Id (State) = 0);

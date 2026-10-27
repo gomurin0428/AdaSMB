@@ -32,6 +32,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
              Position < Output'Length
              and then Output (Output'First + Position) = Value
              and then
+               (if Position > 0 then
+                  Output (Output'First .. Output'First + (Position - 1)) =
+                    Output'Old
+                      (Output'First .. Output'First + (Position - 1)))
+             and then
                (for all Index in Output'Range =>
                   (if Index - Output'First /= Position
                    then Output (Index) = Output'Old (Index)))
@@ -64,6 +69,18 @@ package body SMB.Core_Protocol with SPARK_Mode is
      and then Value'Length <= SMB.Maximum_Frame_Size,
      Post =>
        (if Status = SMB.Ok then
+          Position <= Output'Length
+          and then Value'Length <= Output'Length - Position
+          and then
+            (if Value'Length > 0 then
+               Output (Output'First + Position ..
+                       Output'Last -
+                         (Output'Length - Position - Value'Length)) = Value)
+          and then
+          (if Position >= 8 and then Output'Length >= 8 then
+             SMB.Core_Wire.Encoded_U32 (Output, 4) =
+               SMB.Core_Wire.Encoded_U32 (Output'Old, 4))
+          and then
           (if Value'Length > 0 then
              (for all Index in 0 .. Value'Length - 1 =>
                 Output (Output'First + Position + Index) =
@@ -77,6 +94,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
                 then Output (Index) = Output'Old (Index)))
           and then
             (if Position > 0 then
+               Output (Output'First .. Output'First + (Position - 1)) =
+                 Output'Old
+                   (Output'First .. Output'First + (Position - 1))
+               and then
                (for all Index in 0 .. Position - 1 =>
                   Output (Output'First + Index) =
                     Output'Old (Output'First + Index)))
@@ -112,6 +133,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
           (if Status = SMB.Ok then
              SMB.Core_Wire.Encoded_U16 (Output, Position) = Value
              and then
+               (if Position >= 8 and then Output'Length >= 8 then
+                  SMB.Core_Wire.Encoded_U32 (Output, 4) =
+                    SMB.Core_Wire.Encoded_U32 (Output'Old, 4))
+             and then
                (for all Index in Output'Range =>
                   (if Index - Output'First < Position
                      or else Index - Output'First >= Position + 2
@@ -135,6 +160,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
         Post =>
           (if Status = SMB.Ok then
              SMB.Core_Wire.Encoded_U32 (Output, Position) = Value
+             and then
+               (if Position >= 8 and then Output'Length >= 8 then
+                  SMB.Core_Wire.Encoded_U32 (Output, 4) =
+                    SMB.Core_Wire.Encoded_U32 (Output'Old, 4))
              and then
                (for all Byte_Index in 0 .. 3 =>
                   Output
@@ -551,7 +580,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
       elsif Name'Length > SMB.DWord'Last - 20 then
          Status := SMB.Resource_Limit;
       else
-         Put_U32 (Output, 4, 20 + SMB.DWord (Name'Length), Status);
+         Put_U32 (Output, 4, SMB.DWord (20 + Name'Length), Status);
       end if;
       Put_U16 (Output, 8, 96, Status);
       if Status = SMB.Ok then

@@ -241,7 +241,27 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => File_Id'Length = 16
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 33
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
+            and then Output (Output'First + 2) = 1
+            and then Output (Output'First + 3) = 13
+            and then SMB.Core_Wire.Encoded_U32 (Output, 4) = 1
+            and then SMB.Core_Wire.Encoded_U16 (Output, 8) = 96
+            and then
+              (for all Index in 10 .. 15 =>
+                 Output (Output'First + Index) = 0)
+            and then Output (Output'First + 10 .. Output'First + 15) =
+              SMB.Bytes'(10 .. 15 => 0)
+            and then
+              (for all Index in 0 .. 15 =>
+                 Output (Output'First + 16 + Index) =
+                   File_Id (File_Id'First + Index))
+            and then Output (Output'First + 32) =
+              (if Delete_File then 1 else 0));
 
    procedure Build_Rename
      (File_Id : SMB.Bytes;
@@ -252,7 +272,43 @@ package SMB.Core_Protocol is
    with Pre => File_Id'Length = 16
      and then Name'Length <= Maximum_Name_Bytes
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 52 + Name'Length
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
+            and then Output (Output'First + 2) = 1
+            and then Output (Output'First + 3) = 10
+            and then SMB.Core_Wire.Encoded_U32 (Output, 4) =
+              SMB.DWord (20 + Name'Length)
+            and then SMB.Core_Wire.Encoded_U16 (Output, 8) = 96
+            and then
+              (for all Index in 10 .. 15 =>
+                 Output (Output'First + Index) = 0)
+            and then Output (Output'First + 10 .. Output'First + 15) =
+              SMB.Bytes'(10 .. 15 => 0)
+            and then
+              (for all Index in 0 .. 15 =>
+                 Output (Output'First + 16 + Index) =
+                   File_Id (File_Id'First + Index))
+            and then
+              (for all Index in 32 .. 47 =>
+                 Output (Output'First + Index) = 0)
+            and then Output (Output'First + 32 .. Output'First + 47) =
+              SMB.Bytes'(32 .. 47 => 0)
+            and then SMB.Core_Wire.Encoded_U32 (Output, 48) =
+              SMB.DWord (Name'Length)
+            and then
+              (if Name'Length > 0 then
+                 Output (Output'First + 52 .. Output'First + (Used - 1)) =
+                   Name)
+            and then
+              (Name'Length = 0
+               or else
+                 (for all Index in 0 .. Name'Length - 1 =>
+                    Output (Output'First + 52 + Index) =
+                      Name (Name'First + Index))));
 
    procedure Build_Simple
      (Output : out SMB.Bytes;

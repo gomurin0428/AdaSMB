@@ -4,7 +4,6 @@ package body SMB.Core_Client
   with SPARK_Mode
 is
    pragma Unevaluated_Use_Of_Old (Allow);
-
    Header_Length : constant Natural := SMB.Core_Wire.Header_Size;
    procedure Sign_Packet
      (Packet : in out SMB.Bytes;
@@ -19,10 +18,26 @@ is
        and then Key'Length <= SMB.Maximum_Frame_Size,
      Post =>
        (if Status = SMB.Ok then
+          (if Packet'Length > Header_Length then
+             Packet (Packet'First + Header_Length .. Packet'Last) =
+               Packet'Old (Packet'First + Header_Length .. Packet'Last))
+          and then
           (for all Index in Packet'Range =>
              (if Index < Packet'First + 48
                 or else Index > Packet'First + 63
               then Packet (Index) = Packet'Old (Index)))
+          and then
+            SMB.Core_Wire.Encoded_U16 (Packet, 4) =
+              SMB.Core_Wire.Encoded_U16 (Packet'Old, 4)
+          and then
+            SMB.Core_Wire.Encoded_U16 (Packet, 12) =
+              SMB.Core_Wire.Encoded_U16 (Packet'Old, 12)
+          and then
+            SMB.Core_Wire.Encoded_U32 (Packet, 16) =
+              SMB.Core_Wire.Encoded_U32 (Packet'Old, 16)
+          and then
+            SMB.Core_Wire.Encoded_U64 (Packet, 24) =
+              SMB.Core_Wire.Encoded_U64 (Packet'Old, 24)
           and then
             SMB.Core_Wire.Encoded_U32 (Packet, 36) =
               SMB.Core_Wire.Encoded_U32 (Packet'Old, 36)
@@ -649,7 +664,9 @@ is
      Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
        (if Status = SMB.Ok then
-          SMB.Core_Wire.Encoded_U16 (Packet, 12) =
+          SMB.Core_Wire.Encoded_U16 (Packet, 4) = 64
+          and then SMB.Core_Wire.Encoded_U16 (Packet, 6) = 1
+          and then SMB.Core_Wire.Encoded_U16 (Packet, 12) =
             SMB.Word (Expected.Command)
           and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
             Expected.Message_Id
@@ -747,6 +764,430 @@ is
       Status :=
         (if Invalidate_Status = SMB.Ok then Failure else Invalidate_Status);
    end Fail_Directory;
+
+   function Metadata_Context_Valid
+     (Value : Metadata_Operation;
+      State : SMB.Engine.Engine_State) return Boolean
+   with Post =>
+     (if Metadata_Context_Valid'Result then
+        Value.Owner = SMB.Engine.Current_Owner_Id (State)
+        and then Value.Epoch = SMB.Engine.Current_Epoch (State)
+        and then Value.Expected.Command = 17
+        and then Value.Expected.Signed
+        and then Value.Expected.Request_Signed
+        and then SMB.Engine.Current_Phase (State) = SMB.Engine.Share_Connected
+        and then SMB.Engine.Handle_Matches
+          (State, Value.Token, Value.File_Id, Value.Access_Mode,
+           Value.Directory))
+   is
+      Id : SMB.Bytes (0 .. 15) := (others => 0);
+      Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      Is_Directory : Boolean := False;
+      S : SMB.Core_Status;
+   begin
+      if Value.Expected.Command /= 17
+        or else not Value.Expected.Signed
+        or else not Value.Expected.Request_Signed
+        or else Value.Owner /= SMB.Engine.Current_Owner_Id (State)
+        or else Value.Epoch /= SMB.Engine.Current_Epoch (State)
+        or else SMB.Engine.Current_Phase (State) /=
+          SMB.Engine.Share_Connected
+      then
+         return False;
+      end if;
+      SMB.Engine.Validate_Handle
+        (State, Value.Token, False, False, Id, Mode, Is_Directory, S);
+      if S /= SMB.Ok
+        or else Id /= Value.File_Id
+        or else Mode /= Value.Access_Mode
+        or else Is_Directory /= Value.Directory
+      then
+         return False;
+      end if;
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, Id, Mode, Is_Directory));
+      pragma Assert
+        (for all Index in Value.File_Id'Range =>
+           Id (Index) = Value.File_Id (Index));
+      pragma Assert
+        (SMB.Engine.Handle_Matches_Equivalent
+           (State, Value.Token, Id, Value.File_Id, Mode, Is_Directory));
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (State, Value.Token, Value.File_Id, Value.Access_Mode,
+            Value.Directory));
+      return True;
+   end Metadata_Context_Valid;
+
+   procedure Fail_Metadata
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Failure : SMB.Core_Status;
+      Status : out SMB.Core_Status)
+   with Pre => Failure /= SMB.Ok,
+     Post => Status /= SMB.Ok
+       and then Metadata_Stage_Of (Value) = Metadata_Failed
+       and then SMB.Engine.Current_Phase (State) = SMB.Engine.Disconnected
+   is
+      S : SMB.Core_Status;
+   begin
+      SMB.Engine.Invalidate (State, S);
+      Value.Stage := Metadata_Failed;
+      Status := (if S = SMB.Ok then Failure else S);
+   end Fail_Metadata;
+
+   procedure Prepare_Metadata
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token;
+      Kind : Metadata_Kind;
+      Delete_File : Boolean;
+      Name : SMB.Bytes;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Kind in Rename_Metadata | Disposition_Metadata
+       and then Name'Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+       and then Output'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Used <= Output'Length
+       and then
+         (if not Metadata_Preparation_Context_Matches
+               (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+             or else Output'Length <
+               Header_Length +
+                 (if Kind = Disposition_Metadata then 33 else 52 + Name'Length)
+             or else (Kind = Rename_Metadata
+                      and then (Name'Length = 0 or else Name'Length mod 2 /= 0))
+          then Status /= SMB.Ok
+            and then Metadata_Snapshot_Of (Value) =
+              Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old and then Used = 0)
+       and then
+         (if Status = SMB.Invalid_State_Status
+              and then not Metadata_Preparation_Context_Matches
+                (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+          then Metadata_Snapshot_Of (Value) =
+                 Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Used = 0)
+       and then
+         (if Status in SMB.Invalid_Length | SMB.Resource_Limit
+              and then Metadata_Stage_Of (Value) =
+                Metadata_Stage_Of (Value)'Old
+          then Metadata_Snapshot_Of (Value) =
+                 Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Used = 0)
+       and then
+         (if Status = SMB.Ok then
+            Metadata_Packet_Matches (Value, State, Output, Used)
+            and then Metadata_Stage_Of (Value)'Old = Metadata_Idle
+            and then Metadata_Kind_Of (Value) = Kind
+            and then Metadata_Snapshot_Of (Value).Token = Token
+            and then Metadata_Snapshot_Of (Value).Delete_File = Delete_File
+            and then Metadata_Snapshot_Of (Value).Name_Length = Name'Length
+            and then SMB.Engine.Handle_Matches_In_States
+              (State'Old, State, Token,
+               Metadata_Snapshot_Of (Value).File_Id,
+               Metadata_Snapshot_Of (Value).Access_Mode,
+               Metadata_Snapshot_Of (Value).Directory)
+            and then
+              (if Kind = Rename_Metadata then
+                 Name'Length > 0 and then Name'Length mod 2 = 0
+                 and then
+                   (for all Index in 0 .. Name'Length - 1 =>
+                      Output (Output'First + Header_Length + 52 + Index) =
+                        Name (Name'First + Index)))
+            and then SMB.Engine.Handle_Matches
+              (State'Old, Token,
+               Metadata_Snapshot_Of (Value).File_Id,
+               Metadata_Snapshot_Of (Value).Access_Mode,
+               Metadata_Snapshot_Of (Value).Directory)
+            and then SMB.Engine.Handle_Matches
+              (State, Token, Metadata_Snapshot_Of (Value).File_Id,
+               Metadata_Snapshot_Of (Value).Access_Mode,
+               Metadata_Snapshot_Of (Value).Directory))
+   is
+      Id : SMB.Bytes (0 .. 15) := (others => 0);
+      Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      Dir : Boolean := False;
+      S, B : SMB.Core_Status;
+      Body_Used : Natural;
+      Need : constant Natural :=
+        (if Kind = Disposition_Metadata then Header_Length + 33
+         else Header_Length + 52 + Name'Length);
+      Message : SMB.QWord := 0;
+      Expected : SMB.Engine.Request_Expectation;
+      E : SMB.Core_Status;
+      Before_Begin : constant SMB.Engine.Engine_State := State with Ghost;
+      Old_Metadata : constant Metadata_State_Snapshot :=
+        Metadata_Snapshot_Of (Value);
+   begin
+      Clear_Output (Output);
+      Used := 0;
+      if Value.Stage /= Metadata_Idle
+        or else SMB.Engine.Current_Phase (State) /=
+          SMB.Engine.Share_Connected
+        or else SMB.Engine.Has_Pending_Request (State)
+        or else SMB.Engine.Has_Validated_Response (State)
+        or else Token.Owner /= SMB.Engine.Current_Owner_Id (State)
+        or else Token.Epoch /= SMB.Engine.Current_Epoch (State)
+        or else Token.Ticket = 0
+      then
+         Status := SMB.Invalid_State_Status;
+         pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+         return;
+      end if;
+      if Kind = Rename_Metadata
+        and then (Name'Length = 0 or else Name'Length mod 2 /= 0)
+      then
+         Status := SMB.Invalid_Length;
+         pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+         return;
+      end if;
+      if Output'Length < Need then
+         Status := SMB.Resource_Limit;
+         pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+         return;
+      end if;
+      SMB.Engine.Validate_Handle
+        (State, Token, False, False, Id, Mode, Dir, S);
+      if S /= SMB.Ok then
+         Status := SMB.Invalid_State_Status;
+         pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+         return;
+      end if;
+      pragma Assert
+        (SMB.Engine.Handle_Matches (State, Token, Id, Mode, Dir));
+      pragma Assert
+        (Metadata_Preparation_Context_Matches (Old_Metadata, State, Token));
+      declare
+         Body_Buffer : SMB.Bytes (0 .. Need - Header_Length - 1);
+      begin
+         if Kind = Disposition_Metadata then
+            SMB.Core_Protocol.Build_Disposition
+              (Id, Delete_File, Body_Buffer, Body_Used, B);
+            if B = SMB.Ok then
+               pragma Assert
+                 (for all Index in 10 .. 15 => Body_Buffer (Index) = 0);
+            end if;
+         else
+            SMB.Core_Protocol.Build_Rename
+              (Id, Name, Body_Buffer, Body_Used, B);
+            if B = SMB.Ok then
+               pragma Assert
+                 (for all Index in 10 .. 15 => Body_Buffer (Index) = 0);
+               pragma Assert
+                 (Body_Buffer (32 .. 47) = SMB.Bytes'(32 .. 47 => 0));
+               pragma Assert (Body_Buffer'Length = 52 + Name'Length);
+               pragma Assert
+                 (for all Index in 0 .. Name'Length - 1 =>
+                    Body_Buffer (52 + Index) = Name (Name'First + Index));
+               pragma Assert (Body_Buffer (52 .. Body_Buffer'Last) = Name);
+            end if;
+         end if;
+         if B /= SMB.Ok then
+            Status := B;
+            pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+            return;
+         end if;
+         pragma Assert (Body_Used = Need - Header_Length);
+         pragma Assert
+           (for all Index in 10 .. 15 => Body_Buffer (Index) = 0);
+         Output (Output'First + Header_Length ..
+                 Output'First + (Need - 1)) := Body_Buffer;
+      end;
+      pragma Assert (Before_Begin = State);
+      pragma Assert
+        (for all Index in 10 .. 15 =>
+           Output (Output'First + Header_Length + Index) = 0);
+      SMB.Engine.Begin_Request
+        (State, 17, True, True, Message, Expected, S);
+      if S /= SMB.Ok then
+         Status := S;
+         pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+         return;
+      end if;
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (Before_Begin, Token, Id, Mode, Dir));
+      pragma Assert
+        (SMB.Engine.Handle_Matches_In_States
+           (Before_Begin, State, Token, Id, Mode, Dir));
+      pragma Assert (SMB.Engine.Handle_Matches (State, Token, Id, Mode, Dir));
+      Value.Kind := Kind;
+      Value.Owner := SMB.Engine.Current_Owner_Id (State);
+      Value.Epoch := SMB.Engine.Current_Epoch (State);
+      Value.Token := Token;
+      Value.File_Id := Id;
+      Value.Access_Mode := Mode;
+      Value.Directory := Dir;
+      Value.Delete_File := Delete_File;
+      Value.Name_Length := Name'Length;
+      Value.Expected := Expected;
+      Value.Stage := Metadata_Prepared;
+      pragma Assert (Value.File_Id = Id);
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (Before_Begin, Token, Value.File_Id, Value.Access_Mode,
+            Value.Directory));
+      pragma Assert
+        (SMB.Engine.Handle_Matches_In_States
+           (Before_Begin, State, Token, Value.File_Id, Value.Access_Mode,
+            Value.Directory));
+      Prepare_Header (Output, Expected, S);
+      if S = SMB.Ok then
+         Sign_Packet
+           (Output, Need, SMB.Engine.Current_Signing_Key (State), E);
+         S := E;
+      end if;
+      if S /= SMB.Ok then
+         Fail_Metadata (Value, State, S, Status);
+         Used := 0;
+         return;
+      end if;
+      Used := Need;
+      pragma Assert (Metadata_Packet_Matches (Value, State, Output, Used));
+      pragma Assert
+        (SMB.Engine.Handle_Matches
+           (Before_Begin, Token, Metadata_Snapshot_Of (Value).File_Id,
+            Metadata_Snapshot_Of (Value).Access_Mode,
+            Metadata_Snapshot_Of (Value).Directory));
+      pragma Assert
+        (SMB.Engine.Handle_Matches_In_States
+           (Before_Begin, State, Token, Metadata_Snapshot_Of (Value).File_Id,
+            Metadata_Snapshot_Of (Value).Access_Mode,
+            Metadata_Snapshot_Of (Value).Directory));
+      pragma Assert
+        (if Kind = Rename_Metadata then
+           Output (Output'First + Header_Length + 52 ..
+                   Output'First + (Need - 1)) = Name);
+      pragma Assert
+        (if Kind = Rename_Metadata then
+           (for all Index in 0 .. Name'Length - 1 =>
+              Output (Output'First + Header_Length + 52 + Index) =
+                Name (Name'First + Index)));
+      Status := SMB.Ok;
+   end Prepare_Metadata;
+
+   procedure Prepare_Disposition
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token;
+      Delete_File : Boolean;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status) is
+   begin
+      Prepare_Metadata (Value, State, Token, Disposition_Metadata,
+                        Delete_File, SMB.Bytes'(1 .. 0 => 0),
+                        Output, Used, Status);
+   end Prepare_Disposition;
+
+   procedure Prepare_Rename
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token;
+      Name : SMB.Bytes;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status) is
+   begin
+      Prepare_Metadata (Value, State, Token, Rename_Metadata, False,
+                        Name, Output, Used, Status);
+   end Prepare_Rename;
+
+   procedure Metadata_Send_Succeeded
+     (Value : in out Metadata_Operation;
+      State : SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status) is
+      Old_Metadata : constant Metadata_State_Snapshot :=
+        Metadata_Snapshot_Of (Value);
+   begin
+      if Value.Stage /= Metadata_Prepared
+        or else not Metadata_Context_Valid (Value, State)
+        or else not SMB.Engine.Pending_Request_Matches
+          (State, Value.Expected)
+      then
+         Status := SMB.Invalid_State_Status;
+         pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+      else
+         Value.Stage := Metadata_Sent;
+         Status := SMB.Ok;
+      end if;
+   end Metadata_Send_Succeeded;
+
+   procedure Complete_Metadata
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Nt_Status : out SMB.DWord;
+      Status : out SMB.Core_Status) is
+      Receipt_Status : SMB.Core_Status;
+      Before_Accept : constant SMB.Engine.Engine_State := State with Ghost;
+      Old_Metadata : constant Metadata_State_Snapshot :=
+        Metadata_Snapshot_Of (Value);
+   begin
+      Nt_Status := 0;
+      if Value.Stage /= Metadata_Sent
+        or else not Metadata_Context_Valid (Value, State)
+        or else not SMB.Engine.Pending_Request_Matches
+          (State, Value.Expected)
+      then
+         Status := SMB.Invalid_State_Status;
+         pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+         return;
+      end if;
+      SMB.Engine.Accept_Response (State, Packet, Nt_Status, Status);
+      if Status /= SMB.Ok then
+         Value.Stage := Metadata_Failed;
+         return;
+      end if;
+      pragma Assert
+        (SMB.Engine.Handle_Matches_In_States
+           (Before_Accept, State, Value.Token, Value.File_Id,
+            Value.Access_Mode, Value.Directory));
+      declare
+         Before_Discard : constant SMB.Engine.Engine_State := State with Ghost;
+      begin
+         SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         if Receipt_Status /= SMB.Ok then
+            Fail_Metadata (Value, State, Receipt_Status, Status);
+            return;
+         end if;
+         pragma Assert
+           (SMB.Engine.Handle_Matches_In_States
+              (Before_Discard, State, Value.Token, Value.File_Id,
+               Value.Access_Mode, Value.Directory));
+      end;
+      Value.Stage := Metadata_Finished;
+      Status := SMB.Ok;
+   end Complete_Metadata;
+
+   procedure Abort_Metadata
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status) is
+      S : SMB.Core_Status;
+      Old_Metadata : constant Metadata_State_Snapshot :=
+        Metadata_Snapshot_Of (Value);
+   begin
+      if Value.Stage not in Metadata_Prepared | Metadata_Sent
+        or else not Metadata_Context_Valid (Value, State)
+        or else not SMB.Engine.Pending_Request_Matches
+          (State, Value.Expected)
+      then
+         Status := SMB.Invalid_State_Status;
+         pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
+         return;
+      end if;
+      SMB.Engine.Invalidate (State, S);
+      Value.Stage := Metadata_Failed;
+      Status := S;
+   end Abort_Metadata;
 
    procedure Start_Directory
      (Value : in out Directory_Enumeration;
@@ -1292,9 +1733,8 @@ is
            Output (Output'First + Header_Length + 40 + Index) =
              SMB.Core_Wire.U32_Byte
                ((if Value.Directory then 1 else 16#40#), Index));
-      SMB.Core_Wire.Sign
-        (Output (Output'First .. Output'First + (Required - 1)),
-         Key, Field_Status);
+      Sign_Packet
+        (Output, Required, Key, Field_Status);
       if Field_Status /= SMB.Ok then
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
@@ -1755,9 +2195,10 @@ is
                    (Value.Completed + 1 .. Value.Completed + Amount);
             begin
                pragma Assert_And_Cut
-                 (for all Index in 0 .. Amount - 1 =>
+                 (Payload'Length = Amount and then
+                  (for all Index in 0 .. Amount - 1 =>
                     Payload (Payload'First + Index) =
-                      Value.Buffer (Value.Completed + Index + 1));
+                      Value.Buffer (Value.Completed + Index + 1)));
                SMB.Core_Protocol.Build_Write
                  (File_Id, Value.Position, Payload,
                   Body_Buffer, Body_Used, Field_Status);
@@ -2164,4 +2605,25 @@ is
       Value.Stage := Transfer_Failed;
       Status := Invalidate_Status;
    end Abort_Transfer;
+
+   function Metadata_Stage_Of
+     (Value : Metadata_Operation) return Metadata_Stage is
+     (Value.Stage);
+
+   function Metadata_Kind_Of
+     (Value : Metadata_Operation) return Metadata_Kind is
+     (Value.Kind);
+
+   function Metadata_Snapshot_Of
+     (Value : Metadata_Operation) return Metadata_State_Snapshot is
+     ((Kind => Value.Kind, Stage => Value.Stage,
+       Owner => Value.Owner, Epoch => Value.Epoch,
+       Token => Value.Token, File_Id => Value.File_Id,
+       Access_Mode => Value.Access_Mode, Directory => Value.Directory,
+       Delete_File => Value.Delete_File, Name_Length => Value.Name_Length,
+       Expected => Value.Expected));
+
+   function Metadata_Expected_Of
+     (Value : Metadata_Operation) return SMB.Engine.Request_Expectation is
+     (Value.Expected);
 end SMB.Core_Client;

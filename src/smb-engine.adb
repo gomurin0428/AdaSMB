@@ -800,6 +800,21 @@ is
           State.Handles (Index).File_Id (Byte_Index) =
             File_Id (File_Id'First + Byte_Index))));
 
+   function Handle_Table_Equivalent
+     (Left, Right : Engine_State) return Boolean is
+     (Left.Handles = Right.Handles);
+
+   function Handle_Matches_In_States
+     (Before, After : Engine_State;
+      Token : Handle_Token;
+      File_Id : SMB.Bytes;
+      Access_Mode : Access_Kind;
+      Is_Directory : Boolean) return Boolean is
+     (Handle_Table_Equivalent (Before, After)
+      and then Current_Phase (Before) = Current_Phase (After)
+      and then Current_Owner_Id (Before) = Current_Owner_Id (After)
+      and then Current_Epoch (Before) = Current_Epoch (After));
+
    function Handle_Matches_Equivalent
      (State : Engine_State;
       Token : Handle_Token;

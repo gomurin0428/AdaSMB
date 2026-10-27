@@ -175,10 +175,12 @@ class AdversarialProxy:
             write_responses = 0
             query_requests = 0
             query_responses = 0
+            set_info_requests = 0
             first_query_had_data = False
 
             def client_to_server() -> None:
                 nonlocal session_key, write_requests, query_requests
+                nonlocal set_info_requests
                 try:
                     while not done.is_set():
                         header = recv_exact(client, 4)
@@ -199,9 +201,21 @@ class AdversarialProxy:
                                 )
                                 done.set()
                                 return
+                        if len(payload) >= 64 and payload[12:14] == b"\x11\x00":
+                            set_info_requests += 1
+                            if (
+                                self.mode == "malformed-signed-set-info"
+                                and set_info_requests > 1
+                            ):
+                                relay_error.append(
+                                    RuntimeError("unexpected extra SET_INFO request")
+                                )
+                                done.set()
+                                return
                         if self.mode in {
                             "malformed-signed-create",
                             "malformed-signed-directory-second-page",
+                            "malformed-signed-set-info",
                         }:
                             session_key = (
                                 session_key_from_type3(
@@ -239,6 +253,10 @@ class AdversarialProxy:
                         or (
                             self.mode == "malformed-signed-directory-second-page"
                             and payload[12:14] == b"\x0e\x00"
+                        )
+                        or (
+                            self.mode == "malformed-signed-set-info"
+                            and payload[12:14] == b"\x11\x00"
                         )
                     ):
                         if self.mode == "lost-write-response-after-progress":
@@ -384,6 +402,48 @@ class AdversarialProxy:
                                 break
                             done.set()
                             break
+                        elif self.mode == "malformed-signed-set-info":
+                            if payload[12:14] != b"\x11\x00":
+                                client.sendall(header + payload)
+                                continue
+                            if session_key is None:
+                                raise RuntimeError("could not derive SMB signing key")
+                            if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                                raise RuntimeError("server SET_INFO response was unsigned")
+                            if struct.unpack_from("<H", payload, 64)[0] != 2:
+                                raise RuntimeError("unexpected SET_INFO structure size")
+                            original_signature = bytes(payload[48:64])
+                            signed_payload = bytearray(payload)
+                            signed_payload[48:64] = b"\x00" * 16
+                            expected_signature = hmac.new(
+                                session_key, signed_payload, hashlib.sha256
+                            ).digest()[:16]
+                            if not hmac.compare_digest(
+                                original_signature, expected_signature
+                            ):
+                                raise RuntimeError(
+                                    "derived key did not validate SET_INFO signature"
+                                )
+                            struct.pack_into("<H", payload, 64, 3)
+                            payload[48:64] = b"\x00" * 16
+                            payload[48:64] = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            client.sendall(header + payload)
+                            mutated = True
+                            upstream.join(timeout=11)
+                            if upstream.is_alive():
+                                raise RuntimeError(
+                                    "client did not close after malformed SET_INFO"
+                                )
+                            if not relay_error or not isinstance(
+                                relay_error[0], EOFError
+                            ):
+                                raise RuntimeError(
+                                    "upstream did not exit because the client "
+                                    f"closed: {relay_error!r}"
+                                )
+                            break
                         elif self.mode == "unsigned":
                             flags = struct.unpack_from("<I", payload, 16)[0]
                             struct.pack_into("<I", payload, 16, flags & ~8)
@@ -444,4 +504,13 @@ class AdversarialProxy:
                     raise RuntimeError(
                         "expected exactly two QUERY_DIRECTORY request/response pairs "
                         f"(requests={query_requests}, responses={query_responses})"
+                    )
+            if self.mode == "malformed-signed-set-info":
+                if set_info_requests != 1:
+                    raise RuntimeError(
+                        f"expected exactly one SET_INFO request, got {set_info_requests}"
+                    )
+                if not relay_error or not isinstance(relay_error[0], EOFError):
+                    raise RuntimeError(
+                        "SET_INFO client connection did not close after mutation"
                     )

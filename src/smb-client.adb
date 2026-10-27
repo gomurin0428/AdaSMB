@@ -16,6 +16,7 @@ package body SMB.Client is
    use type SMB.Core_Client.Transfer_Stage;
    use type SMB.Core_Client.Authentication_Stage;
    use type SMB.Core_Client.Directory_Stage;
+   use type SMB.Core_Client.Metadata_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
    use type SMB.Word;
@@ -488,32 +489,78 @@ package body SMB.Client is
       Client.Last_Status := Original_Status;
    end Cleanup_Close;
 
-   procedure Set_Disposition
-     (Client : in out Connection; File : Handle; Delete_File : Boolean) is
-      Payload : SMB.Bytes (0 .. 32) := (others => 0);
-      File_Id : SMB.Bytes (0 .. 15);
-      Directory : Boolean;
-      Used : Natural;
-      Build_Status : SMB.Core_Status;
+   procedure Execute_Metadata
+     (Client : in out Connection;
+      Operation : in out SMB.Core_Client.Metadata_Operation;
+      Packet : SMB.Bytes;
+      Used : Natural) is
+      Core_Status : SMB.Core_Status;
    begin
-      Check_Handle (Client, File, False, False, File_Id, Directory);
-      SMB.Core_Protocol.Build_Disposition
-        (File_Id, Delete_File, Payload, Used, Build_Status);
-      if Build_Status /= SMB.Ok then
-         raise SMB.Protocol_Error with "cannot build SMB disposition request";
+      SMB.Transport.Send_Frame
+        (Client.Channel, Packet (Packet'First .. Packet'First + Used - 1));
+      SMB.Core_Client.Metadata_Send_Succeeded
+        (Operation, Client.Engine_Core, Core_Status);
+      if Core_Status /= SMB.Ok then
+         raise SMB.Protocol_Error with "SMB SET_INFO send was not acknowledged";
       end if;
       declare
-         Response : constant SMB.Bytes := Exchange
-           (Client, SMB.Wire.Set_Info_Command, Payload (0 .. Used - 1),
-            Sign_Request => True, Require_Signed_Response => True,
-            Request_Session => Session_Identifier (Client),
-            Response_Session => Session_Identifier (Client),
-            Request_Tree => Tree_Identifier (Client),
-            Response_Tree => Tree_Identifier (Client));
+         Received : constant SMB.Bytes :=
+           SMB.Transport.Receive_Frame (Client.Channel);
       begin
-         pragma Unreferenced (Response);
-         Require_Status (Client, Client.Last_Status);
+         SMB.Core_Client.Complete_Metadata
+           (Operation, Client.Engine_Core, Received,
+            Client.Last_Status, Core_Status);
       end;
+      if Core_Status /= SMB.Ok then
+         raise SMB.Protocol_Error with "SMB SET_INFO response was rejected";
+      end if;
+   exception
+      when others =>
+         if SMB.Core_Client.Metadata_Stage_Of (Operation) =
+              SMB.Core_Client.Metadata_Prepared
+           or else SMB.Core_Client.Metadata_Stage_Of (Operation) =
+             SMB.Core_Client.Metadata_Sent
+         then
+            SMB.Core_Client.Abort_Metadata
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) =
+           SMB.Engine.Disconnected
+         then
+            Clear_State_Preserving_Status (Client);
+         end if;
+         raise;
+   end Execute_Metadata;
+
+   procedure Set_Disposition
+     (Client : in out Connection; File : Handle; Delete_File : Boolean) is
+      Packet : SMB.Bytes (0 .. 96) := (others => 0);
+      Used : Natural;
+      Core_Status : SMB.Core_Status;
+      Operation : SMB.Core_Client.Metadata_Operation;
+   begin
+      SMB.Core_Client.Prepare_Disposition
+        (Operation, Client.Engine_Core, File.Engine_Token, Delete_File,
+         Packet, Used, Core_Status);
+      if Core_Status /= SMB.Ok then
+         raise SMB.Invalid_State with "SMB handle rejected for SET_INFO";
+      end if;
+      Execute_Metadata (Client, Operation, Packet, Used);
+      Require_Status (Client, Client.Last_Status);
+   exception
+      when others =>
+         if SMB.Core_Client.Metadata_Stage_Of (Operation) in
+              SMB.Core_Client.Metadata_Prepared | SMB.Core_Client.Metadata_Sent
+         then
+            SMB.Core_Client.Abort_Metadata
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) =
+           SMB.Engine.Disconnected
+         then
+            Clear_State_Preserving_Status (Client);
+         end if;
+         raise;
    end Set_Disposition;
 
    procedure Require_Relative_Share (Share : String) is
@@ -1150,33 +1197,30 @@ package body SMB.Client is
       declare
          File : Handle := Create_Internal
            (Client, Old_Name, Read_Only, Open_Existing, False, File_Delete);
-         Payload : SMB.Bytes (0 .. 51 + New_UTF16'Length) := (others => 0);
-         File_Id : SMB.Bytes (0 .. 15);
-         Directory : Boolean;
+         Payload : SMB.Bytes (0 .. 63 + 52 + New_UTF16'Length) :=
+           (others => 0);
          Used : Natural;
-         Build_Status : SMB.Core_Status;
+         Core_Status : SMB.Core_Status;
+         Operation : SMB.Core_Client.Metadata_Operation;
       begin
-         Check_Handle (Client, File, False, False, File_Id, Directory);
-         SMB.Core_Protocol.Build_Rename
-           (File_Id, New_UTF16, Payload, Used, Build_Status);
-         if Build_Status /= SMB.Ok then
+         SMB.Core_Client.Prepare_Rename
+           (Operation, Client.Engine_Core, File.Engine_Token, New_UTF16,
+            Payload, Used, Core_Status);
+         if Core_Status /= SMB.Ok then
             raise SMB.Protocol_Error with "cannot build SMB rename request";
          end if;
-         declare
-            Response : constant SMB.Bytes := Exchange
-              (Client, SMB.Wire.Set_Info_Command, Payload (0 .. Used - 1),
-               Sign_Request => True, Require_Signed_Response => True,
-               Request_Session => Session_Identifier (Client),
-               Response_Session => Session_Identifier (Client),
-               Request_Tree => Tree_Identifier (Client),
-               Response_Tree => Tree_Identifier (Client));
-          begin
-            pragma Unreferenced (Response);
-            Require_Status (Client, Client.Last_Status);
-         end;
+         Execute_Metadata (Client, Operation, Payload, Used);
+         Require_Status (Client, Client.Last_Status);
          Close_Internal (Client, File);
       exception
          when others =>
+            if SMB.Core_Client.Metadata_Stage_Of (Operation) in
+                 SMB.Core_Client.Metadata_Prepared |
+                 SMB.Core_Client.Metadata_Sent
+            then
+               SMB.Core_Client.Abort_Metadata
+                 (Operation, Client.Engine_Core, Core_Status);
+            end if;
             if File.Engine_Token.Ticket /= 0
               and then SMB.Engine.Current_Phase (Client.Engine_Core) =
                 Share_Connected
@@ -1191,11 +1235,13 @@ package body SMB.Client is
       end;
    exception
       when E : others =>
-         if Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
+         if SMB.Engine.Current_Phase (Client.Engine_Core) =
+              SMB.Engine.Disconnected
+           or else Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Authentication_Error'Identity
          then
-            Clear_State (Client);
+            Clear_State_Preserving_Status (Client);
          end if;
          raise;
    end Rename;

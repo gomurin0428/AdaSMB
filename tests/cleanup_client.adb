@@ -5,6 +5,7 @@ with SMB.Client;
 
 procedure Cleanup_Client is
    use type SMB.Byte;
+   use type SMB.Bytes;
 
    function Env (Name : String) return String is
    begin
@@ -189,6 +190,55 @@ begin
       SMB.Client.Disconnect (Client);
       Ada.Text_IO.Put_Line
         ("malformed signed directory page cleanup and reconnect passed");
+   elsif Mode = "malformed-signed-set-info" then
+      declare
+         Rejected : Boolean := False;
+      begin
+         begin
+            SMB.Client.Rename
+              (Client, "set-info-source.txt", "set-info-renamed.txt");
+            raise Program_Error with
+              "malformed signed SET_INFO response was accepted";
+         exception
+            when SMB.Protocol_Error =>
+               Rejected := True;
+         end;
+         if not Rejected or else SMB.Client.Is_Connected (Client) then
+            raise Program_Error with
+              "malformed SET_INFO response did not disconnect the client";
+         end if;
+      end;
+      SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+      SMB.Client.Authenticate (Client, User, Password);
+      SMB.Client.Connect_Share (Client, Share);
+      declare
+         Renamed : SMB.Client.Handle :=
+           SMB.Client.Open_File
+             (Client, "set-info-renamed.txt", SMB.Client.Read_Only);
+         Contents : constant SMB.Bytes :=
+           SMB.Client.Read (Client, Renamed, 0, 24);
+         Fixture : SMB.Client.Handle :=
+           SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+      begin
+         if Contents'Length /= 24
+           or else SMB.Client.Read (Client, Fixture, 0, 1)'Length /= 1
+         then
+            raise Program_Error with
+              "SET_INFO reconnect could not read renamed file and fixture";
+         end if;
+         if Contents /= SMB.Bytes'(16#73#, 16#65#, 16#74#, 16#2D#,
+             16#69#, 16#6E#, 16#66#, 16#6F#, 16#2D#, 16#72#, 16#65#,
+             16#6E#, 16#61#, 16#6D#, 16#65#, 16#64#, 16#2D#, 16#63#,
+             16#6F#, 16#6E#, 16#74#, 16#65#, 16#6E#, 16#74#)
+         then
+            raise Program_Error with "renamed SET_INFO fixture content differs";
+         end if;
+         SMB.Client.Close (Client, Renamed);
+         SMB.Client.Close (Client, Fixture);
+      end;
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line
+        ("malformed signed SET_INFO response and remote rename effect passed");
    else
       Reached_Create := True;
       begin
