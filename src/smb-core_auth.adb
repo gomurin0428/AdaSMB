@@ -12,7 +12,7 @@ package body SMB.Core_Auth is
    use type SMB.Word;
 
    NTLM_Flags : constant SMB.DWord := 16#2088_8215#;
-   Required_Flags : constant SMB.DWord := 16#0088_8215#;
+   Required_Flags : constant SMB.DWord := 16#0088_8211#;
    Type1_Length : constant := 32;
    Type3_Header_Length : constant := 88;
 
@@ -938,10 +938,15 @@ package body SMB.Core_Auth is
             Status := SMB.Invalid_Encoding;
             return;
          end if;
-         Read_U16 (Type2, 12, Target_Name_Len, Read_Status);
-         if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
-         Read_U32 (Type2, 16, Target_Name_Off, Read_Status);
-         if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
+         if (Flags and 16#0000_0004#) /= 0 then
+            Read_U16 (Type2, 12, Target_Name_Len, Read_Status);
+            if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
+            Read_U32 (Type2, 16, Target_Name_Off, Read_Status);
+            if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
+         else
+            Target_Name_Len := 0;
+            Target_Name_Off := 0;
+         end if;
          Read_U16 (Type2, 40, Target_Len, Read_Status);
          if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
          Read_U32 (Type2, 44, Target_Off, Read_Status);
