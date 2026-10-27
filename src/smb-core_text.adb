@@ -325,70 +325,31 @@ package body SMB.Core_Text is
       Output : out String;
       Allow_Empty : Boolean;
       Status : out SMB.Core_Status) is
-      Component_Start : Natural := 0;
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
    begin
-      for I in Output'Range loop
-         Output (I) := Character'Val (0);
-      end loop;
-      Status := SMB.Ok;
-      if Input'Length = 0 then
-         if not Allow_Empty then
-            Status := SMB.Invalid_Value;
-         end if;
+      Output := (others => Character'Val (0));
+      if not Lexically_Valid_Path (Input, Allow_Empty) then
+         Status := SMB.Invalid_Value;
          return;
       end if;
-      for Offset in 0 .. Input'Length - 1 loop
-         pragma Loop_Invariant (Component_Start <= Offset);
-         declare
-            C : constant Character := Input (Input'First + Offset);
-            Component_Length : constant Natural := Offset - Component_Start;
-         begin
-            if C = Character'Val (0) or else C = ':' then
-               Status := SMB.Invalid_Value;
-               return;
-            elsif C = '/' or else C = '\' then
-               if Offset = 0
-                 or else Offset = Input'Length - 1
-                 or else Component_Length = 0
-                 or else (Component_Length = 2
-                          and then Input (Input'First + Component_Start
-                                          .. Input'First + Offset - 1) = "..")
-               then
-                  Status := SMB.Invalid_Value;
-                  return;
-               end if;
-               Output (Output'First + Offset) := '\';
-               Component_Start := Offset + 1;
-            else
-               Output (Output'First + Offset) := C;
-            end if;
-         end;
-      end loop;
-      if Input'Length - Component_Start = 2
-        and then Input (Input'First + Component_Start .. Input'Last) = ".."
-      then
-         Status := SMB.Invalid_Value;
+      if Input'Length > 0 then
+         for Offset in 0 .. Input'Length - 1 loop
+            Output (Output'First + Offset) :=
+              Normalized_Path_Character (Input (Input'First + Offset));
+            pragma Loop_Invariant
+              (for all J in 0 .. Offset =>
+                 Output (Output'First + J) =
+                   Normalized_Path_Character (Input (Input'First + J)));
+         end loop;
       end if;
+      Status := SMB.Ok;
    end Validate_Path;
 
    procedure Validate_Share
      (Input : String;
       Status : out SMB.Core_Status) is
    begin
-      Status := SMB.Ok;
-      if Input'Length = 0 then
-         Status := SMB.Invalid_Value;
-         return;
-      end if;
-      for C of Input loop
-         if C = Character'Val (0)
-           or else C = ':'
-           or else C = '/'
-           or else C = '\'
-         then
-            Status := SMB.Invalid_Value;
-            return;
-         end if;
-      end loop;
+      Status :=
+        (if Lexically_Valid_Share (Input) then SMB.Ok else SMB.Invalid_Value);
    end Validate_Share;
 end SMB.Core_Text;

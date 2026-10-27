@@ -126,7 +126,27 @@ begin
          Fixture : SMB.Client.Handle :=
            SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
          Rejected_Share : Boolean := False;
+         procedure Check_Rejected_Path (Path : String) is
+         begin
+            begin
+               declare
+                  Unexpected : SMB.Client.Handle :=
+                    SMB.Client.Open_File (Client, Path, SMB.Client.Read_Only);
+                  pragma Unreferenced (Unexpected);
+               begin
+                  raise Program_Error with "invalid relative path was accepted";
+               end;
+            exception
+               when SMB.Protocol_Error => null;
+            end;
+            Assert
+              (SMB.Client.Read (Client, Fixture, 0, 1)'Length = 1,
+               "invalid path damaged an existing handle");
+         end Check_Rejected_Path;
       begin
+         Check_Rejected_Path ("../fixture.txt");
+         Check_Rejected_Path ("/fixture.txt");
+         Check_Rejected_Path ("fixture.txt:stream");
          begin
             SMB.Client.Connect_Share (Client, Share);
          exception
