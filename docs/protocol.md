@@ -46,6 +46,14 @@ structure size、DataOffset（1 byte）、DataLength、要求との対応は引�
 
 * [MS-SMB2 2.2.20 READ Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/3e3d2f2c-0e2f-41ea-ad07-fbca6ffdfd90)
 
+ERROR 応答でも `Reserved`（1 byte）を無視します。隣接する
+`ErrorContextCount` は別のフィールドで、SMB 3.1.1 のエラーコンテキストは
+対象外のため、ゼロ以外は引き続き拒否します。エラー本文の structure size
+と ByteCount の境界、署名、要求との対応を検査したうえで、受信した
+NTSTATUS を呼び出し元へ返します。
+
+* [MS-SMB2 2.2.2 ERROR Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d4da8b67-c180-47e3-ba7a-d24214ac4aaa)
+
 ## NTLMv2/SPNEGO
 
 クライアントが出す SPNEGO は NTLM OID だけを含みます。応答は DER の

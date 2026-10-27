@@ -2,9 +2,9 @@
 
 ## Latest complete proof
 
-The complete `make prove` run passed for the READ reserved-field correction
-[`0569107`](https://github.com/gomurin0428/AdaSMB/commit/05691079f981bd013e345122122013f658395ef5).
-A focused protocol/Engine/client proof preceded the complete run, which started
+The complete `make prove` run passed for the ERROR reserved-byte correction
+[`606c641`](https://github.com/gomurin0428/AdaSMB/commit/606c641e8684d2b2edfc21b799e54ef011f32c42).
+A focused protocol proof preceded the complete run, which started
 after `gnatprove --clean`.
 GNATprove analyzed all thirteen configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
@@ -17,11 +17,11 @@ GNATprove analyzed all thirteen configured units:
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 539 | 539 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,394 | 0 | 2,394 |
+| Run-time checks | 2,392 | 0 | 2,392 |
 | Assertions | 292 | 0 | 292 |
 | Functional contracts | 994 | 0 | 994 |
 | Termination | 159 | 153 | 6 |
-| **Total** | **4,383** | **697** | **3,686** |
+| **Total** | **4,381** | **697** | **3,684** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -483,6 +483,35 @@ excludes its bytes from MAC verification.
 The full unit/Samba suites, strict forced build and dependency audit, and clean
 full proof passed. This does not expand the proof to the full facade or establish
 cryptographic hardness. No CI or Unicode oracle rerun was performed.
+
+## ERROR reserved-byte conformance
+
+[MS-SMB2 ERROR Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d4da8b67-c180-47e3-ba7a-d24214ac4aaa)
+requires the client to ignore Reserved at byte 67. The preceding
+ErrorContextCount byte is not interchangeable with it: nonzero context counts
+remain unsupported in this SMB 2.1-only parser. The correction removes only the
+Reserved-byte rejection from `Parse_Error`; structure size and ByteCount bounds
+and all existing contracts remain unchanged. Removing this check accounts for
+the two fewer run-time proof checks.
+
+The `error-reserved` selector accepts all 256 Reserved values for CREATE, READ,
+QUERY_DIRECTORY and SET_INFO error bodies, using nonzero array bounds. Controls
+still reject a nonzero ErrorContextCount, wrong structure size, truncated body,
+and oversized or overflowing ByteCount; empty ErrorData is still accepted.
+The same test against `91c48dd` fails at
+`SMB2.1 ERROR reserved byte was not ignored`.
+
+The new Samba `error-reserved-field` mode verifies the original signature of a
+missing-file CREATE error, changes only Reserved to all ones, and re-signs it.
+The public API reports `SMB.NT_Status_Error` with
+`STATUS_OBJECT_NAME_NOT_FOUND`, rather than treating the ignored byte as a
+protocol fault. The connection remains live and a previously opened handle
+still reads the fixture correctly before CLOSE and a complete LOGOFF exchange.
+This facade exception/connection-preservation behavior is tested, not a formal
+proof of the native wrapper.
+
+Full unit/Samba tests, strict forced build/dependency audit, and the clean full
+proof passed. No CI or Unicode oracle rerun was performed.
 
 ## Reproduction
 
