@@ -1,5 +1,53 @@
 # GNATprove and test report
 
+## Exact partial-transport outcomes
+
+`Core_Transport.Receive_Chunk` and `Advance_Write` now specify exact statuses:
+an already complete or out-of-range position returns `Invalid_Offset`; a
+non-progressing/out-of-range native result or an oversized receive chunk
+returns `Invalid_Length`; every valid transfer returns `Ok`. The existing
+byte-copy, untouched-prefix/tail and failure-preservation guarantees remain.
+`Prepare_Write` also specifies its canonical output index on failure.
+
+Focused controls cover extreme native offsets, invalid positions up to
+`Natural'Last`, error precedence, and empty arrays at upper permitted bounds.
+The existing byte-exact partial transfers and maximum frame controls remain.
+No implementation algorithm or accepted protocol policy is changed.
+
+### Validation
+
+The Candidate GNAT14 build, `transport-core` selector, focused proof of
+`smb-core_transport.adb`, `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, `make transport-test`, and full root
+Samba integration were accepted on commit `6f2bceb`; they were not rerun for
+this Makefile/docs-only follow-up. To avoid a GNAT 14.1 compiler crash during
+data-representation generation, the exact `Advance_Write` status mapping is
+stated as equivalent status predicates instead of a conditional expression.
+
+The initial clean full proof using per-check mode reported one unproved
+grouped postcondition for `SMB.Core_Connection.Prepare_Tree_Connect`, located
+at `smb-core_connection.ads:142`. GNATprove displayed the first conjunct
+(`Used <= Output'Length`), but the verification condition covered the grouped
+postcondition through line 173; the diagnostic did not establish that the
+first conjunct alone was the failing subcondition. The grouped postcondition
+was proved by the subsequent progressive full proof. No contract or assertion
+was weakened, and the final `Core_Connection` body is unchanged from
+`6f2bceb`.
+
+`make prove` now uses `--proof=progressive`, retaining per-check proofs and
+splitting only failed groups. The incremental full-project run used the
+existing clean proof baseline, without running `--clean`, and passed all
+**4,470 checks** (709 flow, 3,761 prover), with **0 unproved**, **0
+justified**, **69 warnings**, and **0 `pragma Assume`**. Its effective
+command was `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make
+prove`, which invokes GNATprove with `-P proof.gpr`, `--mode=all`,
+`--level=2`, `--proof=progressive`, `--report=all`,
+`--checks-as-errors=on`, `--prover=cvc5,z3`, `--timeout=120`, and `-j4`.
+CI and native Windows validation were not run.
+
+Evidence logs are under `/home/ubuntu/transport-progress-outcomes-*`,
+including the incremental progressive full-proof output and summary.
+
 ## Transport loss after an asynchronous interim response
 
 Two additional Samba-backed async proxy modes send a valid `STATUS_PENDING`

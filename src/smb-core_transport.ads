@@ -43,6 +43,14 @@ package SMB.Core_Transport with SPARK_Mode is
       Status : out SMB.Core_Status)
    with Pre => Bounded (Chunk) and then Buffer'Length <= Maximum_Wire_Size,
      Post =>
+       Status =
+         (if Position'Old >= Buffer'Length then SMB.Invalid_Offset
+          elsif Last not in Chunk'Range then SMB.Invalid_Length
+          elsif Natural (Last - Chunk'First) + 1 >
+            Buffer'Length - Position'Old
+          then SMB.Invalid_Length
+          else SMB.Ok)
+       and then
        (if Status = SMB.Ok then
           Last in Chunk'Range
           and then Position > Position'Old
@@ -71,7 +79,7 @@ package SMB.Core_Transport with SPARK_Mode is
           Status = SMB.Ok
           and then First in Data'Range
           and then First = Data'First + Ada.Streams.Stream_Element_Offset (Position)
-        else Status = SMB.Invalid_Offset);
+        else Status = SMB.Invalid_Offset and then First = Data'First);
 
    procedure Advance_Write
      (Data : Ada.Streams.Stream_Element_Array;
@@ -80,6 +88,21 @@ package SMB.Core_Transport with SPARK_Mode is
       Status : out SMB.Core_Status)
    with Pre => Bounded (Data),
      Post =>
+       (Status = SMB.Invalid_Offset) = (Position'Old >= Data'Length)
+       and then
+       (Status = SMB.Invalid_Length) =
+         (Position'Old < Data'Length
+          and then
+            (Last < Data'First +
+               Ada.Streams.Stream_Element_Offset (Position'Old)
+             or else Last > Data'Last))
+       and then
+       (Status = SMB.Ok) =
+         (Position'Old < Data'Length
+          and then Last >= Data'First +
+            Ada.Streams.Stream_Element_Offset (Position'Old)
+          and then Last <= Data'Last)
+       and then
        (if Status = SMB.Ok then
           Position > Position'Old
           and then Position <= Data'Length
