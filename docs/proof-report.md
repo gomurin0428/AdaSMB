@@ -3,8 +3,8 @@
 ## Final clean proof
 
 `gnatprove -P proof.gpr --clean` and the subsequent complete `make prove`
-run passed for FILETIME-core implementation
-[`e2a2554`](https://github.com/gomurin0428/AdaSMB/commit/e2a2554a0f18ac8b5b413ad48c97b796a1c8982b).
+run passed for the path/share contract implementation
+[`ee45904`](https://github.com/gomurin0428/AdaSMB/commit/ee45904f3d5f1d68b142d35d76163ac49d99195b).
 GNATprove analyzed all thirteen configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
@@ -16,11 +16,11 @@ GNATprove analyzed all thirteen configured units:
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 538 | 538 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,365 | 0 | 2,365 |
+| Run-time checks | 2,388 | 0 | 2,388 |
 | Assertions | 291 | 0 | 291 |
-| Functional contracts | 981 | 0 | 981 |
-| Termination | 154 | 148 | 6 |
-| **Total** | **4,333** | **690** | **3,643** |
+| Functional contracts | 987 | 0 | 987 |
+| Termination | 159 | 153 | 6 |
+| **Total** | **4,367** | **695** | **3,672** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -105,13 +105,22 @@ checks or pre/postcondition checking are suppressed. The full socket loops,
 OS return semantics, retry/deadline behavior, allocation/initialization, and
 exception cleanup remain trusted and are tested rather than formally proved.
 
-The new `SMB.Core_Clock` proof covers the actual FILETIME path called during
+The `SMB.Core_Clock` proof covers the actual FILETIME path called during
 authentication. It proves calendar-range validation, signed-64-bit timestamp
 arithmetic and exact truncation of native nanoseconds to a 100-ns floor
 interval. Inputs outside the supported date/seconds/tick bounds return
 `Invalid_Value` and zero before conversion. The fixed-point representation is
 enforced at compile time (`Duration'Small = 1ns`). OS time retrieval, UTC
 splitting, the truth of leap-second flags and exception handling are not proved.
+
+The strengthened `SMB.Core_Text` path/share contracts prove acceptance exactly
+according to their lexical predicates, exact slash normalization with all other
+bytes preserved, and zero output on rejected paths. The path-copy invariant's
+initialization/preservation are proved; its runtime Ignore policy avoids
+quadratic prefix scans without disabling bounds or pre/postcondition checks.
+This does not prove server path resolution, Unicode normalization, or filesystem
+containment. UTF encoder/decoder semantics remain covered by tests rather than
+these new lexical contracts.
 
 The proof does not establish the trusted socket/allocation/exception adapter,
 complete public-facade correctness, cryptographic hardness, server rollback, or
@@ -166,8 +175,13 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   invalid century/day/month/range inputs, maximum accepted date, leap-second
   normalization, subsecond rounding boundaries and a public-clock smoke test.
   `gprbuild -p -P smb_tests.gpr test_suite.adb` followed by
-  `./build/bin/test_suite clock-core` passed as the focused test. A focused
-  `gnatprove -P proof.gpr -u smb-core_clock.adb --mode=all --level=2
+  `./build/bin/test_suite path-contracts` passed as the focused test. Path
+  fixtures exhaustively compare strings of length 0..4 over six characters with
+  the prior component-based rules, under both empty-input policies; additionally
+  they cover literal rejection/normalization cases, UTF-8 byte preservation,
+  maximum size, differing/nonzero/near-`Integer'Last` lower bounds, and share
+  restrictions. A focused
+  `gnatprove -P proof.gpr -u smb-core_text.adb --mode=all --level=2
   --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4`
   also passed before the clean full proof.
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check
@@ -209,9 +223,11 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   exactly one TREE_DISCONNECT and zero LOGOFF requests, then verifies
   reconnect, stale-handle rejection and a successful fresh fixture read.
   A second public `Connect_Share` call on an active share is rejected without
-  disconnecting or invalidating its existing handle. No rollback or
+  disconnecting or invalidating its existing handle. Invalid public paths
+  (`../fixture.txt`, `/fixture.txt`, and an alternate-stream-style name) are
+  rejected while an existing fixture handle remains readable. No rollback or
   exactly-once guarantee is implied.
-* Prior transport milestone (not rerun for the clock-only change):
+* Prior transport milestone (not rerun for the text-only change):
   `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
   python3 tests/transport_integration.py`: passed. A zero-reader peer exercises
   send backpressure/deadline invalidation; fragmented peer writes exercise
