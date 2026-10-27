@@ -21,35 +21,52 @@ not proof of OS entropy quality or new SPARK proof claims.
 
 ### Observed validation
 
-The focused Ada client build and Python syntax compilation passed. The root
-focused Samba integration passed all six exception/call-point cases, including
-same-object recovery with the default OS entropy source. The isolated
-failure-time-close mutant built successfully: its three GUID cases passed, then
-the first nonce case failed as intended when the proxy timed out waiting for
-client EOF, before releasing the client to acknowledge the failure or reconnect.
+The focused Ada client build passed. The root focused Samba integration passed
+all six exception/call-point cases, including same-object recovery with the
+default OS entropy source. The isolated failure-time-close mutant was run in
+the earlier entropy stage; it was not rebuilt or rerun here.
 
-`make test` and forced strict `make check GPRBUILD="gprbuild -f"` passed. The
-full root Samba integration did not complete: after the entropy cases and
-earlier integration scenarios, the first directory mutation case,
-`malformed-signed-directory-second-page`, failed during cleanup/recovery with
-`SMB.PROTOCOL_ERROR : SMB READ response: UNSUPPORTED_FEATURE`. This directory
-case passed in focused Samba runs both alone and immediately after the six
-entropy cases. A separate instrumented full run reproduced the same READ
-rejection earlier, in the normal integration client: the actual Samba response
-had command 8, flags `0x3` (server response plus async), NTSTATUS `0x103`
-(`STATUS_PENDING`), and length 73. This was not a synthetic mutation. The
-current client explicitly excludes async responses and rejects that header.
-Samba's installed defaults are `aio read size = 1` and `aio write size = 1`;
-they were not overridden. The original directory failure's header was not
-captured. No production behavior or test expectation was changed.
-`git diff --check` passed.
+The original pre-PR41 full-integration failure is retained as historical
+evidence. That run failed during cleanup/recovery in
+`malformed-signed-directory-second-page` with
+`SMB.PROTOCOL_ERROR : SMB READ response: UNSUPPORTED_FEATURE`; the directory
+case passed in focused runs both alone and immediately after the six entropy
+cases. A separate instrumented full run reproduced a READ rejection in the
+normal integration client: the actual Samba response had command 8, flags
+`0x3` (server response plus async), NTSTATUS `0x103` (`STATUS_PENDING`), and
+length 73. This was not a synthetic mutation. At the time, the client
+explicitly excluded async responses and rejected that header. Samba's
+installed defaults were `aio read size = 1` and `aio write size = 1`; they
+were not overridden. The original directory failure's exact header was not
+captured.
 
-GNATprove was not rerun because this stage changes tests, build wiring and
-documentation only. The **4,422-check** result recorded for the preceding
-wire-primitive stage is historical, not a proof result for this stage. No CI
+After merging [PR41](https://github.com/gomurin0428/AdaSMB/pull/41) at
+`f90d1f9`, the candidate GNAT14 build, entropy-only integration, `make test`,
+forced strict `make check GPRBUILD="gprbuild -f"`, Python syntax compilation,
+and full root Samba integration all passed. The focused entropy run exercised
+all six failure/recovery cases. The full integration exercised those six
+cases, the normal client, async success, all six async rejection/recovery
+modes, and the existing adversarial, mutation, and security-buffer suites.
+`ADASMB_ASYNC_ONLY=1` also passed the standard integration and async scenarios
+without running entropy cases; `ADASMB_ENTROPY_ONLY=1` passed the six entropy
+cases and returned before the other scenarios.
+
+GNATprove was not rerun for this entropy revalidation. The **4,446-check**
+full proof (708 flow, 3,738 prover; 0 unproved, 0 justified) is inherited from
+the merged PR41 `origin/main` state, not an entropy-specific proof result.
+This branch's entropy-specific changes are limited to test, harness, and
+documentation changes. The final merged tree passed `git diff --check`. No CI
 was run.
 
-Evidence logs: `/home/ubuntu/entropy-failure-01-client-build.log`,
+Revalidation logs: `/home/ubuntu/entropy-revalidation-build.log`,
+`/home/ubuntu/entropy-revalidation-focused.log`,
+`/home/ubuntu/entropy-revalidation-make-test.log`,
+`/home/ubuntu/entropy-revalidation-strict.log`,
+`/home/ubuntu/entropy-revalidation-python.log`,
+`/home/ubuntu/entropy-revalidation-async-selector.log`, and
+`/home/ubuntu/entropy-revalidation-full-integration.log`.
+
+Earlier entropy-stage evidence logs: `/home/ubuntu/entropy-failure-01-client-build.log`,
 `/home/ubuntu/entropy-failure-02-python-syntax.log`,
 `/home/ubuntu/entropy-failure-03-focused-root-integration.log`,
 `/home/ubuntu/entropy-failure-05-mutant-build.log`,
@@ -110,8 +127,9 @@ scenarios, existing adversarial cases, malformed-response cleanup/recovery,
 authentication diagnostics, response mutations, and security-buffer
 rejections. The unrelated daemons on ports 139/445 were left untouched.
 
-The clean full GNATprove run passed across 13 units: **4,446 checks** (**708
-flow** and **3,738 prover**), with **0 unproved** and **0 justified**. The
+The clean full GNATprove result from merged PR41, inherited from `origin/main`
+and not rerun for the entropy stage, passed across 13 units: **4,446 checks**
+(**708 flow** and **3,738 prover**), with **0 unproved** and **0 justified**. The
 categories were 2 data dependencies, 1 flow dependency, 545 initialization,
 2 non-aliasing, 2,413 run-time checks, 292 assertions, 1,027 functional
 contracts, and 164 termination checks (158 flow, 6 prover). There were **69
