@@ -176,6 +176,7 @@ class AdversarialProxy:
             mutated = False
             session_key: bytes | None = None
             read_responses = 0
+            completed_logoff = False
             write_requests = 0
             write_responses = 0
             query_requests = 0
@@ -233,6 +234,7 @@ class AdversarialProxy:
                             "malformed-signed-create",
                             "malformed-signed-directory-second-page",
                             "dangling-signed-directory-second-page",
+                            "read-reserved-fields",
                             "malformed-signed-set-info",
                             "malformed-signed-tree-disconnect",
                         }:
@@ -255,6 +257,15 @@ class AdversarialProxy:
                     payload = bytearray(
                         recv_exact(backend, int.from_bytes(header[1:4], "big"))
                     )
+                    if (
+                        self.mode == "read-reserved-fields"
+                        and payload[12:14] == b"\x02\x00"
+                    ):
+                        if len(payload) < 68 or struct.unpack_from("<I", payload, 8)[0]:
+                            raise RuntimeError("reserved-field test LOGOFF failed")
+                        client.sendall(header + payload)
+                        completed_logoff = True
+                        break
                     if len(payload) >= 64 and (
                         payload[12:14] == b"\x03\x00"
                         or (
@@ -262,7 +273,10 @@ class AdversarialProxy:
                             and payload[12:14] == b"\x05\x00"
                         )
                         or (
-                            self.mode == "interrupted-read-after-progress"
+                            self.mode in {
+                                "interrupted-read-after-progress",
+                                "read-reserved-fields",
+                            }
                             and payload[12:14] == b"\x08\x00"
                         )
                         or (
@@ -324,7 +338,42 @@ class AdversarialProxy:
                                 raise RuntimeError(
                                     "second READ response unexpectedly made no progress"
                                 )
-                            payload[48] ^= 1
+                            payload[67] ^= 0xFF
+                        elif self.mode == "read-reserved-fields":
+                            if payload[12:14] != b"\x08\x00":
+                                client.sendall(header + payload)
+                                continue
+                            if (
+                                len(payload) < 80
+                                or struct.unpack_from("<I", payload, 8)[0] != 0
+                                or struct.unpack_from("<H", payload, 64)[0] != 17
+                                or struct.unpack_from("<I", payload, 68)[0] == 0
+                            ):
+                                raise RuntimeError("expected a successful nonempty READ")
+                            if session_key is None:
+                                raise RuntimeError("could not derive SMB signing key")
+                            if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                                raise RuntimeError("server READ response was unsigned")
+                            original_signature = bytes(payload[48:64])
+                            payload[48:64] = b"\x00" * 16
+                            expected_signature = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            if not hmac.compare_digest(
+                                original_signature, expected_signature
+                            ):
+                                raise RuntimeError(
+                                    "derived key did not validate READ signature"
+                                )
+                            payload[67] = 0xFF
+                            payload[76:80] = b"\xFF" * 4
+                            payload[48:64] = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            client.sendall(header + payload)
+                            read_responses += 1
+                            mutated = True
+                            continue
                         elif self.mode == "malformed-signed-create":
                             if payload[12:14] != b"\x05\x00":
                                 client.sendall(header + payload)
@@ -594,6 +643,13 @@ class AdversarialProxy:
                 if write_requests != 2:
                     raise RuntimeError(
                         f"expected two client WRITE requests, got {write_requests}"
+                    )
+            if self.mode == "read-reserved-fields":
+                if read_responses != 3 or not completed_logoff or logoff_requests != 1:
+                    raise RuntimeError(
+                        "reserved-field READ exchange did not complete: "
+                        f"reads={read_responses}, logoff={completed_logoff}, "
+                        f"logoff_requests={logoff_requests}"
                     )
             if self.mode in DIRECTORY_MODES:
                 if not relay_error or not isinstance(relay_error[0], EOFError):

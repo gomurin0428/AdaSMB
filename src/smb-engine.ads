@@ -411,7 +411,6 @@ is
                   then Packet'Length >= 80
                     and then Current_Response_Info (State).Data_Offset =
                       Natural (Packet (Packet'First + 66))
-                    and then Packet (Packet'First + 67) = 0
                     and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
                       SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
                     and then Current_Response_Info (State).Data_Length =

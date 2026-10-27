@@ -28,7 +28,31 @@ begin
    SMB.Client.Connect (Client, Host, Proxy_Port, 5.0);
    SMB.Client.Authenticate (Client, User, Password);
    SMB.Client.Connect_Share (Client, Share);
-   if Mode = "interrupted-read-after-progress" then
+   if Mode = "read-reserved-fields" then
+      declare
+         File : SMB.Client.Handle :=
+           SMB.Client.Open_File
+             (Client, "interrupted-read.bin", SMB.Client.Read_Only);
+         Contents : constant SMB.Bytes :=
+           SMB.Client.Read (Client, File, 0, 70_001);
+      begin
+         if Contents'Length /= 70_001
+           or else not SMB.Client.Is_Connected (Client)
+           or else
+             (for some Index in Contents'Range =>
+                Contents (Index) /= SMB.Byte ((Index - Contents'First) mod 251))
+         then
+            raise Program_Error with "READ reserved fields changed returned data";
+         end if;
+         if SMB.Client.Read (Client, File, 100, 1) /= SMB.Bytes'(0 => 100) then
+            raise Program_Error with "READ reserved fields broke handle reuse";
+         end if;
+         SMB.Client.Close (Client, File);
+      end;
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line
+        ("signed READ reserved fields, exact data and handle reuse passed");
+   elsif Mode = "interrupted-read-after-progress" then
       declare
          Old_File : constant SMB.Client.Handle :=
            SMB.Client.Open_File (Client, "interrupted-read.bin",
