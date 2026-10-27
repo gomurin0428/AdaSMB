@@ -289,6 +289,31 @@ dependency audit and Python syntax check passed. GNATprove and Samba were not
 rerun for these test-only changes; their latest results above still apply to
 the unchanged library. No CI was run.
 
+## Public path preflight regression
+
+The native facade now encodes CREATE names before entering network-failure
+handlers, including the source path for rename. The private CREATE adapter
+accepts encoded names; public API signatures and post-send defensive cleanup
+are unchanged. Enumeration and rename initialize buffers before acquiring
+their temporary remote handles.
+
+The expanded Samba regression reproduced a real failure on the preceding
+library (`39c415e`): malformed UTF-8 passed lexical validation but was rejected
+before transmission inside `List_Directory`'s broad exception handler, which
+disconnected the connection (`invalid path disconnected: LIST_PATH`).
+The fixed library passes 42 rejection checks: seven path entry points for
+three lexical errors, malformed/truncated UTF-8, and an ASCII path whose
+UTF-16 encoding exceeds 65,534 bytes. Each check verifies the connection,
+existing readable handle, and last NTSTATUS survive the rejection. Rename
+source and target are checked separately.
+
+The current integration suite (including malformed-response cleanup), full
+unit suite, forced warnings-as-errors builds and runtime dependency audit
+passed. Allocation-failure injection was not performed; initialization ordering
+was reviewed. SPARK core sources are unchanged, so the previous 4,387-check
+proof is retained rather than rerun; facade exception correctness remains
+outside that proof. No CI was run.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:

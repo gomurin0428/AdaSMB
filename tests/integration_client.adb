@@ -127,26 +127,67 @@ begin
            SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
          Rejected_Share : Boolean := False;
          procedure Check_Rejected_Path (Path : String) is
+            type Path_Operation is
+              (Open_Path, List_Path, Make_Path, Remove_Path,
+               Remove_Directory_Path, Rename_Source, Rename_Target);
          begin
-            begin
+            for Operation in Path_Operation loop
                declare
-                  Unexpected : SMB.Client.Handle :=
-                    SMB.Client.Open_File (Client, Path, SMB.Client.Read_Only);
-                  pragma Unreferenced (Unexpected);
+                  Original_Status : constant SMB.DWord :=
+                    SMB.Client.Last_NT_Status (Client);
                begin
-                  raise Program_Error with "invalid relative path was accepted";
+                  begin
+                     case Operation is
+                        when Open_Path =>
+                           declare
+                              Unexpected : SMB.Client.Handle :=
+                                SMB.Client.Open_File (Client, Path);
+                              pragma Unreferenced (Unexpected);
+                           begin
+                              null;
+                           end;
+                        when List_Path =>
+                           declare
+                              Unexpected : constant SMB.Client.Directory_Entry_Array :=
+                                SMB.Client.List_Directory (Client, Path);
+                              pragma Unreferenced (Unexpected);
+                           begin
+                              null;
+                           end;
+                        when Make_Path => SMB.Client.Make_Directory (Client, Path);
+                        when Remove_Path => SMB.Client.Remove_File (Client, Path);
+                        when Remove_Directory_Path =>
+                           SMB.Client.Remove_Directory (Client, Path);
+                        when Rename_Source =>
+                           SMB.Client.Rename
+                             (Client, Path, "preflight-should-not-rename.txt");
+                        when Rename_Target =>
+                           SMB.Client.Rename (Client, "fixture.txt", Path);
+                     end case;
+                     raise Program_Error with
+                       "invalid path accepted: " & Path_Operation'Image (Operation);
+                  exception
+                     when SMB.Protocol_Error => null;
+                  end;
+                  Assert
+                    (SMB.Client.Is_Connected (Client),
+                     "invalid path disconnected: " & Path_Operation'Image (Operation));
+                  Assert
+                    (SMB.Client.Last_NT_Status (Client) = Original_Status,
+                     "invalid path changed last NTSTATUS");
+                  Assert
+                    (SMB.Client.Read (Client, Fixture, 0, 1)'Length = 1,
+                     "invalid path damaged an existing handle");
                end;
-            exception
-               when SMB.Protocol_Error => null;
-            end;
-            Assert
-              (SMB.Client.Read (Client, Fixture, 0, 1)'Length = 1,
-               "invalid path damaged an existing handle");
+            end loop;
          end Check_Rejected_Path;
       begin
          Check_Rejected_Path ("../fixture.txt");
          Check_Rejected_Path ("/fixture.txt");
          Check_Rejected_Path ("fixture.txt:stream");
+         Check_Rejected_Path (String'(1 => Character'Val (16#FF#)));
+         Check_Rejected_Path (Character'Val (16#E2#) & Character'Val (16#82#));
+         Check_Rejected_Path (String'(1 .. 32_768 => 'a'));
          begin
             SMB.Client.Connect_Share (Client, Share);
          exception
