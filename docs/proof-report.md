@@ -1,10 +1,11 @@
 # GNATprove and test report
 
-## Final clean proof
+## Latest complete proof
 
-`gnatprove -P proof.gpr --clean` and the subsequent complete `make prove`
-run passed for the UTF-capacity implementation
-[`429c98d`](https://github.com/gomurin0428/AdaSMB/commit/429c98d4072a20aa6fbbe35f409d6a9a0c159e2e).
+The complete `make prove` run passed for the bulk-buffer implementation
+[`cf57972`](https://github.com/gomurin0428/AdaSMB/commit/cf57972b515c07967687b42a4edfd11abdbadfb3).
+This worktree started without generated proof artifacts; the focused client
+proof preceded the complete run.
 GNATprove analyzed all thirteen configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
@@ -16,15 +17,15 @@ GNATprove analyzed all thirteen configured units:
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 538 | 538 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,398 | 0 | 2,398 |
-| Assertions | 301 | 0 | 301 |
+| Run-time checks | 2,389 | 0 | 2,389 |
+| Assertions | 293 | 0 | 293 |
 | Functional contracts | 987 | 0 | 987 |
 | Termination | 159 | 153 | 6 |
-| **Total** | **4,387** | **695** | **3,692** |
+| **Total** | **4,370** | **695** | **3,675** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
-60 flow-analysis warnings (54 in `SMB.Core_Client`, 6 in
+61 flow-analysis warnings (55 in `SMB.Core_Client`, 6 in
 `SMB.Core_Protocol`), primarily unused assignments and status outputs, and
 zero `pragma Assume` statements. The forced `-gnatwe` build passed.
 
@@ -313,6 +314,37 @@ passed. Allocation-failure injection was not performed; initialization ordering
 was reviewed. SPARK core sources are unchanged, so the previous 4,387-check
 proof is retained rather than rerun; facade exception correctness remains
 outside that proof. No CI was run.
+
+## Checked buffer initialization and copying
+
+Four growing-prefix loops in `SMB.Core_Client` now use Ada aggregate or slice
+assignment: transfer/challenge clearing, WRITE snapshot creation and completed
+READ result copying. The old loops rechecked every previous byte at each
+iteration with assertions enabled, giving quadratic runtime verification cost.
+All subprogram pre/postconditions remain unchanged. No new assertion policy,
+timeout increase, suppression or proof justification was introduced.
+The total decreases from 4,387 to 4,370 because the loops and their associated
+checks are replaced, not because the functional contracts were weakened.
+The additional warning concerns the unused initial value of the completely
+overwritten `Clear_Transfer_Buffer` parameter.
+
+This issue surfaced while testing a separate native share-name preflight fix.
+The unchanged core object files in that branch and base `46cc12f` were
+byte-identical. A GDB trace of the 70,001-byte lost-WRITE scenario measured
+10.123678 seconds from `Start_Write` entry to the next `Prepare_Next` entry,
+before any WRITE send, exceeding the proxy's unchanged 10-second idle timeout.
+The snapshot loop alone checked 2,450,105,001 prefix elements.
+With this fix, the same trace interval was 0.000642 seconds, both WRITE chunks
+reached the backend, and the lost-response/reconnect scenario passed.
+These are individual instrumented observations, not throughput benchmarks or
+proved execution-time bounds.
+
+Focused engine-receipt tests additionally use differently based WRITE input
+and READ output ending at `Natural'Last`, including a short READ with a zeroed
+unused tail. Empty and multi-chunk transfer cases remain covered.
+Focused and full proofs, the full unit suite, all-executable builds, forced
+warnings-as-errors builds, dependency audit and the complete Samba suite passed.
+No CI was run.
 
 ## Reproduction
 
