@@ -10,6 +10,7 @@ with SMB.Core_Connection;
 with SMB.Core_Framing;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
+with SMB.Core_Text;
 with SMB.Core_Transport;
 with SMB.Core_Wire;
 with SMB.Crypto;
@@ -39,6 +40,115 @@ procedure Test_Suite is
          raise Program_Error with Message;
       end if;
    end Assert;
+
+   procedure Test_Path_Contracts is
+      procedure Check_Path
+        (Value : String; Valid : Boolean; Allow_Empty : Boolean := False) is
+         Input : constant String (11 .. 10 + Value'Length) := Value;
+         Output : String (29 .. 28 + Value'Length) := (others => '!');
+         Expected : String := Value;
+         Status : SMB.Core_Status;
+      begin
+         for C of Expected loop
+            if C = '/' then
+               C := '\';
+            end if;
+         end loop;
+         SMB.Core_Text.Validate_Path (Input, Output, Allow_Empty, Status);
+         Assert
+           (Status = (if Valid then SMB.Ok else SMB.Invalid_Value),
+            "path lexical acceptance");
+         if Valid then
+            Assert (Output = Expected, "path exact normalization");
+         else
+            Assert ((for all C of Output => C = Character'Val (0)),
+                    "rejected path exposes no partial normalized name");
+         end if;
+      end Check_Path;
+
+      function Reference_Valid (Value : String; Allow_Empty : Boolean)
+                                return Boolean is
+         Start : Natural := 0;
+      begin
+         if Value'Length = 0 then
+            return Allow_Empty;
+         end if;
+         for Offset in 0 .. Value'Length - 1 loop
+            declare
+               C : constant Character := Value (Value'First + Offset);
+            begin
+               if C = Character'Val (0) or else C = ':' then
+                  return False;
+               elsif C = '/' or else C = '\' then
+                  if Offset = Start or else Offset = Value'Length - 1
+                    or else Value (Value'First + Start
+                                   .. Value'First + Offset - 1) = ".."
+                  then
+                     return False;
+                  end if;
+                  Start := Offset + 1;
+               end if;
+            end;
+         end loop;
+         return Value (Value'First + Start .. Value'Last) /= "..";
+      end Reference_Valid;
+
+      Alphabet : constant String := "a./\:" & Character'Val (0);
+      Status : SMB.Core_Status;
+   begin
+      Check_Path ("", False);
+      Check_Path ("", True, True);
+      Check_Path ("a/b\c", True);
+      Check_Path ("./.hidden/..x/.../x..", True);
+      Check_Path ("../file", False);
+      Check_Path ("a/../file", False);
+      Check_Path ("a\..", False);
+      Check_Path ("/a", False);
+      Check_Path ("\a", False);
+      Check_Path ("a/", False);
+      Check_Path ("a\\b", False);
+      Check_Path ("C:file", False);
+      Check_Path ("a" & Character'Val (0) & "b", False);
+      Check_Path (Character'Val (16#C3#) & Character'Val (16#A9#) & "/x", True);
+      for Length in 0 .. 4 loop
+         for Code in 0 .. Alphabet'Length ** Length - 1 loop
+            declare
+               Value : String (1 .. Length);
+               Rest : Natural := Code;
+            begin
+               for I in Value'Range loop
+                  Value (I) := Alphabet (Rest mod Alphabet'Length + 1);
+                  Rest := Rest / Alphabet'Length;
+               end loop;
+               Check_Path (Value, Reference_Valid (Value, False));
+               Check_Path (Value, Reference_Valid (Value, True), True);
+            end;
+         end loop;
+      end loop;
+      declare
+         Large : String (1 .. 65_534) := (others => 'a');
+      begin
+         Check_Path (Large, True);
+         Large (Large'Last - 2 .. Large'Last) := "/..";
+         Check_Path (Large, False);
+      end;
+      declare
+         Input : constant String (Integer'Last - 2 .. Integer'Last) := "a/b";
+         Output : String (Integer'Last - 2 .. Integer'Last);
+      begin
+         SMB.Core_Text.Validate_Path (Input, Output, False, Status);
+         Assert (Status = SMB.Ok and then Output = "a\b",
+                 "path indices near Integer'Last");
+      end;
+      SMB.Core_Text.Validate_Share ("share name", Status);
+      Assert (Status = SMB.Ok, "valid share");
+      SMB.Core_Text.Validate_Share ("", Status);
+      Assert (Status = SMB.Invalid_Value, "empty share");
+      for C of String'("/\:" & Character'Val (0)) loop
+         SMB.Core_Text.Validate_Share ("a" & C & "b", Status);
+         Assert (Status = SMB.Invalid_Value, "share rejects forbidden bytes");
+      end loop;
+   end Test_Path_Contracts;
 
    procedure Test_Core_Clock is
       Value : SMB.QWord;
@@ -4203,11 +4313,15 @@ begin
    if Ada.Command_Line.Argument_Count > 0 then
       if Ada.Command_Line.Argument_Count /= 1
         or else (Ada.Command_Line.Argument (1) /= "transport-core"
-                 and then Ada.Command_Line.Argument (1) /= "clock-core")
+                 and then Ada.Command_Line.Argument (1) /= "clock-core"
+                 and then Ada.Command_Line.Argument (1) /= "path-contracts")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "clock-core" then
+      if Ada.Command_Line.Argument (1) = "path-contracts" then
+         Test_Path_Contracts;
+         Ada.Text_IO.Put_Line ("AdaSMB path contract tests passed");
+      elsif Ada.Command_Line.Argument (1) = "clock-core" then
          Test_Core_Clock;
          Ada.Text_IO.Put_Line ("AdaSMB clock core tests passed");
       else
@@ -4219,6 +4333,7 @@ begin
    Test_Crypto;
    Test_Framing;
    Test_Core_Clock;
+   Test_Path_Contracts;
    Test_Core_Transport;
    Test_Core_Wire;
    Test_NTLM_Authenticate;

@@ -16,7 +16,7 @@ parallel model.
 | --- | --- |
 | `SMB` | Fixed-width integers, bytes, frame limit and statuses |
 | `SMB.Crypto` | MD4, MD5, SHA-256, HMACs and digest comparison; run-time safety, not cryptographic hardness |
-| `SMB.Core_Text` | Strict UTF-8/UTF-16 conversion, NTLM ASCII username uppercase, path/share validation |
+| `SMB.Core_Text` | Strict UTF-8/UTF-16 conversion, NTLM ASCII username uppercase; exact lexical path/share acceptance, byte-preserving slash normalization, and zeroed invalid-path output |
 | `SMB.Core_NTLM` | Strict DER/SPNEGO challenge extraction, directional mechanism-list MIC and final-token validation |
 | `SMB.Core_Auth` | Type 2/security-buffer/AV validation, NTLMv2 proof, Type 3 and its MIC, session key and SPNEGO output |
 | `SMB.Core_Wire` | Bounded integer readers/writers, SMB header construction/correlation validation and signing |
@@ -96,6 +96,20 @@ remove them from GNATprove: their initialization and preservation are proved,
 as specified by [AdaCore's assertion-policy documentation](https://docs.adacore.com/spark2014-docs/html/ug/en/source/assertion_pragmas.html).
 Compiler run-time checks and pre/postcondition checking remain enabled in the
 project builds; no proof assumption or check-suppression pragma is introduced.
+
+`Validate_Path` now binds status to the executable `Lexically_Valid_Path`
+predicate: empty input is allowed only on request; NUL, colon, leading/trailing
+or repeated separators, and exact `..` components are rejected. Success changes
+only forward slashes to backslashes, preserving every other byte and its
+relative position even with different array lower bounds. Failure clears the
+entire output rather than exposing a partial normalized name. Single-dot
+components and names merely containing dots retain their existing acceptance.
+`Validate_Share` similarly binds status to nonempty input without NUL, colon,
+or separators. The path copy's prefix invariant is proved by GNATprove and
+locally ignored at runtime to avoid quadratic scans; runtime bounds and
+pre/postconditions remain enabled. These are lexical byte rules, not proof of
+Unicode conversion semantics, server canonicalization, symlink/DFS behavior,
+or filesystem containment.
 
 Proof covers language-defined run-time checks, initialization, flow analysis and
 the contracts actually written in the source. It does not prove that every
