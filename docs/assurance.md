@@ -111,6 +111,16 @@ pre/postconditions remain enabled. These are lexical byte rules, not proof of
 Unicode conversion semantics, server canonicalization, symlink/DFS behavior,
 or filesystem containment.
 
+Public path APIs now complete lexical validation and UTF-16 encoding in their
+declaration preflight before entering communication/cleanup handlers.
+`Create_Internal` accepts the resulting bounded encoded name instead of
+encoding raw input inside an outer operation's handler. Thus local malformed
+UTF-8 or encoded-length errors do not accidentally trigger the disconnect
+policy for protocol/transport failures during enumeration or rename. Temporary
+folder/file acquisition also follows buffer initialization. This is reviewed
+and regression-tested native adapter ordering, not an extension of the SPARK
+proof or a proof of allocation/exception behavior.
+
 UTF conversion checks capacity for each decoded scalar rather than requiring a
 worst-case-size buffer before decoding. The contracts bound `Used` by both the
 output capacity and twice the input length, including on failure; UTF-16 output
