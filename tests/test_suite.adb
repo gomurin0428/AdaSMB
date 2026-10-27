@@ -1386,6 +1386,113 @@ procedure Test_Suite is
       Assert (Status /= SMB.Ok, "duplicate SPNEGO state accepted");
    end Test_Final_Spnego;
 
+   procedure Test_Directory_Bounds is
+      Count : Natural := 0;
+      Prefix : constant := 8;
+      type Length_Array is array (Positive range <>) of SMB.DWord;
+      Lengths : constant Length_Array :=
+        (0, 1, 2, 3, 4, 8, 9, 65_534, SMB.DWord'Last);
+
+      procedure Check
+        (Available : Natural;
+         Name_Length, Next_Offset : SMB.DWord;
+         High_Bound : Boolean) is
+         Template : SMB.Bytes (0 .. 223) := (others => 0);
+         First : constant Natural :=
+           (if High_Bound then Natural'Last - (Prefix + Available - 1)
+            else 11);
+         Buffer : SMB.Bytes (First .. First + (Prefix + Available - 1)) :=
+           (others => 0);
+         Cursor : Natural := Prefix;
+         Info : SMB.Core_Protocol.Directory_Info;
+         Status : SMB.Core_Status;
+         Expected : constant Boolean :=
+           Available >= 104
+           and then Name_Length > 0
+           and then Name_Length mod 2 = 0
+           and then SMB.QWord (Name_Length) <= SMB.QWord (Available - 104)
+           and then
+             (Next_Offset = 0
+              or else
+                (Next_Offset mod 8 = 0
+                 and then SMB.QWord (Next_Offset) < SMB.QWord (Available)
+                 and then SMB.QWord (Next_Offset) >=
+                   104 + SMB.QWord (Name_Length)));
+      begin
+         SMB.Wire.Put_U32 (Template, 0, Next_Offset);
+         SMB.Wire.Put_U32 (Template, 60, Name_Length);
+         Template (104 .. 111) := (120, 0, 121, 0, 122, 0, 119, 0);
+         if Available > 0 then
+            Buffer (First + Prefix .. Buffer'Last) :=
+              Template (0 .. Available - 1);
+         end if;
+         SMB.Core_Protocol.Parse_Directory_Entry
+           (Buffer, Cursor, Info, Status);
+         Count := Count + 1;
+         Assert
+           ((Status = SMB.Ok) = Expected,
+            "directory bounds result mismatch: available"
+            & Natural'Image (Available) & " name"
+            & SMB.DWord'Image (Name_Length) & " next"
+            & SMB.DWord'Image (Next_Offset));
+         if Expected then
+            Assert
+              (Cursor =
+                 (if Next_Offset = 0 then Buffer'Length
+                  else Prefix + Natural (Next_Offset))
+               and then Info.Next_Cursor = Cursor
+               and then Info.Name_Offset = Prefix + 104
+               and then Info.Name_Length = Natural (Name_Length),
+               "directory bounds output mismatch");
+         else
+            Assert (Cursor = Prefix, "rejected directory record advanced cursor");
+         end if;
+      end Check;
+   begin
+      for High_Bound in Boolean loop
+         for Available in 0 .. 112 loop
+            Check (Available, 2, 0, High_Bound);
+         end loop;
+         for Page_Multiple in 1 .. 2 loop
+            for Name_Length of Lengths loop
+               for Next_Offset in 0 .. Page_Multiple * 112 + 8 loop
+                  Check
+                    (Page_Multiple * 112, Name_Length,
+                     SMB.DWord (Next_Offset), High_Bound);
+               end loop;
+            end loop;
+         end loop;
+         Check (112, 2, SMB.DWord'Last, High_Bound);
+      end loop;
+      declare
+         Chain : SMB.Bytes (0 .. 217) := (others => 0);
+         Cursor : Natural := 0;
+         Info : SMB.Core_Protocol.Directory_Info;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Wire.Put_U32 (Chain, 0, 112);
+         SMB.Wire.Put_U32 (Chain, 60, 2);
+         Chain (104 .. 105) := (120, 0);
+         Chain (106 .. 111) := (others => 16#A5#);
+         SMB.Wire.Put_U32 (Chain, 112 + 60, 2);
+         Chain (216 .. 217) := (121, 0);
+         SMB.Core_Protocol.Parse_Directory_Entry
+           (Chain, Cursor, Info, Status);
+         Assert
+           (Status = SMB.Ok and then Cursor = 112
+            and then Info.Name_Offset = 104 and then Info.Name_Length = 2,
+            "aligned directory chain with nonzero padding rejected");
+         SMB.Core_Protocol.Parse_Directory_Entry
+           (Chain, Cursor, Info, Status);
+         Assert
+           (Status = SMB.Ok and then Cursor = Chain'Length
+            and then Info.Name_Offset = 216 and then Info.Name_Length = 2,
+            "unpadded terminal directory entry rejected");
+      end;
+      Ada.Text_IO.Put_Line
+        ("directory boundary cases:" & Natural'Image (Count));
+   end Test_Directory_Bounds;
+
    procedure Test_Core_Protocol is
       File_Id : constant SMB.Bytes (0 .. 15) := (others => 16#11#);
       Read_Body : SMB.Bytes (0 .. 48) := (others => 0);
@@ -4480,11 +4587,15 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "path-contracts"
                  and then Ada.Command_Line.Argument (1) /= "utf-capacity"
                  and then Ada.Command_Line.Argument (1) /= "engine-receipts"
-                 and then Ada.Command_Line.Argument (1) /= "auth-preflight")
+                 and then Ada.Command_Line.Argument (1) /= "auth-preflight"
+                 and then Ada.Command_Line.Argument (1) /= "directory-bounds")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "auth-preflight" then
+      if Ada.Command_Line.Argument (1) = "directory-bounds" then
+         Test_Directory_Bounds;
+         Ada.Text_IO.Put_Line ("AdaSMB directory bounds tests passed");
+      elsif Ada.Command_Line.Argument (1) = "auth-preflight" then
          Test_Authentication_Preflight;
          Ada.Text_IO.Put_Line ("AdaSMB authentication preflight tests passed");
       elsif Ada.Command_Line.Argument (1) = "engine-receipts" then
@@ -4517,6 +4628,7 @@ begin
    Test_Core_Client_Authentication;
    Test_Final_Spnego;
    Test_Core_Protocol;
+   Test_Directory_Bounds;
    Test_Engine_Malformed_Close;
    Test_Engine_Receipts;
    Test_Text_And_Wire;

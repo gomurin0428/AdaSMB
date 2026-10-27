@@ -161,7 +161,9 @@ begin
          Ada.Text_IO.Put_Line
            ("lost WRITE response after progress and same-connection reconnect passed");
       end;
-   elsif Mode = "malformed-signed-directory-second-page" then
+   elsif Mode in "malformed-signed-directory-second-page"
+     | "dangling-signed-directory-second-page"
+   then
       declare
          Rejected : Boolean := False;
       begin

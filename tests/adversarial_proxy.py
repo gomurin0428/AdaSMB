@@ -10,6 +10,11 @@ import struct
 import threading
 import time
 
+DIRECTORY_MODES = (
+    "malformed-signed-directory-second-page",
+    "dangling-signed-directory-second-page",
+)
+
 
 def recv_exact(connection: socket.socket, length: int) -> bytes:
     result = bytearray()
@@ -203,8 +208,7 @@ class AdversarialProxy:
                         if len(payload) >= 64 and payload[12:14] == b"\x0e\x00":
                             query_requests += 1
                             if (
-                                self.mode
-                                == "malformed-signed-directory-second-page"
+                                self.mode in DIRECTORY_MODES
                                 and query_requests > 2
                             ):
                                 relay_error.append(
@@ -228,6 +232,7 @@ class AdversarialProxy:
                         if self.mode in {
                             "malformed-signed-create",
                             "malformed-signed-directory-second-page",
+                            "dangling-signed-directory-second-page",
                             "malformed-signed-set-info",
                             "malformed-signed-tree-disconnect",
                         }:
@@ -265,7 +270,7 @@ class AdversarialProxy:
                             and payload[12:14] == b"\x09\x00"
                         )
                         or (
-                            self.mode == "malformed-signed-directory-second-page"
+                            self.mode in DIRECTORY_MODES
                             and payload[12:14] == b"\x0e\x00"
                         )
                         or (
@@ -345,7 +350,7 @@ class AdversarialProxy:
                             payload[48:64] = hmac.new(
                                 session_key, payload, hashlib.sha256
                             ).digest()[:16]
-                        elif self.mode == "malformed-signed-directory-second-page":
+                        elif self.mode in DIRECTORY_MODES:
                             if payload[12:14] != b"\x0e\x00":
                                 client.sendall(header + payload)
                                 continue
@@ -392,7 +397,41 @@ class AdversarialProxy:
                                 raise RuntimeError(
                                     "derived key did not validate QUERY_DIRECTORY signature"
                                 )
-                            struct.pack_into("<I", payload, data_offset, 1)
+                            if self.mode == "dangling-signed-directory-second-page":
+                                end = data_offset + data_length
+                                entry = data_offset
+                                while True:
+                                    if end - entry < 104:
+                                        raise RuntimeError("truncated directory record")
+                                    next_entry = struct.unpack_from("<I", payload, entry)[0]
+                                    if next_entry == 0:
+                                        break
+                                    if (
+                                        next_entry < 104
+                                        or next_entry % 8 != 0
+                                        or next_entry >= end - entry
+                                    ):
+                                        raise RuntimeError("invalid backend directory link")
+                                    entry += next_entry
+                                remaining = end - entry
+                                name_length = struct.unpack_from(
+                                    "<I", payload, entry + 60
+                                )[0]
+                                if (
+                                    name_length == 0
+                                    or name_length % 2 != 0
+                                    or name_length > remaining - 104
+                                ):
+                                    raise RuntimeError("invalid backend directory name")
+                                padding = (-remaining) % 8
+                                if data_length + padding > 65_536:
+                                    raise RuntimeError("directory mutation exceeds chunk bound")
+                                payload[end:end] = b"\x00" * padding
+                                struct.pack_into("<I", payload, 68, data_length + padding)
+                                struct.pack_into("<I", payload, entry, remaining + padding)
+                                header = b"\x00" + len(payload).to_bytes(3, "big")
+                            else:
+                                struct.pack_into("<I", payload, data_offset, 1)
                             payload[48:64] = b"\x00" * 16
                             payload[48:64] = hmac.new(
                                 session_key, payload, hashlib.sha256
@@ -400,8 +439,7 @@ class AdversarialProxy:
                             client.sendall(header + payload)
                             mutated = True
                             if (
-                                self.mode
-                                == "malformed-signed-directory-second-page"
+                                self.mode in DIRECTORY_MODES
                             ):
                                 upstream.join(timeout=11)
                                 if upstream.is_alive():
@@ -557,7 +595,7 @@ class AdversarialProxy:
                     raise RuntimeError(
                         f"expected two client WRITE requests, got {write_requests}"
                     )
-            if self.mode == "malformed-signed-directory-second-page":
+            if self.mode in DIRECTORY_MODES:
                 if not relay_error or not isinstance(relay_error[0], EOFError):
                     raise RuntimeError(
                         "directory client connection did not close after mutation"
