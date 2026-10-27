@@ -767,6 +767,7 @@ is
             State.Handles (Index).File_Id := (others => 0);
             Found := True;
          end if;
+         pragma Loop_Invariant (Found);
          pragma Loop_Invariant
            (for all J in State.Handles'First .. Index =>
              not State.Handles (J).Active

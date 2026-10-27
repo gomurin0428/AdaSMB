@@ -516,7 +516,8 @@ is
           and
           Handle_Matches (State, Token, File_Id, Access_Mode, Is_Directory)
           and not Has_Validated_Response (State)
-        else Token.Owner = 0 and Token.Epoch = 0 and Token.Ticket = 0);
+        else State = State'Old
+          and Token.Owner = 0 and Token.Epoch = 0 and Token.Ticket = 0);
 
    procedure Validate_Handle
      (State : Engine_State;
@@ -581,7 +582,8 @@ is
           and Close_Token.Ticket = Token.Ticket
           and
           not Valid_Handle (State, Token, False, False)
-          and not Has_Validated_Response (State));
+          and not Has_Validated_Response (State)
+        else State = State'Old and Status = SMB.Invalid_Handle_Status);
 
    procedure Invalidate
      (State : in out Engine_State;
