@@ -16,6 +16,8 @@ project Proof is
       "smb-core_auth.adb",
       "smb-core_framing.ads",
       "smb-core_framing.adb",
+      "smb-core_transport.ads",
+      "smb-core_transport.adb",
       "smb-core_protocol.ads",
       "smb-core_protocol.adb",
       "smb-core_connection.ads",

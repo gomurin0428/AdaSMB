@@ -51,8 +51,14 @@ WRITE は開始時に入力を private snapshot へ一度だけコピーし、�
 最終結果もコアの境界付きコピーで抽出します。不確かな送受信や不正応答では
 再試行せず Engine を無効化し、ファサードが Channel を閉じます。ソケット I/O、
 返却スライスの転送、割当て、例外処理、コンテナ寿命は信頼境界です。
-ディレクトリ、DISPOSITION、RENAME などの残りの Client 経路は従来の
-`Exchange` 経路であり、今回の証明範囲には含めません。
+認証、ディレクトリ列挙、DISPOSITION／RENAME も型付きコアを通り、
+接続・共有接続・切断は `SMB.Core_Connection` が要求と応答に基づく
+状態更新を管理します。
+
+ソケット経路は `SMB.Core_Transport` を使い、実際に送るネイティブ配列の
+フレーム全バイト、部分受信のコピーと既存データの保持、部分送信の
+残りスライスと進捗を証明対象にしています。OS が返すバイト数の意味、
+ソケットループ、待機期限、割当て・初期化・例外処理は未証明です。
 
 ただし公開 `SMB.Client` の呼び出し順序・バッファ割当て・例外処理、
 ソケット、OS 乱数・時計、ランタイム、メモリ確保は信頼境界に残ります。
@@ -77,7 +83,7 @@ make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテスト
 make check                  # warnings-as-errors と依存関係検査
 make example                # build/bin/smb_example
 make prove                  # GNATprove + cvc5/z3 が必要。未証明があれば失敗
-make transport-test         # 読まない TCP peer に対する送信 timeout 試験
+make transport-test         # TCP 断片化、送受信 timeout、途中切断・復旧試験
 make integration            # 明示的にローカル Samba を起動する opt-in テスト
 ```
 

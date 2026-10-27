@@ -1,4 +1,6 @@
 with Ada.Text_IO;
+with Ada.Streams;
+with Ada.Command_Line;
 with SMB;
 with SMB.Core_Auth;
 with SMB.Core_Client;
@@ -6,6 +8,7 @@ with SMB.Core_Connection;
 with SMB.Core_Framing;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
+with SMB.Core_Transport;
 with SMB.Core_Wire;
 with SMB.Crypto;
 with SMB.Engine;
@@ -34,6 +37,113 @@ procedure Test_Suite is
          raise Program_Error with Message;
       end if;
    end Assert;
+
+   procedure Test_Core_Transport is
+      use type Ada.Streams.Stream_Element;
+      use type Ada.Streams.Stream_Element_Offset;
+      use type Ada.Streams.Stream_Element_Array;
+      Packet : SMB.Bytes (5 .. 68);
+      Frame : Ada.Streams.Stream_Element_Array (7 .. 74);
+      Short : Ada.Streams.Stream_Element_Array (1 .. 67);
+      Chunk : constant Ada.Streams.Stream_Element_Array (7 .. 11) :=
+        (1, 2, 3, 4, 5);
+      Buffer : SMB.Bytes (5 .. 10) := (others => 16#EE#);
+      Position : Natural := 0;
+      First : Ada.Streams.Stream_Element_Offset;
+      Status : SMB.Core_Status;
+   begin
+      for I in Packet'Range loop
+         Packet (I) := SMB.Byte (I);
+      end loop;
+      SMB.Core_Transport.Build_Frame (Packet, Frame, Status);
+      Assert
+        (Status = SMB.Ok and then Frame (7 .. 10) =
+           Ada.Streams.Stream_Element_Array'(0, 0, 0, 64),
+         "nonzero-bound native frame header");
+      for I in Packet'Range loop
+         Assert
+           (Frame (11 + Ada.Streams.Stream_Element_Offset (I - Packet'First)) =
+              Ada.Streams.Stream_Element (Packet (I)), "native frame payload");
+      end loop;
+      SMB.Core_Transport.Build_Frame (Packet, Short, Status);
+      Assert (Status = SMB.Invalid_Length and then
+                (for all I in Short'Range => Short (I) = 0),
+              "short native frame buffer");
+      SMB.Core_Transport.Build_Frame (Packet (5 .. 67), Short, Status);
+      Assert (Status = SMB.Invalid_Length, "undersized packet rejected");
+      declare
+         Large : constant SMB.Bytes (0 .. SMB.Maximum_Frame_Size - 1) :=
+           (others => 16#A5#);
+         Wire : Ada.Streams.Stream_Element_Array
+           (1 .. SMB.Core_Transport.Maximum_Wire_Size);
+      begin
+         SMB.Core_Transport.Build_Frame (Large, Wire, Status);
+         Assert
+           (Status = SMB.Ok and then Wire (1 .. 4) =
+              Ada.Streams.Stream_Element_Array'(0, 16, 0, 0)
+            and then Wire (5) = 16#A5# and then Wire (Wire'Last) = 16#A5#,
+            "maximum frame includes its four-byte prefix");
+      end;
+
+      SMB.Core_Transport.Receive_Chunk (Chunk, 8, Buffer, Position, Status);
+      Assert
+        (Status = SMB.Ok and then Position = 2
+         and then Buffer = SMB.Bytes'(1, 2, 16#EE#, 16#EE#, 16#EE#, 16#EE#),
+         "partial receive preserves unused tail");
+      SMB.Core_Transport.Receive_Chunk
+        (Ada.Streams.Stream_Element_Array'(10 => 3, 11 => 4, 12 => 5),
+         12, Buffer, Position, Status);
+      Assert
+        (Status = SMB.Ok and then Position = 5
+         and then Buffer = SMB.Bytes'(1, 2, 3, 4, 5, 16#EE#),
+         "receive continuation preserves prefix");
+      declare
+         Before : constant SMB.Bytes := Buffer;
+      begin
+         SMB.Core_Transport.Receive_Chunk (Chunk, 8, Buffer, Position, Status);
+         Assert (Status = SMB.Invalid_Length and then Position = 5
+                 and then Buffer = Before, "receive overcount has no effect");
+         SMB.Core_Transport.Receive_Chunk (Chunk, 6, Buffer, Position, Status);
+         Assert (Status = SMB.Invalid_Length and then Position = 5
+                 and then Buffer = Before, "receive EOF has no effect");
+         SMB.Core_Transport.Receive_Chunk (Chunk, 12, Buffer, Position, Status);
+         Assert (Status = SMB.Invalid_Length and then Position = 5
+                 and then Buffer = Before, "invalid receive end has no effect");
+      end;
+      SMB.Core_Transport.Receive_Chunk
+        (Ada.Streams.Stream_Element_Array'(1 => 6), 1, Buffer, Position, Status);
+      Assert (Status = SMB.Ok and then Position = 6
+              and then Buffer = SMB.Bytes'(1, 2, 3, 4, 5, 6),
+              "complete byte-exact receive");
+      SMB.Core_Transport.Receive_Chunk (Chunk, 7, Buffer, Position, Status);
+      Assert (Status = SMB.Invalid_Offset and then Position = 6,
+              "receive cannot progress beyond completion");
+      Position := Natural'Last;
+      SMB.Core_Transport.Receive_Chunk (Chunk, 7, Buffer, Position, Status);
+      Assert (Status = SMB.Invalid_Offset and then Position = Natural'Last,
+              "invalid large receive position is not narrowed");
+
+      Position := 0;
+      SMB.Core_Transport.Prepare_Write (Chunk, Position, First, Status);
+      Assert (Status = SMB.Ok and then First = 7, "initial send slice");
+      SMB.Core_Transport.Advance_Write (Chunk, 8, Position, Status);
+      Assert (Status = SMB.Ok and then Position = 2, "partial send progress");
+      SMB.Core_Transport.Prepare_Write (Chunk, Position, First, Status);
+      Assert (Status = SMB.Ok and then First = 9, "send resumes without replay");
+      SMB.Core_Transport.Advance_Write (Chunk, 8, Position, Status);
+      Assert (Status = SMB.Invalid_Length and then Position = 2,
+              "zero send does not advance");
+      SMB.Core_Transport.Advance_Write (Chunk, 12, Position, Status);
+      Assert (Status = SMB.Invalid_Length and then Position = 2,
+              "send overcount does not advance");
+      SMB.Core_Transport.Advance_Write (Chunk, 11, Position, Status);
+      Assert (Status = SMB.Ok and then Position = 5, "complete partial send");
+      SMB.Core_Transport.Prepare_Write (Chunk, Position, First, Status);
+      Assert (Status = SMB.Invalid_Offset, "completed send has no next slice");
+      SMB.Core_Transport.Advance_Write (Chunk, 11, Position, Status);
+      Assert (Status = SMB.Invalid_Offset and then Position = 5,
+              "duplicate completion does not advance");
+   end Test_Core_Transport;
 
    procedure Test_Framing is
       Sizes : constant array (Positive range 1 .. 2) of Natural :=
@@ -4027,8 +4137,19 @@ procedure Test_Suite is
       end;
    end Test_Text_And_Wire;
 begin
+   if Ada.Command_Line.Argument_Count > 0 then
+      if Ada.Command_Line.Argument_Count /= 1
+        or else Ada.Command_Line.Argument (1) /= "transport-core"
+      then
+         raise Program_Error with "unknown unit-test selection";
+      end if;
+      Test_Core_Transport;
+      Ada.Text_IO.Put_Line ("AdaSMB transport core tests passed");
+      return;
+   end if;
    Test_Crypto;
    Test_Framing;
+   Test_Core_Transport;
    Test_Core_Wire;
    Test_NTLM_Authenticate;
    Test_Core_Client_Authentication;

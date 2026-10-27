@@ -3,22 +3,24 @@
 ## Final clean proof
 
 `gnatprove -P proof.gpr --clean` and the subsequent complete `make prove`
-run passed. GNATprove analyzed all eleven configured units:
+run passed for transport-core implementation
+[`e9209c2`](https://github.com/gomurin0428/AdaSMB/commit/e9209c23a8dd32ed2f38466b3bfa49308aca1498).
+GNATprove analyzed all twelve configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Connection`, `SMB.Core_Framing`,
-`SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Wire`,
+`SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
 `SMB.Crypto` and `SMB.Engine`.
 
 | Category | Total | Flow | Proved by provers |
 | --- | ---: | ---: | ---: |
 | Data dependencies | 1 | 1 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
-| Initialization | 527 | 527 | 0 |
+| Initialization | 536 | 536 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,228 | 0 | 2,228 |
-| Assertions | 281 | 0 | 281 |
-| Functional contracts | 967 | 0 | 967 |
-| Termination | 145 | 139 | 6 |
-| **Total** | **4,152** | **670** | **3,482** |
+| Run-time checks | 2,329 | 0 | 2,329 |
+| Assertions | 291 | 0 | 291 |
+| Functional contracts | 972 | 0 | 972 |
+| Termination | 146 | 140 | 6 |
+| **Total** | **4,278** | **680** | **3,598** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -90,6 +92,19 @@ ID while retaining the session/key; successful LOGOFF invalidates local state
 and zeros the signing-key representation. Valid NTSTATUS errors preserve the
 connection context; malformed or uncertain responses require reconnect.
 
+The new `SMB.Core_Transport` proof covers the actual native stream arrays used
+by `SMB.Transport`: exact TCP-prefix and payload construction, exact accepted
+receive-byte copies with earlier-prefix/unused-tail preservation, positive
+bounded partial-I/O progress, unsent-range selection, and unchanged progress
+or destination on invalid counts. Native capacity includes the four-byte
+prefix beyond the 1-MiB packet limit. Nonzero buffer lower bounds are supported.
+The focused proof explicitly proves initialization and preservation of all
+five new loop invariants. Their local runtime `Ignore` policy avoids quadratic
+prefix rescans but does not change GNATprove's analysis; no runtime bounds
+checks or pre/postcondition checking are suppressed. The full socket loops,
+OS return semantics, retry/deadline behavior, allocation/initialization, and
+exception cleanup remain trusted and are tested rather than formally proved.
+
 The proof does not establish the trusted socket/allocation/exception adapter,
 complete public-facade correctness, cryptographic hardness, server rollback, or
 exactly-once behavior after an uncertain write.
@@ -134,6 +149,13 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   foreign/stale continuations; valid error receipts and handle preservation;
   successful TREE_DISCONNECT/LOGOFF cleanup; matching aborts; and malformed,
   bad-signature and bad-correlation responses.
+  Native transport fixtures cover nonzero-bound frame and receive arrays,
+  maximum-size frames including the TCP prefix, insufficient output capacity,
+  short packets, exact partial-read concatenation with prefix/tail preservation,
+  EOF/overcount/out-of-range results with no progress, oversized positions,
+  partial-write continuation, and duplicate completion rejection.
+  `gprbuild -p -P smb_tests.gpr test_suite.adb` followed by
+  `./build/bin/test_suite transport-core` also passed as the focused test.
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check
   GPRBUILD="gprbuild -f"`: passed. The library, test suite, and example were
   forcibly rebuilt with warnings treated as errors; the runtime dependency
@@ -141,7 +163,7 @@ Raw GNATprove output is `gnatprove.out`; its summary is
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH gnatprove -P
   proof.gpr --clean`: passed. The subsequent
   `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make prove`
-  passed across all eleven units with the clean full-project result above.
+  passed across all twelve units with the clean full-project result above.
 * `sudo -n env PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
   python3 tests/samba_integration.py`: passed against local Samba on
   `127.0.0.1:1445`. The public integration client passed normal authentication,
@@ -176,9 +198,15 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   disconnecting or invalidating its existing handle. No rollback or
   exactly-once guarantee is implied.
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
-  python3 tests/transport_integration.py`: passed, including send backpressure
-  timeout behavior.
-* `python3 -m py_compile tests/adversarial_proxy.py
+  python3 tests/transport_integration.py`: passed. A zero-reader peer exercises
+  send backpressure/deadline invalidation; fragmented peer writes exercise
+  header/body reception and a byte-exact frame echo. EOF during the header or
+  payload, unsupported and oversized prefixes, and a stalled partial header
+  are rejected with client-owned closure, invalid reuse rejection, and a new
+  fragmented frame/echo after reconnecting the same Connection object. TCP
+  may coalesce peer writes; deterministic unit fixtures separately exercise
+  partial counts. OS scheduling and real EINTR injection are not proved/tested.
+* `python3 -m py_compile tests/transport_integration.py tests/adversarial_proxy.py
   tests/samba_integration.py`: passed.
 * `git diff --check`: passed. A source scan found no `pragma Assume`,
   `False_Positive`, `Suppress`, or `Annotate` declarations in `src/` or
