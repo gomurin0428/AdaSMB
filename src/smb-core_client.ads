@@ -79,6 +79,7 @@ is
       Authentication_Finished,
       Authentication_Failed);
    type Authentication is limited private;
+
    Authentication_Request_Size : constant Natural :=
      SMB.Core_Wire.Header_Size + 24 + SMB.Core_Auth.Maximum_Security_Token;
 
@@ -660,6 +661,20 @@ is
                Transfer_Position_Of (Value)'Old
              and then Transfer_Buffer_Of (Value) =
                Transfer_Buffer_Of (Value)'Old));
+
+   function Unverified_Authentication_Status
+     (Value : Authentication;
+      State : SMB.Engine.Engine_State;
+      Packet : SMB.Bytes) return SMB.DWord
+   with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       (if Unverified_Authentication_Status'Result /= 0 then
+          Packet'Length >= 72
+          and then Unverified_Authentication_Status'Result =
+            SMB.Core_Wire.Header_Nt_Status (Packet)
+          and then
+            (Unverified_Authentication_Status'Result and 16#C000_0000#) =
+              16#C000_0000#);
 
    procedure Transfer_Send_Succeeded
      (Value : in out Transfer;

@@ -1,8 +1,7 @@
 with Ada.Containers.Vectors;
 with Ada.Exceptions;
-with Ada.Streams;
-with Ada.Streams.Stream_IO;
 with SMB.Clock;
+with SMB.Entropy;
 with SMB.Core_Auth;
 with SMB.Core_Client;
 with SMB.Core_Connection;
@@ -43,41 +42,10 @@ package body SMB.Client is
         (Source'First + Offset .. Source'First + Offset + Length - 1);
    end Slice;
 
-   procedure Generate_Entropy (Output : out SMB.Bytes) is
-      use Ada.Streams;
-      use Ada.Streams.Stream_IO;
-      File : File_Type;
-      Data : Stream_Element_Array
-        (1 .. Stream_Element_Offset (Output'Length));
-      Last : Stream_Element_Offset;
-   begin
-      Open (File, In_File, "/dev/urandom");
-      Read (File, Data, Last);
-      if Last < Data'Last then
-         Close (File);
-         raise SMB.Authentication_Error with "operating-system entropy source failed";
-      end if;
-      for I in Output'Range loop
-         Output (I) := SMB.Byte (Data (Data'First
-           + Stream_Element_Offset (I - Output'First)));
-      end loop;
-      Close (File);
-   exception
-      when SMB.Authentication_Error =>
-         raise;
-      when E : others =>
-         if Is_Open (File) then
-            Close (File);
-         end if;
-         raise SMB.Authentication_Error with
-           "cannot read operating-system entropy: "
-           & Ada.Exceptions.Exception_Message (E);
-   end Generate_Entropy;
-
    procedure Get_Entropy (Client : Connection; Output : out SMB.Bytes) is
    begin
       if Client.Entropy = null then
-         Generate_Entropy (Output);
+         SMB.Entropy.Generate (Output);
       else
          Client.Entropy (Output);
       end if;
@@ -90,6 +58,7 @@ package body SMB.Client is
       SMB.Engine.Invalidate (Client.Engine_Core, Engine_Status);
       Client.Host := Ada.Strings.Unbounded.Null_Unbounded_String;
       Client.Last_Status := SMB.Success;
+      Client.Unverified_Authentication_Status := 0;
    end Clear_State;
 
    procedure Clear_State_Preserving_Status (Client : in out Connection) is
@@ -510,6 +479,7 @@ package body SMB.Client is
       Engine_Status : SMB.Core_Status;
       Operation : SMB.Core_Connection.Connection_Operation;
    begin
+      Client.Unverified_Authentication_Status := 0;
       SMB.Engine.Initialize (Client.Engine_Core, Engine_Status);
       if Engine_Status /= SMB.Ok then
          raise SMB.Invalid_State with
@@ -577,6 +547,7 @@ package body SMB.Client is
       Nt_Status : SMB.DWord;
       Nonce : SMB.Bytes (0 .. 7);
       Started : Boolean := False;
+      Unverified_Status : SMB.DWord := 0;
    begin
       SMB.Core_Client.Prepare_Negotiate
         (Authentication, Client.Engine_Core, Request, Used, Engine_Status);
@@ -628,12 +599,19 @@ package body SMB.Client is
          Response : constant SMB.Bytes :=
            SMB.Transport.Receive_Frame (Client.Channel);
       begin
+         Unverified_Status := SMB.Core_Client.Unverified_Authentication_Status
+           (Authentication, Client.Engine_Core, Response);
          SMB.Core_Client.Complete_Authenticate
            (Authentication, Client.Engine_Core, Response, Nt_Status,
             Engine_Status);
          Client.Last_Status := Nt_Status;
       end;
       if Engine_Status /= SMB.Ok then
+         if Unverified_Status /= 0 then
+            raise SMB.Authentication_Error with
+              "unsigned authentication failure: unverified peer NTSTATUS"
+              & SMB.DWord'Image (Unverified_Status);
+         end if;
          raise SMB.Authentication_Error with
            "server did not complete signed SMB authentication";
       end if;
@@ -663,6 +641,11 @@ package body SMB.Client is
             Clear_State_Preserving_Status (Client);
          else
             Clear_State (Client);
+            if Ada.Exceptions.Exception_Identity (E) =
+              SMB.Authentication_Error'Identity
+            then
+               Client.Unverified_Authentication_Status := Unverified_Status;
+            end if;
          end if;
          if Ada.Exceptions.Exception_Identity (E) = SMB.NT_Status_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Authentication_Error'Identity
@@ -1270,6 +1253,10 @@ package body SMB.Client is
          Ada.Exceptions.Reraise_Occurrence (First_Error);
       end if;
    end Disconnect;
+
+   function Last_Unverified_Authentication_Status
+     (Client : Connection) return SMB.DWord is
+     (Client.Unverified_Authentication_Status);
 
    function Last_NT_Status (Client : Connection) return SMB.DWord is
      (Client.Last_Status);

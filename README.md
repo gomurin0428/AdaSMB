@@ -30,10 +30,21 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
 「Pure Ada」は、実装が Ada であり C の暗号ライブラリや
 `libsmbclient` をリンクしない、という意味です。`pragma Pure` という
 Ada パッケージ属性を意味しません。GNAT.Sockets、Ada Stream_IO、
-GNAT の通常ランタイムに依存します。既定のエントロピー源は Linux の
-`/dev/urandom` で、`Connect` に callback を渡せば別 OS の呼び出し元が
-OS 固有の CSPRNG を注入できます。CSPRNG が使えない場合は fail closed
-します。プロジェクトは実験的な段階です。
+GNAT の通常ランタイムに依存します。既定のエントロピー源は Unix の
+`/dev/urandom`、Windows の `BCryptGenRandom` (OS標準CSPRNG) です。
+Windows版だけがOS乱数取得のために `bcrypt` をリンクし、AdaのOSアダプターで
+直接呼び出します。ハッシュ・HMAC・NTLM・SMB署名は引き続きPure Adaです。
+`Connect` の既存entropy callbackも利用できます。CSPRNG失敗時は代替せず
+fail closedします。プロジェクトは実験的な段階です。
+
+Windowsでは `OS=Windows_NT` からアダプターを自動選択します。
+クロスビルドではコンパイラのtarget指定に加え `-XADASMB_OS=Windows_NT` または
+`-XADASMB_OS=Unix` を明示してください。
+
+未署名の最終認証失敗も拒否・切断しますが、要求対応と構造が正しいエラーは
+`Last_Unverified_Authentication_Status` と例外メッセージで診断できます。
+これは**未認証の相手による主張**です。`Last_NT_Status`には混ぜず、認証成功や
+自動再試行の判断に使いません。値0は診断なし、Connect/Disconnectで消去します。
 
 ## SPARK による保証範囲
 

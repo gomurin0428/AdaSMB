@@ -265,6 +265,34 @@ class AdversarialProxy:
                     )
                     if (
                         self.mode in {
+                            "unsigned-auth-error",
+                            "unsigned-auth-success",
+                            "unsigned-auth-wrong-id",
+                        }
+                        and payload[12:14] == b"\x01\x00"
+                        and struct.unpack_from("<I", payload, 8)[0] == 0
+                    ):
+                        if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                            raise RuntimeError("expected signed authentication success")
+                        if self.mode != "unsigned-auth-success":
+                            payload = payload[:64] + bytearray(9)
+                            struct.pack_into("<I", payload, 8, 0xC000006D)
+                            struct.pack_into("<H", payload, 64, 9)
+                        struct.pack_into("<I", payload, 16, 1)
+                        payload[48:64] = b"\x00" * 16
+                        if self.mode == "unsigned-auth-wrong-id":
+                            message_id = struct.unpack_from("<Q", payload, 24)[0]
+                            struct.pack_into("<Q", payload, 24, message_id + 1)
+                        client.sendall(b"\x00" + len(payload).to_bytes(3, "big") + payload)
+                        mutated = True
+                        upstream.join(timeout=11)
+                        if upstream.is_alive() or not relay_error or not isinstance(
+                            relay_error[0], EOFError
+                        ):
+                            raise RuntimeError("authentication client did not disconnect")
+                        break
+                    if (
+                        self.mode in {
                             "read-reserved-fields",
                             "error-reserved-field",
                             "connection-reserved-fields",

@@ -100,8 +100,9 @@ Type 2、zero-MIC Type 3 全体で MIC を計算します。channel binding が
 ## 暗号と入力制限
 
 MD4、MD5、SHA-256、HMAC-MD5、HMAC-SHA256 は Ada の整数演算だけで
-実装しています。既定エントロピーは `/dev/urandom` を短く読めなかった
-場合も成功扱いにしません。UTF-8 の overlong、surrogate、範囲外 scalar、
+実装しています。既定エントロピーはUnixで `/dev/urandom`、Windowsで
+`BCryptGenRandom(NULL, buffer, length, BCRYPT_USE_SYSTEM_PREFERRED_RNG)`です。
+短い読み取りやOS API失敗を成功扱いにせず、疑似乱数にフォールバックしません。UTF-8 の overlong、surrogate、範囲外 scalar、
 embedded NUL、UTF-16 の奇数長・不正 surrogate は拒否します。
 
 フレーム最大値は 1 MiB、read/write の単一 credit chunk は 64 KiB
@@ -113,6 +114,15 @@ UNC、drive-qualified、空 component、`..` escape の share-relative path
 です。socket deadline は名前解決後の TCP 接続と各 SMB frame の完全な
 読み書きに適用されます。
 
-この文書とライブラリは、FIPS 等の認証、攻撃耐性の保証、Windows native
-サポートを宣言しません。別 OS では entropy callback と GNAT socket
-環境を呼び出し元が用意する必要があります。
+この文書とライブラリは、FIPS 等の認証や攻撃耐性を保証しません。
+OS乱数・GNAT socket環境は信頼境界です。Windows既定乱数はOS標準APIを使う
+Adaアダプターだけに分離し、他の暗号処理には利用しません。
+
+最終SESSION_SETUPの未署名エラーは引き続き認証失敗として切断します。
+要求ID・SessionId・TreeId・コマンド・エラー構造を検査したうえで、error severityの
+NTSTATUSだけを `Last_Unverified_Authentication_Status` に診断用として残します。
+この値の真正性は保証せず、署名済み応答の `Last_NT_Status` と分離します。
+成功・継続要求・壊れた署名・相関不一致・不正構造を診断値として採用しません。
+
+* [BCryptGenRandom](https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptgenrandom)
+* [MS-SMB2 3.2.5.1.3 Verifying the Signature](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/36172e53-ac81-48fb-b2e3-caa3761b9157)
