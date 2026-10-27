@@ -737,6 +737,67 @@ procedure Test_Suite is
         (Auth.Session_Key, Hex ("e711de05352dfa50de477e818cffec55"),
          "NTLM session base key vector");
       declare
+         Type1 : constant SMB.Bytes := Hex
+           ("4e544c4d53535000010000001582882000000000000000000000000000000000");
+         Type3_First : constant := 14;
+         Type3_Last : constant := 249;
+         MIC_First : constant := Type3_First + 72;
+         MIC_Last : constant := MIC_First + 15;
+         Fields : constant array (Positive range <>) of Natural := (14, 15, 42, 43);
+         Type2_Offset, Type2_Length : Natural;
+         Extract_Status : SMB.Core_Status;
+         Cases : Natural := 0;
+
+         procedure Check_MaxLen (Token : SMB.Bytes) is
+            Result : constant SMB.NTLM.Authentication_Result :=
+              SMB.NTLM.Authenticate
+                ("User", "Password", "Domain", Hex ("ffffff0011223344"), Token);
+            Type3 : SMB.Bytes := Expected (Type3_First .. Type3_Last);
+            Expected_Token : SMB.Bytes := Expected;
+         begin
+            Type3 (MIC_First .. MIC_Last) := (others => 0);
+            Expected_Token (MIC_First .. MIC_Last) := SMB.Crypto.HMAC_MD5
+              (Hex ("e711de05352dfa50de477e818cffec55"),
+               Type1 & Token
+                 (Token'First + Type2_Offset
+                  .. Token'First + Type2_Offset + Type2_Length - 1) & Type3);
+            Assert_Equal
+              (Result.Session_Key, Hex ("e711de05352dfa50de477e818cffec55"),
+               "ignored challenge MaxLen changed session key");
+            Assert_Equal
+              (Result.Security_Token, Expected_Token,
+               "challenge MaxLen must remain in authenticated transcript");
+            Cases := Cases + 1;
+         end Check_MaxLen;
+      begin
+         SMB.Core_NTLM.Extract_Challenge
+           (Challenge, Type2_Offset, Type2_Length, Extract_Status);
+         Assert (Extract_Status = SMB.Ok, "MaxLen fixture extraction");
+         for Rebased in 0 .. 1 loop
+            declare
+               First : constant Natural := Rebased * 7;
+               Token : SMB.Bytes (First .. First + Challenge'Length - 1);
+            begin
+               for Field of Fields loop
+                  for Value in SMB.Byte loop
+                     Token := Challenge;
+                     Token (First + Type2_Offset + Field) := Value;
+                     Check_MaxLen (Token);
+                  end loop;
+               end loop;
+               Token := Challenge;
+               Token (First + Type2_Offset + 12 .. First + Type2_Offset + 13) :=
+                 (others => 0);
+               Token (First + Type2_Offset + 14 .. First + Type2_Offset + 15) :=
+                 (others => 16#FF#);
+               Token (First + Type2_Offset + 16 .. First + Type2_Offset + 19) :=
+                 (others => 0);
+               Check_MaxLen (Token);
+            end;
+         end loop;
+         Ada.Text_IO.Put_Line ("NTLM ignored MaxLen cases:" & Cases'Image);
+      end;
+      declare
          Nonce : constant SMB.Bytes (0 .. 7) :=
            (16#FF#, 16#FF#, 16#FF#, 0, 16#11#, 16#22#, 16#33#, 16#44#);
          Type2_Offset, Type2_Length : Natural := 0;
@@ -744,6 +805,7 @@ procedure Test_Suite is
          Wire_Status : SMB.Core_Status;
          Info_Offset : SMB.DWord := 0;
          Bad_Offset : SMB.Bytes := Challenge;
+         Length_Fields : constant array (Positive range <>) of Natural := (12, 40);
          Duplicate_AV : SMB.Bytes := Challenge;
          Nonminimal : SMB.Bytes (0 .. Challenge'Length) := (others => 0);
          Small_Output : SMB.Bytes (0 .. 0) := (others => 0);
@@ -778,6 +840,16 @@ procedure Test_Suite is
            (Type2_Offset + 16 .. Type2_Offset + 19) :=
              (16#FF#, 16#FF#, 16#FF#, 16#FF#);
          Assert_Protocol_Rejected (Bad_Offset);
+
+         Bad_Offset := Challenge;
+         Bad_Offset (Type2_Offset + 44 .. Type2_Offset + 47) := (others => 16#FF#);
+         Assert_Protocol_Rejected (Bad_Offset);
+         for Field of Length_Fields loop
+            Bad_Offset := Challenge;
+            Bad_Offset (Type2_Offset + Field .. Type2_Offset + Field + 1) :=
+              (others => 16#FF#);
+            Assert_Protocol_Rejected (Bad_Offset);
+         end loop;
 
          declare
             Type2_Data : SMB.Bytes (0 .. Type2_Length - 1) :=
@@ -4900,11 +4972,14 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "connection-reserved"
                  and then Ada.Command_Line.Argument (1) /= "response-mutations"
                  and then Ada.Command_Line.Argument (1) /= "header-mutations"
-                 and then Ada.Command_Line.Argument (1) /= "security-buffers")
+                 and then Ada.Command_Line.Argument (1) /= "security-buffers"
+                 and then Ada.Command_Line.Argument (1) /= "ntlm-maxlen")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "security-buffers" then
+      if Ada.Command_Line.Argument (1) = "ntlm-maxlen" then
+         Test_NTLM_Authenticate;
+      elsif Ada.Command_Line.Argument (1) = "security-buffers" then
          Security_Buffer_Tests;
       elsif Ada.Command_Line.Argument (1) = "header-mutations" then
          Header_Mutation_Tests;

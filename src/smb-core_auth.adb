@@ -916,9 +916,9 @@ package body SMB.Core_Auth is
               .. Server_Token'First + (Type2_Offset + Type2_Length - 1));
          Type1 : SMB.Bytes (0 .. Type1_Length - 1) := (others => 0);
          Flags : SMB.DWord;
-         Target_Name_Len, Target_Name_Max : SMB.Word;
+         Target_Name_Len : SMB.Word;
          Target_Name_Off : SMB.DWord;
-         Target_Len, Target_Max : SMB.Word;
+         Target_Len : SMB.Word;
          Target_Off : SMB.DWord;
          Read_Status : SMB.Core_Status;
       begin
@@ -940,19 +940,13 @@ package body SMB.Core_Auth is
          end if;
          Read_U16 (Type2, 12, Target_Name_Len, Read_Status);
          if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
-         Read_U16 (Type2, 14, Target_Name_Max, Read_Status);
-         if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
          Read_U32 (Type2, 16, Target_Name_Off, Read_Status);
          if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
          Read_U16 (Type2, 40, Target_Len, Read_Status);
          if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
-         Read_U16 (Type2, 42, Target_Max, Read_Status);
-         if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
          Read_U32 (Type2, 44, Target_Off, Read_Status);
          if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
-         if Target_Name_Max < Target_Name_Len
-           or else Target_Max < Target_Len
-           or else Target_Name_Off > SMB.DWord (Type2'Length)
+         if Target_Name_Off > SMB.DWord (Type2'Length)
            or else Target_Off > SMB.DWord (Type2'Length)
            or else Target_Name_Off > SMB.DWord (Natural'Last)
            or else Target_Off > SMB.DWord (Natural'Last)
@@ -972,14 +966,9 @@ package body SMB.Core_Auth is
             Has_Timestamp : Boolean;
          begin
             if (Target_Name_Len > 0 and then Name_Offset < Header_Len)
-              or else
-                (Target_Name_Max > 0 and then Name_Offset < Header_Len)
               or else Natural (Target_Name_Len) > Type2'Length - Name_Offset
-              or else Natural (Target_Name_Max) > Type2'Length - Name_Offset
               or else (Target_Len > 0 and then Info_Offset < Header_Len)
-              or else (Target_Max > 0 and then Info_Offset < Header_Len)
               or else Natural (Target_Len) > Type2'Length - Info_Offset
-              or else Natural (Target_Max) > Type2'Length - Info_Offset
             then
                Status := SMB.Invalid_Offset;
                return;
