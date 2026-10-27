@@ -47,7 +47,7 @@ without sending Type 3, disconnected with diagnostics cleared, then reconnected
 and read the fixture successfully.
 
 No GNATprove run was performed because this stage changes no production or
-proof source. No CI or PR action was performed.
+proof source. No CI was run.
 
 Evidence logs: `/home/ubuntu/ntlm-av-01-ntlm-test.log`,
 `/home/ubuntu/ntlm-av-02-ntlm-test-after-constant.log`,
