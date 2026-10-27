@@ -16,6 +16,18 @@ package SMB.Core_Auth is
      (Data'Last < Data'First
       or else Data'Last - Data'First < Limit);
 
+   procedure Validate_Credentials
+     (User, Password, Domain : String;
+      Status : out SMB.Core_Status)
+   with
+     Global => null,
+     Post =>
+       (if Status = SMB.Ok then
+          User'Length > 0
+          and then Storage_Bounded (User, Maximum_Credential_Bytes)
+          and then Storage_Bounded (Password, Maximum_Credential_Bytes)
+          and then Storage_Bounded (Domain, Maximum_Credential_Bytes));
+
    procedure Build_Negotiate_Token
      (Output : in out SMB.Bytes;
       Used : out Natural;

@@ -3,6 +3,7 @@ with Ada.Exceptions;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
 with SMB.Clock;
+with SMB.Core_Auth;
 with SMB.Core_Client;
 with SMB.Core_Connection;
 with SMB.Core_Protocol;
@@ -563,7 +564,7 @@ package body SMB.Client is
          raise SMB.Protocol_Error with Ada.Exceptions.Exception_Message (E);
    end Connect;
 
-   procedure Authenticate
+   procedure Authenticate_Internal
      (Client : in out Connection;
       User, Password : String;
       Domain : String := "") is
@@ -672,6 +673,20 @@ package body SMB.Client is
             raise;
          end if;
          raise SMB.Authentication_Error with Ada.Exceptions.Exception_Message (E);
+   end Authenticate_Internal;
+
+   procedure Authenticate
+     (Client : in out Connection;
+      User, Password : String;
+      Domain : String := "") is
+      Status : SMB.Core_Status;
+   begin
+      if SMB.Engine.Current_Phase (Client.Engine_Core) = SMB.Engine.Negotiated
+      then
+         SMB.Core_Auth.Validate_Credentials (User, Password, Domain, Status);
+         Require_Authentication_Status (Status, "invalid NTLM credentials");
+      end if;
+      Authenticate_Internal (Client, User, Password, Domain);
    end Authenticate;
 
    procedure Connect_Share (Client : in out Connection; Share : String) is

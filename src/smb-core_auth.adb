@@ -16,6 +16,49 @@ package body SMB.Core_Auth is
    Type1_Length : constant := 32;
    Type3_Header_Length : constant := 88;
 
+   procedure Validate_Credentials
+     (User, Password, Domain : String;
+      Status : out SMB.Core_Status)
+   is
+      Upper_User : String (1 .. Maximum_Credential_Bytes) :=
+        (others => Character'Val (0));
+      Encoded : SMB.Bytes (1 .. 2 * Maximum_Credential_Bytes);
+      Used : Natural;
+   begin
+      if not Storage_Bounded (User, Maximum_Credential_Bytes)
+        or else not Storage_Bounded (Password, Maximum_Credential_Bytes)
+        or else not Storage_Bounded (Domain, Maximum_Credential_Bytes)
+      then
+         Status := SMB.Resource_Limit;
+         return;
+      end if;
+      if User'Length = 0 then
+         Status := SMB.Unsupported_Feature;
+         return;
+      end if;
+      SMB.Core_Text.Uppercase_NTLM_User
+        (User, Upper_User (1 .. User'Length), Status);
+      if Status /= SMB.Ok then
+         Status := SMB.Unsupported_Feature;
+         return;
+      end if;
+      SMB.Core_Text.UTF8_To_UTF16 (Password, Encoded, Used, Status);
+      if Status /= SMB.Ok then
+         Status := SMB.Unsupported_Feature;
+         return;
+      end if;
+      SMB.Core_Text.UTF8_To_UTF16
+        (Upper_User (1 .. User'Length), Encoded, Used, Status);
+      if Status /= SMB.Ok then
+         Status := SMB.Unsupported_Feature;
+         return;
+      end if;
+      SMB.Core_Text.UTF8_To_UTF16 (Domain, Encoded, Used, Status);
+      if Status /= SMB.Ok then
+         Status := SMB.Unsupported_Feature;
+      end if;
+   end Validate_Credentials;
+
    procedure Read_U16
      (Data : SMB.Bytes; Offset : Natural; Value : out SMB.Word;
       Status : out SMB.Core_Status)
