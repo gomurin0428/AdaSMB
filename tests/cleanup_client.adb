@@ -32,7 +32,109 @@ begin
    SMB.Client.Connect (Client, Host, Proxy_Port, 5.0);
    SMB.Client.Authenticate (Client, User, Password);
    SMB.Client.Connect_Share (Client, Share);
-   if Mode = "read-reserved-fields" then
+   if Mode = "handle-capacity" then
+      declare
+         Limit : constant Positive := 256;
+
+         procedure Reject_Extra_Operations (File : SMB.Client.Handle) is
+         begin
+            for Action in 1 .. 8 loop
+               declare
+                  Data : constant SMB.Bytes := SMB.Client.Read (Client, File, 1024, 1);
+               begin
+                  if Data'Length /= 0
+                    or else SMB.Client.Last_NT_Status (Client) /= SMB.Status_End_Of_File
+                  then
+                     raise Program_Error with "capacity test did not establish EOF status";
+                  end if;
+               end;
+               begin
+                  case Action is
+                     when 1 .. 3 =>
+                        declare
+                           Extra : SMB.Client.Handle := SMB.Client.Open_File
+                             (Client,
+                              (if Action = 2 then "capacity-created.txt" else "fixture.txt"),
+                              SMB.Client.Read_Write,
+                              (if Action = 1 then SMB.Client.Open_Existing
+                               elsif Action = 2 then SMB.Client.Create_New
+                               else SMB.Client.Truncate_Existing));
+                        begin
+                           SMB.Client.Close (Client, Extra);
+                        end;
+                     when 4 =>
+                        declare
+                           Entries : constant SMB.Client.Directory_Entry_Array :=
+                             SMB.Client.List_Directory (Client);
+                           pragma Unreferenced (Entries);
+                        begin
+                           null;
+                        end;
+                     when 5 => SMB.Client.Make_Directory (Client, "capacity-new-dir");
+                     when 6 => SMB.Client.Rename
+                       (Client, "fixture.txt", "capacity-renamed.txt");
+                     when 7 => SMB.Client.Remove_File (Client, "fixture.txt");
+                     when 8 => SMB.Client.Remove_Directory (Client, "capacity-retained-dir");
+                  end case;
+                  raise Program_Error with "full handle table accepted another operation";
+               exception
+                  when Error : SMB.Invalid_State =>
+                     if Ada.Exceptions.Exception_Message (Error) /=
+                       "SMB CREATE cannot start: RESOURCE_LIMIT"
+                     then
+                        raise;
+                     end if;
+               end;
+               if not SMB.Client.Is_Connected (Client)
+                 or else SMB.Client.Last_NT_Status (Client) /= SMB.Status_End_Of_File
+                 or else SMB.Client.Read (Client, File, 0, 1) /= SMB.Bytes'(0 => 65)
+               then
+                  raise Program_Error with "capacity refusal damaged state or handle";
+               end if;
+            end loop;
+         end Reject_Extra_Operations;
+
+         procedure Fill (Depth : Positive) is
+            File : SMB.Client.Handle :=
+              SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+         begin
+            if Depth < Limit then
+               Fill (Depth + 1);
+               if SMB.Client.Read (Client, File, 0, 1) /= SMB.Bytes'(0 => 65) then
+                  raise Program_Error with "capacity refusal damaged an older handle";
+               end if;
+               SMB.Client.Close (Client, File);
+            else
+               Reject_Extra_Operations (File);
+               SMB.Client.Close (Client, File);
+               declare
+                  Entries : constant SMB.Client.Directory_Entry_Array :=
+                    SMB.Client.List_Directory (Client);
+               begin
+                  if Entries'Length = 0 then
+                     raise Program_Error with "released slot did not allow enumeration";
+                  end if;
+               end;
+               declare
+                  Replacement : SMB.Client.Handle :=
+                    SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+               begin
+                  if SMB.Client.Read (Client, Replacement, 0, 1) /= SMB.Bytes'(0 => 65) then
+                     raise Program_Error with "released slot did not allow a new file";
+                  end if;
+                  SMB.Client.Close (Client, Replacement);
+               end;
+            end if;
+         end Fill;
+      begin
+         SMB.Client.Make_Directory (Client, "capacity-retained-dir");
+         Fill (1);
+         SMB.Client.Remove_Directory (Client, "capacity-retained-dir");
+      end;
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line
+        ("256 handles, eight preflight refusals, retained status and slot reuse passed");
+   elsif Mode = "read-reserved-fields" then
       declare
          File : SMB.Client.Handle :=
            SMB.Client.Open_File

@@ -1,5 +1,48 @@
 # GNATprove and test report
 
+## Handle capacity rejection and slot reuse
+
+The existing 256-handle preflight limit is exercised through the coordinator
+and public API. The coordinator test fills the table, checks exact
+`Resource_Limit`/zero output/unchanged state, closes a middle slot and reuses
+it with a fresh ticket, rejects the old token and validates every live handle.
+
+The Samba case fills all 256 slots and rejects eight operations requiring
+another CREATE: existing/new/truncated files, listing, directory creation,
+rename, file deletion and directory deletion. Every refusal preserves the
+connection, a nonzero EOF status and readable handles. Closing one file allows
+listing and a replacement file. A transparent proxy counts exactly 260
+CREATE/CLOSE requests overall and a peak of 256 live handles; it does not
+change real Samba responses or capture credentials. The final counts were 260
+CREATE, 260 CLOSE, peak 256 and zero handles at disconnect, with one SET_INFO,
+TREE_DISCONNECT and LOGOFF. Filesystem checks reject unintended creation,
+truncation, rename or deletion. `ADASMB_HANDLES_ONLY=1` selects this case
+independently.
+
+The first test build found a missing visibility for the new
+`Operation_Stage` equality assertion; adding `use type
+SMB.Core_Client.Operation_Stage` fixed it. Python syntax compilation, the
+Candidate GNAT14 normal and forced builds, and `engine-receipts` passed. The
+selector covered the prior 74 handle-validation cases and the new full-table
+test (256 handles, unchanged-state rejection, slot reuse and stale-token
+rejection). Focused and full Samba integration, `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and `git diff --check` passed.
+
+For the sensitivity control, only `Begin_Request`'s `if not Free then`
+preflight was replaced by `if False then`; the `Register_Handle` guard was
+untouched. The mutant built successfully. `engine-receipts` failed at the new
+`full handle table changed state or prepared a request` assertion. The public
+integration also failed: bypassing preflight sent the first extra CREATE to
+Samba, which returned NTSTATUS `3221225506` (`0xC0000022`) rather than the
+expected local `RESOURCE_LIMIT`. The request failed at the backend before a
+`Register_Handle` result; this is not preflight rejection. The original
+`src/smb-engine.adb` was restored byte-for-byte, SHA-256
+`3ffb7e21eb32af62eb220ccfea6cc2c8cebd7d2508633cb5c822a10cabe4bb27`.
+After restoration, both binaries were force-rebuilt and the focused unit and
+Samba tests passed again.
+
+Formal proof, native Windows and CI were not run for this tests-only change.
+
 ## Exact handle validation outcomes
 
 For a 16-byte output buffer, `Validate_Handle` retains the success equivalence:
