@@ -227,12 +227,11 @@ package body SMB.Client is
 
    function Create_Internal
      (Client : in out Connection;
-      Path : String;
+      UTF16_Name : SMB.Bytes;
       Mode : Access_Mode;
       Disposition : Create_Disposition;
       Is_Directory : Boolean;
       Additional_Access : SMB.DWord := 0) return Handle is
-      UTF16_Name : constant SMB.Bytes := Encode_Name (Path);
       Packet : SMB.Bytes
         (0 .. SMB.Core_Wire.Header_Size + 56
           + Natural'Max (1, UTF16_Name'Length) - 1) := (others => 0);
@@ -733,9 +732,10 @@ package body SMB.Client is
       Mode : Access_Mode := Read_Only;
       Disposition : Create_Disposition := Open_Existing) return Handle is
       Safe_Path : constant String := Validated_Path (Path);
+      UTF16_Name : constant SMB.Bytes := Encode_Name (Safe_Path);
    begin
       return Create_Internal
-        (Client, Safe_Path, Mode, Disposition, False);
+        (Client, UTF16_Name, Mode, Disposition, False);
    end Open_File;
 
    function Read
@@ -886,12 +886,11 @@ package body SMB.Client is
      (Client : in out Connection;
       Path : String := "") return Directory_Entry_Array is
       Safe_Path : constant String := Validated_Path (Path, Allow_Empty => True);
+      UTF16_Name : constant SMB.Bytes := Encode_Name (Safe_Path);
       Entries : Entry_Vectors.Vector;
       Core_Status : SMB.Core_Status;
    begin
       declare
-         Folder : Handle := Create_Internal
-           (Client, Safe_Path, Read_Only, Open_Existing, True);
          Enumeration : SMB.Core_Client.Directory_Enumeration;
          Request : SMB.Bytes
            (0 .. SMB.Core_Client.Directory_Request_Size - 1) :=
@@ -902,6 +901,8 @@ package body SMB.Client is
          Used : Natural := 0;
          Nt_Status : SMB.DWord := 0;
          Started : Boolean := False;
+         Folder : Handle := Create_Internal
+           (Client, UTF16_Name, Read_Only, Open_Existing, True);
       begin
          SMB.Core_Client.Start_Directory
            (Enumeration, Client.Engine_Core, Folder.Engine_Token, Core_Status);
@@ -1041,10 +1042,11 @@ package body SMB.Client is
 
    procedure Make_Directory (Client : in out Connection; Path : String) is
       Safe_Path : constant String := Validated_Path (Path);
+      UTF16_Name : constant SMB.Bytes := Encode_Name (Safe_Path);
    begin
       declare
          Folder : Handle :=
-           Create_Internal (Client, Safe_Path, Read_Write, Create_New, True);
+           Create_Internal (Client, UTF16_Name, Read_Write, Create_New, True);
       begin
          Close_Internal (Client, Folder);
          exception
@@ -1065,10 +1067,11 @@ package body SMB.Client is
 
    procedure Remove_File (Client : in out Connection; Path : String) is
       Safe_Path : constant String := Validated_Path (Path);
+      UTF16_Name : constant SMB.Bytes := Encode_Name (Safe_Path);
    begin
       declare
          File : Handle := Create_Internal
-           (Client, Safe_Path, Read_Only, Open_Existing, False, File_Delete);
+           (Client, UTF16_Name, Read_Only, Open_Existing, False, File_Delete);
       begin
          Set_Disposition (Client, File, True);
          Close_Internal (Client, File);
@@ -1090,10 +1093,11 @@ package body SMB.Client is
 
    procedure Remove_Directory (Client : in out Connection; Path : String) is
       Safe_Path : constant String := Validated_Path (Path);
+      UTF16_Name : constant SMB.Bytes := Encode_Name (Safe_Path);
    begin
       declare
          Folder : Handle := Create_Internal
-           (Client, Safe_Path, Read_Only, Open_Existing, True, File_Delete);
+           (Client, UTF16_Name, Read_Only, Open_Existing, True, File_Delete);
       begin
          Set_Disposition (Client, Folder, True);
          Close_Internal (Client, Folder);
@@ -1117,15 +1121,16 @@ package body SMB.Client is
       Old_Name : constant String := Validated_Path (Old_Path);
       New_Name : constant String := Validated_Path (New_Path);
       New_UTF16 : constant SMB.Bytes := Encode_Name (New_Name);
+      Old_UTF16 : constant SMB.Bytes := Encode_Name (Old_Name);
    begin
       declare
-         File : Handle := Create_Internal
-           (Client, Old_Name, Read_Only, Open_Existing, False, File_Delete);
          Payload : SMB.Bytes (0 .. 63 + 52 + New_UTF16'Length) :=
            (others => 0);
          Used : Natural;
          Core_Status : SMB.Core_Status;
          Operation : SMB.Core_Client.Metadata_Operation;
+         File : Handle := Create_Internal
+           (Client, Old_UTF16, Read_Only, Open_Existing, False, File_Delete);
       begin
          SMB.Core_Client.Prepare_Rename
            (Operation, Client.Engine_Core, File.Engine_Token, New_UTF16,
