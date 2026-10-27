@@ -6,6 +6,7 @@ with SMB.Client;
 procedure Cleanup_Client is
    use type SMB.Byte;
    use type SMB.Bytes;
+   use type SMB.DWord;
 
    function Env (Name : String) return String is
    begin
@@ -52,6 +53,38 @@ begin
       SMB.Client.Disconnect (Client);
       Ada.Text_IO.Put_Line
         ("signed READ reserved fields, exact data and handle reuse passed");
+   elsif Mode = "error-reserved-field" then
+      declare
+         File : SMB.Client.Handle :=
+           SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+      begin
+         begin
+            declare
+               Missing : SMB.Client.Handle :=
+                 SMB.Client.Open_File
+                   (Client, "reserved-error-missing.bin", SMB.Client.Read_Only);
+            begin
+               SMB.Client.Close (Client, Missing);
+               raise Program_Error with "missing file unexpectedly opened";
+            end;
+         exception
+            when SMB.NT_Status_Error =>
+               if SMB.Client.Last_NT_Status (Client) /=
+                 SMB.Status_Object_Name_Not_Found
+               then
+                  raise Program_Error with "ERROR reserved byte lost NTSTATUS";
+               end if;
+         end;
+         if not SMB.Client.Is_Connected (Client)
+           or else SMB.Client.Read (Client, File, 0, 1) /= SMB.Bytes'(0 => 65)
+         then
+            raise Program_Error with "ERROR reserved byte broke handle reuse";
+         end if;
+         SMB.Client.Close (Client, File);
+      end;
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line
+        ("signed ERROR reserved byte, NTSTATUS and handle reuse passed");
    elsif Mode = "interrupted-read-after-progress" then
       declare
          Old_File : constant SMB.Client.Handle :=

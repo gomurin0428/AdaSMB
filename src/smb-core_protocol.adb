@@ -684,9 +684,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          return;
       end if;
       Available := Packet'Length - 72;
-      if Packet (Packet'First + 66) /= 0
-        or else Packet (Packet'First + 67) /= 0
-      then
+      if Packet (Packet'First + 66) /= 0 then
          Status := SMB.Invalid_Protocol;
          return;
       end if;

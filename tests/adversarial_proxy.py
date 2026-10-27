@@ -176,6 +176,7 @@ class AdversarialProxy:
             mutated = False
             session_key: bytes | None = None
             read_responses = 0
+            error_responses = 0
             completed_logoff = False
             write_requests = 0
             write_responses = 0
@@ -235,6 +236,7 @@ class AdversarialProxy:
                             "malformed-signed-directory-second-page",
                             "dangling-signed-directory-second-page",
                             "read-reserved-fields",
+                            "error-reserved-field",
                             "malformed-signed-set-info",
                             "malformed-signed-tree-disconnect",
                         }:
@@ -258,7 +260,7 @@ class AdversarialProxy:
                         recv_exact(backend, int.from_bytes(header[1:4], "big"))
                     )
                     if (
-                        self.mode == "read-reserved-fields"
+                        self.mode in {"read-reserved-fields", "error-reserved-field"}
                         and payload[12:14] == b"\x02\x00"
                     ):
                         if len(payload) < 68 or struct.unpack_from("<I", payload, 8)[0]:
@@ -268,6 +270,10 @@ class AdversarialProxy:
                         break
                     if len(payload) >= 64 and (
                         payload[12:14] == b"\x03\x00"
+                        or (
+                            self.mode == "error-reserved-field"
+                            and payload[12:14] == b"\x05\x00"
+                        )
                         or (
                             self.mode == "malformed-signed-create"
                             and payload[12:14] == b"\x05\x00"
@@ -372,6 +378,45 @@ class AdversarialProxy:
                             ).digest()[:16]
                             client.sendall(header + payload)
                             read_responses += 1
+                            mutated = True
+                            continue
+                        elif self.mode == "error-reserved-field":
+                            if (
+                                payload[12:14] != b"\x05\x00"
+                                or struct.unpack_from("<I", payload, 8)[0] == 0
+                            ):
+                                client.sendall(header + payload)
+                                continue
+                            if (
+                                len(payload) < 72
+                                or struct.unpack_from("<I", payload, 8)[0] != 0xC0000034
+                                or struct.unpack_from("<H", payload, 64)[0] != 9
+                                or payload[66] != 0
+                                or struct.unpack_from("<I", payload, 68)[0]
+                                > len(payload) - 72
+                            ):
+                                raise RuntimeError("expected missing-file ERROR body")
+                            if session_key is None:
+                                raise RuntimeError("could not derive SMB signing key")
+                            if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                                raise RuntimeError("server ERROR response was unsigned")
+                            original_signature = bytes(payload[48:64])
+                            payload[48:64] = b"\x00" * 16
+                            expected_signature = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            if not hmac.compare_digest(
+                                original_signature, expected_signature
+                            ):
+                                raise RuntimeError(
+                                    "derived key did not validate ERROR signature"
+                                )
+                            payload[67] = 0xFF
+                            payload[48:64] = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            client.sendall(header + payload)
+                            error_responses += 1
                             mutated = True
                             continue
                         elif self.mode == "malformed-signed-create":
@@ -649,6 +694,13 @@ class AdversarialProxy:
                     raise RuntimeError(
                         "reserved-field READ exchange did not complete: "
                         f"reads={read_responses}, logoff={completed_logoff}, "
+                        f"logoff_requests={logoff_requests}"
+                    )
+            if self.mode == "error-reserved-field":
+                if error_responses != 1 or not completed_logoff or logoff_requests != 1:
+                    raise RuntimeError(
+                        "reserved-field ERROR exchange did not complete: "
+                        f"errors={error_responses}, logoff={completed_logoff}, "
                         f"logoff_requests={logoff_requests}"
                     )
             if self.mode in DIRECTORY_MODES:

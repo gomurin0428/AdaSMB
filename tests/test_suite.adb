@@ -1386,6 +1386,60 @@ procedure Test_Suite is
       Assert (Status /= SMB.Ok, "duplicate SPNEGO state accepted");
    end Test_Final_Spnego;
 
+   procedure Test_Error_Reserved is
+      Packet : SMB.Bytes (11 .. 85) := (others => 0);
+      Info : SMB.Core_Protocol.Response_Info;
+      Status : SMB.Core_Status;
+      type Command_Array is array (Positive range <>) of
+        SMB.Core_Wire.Command_Code;
+      Commands : constant Command_Array := (5, 8, 14, 17);
+   begin
+      SMB.Wire.Put_U16 (Packet, 64, 9);
+      SMB.Wire.Put_U32 (Packet, 68, 3);
+      for Reserved in SMB.Byte loop
+         Packet (Packet'First + 67) := Reserved;
+         for Command of Commands loop
+            SMB.Core_Protocol.Parse_Response
+              (Packet, Command, SMB.Status_Access_Denied, Info, Status);
+            Assert
+              (Status = SMB.Ok, "SMB2.1 ERROR reserved byte was not ignored");
+         end loop;
+      end loop;
+      Packet (Packet'First + 66) := 1;
+      SMB.Core_Protocol.Parse_Response
+        (Packet, SMB.Core_Wire.Command_Code (5),
+         SMB.Status_Access_Denied, Info, Status);
+      Assert
+        (Status /= SMB.Ok, "SMB2.1 ERROR accepted nonzero ErrorContextCount");
+      Packet (Packet'First + 66) := 0;
+      SMB.Wire.Put_U32 (Packet, 68, 4);
+      SMB.Core_Protocol.Parse_Response
+        (Packet, SMB.Core_Wire.Command_Code (5),
+         SMB.Status_Access_Denied, Info, Status);
+      Assert (Status /= SMB.Ok, "ERROR accepted oversized ByteCount");
+      SMB.Wire.Put_U32 (Packet, 68, SMB.DWord'Last);
+      SMB.Core_Protocol.Parse_Response
+        (Packet, SMB.Core_Wire.Command_Code (5),
+         SMB.Status_Access_Denied, Info, Status);
+      Assert (Status /= SMB.Ok, "ERROR accepted overflowing ByteCount");
+      SMB.Wire.Put_U32 (Packet, 68, 0);
+      SMB.Core_Protocol.Parse_Response
+        (Packet (Packet'First .. Packet'First + 71),
+         SMB.Core_Wire.Command_Code (5),
+         SMB.Status_Access_Denied, Info, Status);
+      Assert (Status = SMB.Ok, "ERROR rejected empty data with reserved byte");
+      SMB.Core_Protocol.Parse_Response
+        (Packet (Packet'First .. Packet'First + 70),
+         SMB.Core_Wire.Command_Code (5),
+         SMB.Status_Access_Denied, Info, Status);
+      Assert (Status /= SMB.Ok, "ERROR accepted truncated body");
+      SMB.Wire.Put_U16 (Packet, 64, 8);
+      SMB.Core_Protocol.Parse_Response
+        (Packet, SMB.Core_Wire.Command_Code (5),
+         SMB.Status_Access_Denied, Info, Status);
+      Assert (Status /= SMB.Ok, "ERROR accepted wrong structure size");
+   end Test_Error_Reserved;
+
    procedure Test_Read_Reserved is
       Packet : SMB.Bytes (11 .. 92) := (others => 0);
       Info : SMB.Core_Protocol.Response_Info;
@@ -1643,13 +1697,13 @@ procedure Test_Suite is
       SMB.Core_Protocol.Parse_Response
         (Error_Packet, SMB.Core_Wire.Command_Code (8),
          SMB.Status_End_Of_File, Info, Status);
-      Assert (Status /= SMB.Ok, "nonzero SMB2.1 error reserved byte accepted");
+      Assert (Status /= SMB.Ok, "nonzero SMB2.1 ErrorContextCount accepted");
       Error_Packet (66) := 0;
       Error_Packet (67) := 1;
       SMB.Core_Protocol.Parse_Response
         (Error_Packet, SMB.Core_Wire.Command_Code (8),
          SMB.Status_End_Of_File, Info, Status);
-      Assert (Status /= SMB.Ok, "nonzero SMB2.1 error reserved byte accepted");
+      Assert (Status = SMB.Ok, "nonzero SMB2.1 error reserved byte rejected");
       SMB.Core_Protocol.Parse_Response
         (Error_Packet, SMB.Core_Wire.Command_Code (99),
          SMB.Status_End_Of_File, Info, Status);
@@ -4630,11 +4684,15 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "engine-receipts"
                  and then Ada.Command_Line.Argument (1) /= "auth-preflight"
                  and then Ada.Command_Line.Argument (1) /= "directory-bounds"
-                 and then Ada.Command_Line.Argument (1) /= "read-reserved")
+                 and then Ada.Command_Line.Argument (1) /= "read-reserved"
+                 and then Ada.Command_Line.Argument (1) /= "error-reserved")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "read-reserved" then
+      if Ada.Command_Line.Argument (1) = "error-reserved" then
+         Test_Error_Reserved;
+         Ada.Text_IO.Put_Line ("AdaSMB ERROR reserved-field tests passed");
+      elsif Ada.Command_Line.Argument (1) = "read-reserved" then
          Test_Read_Reserved;
          Ada.Text_IO.Put_Line ("AdaSMB READ reserved-field tests passed");
       elsif Ada.Command_Line.Argument (1) = "directory-bounds" then
@@ -4674,6 +4732,7 @@ begin
    Test_Final_Spnego;
    Test_Core_Protocol;
    Test_Read_Reserved;
+   Test_Error_Reserved;
    Test_Directory_Bounds;
    Test_Engine_Malformed_Close;
    Test_Engine_Receipts;
