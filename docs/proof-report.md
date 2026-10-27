@@ -369,6 +369,28 @@ applicable. This is native exception-ordering regression coverage, not an
 extension of that proof. Allocation-failure injection was not performed.
 No CI was run.
 
+## Public transfer preflight regression coverage
+
+Six additional Samba cases exercise public READ/WRITE rejection of a request
+larger than 1 MiB, a one-byte range overflowing `QWord'Last`, and an access-kind
+mismatch (READ through a write-only handle or WRITE through a read-only handle).
+Each case first obtains `STATUS_OBJECT_NAME_NOT_FOUND` from a real missing-file
+request. The local rejection must preserve that nonzero NTSTATUS and the
+connection, with the expected `Protocol_Error` or `Invalid_State`.
+Subsequent valid writes/reads exercise all three existing handles.
+
+The unchanged library passes these tests; this is additional coverage, not a
+newly discovered product fix. A separate uncommitted negative-control build
+deliberately reset `Last_Status` in the READ exception handler. The new test
+failed with `local transfer error changed last NTSTATUS: OVERFLOWING_READ`
+after its connection-alive assertion passed, demonstrating detection of
+status loss without relying on a disconnect.
+
+All executable builds, full unit tests, strict rebuild/dependency audit and
+the complete Samba suite passed. No library source changed, so the current
+4,370-check SPARK result is retained; proof and Unicode-oracle runs were not
+repeated. No CI was run.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:
