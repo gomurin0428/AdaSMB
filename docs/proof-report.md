@@ -34,8 +34,15 @@ earlier integration scenarios, the first directory mutation case,
 `malformed-signed-directory-second-page`, failed during cleanup/recovery with
 `SMB.PROTOCOL_ERROR : SMB READ response: UNSUPPORTED_FEATURE`. This directory
 case passed in focused Samba runs both alone and immediately after the six
-entropy cases. The cause in the full scenario order remains undetermined; no
-production behavior or test expectation was changed. `git diff --check` passed.
+entropy cases. A separate instrumented full run reproduced the same READ
+rejection earlier, in the normal integration client: the actual Samba response
+had command 8, flags `0x3` (server response plus async), NTSTATUS `0x103`
+(`STATUS_PENDING`), and length 73. This was not a synthetic mutation. The
+current client explicitly excludes async responses and rejects that header.
+Samba's installed defaults are `aio read size = 1` and `aio write size = 1`;
+they were not overridden. The original directory failure's header was not
+captured. No production behavior or test expectation was changed.
+`git diff --check` passed.
 
 GNATprove was not rerun because this stage changes tests, build wiring and
 documentation only. The **4,422-check** result recorded for the preceding
@@ -52,7 +59,10 @@ Evidence logs: `/home/ubuntu/entropy-failure-01-client-build.log`,
 `/home/ubuntu/entropy-failure-09-strict-build.log`,
 `/home/ubuntu/entropy-failure-10-full-root-integration.log`,
 `/home/ubuntu/entropy-failure-11-focused-directory-repro.log`, and
-`/home/ubuntu/entropy-failure-12-entropy-then-directory-focus.log`.
+`/home/ubuntu/entropy-failure-12-entropy-then-directory-focus.log`,
+`/home/ubuntu/entropy-diagnostic-build.log`, and
+`/home/ubuntu/entropy-diagnostic-full-1.log`. Diagnostic instrumentation remains
+only in a detached worktree, not in the library or this change.
 
 ## Exact wire primitive outcomes and failure preservation
 
