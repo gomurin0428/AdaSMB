@@ -19,7 +19,9 @@ import sys
 import tempfile
 import time
 
-from adversarial_proxy import AdversarialProxy, DIRECTORY_MODES, RESPONSE_MUTATIONS
+from adversarial_proxy import (
+    AdversarialProxy, DIRECTORY_MODES, RESPONSE_MUTATIONS, SECURITY_BUFFER_MUTATIONS,
+)
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -404,6 +406,20 @@ def main() -> int:
                     if (share / "mutation-write.bin").read_bytes() != expected:
                         raise RuntimeError("unexpected remote WRITE effect after response mutation")
                     (share / "mutation-write.bin").unlink()
+                for index, mode in enumerate(SECURITY_BUFFER_MUTATIONS, start=40):
+                    proxy_port = PORT + index
+                    proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD)
+                    proxy.start()
+                    security_env = env.copy()
+                    security_env.update(
+                        SMB_TEST_PORT=str(proxy_port),
+                        SMB_TEST_BACKEND_PORT=str(PORT),
+                        SMB_TEST_MODE=mode,
+                    )
+                    try:
+                        run([str(ROOT / "build/bin/security_buffer_client")], env=security_env)
+                    finally:
+                        proxy.join()
             finally:
                 try:
                     os.killpg(daemon.pid, signal.SIGTERM)

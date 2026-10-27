@@ -1,5 +1,75 @@
 # GNATprove and test report
 
+## Authentication security-buffer contracts and regression scope
+
+`Parse_Response` now specifies the exact NEGOTIATE security-buffer length and
+nonempty offset (zero-length NEGOTIATE buffers retain normalized offset zero).
+For both successful and continuing SESSION_SETUP replies it specifies the
+nonzero SessionId, exact extracted offset/length and nonempty-body lower bound.
+These are strengthened contracts for the existing implementation, not changed
+acceptance rules. The specifications describe
+[NEGOTIATE buffers](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/63abf97c-0d09-47e2-88d6-6bfa552949a5)
+as a variable-length field, separate from the fixed body; zero-length NEGOTIATE
+is explicitly permitted for client-initiated authentication.
+
+`test_suite security-buffers` crosses byte-sized offsets, the exact packet end,
+and the maximum WORD offset with zero/boundary/oversized lengths in all three
+phases, at array lower bounds zero and seven. It checks exact status, extracted
+range and SessionId. Empty buffers are not mistaken for malformed nonempty ones.
+
+Six Samba modes mutate offset or length in NEGOTIATE, the initial SESSION_SETUP
+challenge, and final SESSION_SETUP. NEGOTIATE and challenge are preauthentication
+unsigned replies; final SESSION_SETUP is verified and re-signed with a valid
+HMAC. The proxy requires the client to close, without an extra request: no
+SESSION_SETUP after a malformed NEGOTIATE, no Type 3 request after a malformed
+challenge, and no TREE_CONNECT after a malformed final reply. The public client
+requires Protocol_Error for NEGOTIATE and challenge mutations, and the
+existing Authentication_Error mapping for final signed authentication
+mutations. Each case also requires disconnected state and cleared diagnostics,
+then reconnects/authenticates on the same object and reads a real file. A
+wrong-phase exception is not accepted. This tests structural parsing and
+recovery, not cryptographic authenticity of preauth data.
+
+## Linux validation: authentication security-buffer contracts
+
+The focused build, `test_suite security-buffers`, Python syntax compilation,
+`make test`, and strict `make check GPRBUILD="gprbuild -f"` passed. The selector
+passed 20,124 cases across NEGOTIATE, challenge, and final SESSION_SETUP,
+including rebased arrays, offset/length boundaries, and zero-length buffers.
+The changed public client also passed a forced strict build with
+`gprbuild -p -f -P smb_tests.gpr security_buffer_client.adb -cargs:Ada -gnatwe`.
+
+The first integration attempt exposed an incorrect test expectation, not a
+production defect: the public facade maps a rejected final authentication
+response to `SMB.Authentication_Error`, while the client initially caught only
+`SMB.Protocol_Error`. The client now expects `SMB.Protocol_Error` only for
+NEGOTIATE and challenge mutations and `SMB.Authentication_Error` only for the
+two final-authentication mutations; a wrong-phase exception is re-raised. No
+production exception behavior was changed. The corrected Samba integration
+passed all existing cases and all six security-buffer modes. The proxy validated
+the original preauthentication replies, verified and re-signed the final
+SESSION_SETUP HMAC, and confirmed rejection without a subsequent request. In
+each case the public client confirmed disconnected state and cleared
+diagnostics, then reconnected on the same object, authenticated, opened the
+fixture and read the expected byte.
+
+The single clean full proof passed with 4,409 checks: 700 flow and 3,709 prover
+checks, zero unproved and zero justified. Categories were 2 data dependencies,
+1 flow dependency, 541 initialization, 2 non-aliasing, 2,398 run-time checks,
+292 assertions, 1,013 functional contracts, and 160 termination checks (154
+flow, 6 prover). GNATprove reported 68 warnings.
+
+Evidence: `/home/ubuntu/security-buffer-17-selector-final.log`,
+`/home/ubuntu/security-buffer-18-pycompile-final.log`,
+`/home/ubuntu/security-buffer-19-make-test.log`,
+`/home/ubuntu/security-buffer-20-make-check.log`,
+`/home/ubuntu/security-buffer-21-samba-integration.log` (initial expected-
+exception mismatch), `/home/ubuntu/security-buffer-22-client-build.log`,
+`/home/ubuntu/security-buffer-23-samba-integration-final.log`,
+`/home/ubuntu/security-buffer-24-proof-clean.log`,
+`/home/ubuntu/security-buffer-25-make-prove.log`, and
+`/home/ubuntu/security-buffer-26-proof-summary.out`.
+
 ## Header acceptance contracts and mutation regression scope
 
 `SMB.Core_Wire.Validate_Header` now specifies the successful response's
