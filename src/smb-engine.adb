@@ -5,6 +5,9 @@ package body SMB.Engine
   with SPARK_Mode,
        Refined_State => (Identity_Registry => Next_Owner_Id)
 is
+   use type SMB.Word;
+   use type SMB.Core_Protocol.Response_Info;
+
    Next_Owner_Id : SMB.QWord := 0;
 
    function Bounded_Slice
@@ -59,6 +62,7 @@ is
       State.Signing_Key := (others => 0);
       State.Has_Key := False;
       State.Pending := False;
+      State.Pending_Async_Id := 0;
       State.Pending_Expected := (others => <>);
       State.Receipt_Valid := False;
       State.Receipt_Command := 0;
@@ -321,6 +325,7 @@ is
       Expected.Request_Amount := Request_Amount;
       Expected.Close_Token := Close_Token;
       State.Pending_Expected := Expected;
+      State.Pending_Async_Id := 0;
       State.Pending := True;
       State.Next_Message_Id := State.Next_Message_Id + 1;
       Status := SMB.Ok;
@@ -332,6 +337,7 @@ is
    begin
       State.Current := Disconnected;
       State.Pending := False;
+      State.Pending_Async_Id := 0;
       State.Session_Id := 0;
       State.Tree_Id := 0;
       State.Signing_Key := (others => 0);
@@ -356,6 +362,97 @@ is
       State.Epoch := State.Epoch + 1;
       Status := SMB.Ok;
    end Invalidate;
+
+   procedure Inspect_Interim_Response
+     (State : in out Engine_State;
+      Packet : SMB.Bytes;
+      Is_Interim : out Boolean;
+      Status : out SMB.Core_Status) is
+      Ignore_Status : SMB.Core_Status;
+      Wire_Status : SMB.Core_Status;
+      Nt_Status : SMB.DWord;
+      Structure_Size : SMB.Word;
+      Body_Status : SMB.Core_Status;
+      Supported_Command : Boolean;
+   begin
+      Is_Interim := False;
+      Status := SMB.Ok;
+      if Packet'Length < SMB.Core_Wire.Header_Size
+        or else SMB.Core_Wire.Header_Nt_Status (Packet) /= SMB.Status_Pending
+      then
+         return;
+      end if;
+      if not State.Pending then
+         Invalidate (State, Ignore_Status);
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      Supported_Command :=
+        State.Pending_Expected.Command = 2
+        or else State.Pending_Expected.Command = 4
+        or else State.Pending_Expected.Command = 5
+        or else State.Pending_Expected.Command = 6
+        or else State.Pending_Expected.Command = 8
+        or else State.Pending_Expected.Command = 9
+        or else State.Pending_Expected.Command = 14
+        or else State.Pending_Expected.Command = 17;
+      if not Supported_Command then
+         Invalidate (State, Ignore_Status);
+         Status := SMB.Unsupported_Feature;
+         return;
+      end if;
+      if not State.Has_Key
+        or else not State.Pending_Expected.Request_Signed
+        or else not State.Pending_Expected.Signed
+        or else State.Receipt_Valid
+      then
+         Invalidate (State, Ignore_Status);
+         Status := SMB.Signature_Error;
+         return;
+      end if;
+      if State.Current /= Authenticated
+        and then State.Current /= Share_Connected
+      then
+         Invalidate (State, Ignore_Status);
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      SMB.Core_Wire.Validate_Header
+        (Packet,
+         (Command => State.Pending_Expected.Command,
+          Message_Id => State.Pending_Expected.Message_Id,
+          Tree_Id => State.Pending_Expected.Tree_Id,
+          Session_Id => State.Pending_Expected.Session_Id,
+          Match_Tree => State.Pending_Expected.Match_Tree,
+          Match_Session => State.Pending_Expected.Match_Session,
+          Signed => State.Pending_Expected.Signed),
+         Nt_Status, Wire_Status,
+         Async_Id => State.Pending_Async_Id,
+         Interim => True);
+      if Wire_Status /= SMB.Ok then
+         Invalidate (State, Ignore_Status);
+         Status := Wire_Status;
+         return;
+      end if;
+      if Packet'Length < 72 then
+         Invalidate (State, Ignore_Status);
+         Status := SMB.Invalid_Protocol;
+         return;
+      end if;
+      SMB.Core_Wire.Read_U16
+        (Packet, 64, Structure_Size, Body_Status);
+      if Body_Status /= SMB.Ok
+        or else Structure_Size /= 9
+        or else Packet (Packet'First + 66) /= 0
+        or else SMB.Core_Wire.Encoded_U32 (Packet, 68) /= 0
+      then
+         Invalidate (State, Ignore_Status);
+         Status := SMB.Invalid_Protocol;
+         return;
+      end if;
+      State.Pending_Async_Id := SMB.Core_Wire.Encoded_U64 (Packet, 32);
+      Is_Interim := True;
+   end Inspect_Interim_Response;
 
    procedure Accept_Response
      (State : in out Engine_State;
@@ -385,7 +482,8 @@ is
           Match_Tree => State.Pending_Expected.Match_Tree,
           Match_Session => State.Pending_Expected.Match_Session,
           Signed => State.Pending_Expected.Signed),
-         Nt_Status, Wire_Status);
+         Nt_Status, Wire_Status,
+         Async_Id => State.Pending_Async_Id);
       if Wire_Status /= SMB.Ok then
          Invalidate (State, Ignore_Status);
          Nt_Status := 0;
@@ -477,6 +575,7 @@ is
       State.Receipt_Info := Parsed;
       State.Receipt_Close_Token := State.Pending_Expected.Close_Token;
       State.Pending := False;
+      State.Pending_Async_Id := 0;
       State.Pending_Expected := (others => <>);
       if Nt_Status = SMB.Success
         and then State.Receipt_Command = 4
@@ -710,6 +809,8 @@ is
      (State.Max_Read);
    function Current_Max_Write (State : Engine_State) return Natural is
      (State.Max_Write);
+   function Current_Async_Id (State : Engine_State) return SMB.QWord is
+     (State.Pending_Async_Id);
    function Current_Signing_Key (State : Engine_State) return SMB.Bytes is
      (State.Signing_Key);
    function Has_Open_Handles (State : Engine_State) return Boolean is
@@ -823,6 +924,30 @@ is
       and then Left.Max_Write = Right.Max_Write
       and then Left.Has_Key = Right.Has_Key
       and then Left.Signing_Key = Right.Signing_Key
+      and then Left.Handles = Right.Handles);
+
+   function Interim_Context_Equivalent
+     (Left, Right : Engine_State) return Boolean is
+     (Left.Current = Right.Current
+      and then Left.Owner_Id = Right.Owner_Id
+      and then Left.Epoch = Right.Epoch
+      and then Left.Next_Message_Id = Right.Next_Message_Id
+      and then Left.Next_Ticket = Right.Next_Ticket
+      and then Left.Session_Id = Right.Session_Id
+      and then Left.Tree_Id = Right.Tree_Id
+      and then Left.Max_Read = Right.Max_Read
+      and then Left.Max_Write = Right.Max_Write
+      and then Left.Signing_Key = Right.Signing_Key
+      and then Left.Has_Key = Right.Has_Key
+      and then Left.Pending = Right.Pending
+      and then Left.Pending_Expected = Right.Pending_Expected
+      and then Left.Receipt_Valid = Right.Receipt_Valid
+      and then Left.Receipt_Command = Right.Receipt_Command
+      and then Left.Receipt_Status = Right.Receipt_Status
+      and then Left.Receipt_Signed = Right.Receipt_Signed
+      and then Left.Receipt_MIC_Valid = Right.Receipt_MIC_Valid
+      and then Left.Receipt_Close_Token = Right.Receipt_Close_Token
+      and then Left.Receipt_Info = Right.Receipt_Info
       and then Left.Handles = Right.Handles);
 
    procedure Lemma_Connection_Context_Transitive

@@ -64,6 +64,86 @@ Evidence logs: `/home/ubuntu/entropy-failure-01-client-build.log`,
 `/home/ubuntu/entropy-diagnostic-full-1.log`. Diagnostic instrumentation remains
 only in a detached worktree, not in the library or this change.
 
+
+## SMB 2.1 asynchronous interim responses
+
+The public API remains synchronous with one outstanding request. Async
+interim/final handling is supported only for authenticated LOGOFF,
+TREE_DISCONNECT, CREATE, CLOSE, READ, WRITE, QUERY_DIRECTORY, and SET_INFO.
+The Engine records an AsyncId after validating request correlation and the
+bounded `STATUS_PENDING` ERROR body. Interim responses are intentionally not
+signature-verified; they are not trusted as NTSTATUS, authenticated data, or a
+validated response receipt. The matching final is signature-verified over the
+original raw response bytes before parsing. One absolute receive deadline
+covers repeated interims and the final response.
+
+The existing one-request credit profile is retained: first interim credit must
+be positive, repeated interim credit may be zero, async final credit is zero,
+and synchronous response credit remains positive. Async NEGOTIATE,
+SESSION_SETUP, and TREE_CONNECT, SMB3, compounds, cancel, concurrency, and full
+credit-window management are outside scope.
+
+SMB2 references:
+
+- [STATUS_PENDING interim response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/c1692ece-7c6d-45c8-a0e3-6b53c0483030)
+- [Client signature-verification requirement](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/36172e53-ac81-48fb-b2e3-caa3761b9157)
+- [Record AsyncId and verify the final response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/a01c6101-b94b-45c1-b7ec-cbcc94d51138)
+- [Async final response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d39a64be-b8f8-424d-b8e5-a2cf5257459e)
+
+### Observed validation
+
+The focused async engine suite passed, covering interim retention and repeats,
+signed zero-credit async finals, correlation and AsyncId failures, signature
+failures, malformed interim bodies, receipt/status/data non-commitment, and
+stale-handle invalidation. Python syntax compilation passed for all three
+integration harnesses. The focused Samba run passed the positive workflow,
+including the eight supported command transformations and signed missing-file
+error, plus all six READ rejection-and-recovery modes.
+
+`make test` passed the default suite, including the async engine cases and the
+existing framing, wire, NTLM, SPNEGO, response, header, security-buffer, and
+directory regression groups. `make transport-test` passed all 12 transport
+scenarios. Forced strict `make check GPRBUILD="gprbuild -f"` passed with
+`-gnatwe`, including runtime dependency checks. The full Samba integration
+passed on `127.0.0.1:1445`; this included the async success and six rejection
+scenarios, existing adversarial cases, malformed-response cleanup/recovery,
+authentication diagnostics, response mutations, and security-buffer
+rejections. The unrelated daemons on ports 139/445 were left untouched.
+
+The clean full GNATprove run passed across 13 units: **4,446 checks** (**708
+flow** and **3,738 prover**), with **0 unproved** and **0 justified**. The
+categories were 2 data dependencies, 1 flow dependency, 545 initialization,
+2 non-aliasing, 2,413 run-time checks, 292 assertions, 1,027 functional
+contracts, and 164 termination checks (158 flow, 6 prover). There were **69
+warnings**: 6 in `SMB.Core_Auth`, 56 in `SMB.Core_Client`, 6 in
+`SMB.Core_Protocol`, and 1 in `SMB.Engine`. The per-entity summary records
+**0 `pragma Assume` statements**. The proof report covers bounded state and
+parsing properties only; it does not prove socket timing, OS behavior, or the
+authenticity of an unsigned interim response.
+
+One proof-only assertion in `SMB.Core_Client.Prepare_Next` now uses
+`Payload'Length` as the quantified upper bound, matching the `Build_Write`
+postcondition directly; the preceding assertion proves it equals `Amount`.
+This does not change the transfer behavior or the public contract.
+
+`git diff --check` passed.
+
+Evidence logs:
+
+- `/home/ubuntu/async-responses-focused.log` — focused async engine tests.
+- `/home/ubuntu/async-responses-python.log` — Python syntax compilation.
+- `/home/ubuntu/async-responses-integration-focused.log` — focused async Samba
+  scenarios.
+- `/home/ubuntu/async-responses-focused-proof.log` — focused GNATprove.
+- `/home/ubuntu/async-responses-make-test-final.log` — default unit suite.
+- `/home/ubuntu/async-responses-transport-gnat14.log` — transport scenarios.
+- `/home/ubuntu/async-responses-strict-final.log` — forced strict build.
+- `/home/ubuntu/async-responses-integration-final.log` — full Samba integration.
+- `/home/ubuntu/async-responses-full-proof-final.log` — clean full GNATprove.
+- `build/proof-obj/gnatprove/gnatprove.out` — full proof summary.
+
+Historical proof counts are not represented as results for this stage.
+
 ## Exact wire primitive outcomes and failure preservation
 
 The 16/32/64-bit readers and writers now specify `Ok` exactly when their
