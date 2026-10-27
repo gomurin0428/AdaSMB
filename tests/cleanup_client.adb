@@ -55,7 +55,8 @@ begin
                            Extra : SMB.Client.Handle := SMB.Client.Open_File
                              (Client,
                               (if Action = 2 then "capacity-created.txt" else "fixture.txt"),
-                              SMB.Client.Read_Write,
+                              (if Action = 1 then SMB.Client.Read_Only
+                               else SMB.Client.Read_Write),
                               (if Action = 1 then SMB.Client.Open_Existing
                                elsif Action = 2 then SMB.Client.Create_New
                                else SMB.Client.Truncate_Existing));
