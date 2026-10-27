@@ -86,6 +86,10 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Status =
+         (if Offset <= Data'Length and then Data'Length - Offset >= 2
+          then SMB.Ok else SMB.Invalid_Offset)
+       and then
        (if Status = SMB.Ok then
           Offset <= Data'Length
           and then Data'Length - Offset >= 2
@@ -97,6 +101,10 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Status =
+         (if Offset <= Data'Length and then Data'Length - Offset >= 4
+          then SMB.Ok else SMB.Invalid_Offset)
+       and then
        (if Status = SMB.Ok then Value = Encoded_U32 (Data, Offset)
         else Value = 0);
 
@@ -105,6 +113,10 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Status =
+         (if Offset <= Data'Length and then Data'Length - Offset >= 8
+          then SMB.Ok else SMB.Invalid_Offset)
+       and then
        (if Status = SMB.Ok then
           Offset <= Data'Length
           and then Data'Length - Offset >= 8
@@ -116,8 +128,9 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       (if Offset <= Data'Length and then Data'Length - Offset >= 2
-        then Status = SMB.Ok)
+       Status =
+         (if Offset <= Data'Length and then Data'Length - Offset >= 2
+          then SMB.Ok else SMB.Invalid_Offset)
        and then
        (if Status = SMB.Ok then
           Offset <= Data'Length
@@ -136,8 +149,9 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       (if Offset <= Data'Length and then Data'Length - Offset >= 4
-        then Status = SMB.Ok)
+       Status =
+         (if Offset <= Data'Length and then Data'Length - Offset >= 4
+          then SMB.Ok else SMB.Invalid_Offset)
        and then
        (if Status = SMB.Ok then
           Offset <= Data'Length
@@ -160,8 +174,9 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       (if Offset <= Data'Length and then Data'Length - Offset >= 8
-        then Status = SMB.Ok)
+       Status =
+         (if Offset <= Data'Length and then Data'Length - Offset >= 8
+          then SMB.Ok else SMB.Invalid_Offset)
        and then
        (if Status = SMB.Ok then
           Offset <= Data'Length
@@ -189,7 +204,8 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       (if Data'Length >= Header_Size then Status = SMB.Ok)
+       Status =
+         (if Data'Length >= Header_Size then SMB.Ok else SMB.Invalid_Length)
        and then
        (if Status = SMB.Ok then
           Encoded_U16 (Data, 4) = Header_Size
@@ -206,7 +222,8 @@ package SMB.Core_Wire is
             (for all Index in Data'Range =>
                (if Index - Data'First >= Header_Size
                 then Data (Index) = Data'Old (Index)
-                else True)));
+                else True))
+        else Data = Data'Old);
 
    function Header_Nt_Status (Data : SMB.Bytes) return SMB.DWord
    with Pre =>
