@@ -23,7 +23,7 @@ parallel model.
 | `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
 | `SMB.Core_Transport` | Native stream frame construction, exact receive-prefix copying with prefix/tail preservation, bounded partial-read/write progress and unsent-slice selection |
 | `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
-| `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, transfer arithmetic and pagination limits |
+| `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions |
 | `SMB.Engine` | Phases, pending requests, signed response acceptance, single-use response receipts and handle identity/lifetime |
