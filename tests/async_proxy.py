@@ -21,6 +21,8 @@ NEGATIVE_MODES = {
     "tampered-final",
     "malformed-pending",
     "repeat-pending",
+    "disconnect-after-pending",
+    "truncated-final",
 }
 
 
@@ -183,6 +185,13 @@ class AsyncProxy:
                                 raise RuntimeError("client did not close after pending deadline")
                             client.sendall(frame(pending))
                             final = self._async_final(response, key, async_id, self.mode)
+                            if self.mode in {"disconnect-after-pending", "truncated-final"}:
+                                if self.mode == "truncated-final":
+                                    client.sendall(frame(final)[:-1])
+                                client.shutdown(socket.SHUT_WR)
+                                if client.recv(1) != b"":
+                                    raise RuntimeError("client sent data after async transport loss")
+                                return
                             client.sendall(frame(final))
                             if client.recv(1) != b"":
                                 raise RuntimeError("client did not close after invalid async final")

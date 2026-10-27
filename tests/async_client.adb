@@ -1,4 +1,5 @@
 with Ada.Environment_Variables;
+with Ada.Exceptions;
 with Ada.Real_Time;
 with Ada.Text_IO;
 with SMB;
@@ -10,6 +11,9 @@ procedure Async_Client is
    use type Ada.Real_Time.Time;
    Mode : constant String :=
      Ada.Environment_Variables.Value ("SMB_TEST_MODE");
+   Transport_Failure : constant Boolean :=
+     Mode = "repeat-pending" or else Mode = "disconnect-after-pending"
+     or else Mode = "truncated-final";
    Host : constant String :=
      Ada.Environment_Variables.Value ("SMB_TEST_HOST");
    Port : constant Positive :=
@@ -89,13 +93,18 @@ begin
          end;
       exception
          when SMB.Protocol_Error =>
-            if Mode = "repeat-pending" then
-               raise Program_Error with "repeated pending did not reach deadline";
+            if Transport_Failure then
+               raise Program_Error with "async transport failure was misclassified";
             end if;
             Rejected := True;
-         when SMB.Transport_Error =>
-            if Mode /= "repeat-pending" then
+         when E : SMB.Transport_Error =>
+            if not Transport_Failure then
                raise Program_Error with "unexpected transport failure";
+            elsif Mode /= "repeat-pending"
+              and then Ada.Exceptions.Exception_Message (E) /=
+                "peer closed SMB connection"
+            then
+               raise Program_Error with "async EOF was not observed";
             end if;
             Rejected := True;
       end;
