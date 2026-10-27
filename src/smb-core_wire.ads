@@ -113,6 +113,9 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       (if Offset <= Data'Length and then Data'Length - Offset >= 2
+        then Status = SMB.Ok)
+       and then
        (if Status = SMB.Ok then
           Offset <= Data'Length
           and then Data'Length - Offset >= 2
@@ -130,6 +133,9 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       (if Offset <= Data'Length and then Data'Length - Offset >= 4
+        then Status = SMB.Ok)
+       and then
        (if Status = SMB.Ok then
           Offset <= Data'Length
           and then Data'Length - Offset >= 4
@@ -151,6 +157,9 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       (if Offset <= Data'Length and then Data'Length - Offset >= 8
+        then Status = SMB.Ok)
+       and then
        (if Status = SMB.Ok then
           Offset <= Data'Length
           and then Data'Length - Offset >= 8
@@ -177,11 +186,14 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       (if Data'Length >= Header_Size then Status = SMB.Ok)
+       and then
        (if Status = SMB.Ok then
           Encoded_U16 (Data, 4) = Header_Size
           and then Encoded_U16 (Data, 6) = 1
           and then
           Encoded_U16 (Data, 12) = SMB.Word (Command)
+          and then Encoded_U16 (Data, 14) = Credit
           and then Encoded_U64 (Data, 24) = Message_Id
           and then Encoded_U32 (Data, 36) = Tree_Id
           and then Encoded_U64 (Data, 40) = Session_Id
@@ -217,6 +229,9 @@ package SMB.Core_Wire is
      Data'Length <= SMB.Maximum_Frame_Size
      and Key'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       (if Data'Length >= Header_Size and then Key'Length > 0
+        then Status = SMB.Ok)
+       and then
        (if Status = SMB.Ok then
           (for all Index in Data'Range =>
              (if Index < Data'First + 48

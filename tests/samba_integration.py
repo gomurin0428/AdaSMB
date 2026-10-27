@@ -262,6 +262,30 @@ def main() -> int:
                 if not renamed.is_file() or renamed.read_bytes() != set_info_content:
                     raise RuntimeError("SET_INFO remote rename effect/content mismatch")
                 renamed.unlink()
+                proxy_port = PORT + 13
+                tree_disconnect_mode = "malformed-signed-tree-disconnect"
+                proxy = AdversarialProxy(
+                    tree_disconnect_mode,
+                    proxy_port,
+                    PORT,
+                    user=USER,
+                    password=PASSWORD,
+                )
+                proxy.start()
+                tree_disconnect_env = env.copy()
+                tree_disconnect_env.update(
+                    SMB_TEST_HOST="127.0.0.1",
+                    SMB_TEST_PORT=str(proxy_port),
+                    SMB_TEST_BACKEND_PORT=str(PORT),
+                    SMB_TEST_MODE=tree_disconnect_mode,
+                )
+                try:
+                    run(
+                        [str(ROOT / "build/bin/cleanup_client")],
+                        env=tree_disconnect_env,
+                    )
+                finally:
+                    proxy.join()
             finally:
                 try:
                     os.killpg(daemon.pid, signal.SIGTERM)

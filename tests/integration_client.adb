@@ -122,6 +122,25 @@ begin
                "initial invalid-state authentication disconnected client");
       end;
       SMB.Client.Connect_Share (Client, Share);
+      declare
+         Fixture : SMB.Client.Handle :=
+           SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+         Rejected_Share : Boolean := False;
+      begin
+         begin
+            SMB.Client.Connect_Share (Client, Share);
+         exception
+            when SMB.Invalid_State =>
+               Rejected_Share := True;
+         end;
+         Assert
+           (Rejected_Share,
+            "repeat Connect_Share on an active share was not rejected");
+         Assert
+           (SMB.Client.Read (Client, Fixture, 0, 1)'Length = 1,
+            "repeat Connect_Share invalidated the active share handle");
+         SMB.Client.Close (Client, Fixture);
+      end;
       Check_Handle_Capacity (1);
 
       begin

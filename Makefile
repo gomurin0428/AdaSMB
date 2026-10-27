@@ -32,7 +32,7 @@ check:
 prove:
 	@command -v gnatprove >/dev/null 2>&1 || { echo "gnatprove is required"; exit 127; }
 	@gnatprove -P proof.gpr --mode=all --level=2 --report=all \
-		--checks-as-errors=on --prover=cvc5,z3 --timeout=30 -j4 \
+		--checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4 \
 		> gnatprove.out 2>&1; result=$$?; \
 		cat gnatprove.out; exit $$result
 

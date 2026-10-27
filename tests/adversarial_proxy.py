@@ -176,15 +176,28 @@ class AdversarialProxy:
             query_requests = 0
             query_responses = 0
             set_info_requests = 0
+            tree_disconnect_requests = 0
+            logoff_requests = 0
             first_query_had_data = False
 
             def client_to_server() -> None:
                 nonlocal session_key, write_requests, query_requests
                 nonlocal set_info_requests
+                nonlocal tree_disconnect_requests, logoff_requests
                 try:
                     while not done.is_set():
                         header = recv_exact(client, 4)
                         payload = recv_exact(client, int.from_bytes(header[1:4], "big"))
+                        if len(payload) >= 64 and payload[12:14] == b"\x04\x00":
+                            tree_disconnect_requests += 1
+                        if len(payload) >= 64 and payload[12:14] == b"\x02\x00":
+                            logoff_requests += 1
+                        if self.mode == "malformed-signed-tree-disconnect" and mutated:
+                            relay_error.append(RuntimeError(
+                                "unexpected client request after malformed TREE_DISCONNECT"
+                            ))
+                            done.set()
+                            return
                         if len(payload) >= 64 and payload[12:14] == b"\x09\x00":
                             write_requests += 1
                         if len(payload) >= 64 and payload[12:14] == b"\x0e\x00":
@@ -216,6 +229,7 @@ class AdversarialProxy:
                             "malformed-signed-create",
                             "malformed-signed-directory-second-page",
                             "malformed-signed-set-info",
+                            "malformed-signed-tree-disconnect",
                         }:
                             session_key = (
                                 session_key_from_type3(
@@ -257,6 +271,10 @@ class AdversarialProxy:
                         or (
                             self.mode == "malformed-signed-set-info"
                             and payload[12:14] == b"\x11\x00"
+                        )
+                        or (
+                            self.mode == "malformed-signed-tree-disconnect"
+                            and payload[12:14] == b"\x04\x00"
                         )
                     ):
                         if self.mode == "lost-write-response-after-progress":
@@ -444,6 +462,52 @@ class AdversarialProxy:
                                     f"closed: {relay_error!r}"
                                 )
                             break
+                        elif self.mode == "malformed-signed-tree-disconnect":
+                            if payload[12:14] != b"\x04\x00":
+                                client.sendall(header + payload)
+                                continue
+                            if session_key is None:
+                                raise RuntimeError("could not derive SMB signing key")
+                            if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                                raise RuntimeError(
+                                    "server TREE_DISCONNECT response was unsigned"
+                                )
+                            if struct.unpack_from("<H", payload, 64)[0] != 4:
+                                raise RuntimeError(
+                                    "unexpected TREE_DISCONNECT structure size"
+                                )
+                            original_signature = bytes(payload[48:64])
+                            signed_payload = bytearray(payload)
+                            signed_payload[48:64] = b"\x00" * 16
+                            expected_signature = hmac.new(
+                                session_key, signed_payload, hashlib.sha256
+                            ).digest()[:16]
+                            if not hmac.compare_digest(
+                                original_signature, expected_signature
+                            ):
+                                raise RuntimeError(
+                                    "derived key did not validate TREE_DISCONNECT signature"
+                                )
+                            struct.pack_into("<H", payload, 64, 5)
+                            payload[48:64] = b"\x00" * 16
+                            payload[48:64] = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            client.sendall(header + payload)
+                            mutated = True
+                            upstream.join(timeout=11)
+                            if upstream.is_alive():
+                                raise RuntimeError(
+                                    "client did not close after malformed TREE_DISCONNECT"
+                                )
+                            if not relay_error or not isinstance(
+                                relay_error[0], EOFError
+                            ):
+                                raise RuntimeError(
+                                    "upstream did not exit because the client "
+                                    f"closed: {relay_error!r}"
+                                )
+                            break
                         elif self.mode == "unsigned":
                             flags = struct.unpack_from("<I", payload, 16)[0]
                             struct.pack_into("<I", payload, 16, flags & ~8)
@@ -513,4 +577,18 @@ class AdversarialProxy:
                 if not relay_error or not isinstance(relay_error[0], EOFError):
                     raise RuntimeError(
                         "SET_INFO client connection did not close after mutation"
+                    )
+            if self.mode == "malformed-signed-tree-disconnect":
+                if tree_disconnect_requests != 1:
+                    raise RuntimeError(
+                        "expected exactly one TREE_DISCONNECT request, got "
+                        f"{tree_disconnect_requests}"
+                    )
+                if logoff_requests != 0:
+                    raise RuntimeError(
+                        f"expected zero LOGOFF requests, got {logoff_requests}"
+                    )
+                if not relay_error or not isinstance(relay_error[0], EOFError):
+                    raise RuntimeError(
+                        "TREE_DISCONNECT client connection did not close after mutation"
                     )

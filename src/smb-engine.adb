@@ -308,7 +308,9 @@ is
       Expected :=
         (Command => Command,
          Message_Id => Message_Id,
-         Tree_Id => (if Command = 2 then 0 else State.Tree_Id),
+         Tree_Id =>
+           (if Command = 0 or else Command = 2 or else Command = 3
+            then 0 else State.Tree_Id),
          Session_Id => State.Session_Id,
          Match_Tree => Tree_Match,
          Match_Session => Session_Match,
@@ -803,6 +805,31 @@ is
    function Handle_Table_Equivalent
      (Left, Right : Engine_State) return Boolean is
      (Left.Handles = Right.Handles);
+
+   procedure Lemma_Handle_Table_Transitive
+     (First, Middle, Last : Engine_State) is
+   begin
+      null;
+   end Lemma_Handle_Table_Transitive;
+
+   function Connection_Context_Equivalent
+     (Left, Right : Engine_State) return Boolean is
+     (Left.Current = Right.Current
+      and then Left.Owner_Id = Right.Owner_Id
+      and then Left.Epoch = Right.Epoch
+      and then Left.Session_Id = Right.Session_Id
+      and then Left.Tree_Id = Right.Tree_Id
+      and then Left.Max_Read = Right.Max_Read
+      and then Left.Max_Write = Right.Max_Write
+      and then Left.Has_Key = Right.Has_Key
+      and then Left.Signing_Key = Right.Signing_Key
+      and then Left.Handles = Right.Handles);
+
+   procedure Lemma_Connection_Context_Transitive
+     (First, Middle, Last : Engine_State) is
+   begin
+      null;
+   end Lemma_Connection_Context_Transitive;
 
    function Handle_Matches_In_States
      (Before, After : Engine_State;

@@ -772,22 +772,20 @@ package body SMB.Core_Protocol with SPARK_Mode is
             Status := SMB.Invalid_Protocol;
             return;
          end if;
-         Read_U32 (Packet, 96, DWord_Value, Header_Status);
+         DWord_Value := SMB.Core_Wire.Encoded_U32 (Packet, 96);
          if DWord_Value = 0 then
             Status := SMB.Invalid_Value;
             return;
          end if;
-         Info.Max_Read := Natural'Min (Maximum_IO_Chunk,
-           (if SMB.QWord (DWord_Value) > SMB.QWord (Natural'Last)
-            then Natural'Last else Natural (DWord_Value)));
-         Read_U32 (Packet, 100, DWord_Value, Header_Status);
+         Info.Max_Read :=
+           Natural (SMB.DWord'Min (Maximum_IO_Chunk, DWord_Value));
+         DWord_Value := SMB.Core_Wire.Encoded_U32 (Packet, 100);
          if DWord_Value = 0 then
             Status := SMB.Invalid_Value;
             return;
          end if;
-         Info.Max_Write := Natural'Min (Maximum_IO_Chunk,
-           (if SMB.QWord (DWord_Value) > SMB.QWord (Natural'Last)
-            then Natural'Last else Natural (DWord_Value)));
+         Info.Max_Write :=
+           Natural (SMB.DWord'Min (Maximum_IO_Chunk, DWord_Value));
          Read_U16 (Packet, 120, Word_Value, Header_Status);
          Read_U16 (Packet, 122, Structure, Header_Status);
          if Header_Status /= SMB.Ok then
@@ -845,7 +843,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Read_U16 (Packet, 64, Structure, Header_Status);
-         Read_U32 (Packet, 36, Info.Tree_Id, Header_Status);
+         Info.Tree_Id := SMB.Core_Wire.Encoded_U32 (Packet, 36);
          if Structure /= 16 or else Packet (Packet'First + 66) /= 1
            or else Packet (Packet'First + 67) /= 0
            or else Info.Tree_Id = 0
@@ -964,7 +962,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Word_Value := SMB.Core_Wire.Encoded_U16 (Packet, 66);
          DWord_Value := SMB.Core_Wire.Encoded_U32 (Packet, 68);
          if Structure /= 9
-           or else not Fits (DWord_Value, Maximum_IO_Chunk)
+           or else DWord_Value > SMB.DWord (Maximum_IO_Chunk)
          then
             Status := SMB.Invalid_Protocol;
             return;
@@ -1009,13 +1007,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
       if Header_Status /= SMB.Ok and then Status = SMB.Ok then
          Status := Header_Status;
       end if;
-      if Status = SMB.Ok
-        and then
-          (Info.Data_Offset > Packet'Length
-           or else Info.Data_Length > Packet'Length - Info.Data_Offset)
-      then
-         Status := SMB.Invalid_Offset;
-      end if;
       if Status = SMB.Ok and then Command = 14
         and then Nt_Status = SMB.Success
       then
@@ -1023,6 +1014,13 @@ package body SMB.Core_Protocol with SPARK_Mode is
            Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66));
          Info.Data_Length :=
            Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68));
+      end if;
+      if Status = SMB.Ok
+        and then
+          (Info.Data_Offset > Packet'Length
+           or else Info.Data_Length > Packet'Length - Info.Data_Offset)
+      then
+         Status := SMB.Invalid_Offset;
       end if;
    end Parse_Response;
 

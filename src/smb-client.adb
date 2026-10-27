@@ -4,10 +4,10 @@ with Ada.Streams;
 with Ada.Streams.Stream_IO;
 with SMB.Clock;
 with SMB.Core_Client;
+with SMB.Core_Connection;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
 with SMB.Core_Wire;
-with SMB.Wire;
 
 package body SMB.Client is
    use type Ada.Exceptions.Exception_Id;
@@ -17,9 +17,9 @@ package body SMB.Client is
    use type SMB.Core_Client.Authentication_Stage;
    use type SMB.Core_Client.Directory_Stage;
    use type SMB.Core_Client.Metadata_Stage;
+   use type SMB.Core_Connection.Connection_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
-   use type SMB.Word;
 
    File_Delete           : constant SMB.DWord := 16#0001_0000#;
    Disconnected : constant SMB.Engine.Phase := SMB.Engine.Disconnected;
@@ -28,21 +28,6 @@ package body SMB.Client is
 
    package Entry_Vectors is new Ada.Containers.Vectors
      (Index_Type => Natural, Element_Type => Directory_Entry);
-
-   procedure Copy_Bytes
-     (Target : in out SMB.Bytes; Target_Offset : Natural;
-      Source : SMB.Bytes) is
-   begin
-      if Target_Offset > Target'Length
-        or else Source'Length > Target'Length - Target_Offset
-      then
-         raise SMB.Protocol_Error with "SMB field exceeds packet bounds";
-      end if;
-      if Source'Length > 0 then
-         Target (Target'First + Target_Offset
-                   .. Target'First + Target_Offset + Source'Length - 1) := Source;
-      end if;
-   end Copy_Bytes;
 
    function Slice
      (Source : SMB.Bytes; Offset, Length : Natural) return SMB.Bytes is
@@ -56,12 +41,6 @@ package body SMB.Client is
       return Source
         (Source'First + Offset .. Source'First + Offset + Length - 1);
    end Slice;
-
-   function Session_Identifier (Client : Connection) return SMB.QWord is
-     (SMB.Engine.Current_Session_Id (Client.Engine_Core));
-
-   function Tree_Identifier (Client : Connection) return SMB.DWord is
-     (SMB.Engine.Current_Tree_Id (Client.Engine_Core));
 
    procedure Generate_Entropy (Output : out SMB.Bytes) is
       use Ada.Streams;
@@ -157,107 +136,6 @@ package body SMB.Client is
          raise SMB.Protocol_Error with Context;
       end if;
    end Require_Authentication_Status;
-
-   function Exchange
-     (Client : in out Connection;
-      Command : SMB.Wire.Command_Code;
-      Payload : SMB.Bytes;
-      Sign_Request : Boolean := False;
-      Require_Signed_Response : Boolean := False;
-      Request_Session : SMB.QWord := 0;
-      Response_Session : SMB.QWord := 0;
-      Request_Tree : SMB.DWord := 0;
-      Response_Tree : SMB.DWord := 0;
-      Request_Amount : Natural := 0;
-      Close_Token : SMB.Engine.Handle_Token := (others => 0)) return SMB.Bytes is
-      Message : SMB.QWord;
-      Expected : SMB.Engine.Request_Expectation;
-      Engine_Status : SMB.Core_Status;
-      Nt_Status : SMB.DWord;
-      Wire_Status : SMB.Core_Status;
-      Expected_Tree : constant SMB.DWord :=
-        (if Command = SMB.Wire.Logoff_Command then 0
-         else Tree_Identifier (Client));
-   begin
-      if Payload'Length > SMB.Maximum_Frame_Size - SMB.Core_Wire.Header_Size then
-         raise SMB.Protocol_Error with "SMB request exceeds frame limit";
-      end if;
-      if Request_Session /= Session_Identifier (Client)
-        or else Request_Tree /= Expected_Tree
-        or else Response_Session /= Session_Identifier (Client)
-        or else Response_Tree /= Expected_Tree
-      then
-         raise SMB.Invalid_State with "request identifiers disagree with session engine";
-      end if;
-      SMB.Engine.Begin_Request
-        (Client.Engine_Core, SMB.Core_Wire.Command_Code (Command),
-         Sign_Request, Require_Signed_Response, Message, Expected,
-         Engine_Status, Request_Amount, Close_Token);
-      if Engine_Status /= SMB.Ok then
-         raise SMB.Invalid_State with
-           "session engine rejected request: "
-           & SMB.Core_Status'Image (Engine_Status);
-      end if;
-      declare
-         Packet : SMB.Bytes
-           (0 .. SMB.Core_Wire.Header_Size + Payload'Length - 1);
-      begin
-      SMB.Core_Wire.Initialize_Header
-        (Packet, SMB.Core_Wire.Command_Code (Command), Message,
-         Expected.Tree_Id, Expected.Session_Id, 1, Wire_Status);
-      if Wire_Status /= SMB.Ok then
-         raise SMB.Protocol_Error with "cannot build SMB header";
-      end if;
-      if Sign_Request then
-         SMB.Core_Wire.Write_U32 (Packet, 16, 8, Wire_Status);
-      end if;
-      Copy_Bytes (Packet, SMB.Core_Wire.Header_Size, Payload);
-      if Sign_Request then
-         SMB.Core_Wire.Sign
-           (Packet, SMB.Engine.Current_Signing_Key (Client.Engine_Core),
-            Wire_Status);
-      end if;
-      if Wire_Status /= SMB.Ok then
-         raise SMB.Protocol_Error with "cannot sign SMB request";
-      end if;
-      SMB.Transport.Send_Frame (Client.Channel, Packet);
-      declare
-         Response : constant SMB.Bytes :=
-           SMB.Transport.Receive_Frame (Client.Channel);
-      begin
-         SMB.Engine.Accept_Response
-           (Client.Engine_Core, Response, Nt_Status, Engine_Status);
-         if Engine_Status /= SMB.Ok then
-            if Command = SMB.Wire.Session_Setup_Command
-              and then Require_Signed_Response
-            then
-               raise SMB.Authentication_Error with
-                 "server did not complete signed SMB authentication";
-            end if;
-            raise SMB.Protocol_Error with
-              "SMB response rejected by session engine: "
-              & SMB.Core_Status'Image (Engine_Status);
-         end if;
-         Client.Last_Status := Nt_Status;
-         return Response;
-      end;
-      end;
-   exception
-      when E : others =>
-         if Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
-           or else Ada.Exceptions.Exception_Identity (E) = SMB.Authentication_Error'Identity
-           or else Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
-         then
-            Clear_State (Client);
-            raise;
-         elsif Ada.Exceptions.Exception_Identity (E) = SMB.Invalid_State'Identity
-         then
-            raise;
-         else
-            Clear_State (Client);
-            raise SMB.Protocol_Error with Ada.Exceptions.Exception_Message (E);
-         end if;
-   end Exchange;
 
    procedure Check_Handle
      (Client : Connection;
@@ -532,6 +410,51 @@ package body SMB.Client is
          raise;
    end Execute_Metadata;
 
+   procedure Execute_Connection
+     (Client : in out Connection;
+      Operation : in out SMB.Core_Connection.Connection_Operation;
+      Packet : SMB.Bytes;
+      Used : Natural) is
+      Core_Status : SMB.Core_Status;
+      Nt_Status : SMB.DWord;
+   begin
+      Client.Last_Status := SMB.Success;
+      SMB.Transport.Send_Frame
+        (Client.Channel, Packet (Packet'First .. Packet'First + Used - 1));
+      SMB.Core_Connection.Send_Succeeded
+        (Operation, Client.Engine_Core, Core_Status);
+      if Core_Status /= SMB.Ok then
+         raise SMB.Protocol_Error with
+           "SMB connection request send was not acknowledged";
+      end if;
+      declare
+         Response : constant SMB.Bytes :=
+           SMB.Transport.Receive_Frame (Client.Channel);
+      begin
+         SMB.Core_Connection.Complete
+           (Operation, Client.Engine_Core, Response, Nt_Status, Core_Status);
+      end;
+      Client.Last_Status := Nt_Status;
+      if Core_Status /= SMB.Ok then
+         raise SMB.Protocol_Error with
+           "SMB connection response was rejected";
+      end if;
+   exception
+      when others =>
+         if SMB.Core_Connection.Stage_Of (Operation) in
+              SMB.Core_Connection.Prepared | SMB.Core_Connection.Sent
+         then
+            SMB.Core_Connection.Abort_Connection
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) =
+           SMB.Engine.Disconnected
+         then
+            Clear_State_Preserving_Status (Client);
+         end if;
+         raise;
+   end Execute_Connection;
+
    procedure Set_Disposition
      (Client : in out Connection; File : Handle; Delete_File : Boolean) is
       Packet : SMB.Bytes (0 .. 96) := (others => 0);
@@ -582,10 +505,10 @@ package body SMB.Client is
       Timeout_Seconds : Duration := 10.0;
       Entropy : Entropy_Source := null) is
       Guid : SMB.Bytes (0 .. 15);
-      Payload : SMB.Bytes (0 .. 37) := (others => 0);
+      Packet : SMB.Bytes (0 .. 101) := (others => 0);
       Used : Natural;
       Engine_Status : SMB.Core_Status;
-      Response_Info : SMB.Core_Protocol.Response_Info;
+      Operation : SMB.Core_Connection.Connection_Operation;
    begin
       SMB.Engine.Initialize (Client.Engine_Core, Engine_Status);
       if Engine_Status /= SMB.Ok then
@@ -602,30 +525,28 @@ package body SMB.Client is
       if Engine_Status /= SMB.Ok then
          raise SMB.Invalid_State with "session engine rejected transport connection";
       end if;
-      SMB.Core_Protocol.Build_Negotiate
-        (Guid, Payload, Used, Engine_Status);
+      SMB.Core_Connection.Prepare_Negotiate
+        (Operation, Client.Engine_Core, Guid, Packet, Used, Engine_Status);
       if Engine_Status /= SMB.Ok then
          raise SMB.Protocol_Error with "cannot build SMB negotiate request";
       end if;
-      declare
-         Response : constant SMB.Bytes := Exchange
-           (Client, SMB.Wire.Negotiate_Command, Payload (0 .. Used - 1));
-      begin
-         pragma Unreferenced (Response);
-      end;
+      Execute_Connection (Client, Operation, Packet, Used);
       Require_Status (Client, Client.Last_Status);
-      Response_Info := SMB.Engine.Current_Response_Info (Client.Engine_Core);
-      SMB.Engine.Mark_Negotiated
-        (Client.Engine_Core, Response_Info.Max_Read, Response_Info.Max_Write,
-         Engine_Status);
-      if Engine_Status /= SMB.Ok then
-         Clear_State (Client);
-         raise SMB.Protocol_Error with "invalid negotiated SMB limits";
-      end if;
    exception
       when E : others =>
+         if SMB.Core_Connection.Stage_Of (Operation) in
+              SMB.Core_Connection.Prepared | SMB.Core_Connection.Sent
+         then
+            SMB.Core_Connection.Abort_Connection
+              (Operation, Client.Engine_Core, Engine_Status);
+         end if;
          if Ada.Exceptions.Exception_Identity (E) = SMB.Invalid_State'Identity
          then
+            if SMB.Engine.Current_Phase (Client.Engine_Core) =
+              SMB.Engine.Disconnected
+            then
+               Clear_State_Preserving_Status (Client);
+            end if;
             raise;
          end if;
          if Ada.Exceptions.Exception_Identity (E) = SMB.NT_Status_Error'Identity
@@ -755,46 +676,49 @@ package body SMB.Client is
    end Authenticate;
 
    procedure Connect_Share (Client : in out Connection; Share : String) is
+      Operation : SMB.Core_Connection.Connection_Operation;
+      Core_Status : SMB.Core_Status;
    begin
       Require_Relative_Share (Share);
       declare
          UNC : constant String :=
            "\\" & Ada.Strings.Unbounded.To_String (Client.Host) & "\" & Share;
          Name : constant SMB.Bytes := Encode_Name (UNC);
-         Payload : SMB.Bytes (0 .. 7 + Name'Length) := (others => 0);
+         Packet : SMB.Bytes
+           (0 .. SMB.Core_Wire.Header_Size + 8 + Name'Length - 1) :=
+             (others => 0);
          Used : Natural;
          Engine_Status : SMB.Core_Status;
       begin
-      SMB.Core_Protocol.Build_Tree_Connect
-        (Name, Payload, Used, Engine_Status);
-      if Engine_Status /= SMB.Ok then
-         raise SMB.Protocol_Error with "share name exceeds SMB limits";
-      end if;
-      declare
-         Response : constant SMB.Bytes := Exchange
-           (Client, SMB.Wire.Tree_Connect_Command, Payload (0 .. Used - 1),
-            Sign_Request => True, Require_Signed_Response => True,
-            Request_Session => Session_Identifier (Client),
-            Response_Session => Session_Identifier (Client));
-      begin
-         pragma Unreferenced (Response);
-      end;
-      Require_Status (Client, Client.Last_Status);
-      declare
-         Response_Info : constant SMB.Core_Protocol.Response_Info :=
-           SMB.Engine.Current_Response_Info (Client.Engine_Core);
-      begin
-         SMB.Engine.Mark_Share_Connected
-           (Client.Engine_Core, Response_Info.Tree_Id, Engine_Status);
-      end;
-      if Engine_Status /= SMB.Ok then
-         Clear_State (Client);
-         raise SMB.Protocol_Error with "session engine rejected share connection";
-      end if;
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Operation, Client.Engine_Core, Name, Packet, Used, Engine_Status);
+         if Engine_Status /= SMB.Ok then
+            if (Engine_Status = SMB.Invalid_State_Status
+                or else Engine_Status = SMB.Counter_Exhausted)
+              and then SMB.Core_Connection.Stage_Of (Operation) =
+                SMB.Core_Connection.Idle
+            then
+               raise SMB.Invalid_State with
+                 "session engine rejected tree connect";
+            end if;
+            raise SMB.Protocol_Error with "share name exceeds SMB limits";
+         end if;
+         Execute_Connection (Client, Operation, Packet, Used);
+         Require_Status (Client, Client.Last_Status);
       end;
    exception
       when E : others =>
-         if Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
+         if SMB.Core_Connection.Stage_Of (Operation) in
+              SMB.Core_Connection.Prepared | SMB.Core_Connection.Sent
+         then
+            SMB.Core_Connection.Abort_Connection
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) =
+           SMB.Engine.Disconnected
+         then
+            Clear_State_Preserving_Status (Client);
+         elsif Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Authentication_Error'Identity
          then
@@ -1247,34 +1171,39 @@ package body SMB.Client is
    end Rename;
 
    procedure Disconnect (Client : in out Connection) is
-      Payload : SMB.Bytes (0 .. 3) := (others => 0);
+      Packet : SMB.Bytes (0 .. 67) := (others => 0);
       Used : Natural;
-      Build_Status : SMB.Core_Status;
+      Core_Status : SMB.Core_Status;
       First_Error : Ada.Exceptions.Exception_Occurrence;
       Has_Error : Boolean := False;
       First_Status : SMB.DWord := SMB.Success;
+      Tree_Operation : SMB.Core_Connection.Connection_Operation;
+      Logoff_Operation : SMB.Core_Connection.Connection_Operation;
    begin
       if SMB.Engine.Current_Phase (Client.Engine_Core) = Share_Connected then
          begin
-            SMB.Core_Protocol.Build_Simple (Payload, Used, Build_Status);
-            if Build_Status /= SMB.Ok then
-               raise SMB.Protocol_Error with "cannot build tree disconnect request";
+            SMB.Core_Connection.Prepare_Tree_Disconnect
+              (Tree_Operation, Client.Engine_Core, Packet, Used, Core_Status);
+            if Core_Status /= SMB.Ok then
+               raise SMB.Protocol_Error with
+                 "cannot prepare tree disconnect request";
             end if;
-            declare
-               Response : constant SMB.Bytes := Exchange
-                 (Client, SMB.Wire.Tree_Disconnect_Command,
-                  Payload (0 .. Used - 1),
-                  Sign_Request => True, Require_Signed_Response => True,
-                  Request_Session => Session_Identifier (Client),
-                  Response_Session => Session_Identifier (Client),
-                  Request_Tree => Tree_Identifier (Client),
-                  Response_Tree => Tree_Identifier (Client));
-            begin
-               pragma Unreferenced (Response);
-               Require_Status (Client, Client.Last_Status);
-            end;
+            Execute_Connection (Client, Tree_Operation, Packet, Used);
+            Require_Status (Client, Client.Last_Status);
          exception
             when E : others =>
+               if SMB.Core_Connection.Stage_Of (Tree_Operation) in
+                    SMB.Core_Connection.Prepared |
+                    SMB.Core_Connection.Sent
+               then
+                  SMB.Core_Connection.Abort_Connection
+                    (Tree_Operation, Client.Engine_Core, Core_Status);
+               end if;
+               if SMB.Engine.Current_Phase (Client.Engine_Core) =
+                 SMB.Engine.Disconnected
+               then
+                  Clear_State_Preserving_Status (Client);
+               end if;
                if not Has_Error then
                   Ada.Exceptions.Save_Occurrence (First_Error, E);
                   First_Status := Client.Last_Status;
@@ -1286,22 +1215,28 @@ package body SMB.Client is
         Authenticated | Share_Connected
       then
          begin
-            SMB.Core_Protocol.Build_Simple (Payload, Used, Build_Status);
-            if Build_Status /= SMB.Ok then
-               raise SMB.Protocol_Error with "cannot build logoff request";
+            SMB.Core_Connection.Prepare_Logoff
+              (Logoff_Operation, Client.Engine_Core, Packet, Used,
+               Core_Status);
+            if Core_Status /= SMB.Ok then
+               raise SMB.Protocol_Error with "cannot prepare logoff request";
             end if;
-            declare
-               Response : constant SMB.Bytes := Exchange
-                 (Client, SMB.Wire.Logoff_Command, Payload (0 .. Used - 1),
-                  Sign_Request => True, Require_Signed_Response => True,
-                  Request_Session => Session_Identifier (Client),
-                  Response_Session => Session_Identifier (Client));
-            begin
-               pragma Unreferenced (Response);
-               Require_Status (Client, Client.Last_Status);
-            end;
+            Execute_Connection (Client, Logoff_Operation, Packet, Used);
+            Require_Status (Client, Client.Last_Status);
          exception
             when E : others =>
+               if SMB.Core_Connection.Stage_Of (Logoff_Operation) in
+                    SMB.Core_Connection.Prepared |
+                    SMB.Core_Connection.Sent
+               then
+                  SMB.Core_Connection.Abort_Connection
+                    (Logoff_Operation, Client.Engine_Core, Core_Status);
+               end if;
+               if SMB.Engine.Current_Phase (Client.Engine_Core) =
+                 SMB.Engine.Disconnected
+               then
+                  Clear_State_Preserving_Status (Client);
+               end if;
                if not Has_Error then
                   Ada.Exceptions.Save_Occurrence (First_Error, E);
                   First_Status := Client.Last_Status;
