@@ -1,5 +1,54 @@
 # GNATprove and test report
 
+## FILETIME calendar differential regression
+
+`make clock-test` compares the production `SMB.Core_Clock.To_Filetime` with
+Python's proleptic Gregorian calendar for every accepted date, from
+1601-01-01 through 9999-12-31. It also rejects day zero and the day after each
+month's last day throughout that range, plus out-of-domain fields and signed
+32-bit extremes. Error outputs must be zero, not a retained initial value.
+Selected epoch, leap/non-leap century and maximum dates are combined with
+second/tick boundaries. Expected FILETIME values use integer arithmetic;
+no floating-point Unix timestamps or platform timezone conversions are used.
+
+The helper checks cover every hour/minute/second with and without the input
+leap flag, and nanosecond fractions around 100ns boundaries plus reproducible
+samples. Fraction inputs are exact decimal `Duration` values; expected ticks
+are integer division by 100. Four deliberately wrong expectations must fail.
+Fixtures stream through a temporary file rather than requiring millions of
+lines to remain in memory.
+
+These are deterministic conversion tests, not a check of OS clock accuracy,
+timezone services or historical leap-second tables. The core intentionally
+maps seconds-of-day 86,400 to the next day's first second; the final accepted
+date is checked with integer ticks without constructing a year-10000 Python
+date. The tests do not change production/proof code or add formal proof of
+the external calendar reference.
+
+### Observed validation
+
+`make clock-test` passed **3,453,296 cases**: 3,067,671 calendar dates,
+201,576 invalid month/day combinations, 168 time boundaries, 22 invalid
+fields, 172,800 seconds-of-day cases, and 11,059 fractions. All four
+sensitivity checks passed. Python syntax compilation passed.
+
+`make test` passed, including the NTLM MaxLen (2,050), final SPNEGO (14,936),
+challenge extraction (45,396), response mutation (35,070), header mutation
+(18,838), security buffer mutation (20,124), and directory boundary (6,600)
+case groups. Forced strict `make check GPRBUILD="gprbuild -f"` passed,
+compiling the library, tests (including `clock_probe`) and example with
+`-gnatwe`; runtime dependency checks passed. `git diff --check` passed.
+
+No GNATprove, Samba integration, or CI run was performed for this test-only
+stage. The 4,412-check proof recorded for PR35 remains historical and is not
+claimed as a fresh result here.
+
+Evidence logs: `/home/ubuntu/clock-conformance-01-clock-test.log`,
+`/home/ubuntu/clock-conformance-02-pycompile.log`,
+`/home/ubuntu/clock-conformance-03-make-test.log`,
+`/home/ubuntu/clock-conformance-04-make-check.log`, and
+`/home/ubuntu/clock-conformance-05-diff-check.log`.
+
 ## SMB signing oracle and fail-closed status contracts
 
 `SMB.Core_Wire.Sign` and `Verify_Signature` now specify the exact status for
