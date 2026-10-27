@@ -1,5 +1,67 @@
 # GNATprove and test report
 
+## Optional NTLM TargetName fields
+
+The Type 2 receive path no longer requires `NTLMSSP_REQUEST_TARGET`.
+When it is clear, `TargetNameLen`, `TargetNameMaxLen` and
+`TargetNameBufferOffset` are ignored as required by
+[MS-NLMP 2.2.1.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/801a4681-8809-4be9-ab0d-61dcfe762786).
+No name slice is decoded or indexed in that case; the internal name length
+and offset are zero. When the flag is set, existing bounds and UTF-16 checks
+remain active. Unicode, NTLM, extended session security, signing, always-sign
+and TargetInfo requirements are unchanged. Mandatory AV names are still
+validated even when the separate TargetName fields are ignored.
+
+`tests/ntlm_challenge_fields.py`, included in `make ntlm-test`, uses the
+complete Python Type 3/SPNEGO oracle from the AV tests. It covers all byte
+values in all eight ignored metadata bytes, invalid unused name bytes,
+omitted name storage, and control cases for active name validation,
+mandatory negotiation flags and TargetInfo bounds. The session key is
+unchanged, but the full raw Type 2, including ignored bytes, remains in the
+MIC transcript. Array lower bounds and the public exception adapter are
+checked by the existing probe. This is a semantic regression test, not a
+new formal claim about NTLM cryptographic strength.
+
+### Observed validation
+
+`make ntlm-test` passed 211 AV fixtures (422 rebased cases) and 2,074
+challenge-field fixtures (4,148 rebased cases). Both the core and public APIs
+agreed with the frozen expected keys and tokens. The two sensitivity checks
+for each fixture set also passed: corrupted expected output and an incorrect
+rejection expectation were both rejected by the probe.
+
+The detached `477f6a0` baseline built successfully with the current shared AV
+helper and challenge-field fixtures, but the new selector failed at fixture 2,
+`REQUEST_TARGET clear`, with
+`raised PROGRAM_ERROR : AV authentication oracle mismatch: INVALID_PROTOCOL`.
+This reproduces the old required-flag rejection, rather than a setup failure.
+
+Python syntax compilation, `make test`, and strict
+`make check GPRBUILD="gprbuild -f"` passed. The full Samba integration passed
+the existing regression scenarios and its three AV mutation modes:
+`challenge-av-timestamp-length`, `challenge-av-name-encoding`, and
+`challenge-av-terminator`. It did not test acceptance of the modified
+`REQUEST_TARGET` case; that behavior is covered by the synthetic core/public
+fixtures only.
+
+The single clean full proof passed across 13 units with 4,411 checks: 699 flow
+and 3,712 prover checks, 0 unproved, 0 justified, and 68 GNATprove warnings.
+The totals comprise 2 data dependencies, 1 flow dependency, 539 initialization,
+2 non-aliasing, 2,401 run-time checks, 292 assertions, 1,013 functional
+contracts, and 161 termination checks (155 flow, 6 prover). No proof contracts
+were changed, and no `pragma Assume` or `pragma Suppress` was introduced.
+
+Evidence logs: `/home/ubuntu/ntlm-targetname-01-ntlm-test.log`,
+`/home/ubuntu/ntlm-targetname-02-baseline-build.log`,
+`/home/ubuntu/ntlm-targetname-03-baseline-repro.log`,
+`/home/ubuntu/ntlm-targetname-04-pycompile.log`,
+`/home/ubuntu/ntlm-targetname-05-make-test.log`,
+`/home/ubuntu/ntlm-targetname-06-make-check.log`,
+`/home/ubuntu/ntlm-targetname-07-samba-integration.log`,
+`/home/ubuntu/ntlm-targetname-08-proof-clean.log`,
+`/home/ubuntu/ntlm-targetname-09-make-prove.log`, and
+`/home/ubuntu/ntlm-targetname-10-proof-summary.out`.
+
 ## NTLM AV-pair conformance and recovery scope
 
 `make ntlm-test` uses a Python reference encoder and HMAC-MD5 implementation

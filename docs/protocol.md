@@ -83,7 +83,7 @@ server-to-client の `mechListMIC` を必須として検証します。これは
 メッセージ自体の MIC とは別の検査です。文字列中の
 `NTLMSSP` を検索して認証することはしません。
 
-Type 2 の security buffer と AV pairs を全て bounds-check し、Unicode、
+Type 2 の有効な security buffer と AV pairs を bounds-check し、Unicode、
 NTLM、ESS、signing、target-info を要求します。server timestamp を
 優先して NTLMv2 blob に使い、その AV がある場合は LM response を全
 zero にします。timestamp がない場合だけ現在の FILETIME と callback
@@ -92,10 +92,16 @@ Type 2、zero-MIC Type 3 全体で MIC を計算します。channel binding が
 非 zero の場合、値を捏造せず拒否します。KEY_EXCH/RC4、NTLMv1、LM 認証
 は提供しません。
 
+`NTLMSSP_REQUEST_TARGET` が解除されている場合、TargetName の長さ・最大長・
+オフセットは仕様に従って無視し、名前を読み取りません。設定されている場合は
+既存の境界・UTF-16 検査を行います。TargetInfo とその必須 AV 名の検査は
+維持し、無視するフィールドも含めて Type 2 全体を MIC 計算の対象にします。
+
 公式仕様:
 
 * [MS-NLMP NTOWFv2 and session base key](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/5e550938-91d4-459f-b67d-75d70009e3f3)
 * [MS-NLMP timestamp, LM response and MIC AV flag](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/c0250a97-2940-40c7-82fb-20d208c71e96)
+* [MS-NLMP CHALLENGE_MESSAGE fields](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/801a4681-8809-4be9-ab0d-61dcfe762786)
 
 ## 暗号と入力制限
 

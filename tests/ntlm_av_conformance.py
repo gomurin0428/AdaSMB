@@ -50,12 +50,16 @@ def challenge_token(info: bytes) -> tuple[bytes, bytes]:
     raw = (b"NTLMSSP\0" + struct.pack("<IHHII", 2, len(DOMAIN), len(DOMAIN), 48, FLAGS)
            + CHALLENGE + b"\0" * 8 + struct.pack("<HHI", len(info), len(info), 60)
            + DOMAIN + info)
-    token = tlv(0xA1, tlv(0x30, bytes.fromhex("a0030a0101") + MECHANISM
+    return wrap_challenge(raw), raw
+
+
+def wrap_challenge(raw: bytes) -> bytes:
+    return tlv(0xA1, tlv(0x30, bytes.fromhex("a0030a0101") + MECHANISM
                         + tlv(0xA2, tlv(4, raw))))
-    return token, raw
 
 
-def expected_auth(raw: bytes, pairs: list[tuple[int, bytes]], clock: int) -> tuple[bytes, bytes]:
+def expected_auth(raw: bytes, pairs: list[tuple[int, bytes]], clock: int,
+                  server_flags: int = FLAGS) -> tuple[bytes, bytes]:
     response_key = mac(md4("Password".encode("utf-16le")), "USERDomain".encode("utf-16le"))
     if response_key.hex() != "0c868a403bfd7a93a3001ef22ef02e3f":
         raise AssertionError("NTLMv2 reference key known-answer mismatch")
@@ -73,7 +77,7 @@ def expected_auth(raw: bytes, pairs: list[tuple[int, bytes]], clock: int) -> tup
     fields = [lm, proof + blob, DOMAIN, "USER".encode("utf-16le"), b"", b""]
     type3 = bytearray(88)
     type3[:12] = b"NTLMSSP\0" + struct.pack("<I", 3)
-    struct.pack_into("<I", type3, 60, FLAGS)
+    struct.pack_into("<I", type3, 60, FLAGS & server_flags)
     for position, field in zip((12, 20, 28, 36, 44, 52), fields):
         struct.pack_into("<HHI", type3, position, len(field), len(field), len(type3))
         type3.extend(field)
@@ -140,14 +144,13 @@ def fixtures() -> list[tuple[str, str]]:
     return cases
 
 
-def main() -> None:
+def run_cases(cases: list[tuple[str, str]], label: str) -> None:
     probe = ROOT / "build" / "bin" / ("ntlm_av_probe.exe" if sys.platform == "win32" else "ntlm_av_probe")
-    cases = fixtures()
     result = subprocess.run([str(probe)], input="\n".join(line for _, line in cases) + "\n",
                             text=True, capture_output=True, timeout=180)
     if result.returncode != 0 or result.stdout.strip() != f"PASS {len(cases)}":
         print(result.stdout + result.stderr, file=sys.stderr)
-        raise RuntimeError("NTLM AV conformance failed; fixture ordering is deterministic")
+        raise RuntimeError(f"NTLM {label} conformance failed; fixture ordering is deterministic")
     first = cases[0][1].split()
     changed = bytearray.fromhex(first[3])
     changed[-1] ^= 1
@@ -158,8 +161,8 @@ def main() -> None:
                                capture_output=True, timeout=30)
         if check.returncode == 0 or "raised PROGRAM_ERROR" not in check.stderr:
             raise RuntimeError("probe sensitivity check failed or could not execute")
-    print(f"PASS: {len(cases)} AV fixtures, {2 * len(cases)} rebased cases; core/public agreement; two sensitivity checks")
+    print(f"PASS: {len(cases)} {label} fixtures, {2 * len(cases)} rebased cases; core/public agreement; two sensitivity checks")
 
 
 if __name__ == "__main__":
-    main()
+    run_cases(fixtures(), "AV")
