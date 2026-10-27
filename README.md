@@ -100,6 +100,8 @@ WRITE は開始時に入力を private snapshot へ一度だけコピーし、�
 make build                  # 静的ライブラリ build/lib/libsmb.a
 make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテスト
 make unicode-test           # Python 標準 codec との Unicode 全スカラー差分試験
+make ntlm-test              # NTLM challenge と認証出力の差分試験
+make crypto-test            # OpenSSL / Python と hash・HMAC の差分試験
 make check                  # warnings-as-errors と依存関係検査
 make example                # build/bin/smb_example
 make prove                  # GNATprove + cvc5/z3 が必要。未証明があれば失敗
@@ -112,6 +114,12 @@ NUL を除く全 1,112,063 Unicode スカラー、短いバイト列の全組合
 複合文字列・固定 seed の入力を検査します。NUL は SMB の方針で拒否します。
 この差分試験は Unicode の意味的な形式証明ではありません。Python は
 試験専用であり、ライブラリの実行時依存には追加されません。
+
+`make crypto-test` は Python 3 と OpenSSL 3 の legacy provider が必要です。
+MD4 は OpenSSL、MD5/SHA-256 と HMAC は Python の `hashlib`/`hmac` と比較し、
+ブロック境界・長い鍵・最大入力長・配列下限の違いを検査します。これらは
+試験専用の依存です。暗号学的強度や定時間性の証明ではなく、MD4/MD5 を
+NTLM 互換用途以外の新しい設計に推奨するものでもありません。
 
 example はホスト、share、パスを引数に取れますが、パスワードを引数に
 取りません。`SMB_USER`、`SMB_DOMAIN`、`SMB_PASSWORD` 環境変数を使います。
