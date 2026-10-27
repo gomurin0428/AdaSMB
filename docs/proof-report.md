@@ -1,5 +1,44 @@
 # GNATprove and test report
 
+## Transport loss after an asynchronous interim response
+
+Two additional Samba-backed async proxy modes send a valid `STATUS_PENDING`
+for READ, then either half-close before the final response or send a correctly
+signed final frame with its last byte missing before half-closing. The client
+must observe the exact EOF transport error, not a timeout or a protocol error.
+The proxy also checks that the client closes without sending another request
+on the interrupted connection.
+
+The existing public-API recovery checks apply to both modes: no READ result
+escapes, the connection is closed, the interim is not published as NTSTATUS,
+the same object reconnects, the old handle is rejected and a newly opened
+handle reads the expected fixture byte. These tests exercise receive failure
+while an AsyncId is already stored, rather than only malformed final replies
+or the repeated-interim deadline path. Production source is unchanged.
+
+### Observed validation
+
+The focused Candidate GNAT14 build and Python syntax compilation passed. The
+focused root async-only integration passed the normal client, async success,
+and all eight negative modes, including both transport-loss cases. `make test`
+and forced strict `make check GPRBUILD="gprbuild -f"` passed. The full root
+Samba integration also passed: all six entropy recovery cases, async success
+and rejection/recovery, and the existing adversarial, mutation, and
+security-buffer scenarios.
+
+GNATprove was not rerun because production source is unchanged. The **4,459
+checks** (709 flow, 3,750 prover; 0 unproved, 0 justified, 69 warnings, and 0
+`pragma Assume`) are inherited from PR42, not a new proof result for this
+test-only change. CI and native Windows validation were not rerun; transport
+and oracle suites were also outside this stage's scope.
+
+Evidence logs: `/home/ubuntu/async-transport-loss-focused-build.log`,
+`/home/ubuntu/async-transport-loss-python.log`,
+`/home/ubuntu/async-transport-loss-focused-integration.log`,
+`/home/ubuntu/async-transport-loss-make-test.log`,
+`/home/ubuntu/async-transport-loss-strict-check.log`, and
+`/home/ubuntu/async-transport-loss-full-integration.log`.
+
 ## Engine response-to-request correlation contracts
 
 `Response_Header_Matches_Request` is a ghost predicate over the outstanding
