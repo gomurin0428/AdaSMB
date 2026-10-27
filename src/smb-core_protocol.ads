@@ -468,9 +468,18 @@ package SMB.Core_Protocol is
    with Pre => Requested <= Maximum_IO_Chunk
      and then Count <= Maximum_IO_Chunk
      and then Remaining <= SMB.Maximum_Frame_Size,
-     Post => Remaining <= Remaining'Old
+     Post => Status =
+       (if (Count = 0 and then Requested /= 0 and then Require_Progress)
+          or else Count > Requested or else Count > Remaining'Old
+        then SMB.Invalid_Value
+        elsif SMB.QWord (Count) > SMB.QWord'Last - Position'Old
+        then SMB.Invalid_Offset
+        else SMB.Ok)
+       and then Remaining <= Remaining'Old
        and then (if Status = SMB.Ok then
-          Remaining = Remaining'Old - Count
+          Count <= Requested
+          and then SMB.QWord (Count) <= SMB.QWord'Last - Position'Old
+          and then Remaining = Remaining'Old - Count
           and then Position = Position'Old + SMB.QWord (Count)
         else Position = Position'Old
           and then Remaining = Remaining'Old);
@@ -481,7 +490,10 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => Remaining <= SMB.Maximum_Frame_Size
      and then Limit <= Maximum_IO_Chunk,
-     Post => Amount <= Remaining
+     Post => Status =
+       (if Remaining /= 0 and then Limit = 0 then SMB.Invalid_Value
+        else SMB.Ok)
+       and then Amount <= Remaining
        and then Amount <= Limit
        and then (if Status = SMB.Ok
          then Amount = Natural'Min (Remaining, Limit)
@@ -492,9 +504,10 @@ package SMB.Core_Protocol is
       Total : Natural;
       Status : out SMB.Core_Status)
    with Pre => Total <= SMB.Maximum_Frame_Size,
-     Post =>
-       (if Status = SMB.Ok then
-          SMB.QWord (Total) <= SMB.QWord'Last - Base_Offset);
+     Post => Status =
+       (if SMB.QWord (Total) > SMB.QWord'Last - Base_Offset
+        then SMB.Invalid_Offset
+        else SMB.Ok);
 
    procedure Count_Directory_Page
      (Pages : in out Natural;
