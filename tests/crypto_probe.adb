@@ -1,9 +1,12 @@
 with Ada.Unchecked_Deallocation;
 with Ada.Text_IO;
 with SMB.Crypto;
+with SMB.Core_Wire;
+with SMB.Wire;
 
 procedure Crypto_Probe is
    use type SMB.Bytes;
+   use type SMB.Core_Status;
 
    type Bytes_Access is access SMB.Bytes;
    type String_Access is access String;
@@ -99,9 +102,76 @@ procedure Crypto_Probe is
       end loop;
    end Check_HMAC;
 
+   procedure Check_Wire
+     (Key, Data, Expected : SMB.Bytes;
+      Expected_Status : SMB.Core_Status;
+      Signing : Boolean;
+      Expected_Valid : Boolean := False)
+   is
+   begin
+      for Key_Rebased in 0 .. 1 loop
+         for Data_Rebased in 0 .. 1 loop
+            declare
+               Key_First : constant Natural := 7 * Key_Rebased;
+               Data_First : constant Natural := 7 * Data_Rebased;
+               Input_Key : Bytes_Access := null;
+               Input_Data : Bytes_Access := null;
+               Status : SMB.Core_Status;
+               Valid : Boolean := True;
+            begin
+               Input_Key := new SMB.Bytes
+                 (Key_First .. Key_First + Key'Length - 1);
+               Input_Data := new SMB.Bytes
+                 (Data_First .. Data_First + Data'Length - 1);
+               Input_Key.all := Key;
+               Input_Data.all := Data;
+               if Signing then
+                  SMB.Core_Wire.Sign (Input_Data.all, Input_Key.all, Status);
+                  if Status /= Expected_Status or else Input_Data.all /= Expected then
+                     raise Program_Error with "core signing mismatch";
+                  end if;
+                  Input_Data.all := Data;
+                  begin
+                     SMB.Wire.Sign (Input_Data.all, Input_Key.all);
+                     if Expected_Status /= SMB.Ok then
+                        raise Program_Error with "public signing accepted invalid input";
+                     end if;
+                  exception
+                     when SMB.Protocol_Error =>
+                        if Expected_Status = SMB.Ok then
+                           raise Program_Error with "public signing rejected valid input";
+                        end if;
+                  end;
+                  if Input_Data.all /= Expected then
+                     raise Program_Error with "public signing output mismatch";
+                  end if;
+               else
+                  SMB.Core_Wire.Verify_Signature
+                    (Input_Data.all, Input_Key.all, Valid, Status);
+                  if Status /= Expected_Status or else Valid /= Expected_Valid then
+                     raise Program_Error with "core verification mismatch";
+                  end if;
+                  if SMB.Wire.Verify_Signature (Input_Data.all, Input_Key.all)
+                    /= Expected_Valid
+                  then
+                     raise Program_Error with "public verification mismatch";
+                  end if;
+               end if;
+               Free_Bytes (Input_Data);
+               Free_Bytes (Input_Key);
+            exception
+               when others =>
+                  Free_Bytes (Input_Data);
+                  Free_Bytes (Input_Key);
+                  raise;
+            end;
+         end loop;
+      end loop;
+   end Check_Wire;
+
    Count : Natural := 0;
    Line_Buffer : constant String_Access :=
-     new String (1 .. 4 * SMB.Maximum_Frame_Size + 128);
+     new String (1 .. 6 * SMB.Maximum_Frame_Size + 128);
 begin
    while not Ada.Text_IO.End_Of_File loop
       declare
@@ -138,6 +208,15 @@ begin
                Check_HMAC
                  (Hex (Field (2)), Hex (Field (3)),
                   Hex (Field (4)), Hex (Field (5)));
+            elsif Field (1) = "S" then
+               Check_Wire
+                 (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)),
+                  SMB.Core_Status'Value (Field (5)), Signing => True);
+            elsif Field (1) = "V" then
+               Check_Wire
+                 (Hex (Field (2)), Hex (Field (3)), SMB.Bytes'(1 .. 0 => 0),
+                  SMB.Core_Status'Value (Field (5)), Signing => False,
+                  Expected_Valid => Boolean'Value (Field (4)));
             else
                raise Program_Error with "unknown fixture operation";
             end if;

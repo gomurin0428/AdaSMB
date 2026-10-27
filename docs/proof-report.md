@@ -1,5 +1,63 @@
 # GNATprove and test report
 
+## SMB signing oracle and fail-closed status contracts
+
+`SMB.Core_Wire.Sign` and `Verify_Signature` now specify the exact status for
+short frames, empty keys and otherwise valid input sizes. Verification
+additionally guarantees `Valid = False` on a non-`Ok` status. These contracts
+depend only on public input lengths/status; no early-exit comparison of secret
+bytes was added to an executable assertion. The signing/verification bodies
+and existing buffer-preservation contracts are unchanged.
+
+`make signing-test` compares the core and public wire APIs with Python HMAC
+following [MS-SMB2 3.1.4.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/a3e9ea1e-53c8-4cff-94bd-d98fb20417c0)
+and [3.1.5.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/5b570c0b-0854-4324-8fb5-d410692dde3e):
+zero bytes 48..63, hash the entire SMB message, and copy the first 16 digest
+bytes. Whole signed packets must match the oracle, including unchanged bytes
+outside the signature. Error cases preserve the signing buffer and reset
+verification output from an initial `True` to `False`; the public signing
+API raises `SMB.Protocol_Error`, while public verification returns `False`.
+
+Cases cover every length 0..129, larger boundaries through the maximum frame,
+empty/short/long keys, independent array lower bounds 0/7, each bit of a
+129-byte signed message (including all signature bits), each key bit, message
+extension/truncation, and selected mutations in a maximum-sized message.
+Appending zeros to a short HMAC key is correctly recognized as equivalent
+padding, not incorrectly required to fail. Four sensitivity checks corrupt a
+signature expectation or invert valid, invalid and error-case verification
+expectations. This tests signing primitives, not whether arbitrary synthetic
+bytes are valid SMB headers or whether a peer is authenticated. It does not
+prove HMAC strength or constant-time execution.
+
+### Observed validation
+
+`make signing-test` passed **3,135 signing/verification fixtures / 12,540
+rebased cases** through the core and public APIs; all four sensitivity checks
+passed. The existing `make crypto-test` also passed: **445 hash fixtures /
+890 rebased cases** and **1,832 HMAC fixtures / 7,328 rebased cases**, with
+all five sensitivity checks. Python syntax compilation passed.
+
+`make test` passed. Full local Samba integration passed all existing
+scenarios and mutation/recovery checks. The clean full proof passed across
+**13 units**: **4,412 checks**, with **699 flow** and **3,713 prover** checks,
+**0 unproved**, **0 justified**, **68 warnings**, and **0 `pragma Assume`
+statements**. The warnings are in `SMB.Core_Auth` (6), `SMB.Core_Client` (56),
+and `SMB.Core_Protocol` (6). `SMB.Core_Wire.Sign`'s 15 checks and
+`SMB.Core_Wire.Verify_Signature`'s 12 checks passed. Strict
+`make check GPRBUILD="gprbuild -f"` and `git diff --check` passed.
+
+The public signing/verification bodies are unchanged; only their contracts
+in `src/smb-core_wire.ads` changed. No CI was run.
+
+Evidence logs: `/home/ubuntu/signing-conformance-01-signing-test.log`,
+`/home/ubuntu/signing-conformance-02-crypto-test.log`,
+`/home/ubuntu/signing-conformance-03-pycompile.log`,
+`/home/ubuntu/signing-conformance-04-make-test.log`,
+`/home/ubuntu/signing-conformance-05-samba-integration.log`,
+`/home/ubuntu/signing-conformance-06-clean-proof.log`,
+`/home/ubuntu/signing-conformance-07-make-check.log`, and
+`/home/ubuntu/signing-conformance-08-diff-check.log`.
+
 ## Hash and HMAC differential regression
 
 `make crypto-test` checks the production `SMB.Crypto` functions against

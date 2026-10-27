@@ -249,8 +249,9 @@ package SMB.Core_Wire is
      Data'Length <= SMB.Maximum_Frame_Size
      and Key'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       (if Data'Length >= Header_Size and then Key'Length > 0
-        then Status = SMB.Ok)
+       Status = (if Data'Length < Header_Size then SMB.Invalid_Length
+                 elsif Key'Length = 0 then SMB.Invalid_Value
+                 else SMB.Ok)
        and then
        (if Status = SMB.Ok then
           (for all Index in Data'Range =>
@@ -269,5 +270,10 @@ package SMB.Core_Wire is
       Status : out SMB.Core_Status)
    with Pre =>
      Data'Length <= SMB.Maximum_Frame_Size
-     and Key'Length <= SMB.Maximum_Frame_Size;
+     and Key'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Status = (if Data'Length < Header_Size then SMB.Invalid_Length
+                 elsif Key'Length = 0 then SMB.Invalid_Value
+                 else SMB.Ok)
+       and then (if Status /= SMB.Ok then not Valid);
 end SMB.Core_Wire;
