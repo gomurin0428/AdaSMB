@@ -2974,7 +2974,7 @@ procedure Test_Suite is
          declare
             Original : constant SMB.Bytes (1 .. 5) :=
               (16#11#, 16#22#, 16#33#, 16#44#, 16#55#);
-            Mutable_Data : SMB.Bytes (1 .. 5) := Original;
+            Mutable_Data : SMB.Bytes (11 .. 15) := Original;
             Write_Transfer : SMB.Core_Client.Transfer (5);
             Read_Transfer : SMB.Core_Client.Transfer (5);
             Boundary_Transfer : SMB.Core_Client.Transfer (1);
@@ -2983,7 +2983,8 @@ procedure Test_Suite is
             Read_Packet : SMB.Bytes (0 .. 112) := (others => 0);
             Write_Response : SMB.Bytes (0 .. 79) := (others => 0);
             Read_Response : SMB.Bytes (0 .. 84) := (others => 0);
-            Result : SMB.Bytes (0 .. 4) := (others => 0);
+            Result : SMB.Bytes (Natural'Last - 4 .. Natural'Last) :=
+              (others => 0);
             Invalid_Token : constant SMB.Engine.Handle_Token :=
               (Owner => 0, Epoch => 0, Ticket => 0);
             Used : Natural;
@@ -3161,7 +3162,11 @@ procedure Test_Suite is
               (Read_Transfer, Result, Used, Status);
             Assert
               (Status = SMB.Ok and then Used = 2
-               and then Result (0 .. 1) = Original (1 .. 2)
+               and then Result (Result'First .. Result'First + 1) =
+                 Original (1 .. 2)
+               and then
+                 (for all Index in Result'First + 2 .. Result'Last =>
+                    Result (Index) = 0)
                and then SMB.Core_Client.Transfer_Stage_Of (Read_Transfer) =
                  SMB.Core_Client.Transfer_Finished,
                "short READ terminates with validated prefix");
@@ -4440,11 +4445,15 @@ begin
         or else (Ada.Command_Line.Argument (1) /= "transport-core"
                  and then Ada.Command_Line.Argument (1) /= "clock-core"
                  and then Ada.Command_Line.Argument (1) /= "path-contracts"
-                 and then Ada.Command_Line.Argument (1) /= "utf-capacity")
+                 and then Ada.Command_Line.Argument (1) /= "utf-capacity"
+                 and then Ada.Command_Line.Argument (1) /= "engine-receipts")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "utf-capacity" then
+      if Ada.Command_Line.Argument (1) = "engine-receipts" then
+         Test_Engine_Receipts;
+         Ada.Text_IO.Put_Line ("AdaSMB engine receipt tests passed");
+      elsif Ada.Command_Line.Argument (1) = "utf-capacity" then
          Test_UTF_Capacity;
          Ada.Text_IO.Put_Line ("AdaSMB UTF capacity tests passed");
       elsif Ada.Command_Line.Argument (1) = "path-contracts" then

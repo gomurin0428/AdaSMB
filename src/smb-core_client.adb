@@ -76,12 +76,7 @@ is
      (for all Index in Buffer'Range => Buffer (Index) = 0)
    is
    begin
-      for Index in Buffer'Range loop
-         Buffer (Index) := 0;
-         pragma Loop_Invariant
-           (for all Cleared in Buffer'First .. Index =>
-              Buffer (Cleared) = 0);
-      end loop;
+      Buffer := (others => 0);
    end Clear_Transfer_Buffer;
 
    procedure Clear_Output (Output : out SMB.Bytes) is
@@ -104,12 +99,7 @@ is
           Value.Challenge (Index) = 0)
    is
    begin
-      for Index in Value.Challenge'Range loop
-         Value.Challenge (Index) := 0;
-         pragma Loop_Invariant
-           (for all Cleared in Value.Challenge'First .. Index =>
-              Value.Challenge (Cleared) = 0);
-      end loop;
+      Value.Challenge := (others => 0);
       Value.Challenge_Length := 0;
    end Clear_Authentication_Buffer;
 
@@ -2082,13 +2072,7 @@ is
       Value.Requested := 0;
       Value.Expected := (others => <>);
       if Data'Length > 0 then
-         for Index in 0 .. Data'Length - 1 loop
-            Value.Buffer (Index + 1) := Data (Data'First + Index);
-            pragma Loop_Invariant
-              (for all Copied in 0 .. Index =>
-                 Value.Buffer (Copied + 1) =
-                   Data (Data'First + Copied));
-         end loop;
+         Value.Buffer := Data;
       end if;
       Status := SMB.Ok;
    end Start_Write;
@@ -2576,13 +2560,8 @@ is
          return;
       end if;
       if Value.Completed > 0 then
-         for Index in 0 .. Value.Completed - 1 loop
-            Output (Output'First + Index) := Value.Buffer (Index + 1);
-            pragma Loop_Invariant
-              (for all Copied in 0 .. Index =>
-                 Output (Output'First + Copied) =
-                   Value.Buffer (Copied + 1));
-         end loop;
+         Output (Output'First .. Output'First + (Value.Completed - 1)) :=
+           Value.Buffer (1 .. Value.Completed);
       end if;
       Used := Value.Completed;
       Status := SMB.Ok;
