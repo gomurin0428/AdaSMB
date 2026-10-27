@@ -1,5 +1,58 @@
 # GNATprove and test report
 
+## TCP frame boundaries and progress-independent receive deadline
+
+The local transport regression adds a fragmented maximum-sized 1-MiB frame
+and five coalesced frames of different lengths and byte patterns. Echoes must
+preserve the exact framing and payload, without consuming bytes from the next
+frame. Zero-length and 63-byte frame headers must raise `Protocol_Error`
+without waiting for a body, invalidate the transport, and allow reconnection
+using the same connection object.
+
+A separate slow-trickle case sends each byte 110ms apart, completing the
+header and starting the payload before the configured 500ms deadline. The
+client must time out between 450ms and 750ms, rather than refreshing the
+deadline after the header or after each successful partial receive. It then
+checks failure invalidation, rejection of silent reuse, and reconnect/echo.
+This is a scheduling-sensitive local regression, not a hard real-time proof.
+DNS and multi-request API deadlines remain outside this per-frame guarantee.
+
+### Observed validation
+
+`make transport-test` passed the stalled-write case and all 11 receive modes,
+including byte-exact echoes for the 1-MiB frame and five coalesced frames,
+malformed/undersized headers, and failure/reconnect behavior. The
+`trickle-read` scenario also passed five additional consecutive runs.
+Python syntax compilation passed.
+
+For the negative control, a detached worktree at `9d3e014` received the
+current test files and a single mutation to `src/smb-transport.adb` that
+restarted the deadline after reading the header. The mutant built, and
+`trickle-read` produced the expected Ada diagnostic,
+`raised PROGRAM_ERROR : stalled receive violated its deadline`. Because that
+assertion aborts the client before recovery, the outer integration helper then
+timed out waiting for the recovery connection; this was a consequence of the
+expected rejection. The mutant remains isolated and was not committed.
+
+`make test` passed, including the NTLM MaxLen (2,050), final SPNEGO (14,936),
+challenge extraction (45,396), response mutation (35,070), header mutation
+(18,838), security buffer mutation (20,124), and directory boundary (6,600)
+case groups. Forced strict `make check GPRBUILD="gprbuild -f"` passed,
+compiling the library, tests, and example with `-gnatwe`; runtime dependency
+checks passed. `git diff --check` passed.
+
+This stage changes tests and documentation only; no GNATprove, full Samba
+integration, or CI run was performed.
+
+Evidence logs: `/home/ubuntu/transport-framing-01-transport-test.log`,
+`/home/ubuntu/transport-framing-02-trickle-repeat.log`,
+`/home/ubuntu/transport-framing-03-pycompile.log`,
+`/home/ubuntu/transport-framing-04-negative-build.log`,
+`/home/ubuntu/transport-framing-05-negative-control.log`,
+`/home/ubuntu/transport-framing-06-make-test.log`,
+`/home/ubuntu/transport-framing-07-make-check.log`, and
+`/home/ubuntu/transport-framing-08-diff-check.log`.
+
 ## FILETIME calendar differential regression
 
 `make clock-test` compares the production `SMB.Core_Clock.To_Filetime` with

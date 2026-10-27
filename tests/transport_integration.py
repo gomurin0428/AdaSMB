@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import pathlib
+import select
 import socket
 import subprocess
 import time
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+MAX_FRAME = 1_048_576
 
 
 def backpressure() -> None:
@@ -52,9 +54,14 @@ def recv_exact(peer: socket.socket, length: int) -> bytes:
     return bytes(data)
 
 
+def frame_bytes(length: int, seed: int = 0) -> bytes:
+    cycle = bytes((i + seed) % 256 for i in range(256))
+    payload = (cycle * ((length + 255) // 256))[:length]
+    return b"\x00" + length.to_bytes(3, "big") + payload
+
+
 def fragmented_echo(peer: socket.socket, length: int) -> None:
-    payload = bytes(i % 256 for i in range(length))
-    frame = b"\x00" + length.to_bytes(3, "big") + payload
+    frame = frame_bytes(length)
     peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     offset = 0
     for count in (1, 2, 1, 3, 17, 29):
@@ -66,6 +73,39 @@ def fragmented_echo(peer: socket.socket, length: int) -> None:
         raise RuntimeError("echo changed the frame header or payload bytes")
     if peer.recv(1) != b"":
         raise RuntimeError("unexpected bytes after complete echoed frame")
+
+
+def coalesced_echo(peer: socket.socket) -> None:
+    frames = b"".join(frame_bytes(length, seed) for length, seed in
+                      ((64, 0), (65, 17), (512, 63), (65536, 129), (64, 255)))
+    peer.sendall(frames)
+    if recv_exact(peer, len(frames)) != frames:
+        raise RuntimeError("coalesced frames were merged, reordered or changed")
+    if peer.recv(1) != b"":
+        raise RuntimeError("unexpected bytes after coalesced frames")
+
+
+def trickle_until_closed(peer: socket.socket) -> None:
+    peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    started = time.monotonic()
+    sent = 0
+    for byte in frame_bytes(64):
+        try:
+            peer.sendall(bytes([byte]))
+            sent += 1
+            readable, _, _ = select.select([peer], [], [], 0.11)
+            if readable:
+                if peer.recv(1) != b"":
+                    raise RuntimeError("trickle receive unexpectedly sent data")
+                break
+        except (BrokenPipeError, ConnectionResetError):
+            break
+        if time.monotonic() - started > 2.0:
+            raise RuntimeError("trickle receive kept extending its deadline")
+    else:
+        raise RuntimeError("trickle receive accepted a late complete frame")
+    if sent < 5:
+        raise RuntimeError("trickle test did not reach the payload before closure")
 
 
 def receive_case(mode: str) -> None:
@@ -84,8 +124,10 @@ def receive_case(mode: str) -> None:
                 peer, _ = listener.accept()
                 with peer:
                     peer.settimeout(5)
-                    if mode == "fragmented":
-                        fragmented_echo(peer, 512)
+                    if mode in ("fragmented", "maximum-frame"):
+                        fragmented_echo(peer, 512 if mode == "fragmented" else MAX_FRAME)
+                    elif mode == "coalesced":
+                        coalesced_echo(peer)
                     else:
                         if mode == "eof-header":
                             peer.sendall(b"\x00\x00")
@@ -97,14 +139,20 @@ def receive_case(mode: str) -> None:
                             peer.sendall(b"\x81\x00\x00\x40")
                         elif mode == "oversized-header":
                             peer.sendall(b"\x00\x10\x00\x01")
+                        elif mode == "empty-header":
+                            peer.sendall(b"\x00\x00\x00\x00")
+                        elif mode == "undersized-header":
+                            peer.sendall(b"\x00\x00\x00\x3f")
                         elif mode == "stalled-read":
                             # Keep the peer open: the client must enforce its deadline.
                             peer.sendall(b"\x00\x00")
+                        elif mode == "trickle-read":
+                            trickle_until_closed(peer)
                         else:
                             raise ValueError(mode)
-                        if peer.recv(1) != b"":
+                        if mode != "trickle-read" and peer.recv(1) != b"":
                             raise RuntimeError("client sent data instead of closing failed receive")
-                if mode != "fragmented":
+                if mode not in ("fragmented", "maximum-frame", "coalesced"):
                     recovered, _ = listener.accept()
                     with recovered:
                         recovered.settimeout(5)
@@ -113,13 +161,18 @@ def receive_case(mode: str) -> None:
                 if client.returncode:
                     raise RuntimeError(f"{mode} failed:\n{stdout}{stderr}")
                 expected = (
-                    "fragmented receive and byte-exact echo passed"
-                    if mode == "fragmented"
+                    f"byte-exact receive and echo passed: {mode}"
+                    if mode in ("fragmented", "maximum-frame", "coalesced")
                     else f"receive failure and same-connection recovery passed: {mode}"
                 )
                 if expected not in stdout:
                     raise RuntimeError(f"{mode} did not reach its assertions")
                 print(stdout, end="")
+            except Exception as error:
+                if client.poll() is None:
+                    client.kill()
+                stdout, stderr = client.communicate()
+                raise RuntimeError(f"{mode} failed: {error}\n{stdout}{stderr}") from error
             finally:
                 if client.poll() is None:
                     client.kill()
@@ -129,8 +182,9 @@ def receive_case(mode: str) -> None:
 def main() -> None:
     backpressure()
     for mode in (
-        "fragmented", "eof-header", "eof-payload", "malformed-header",
-        "oversized-header", "stalled-read",
+        "fragmented", "maximum-frame", "coalesced", "eof-header", "eof-payload",
+        "malformed-header", "oversized-header", "empty-header", "undersized-header",
+        "stalled-read", "trickle-read",
     ):
         receive_case(mode)
 
