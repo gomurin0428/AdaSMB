@@ -1,5 +1,55 @@
 # GNATprove and test report
 
+## NTLM Type 2 layout and public recovery
+
+`ntlm_challenge_fields.py` adds 750 layout fixtures, each checked at two array
+lower bounds through the core and public NTLM APIs. The independent complete
+Type 3/SPNEGO oracle is reused without changing its output rules. Valid
+cases include either payload order, padding before/between/after fields,
+odd-aligned TargetInfo, optional Version storage with ignored debug contents,
+ignored reserved bytes, an empty TargetName, and a bounded read-only alias
+of TargetName into the domain AV value. No new blanket overlap-rejection rule
+is imposed: each used slice must remain valid and within the payload.
+
+Malformed cases place nonempty fields at every byte of the fixed header,
+past the payload or at integer boundaries, and exercise oversized lengths,
+empty required TargetInfo and truncated headers. Failure must publish neither
+an authentication token nor a session key. Three Samba mutations separately
+move TargetName into the header, set TargetInfo's offset to `0xFFFFFFFF`, or
+set its length to `0xFFFF`, while retaining the original outer security-buffer
+and DER lengths. The existing public recovery client requires rejection,
+disconnection, cleared diagnostics and successful reconnect/read; the proxy
+requires that Type 3 was not sent.
+
+These changes add regression evidence only. They do not change production or
+proof code, relax signing, establish authenticity of an unsigned challenge,
+or add a cryptographic-strength proof. GNATprove and CI are not run for this
+test-only stage.
+
+### Observed validation
+
+`make ntlm-test` passed the existing 211 AV fixtures (422 rebased cases) and
+2,824 challenge-field fixtures (5,648 rebased cases). Core and public NTLM
+results agreed with the expected keys and tokens; both sensitivity checks for
+each fixture set passed. Python syntax compilation, `make test`, and strict
+`make check GPRBUILD="gprbuild -f"` passed.
+
+The full Samba integration passed all existing scenarios and all three new
+layout modes: `challenge-layout-name-header`,
+`challenge-layout-info-offset`, and `challenge-layout-info-length`. The
+recovery client checked rejection, disconnect, cleared diagnostics, and
+reconnect/read; the proxy required that no Type 3 was sent.
+
+No GNATprove run was performed because production and proof sources were
+unchanged. No CI was run.
+
+Evidence logs: `/home/ubuntu/ntlm-layout-01-ntlm-test.log`,
+`/home/ubuntu/ntlm-layout-02-pycompile.log`,
+`/home/ubuntu/ntlm-layout-03-make-test.log`,
+`/home/ubuntu/ntlm-layout-04-make-check.log`,
+`/home/ubuntu/ntlm-layout-05-samba-integration.log`, and
+`/home/ubuntu/ntlm-layout-06-diff-check.log`.
+
 ## Optional NTLM TargetName fields
 
 The Type 2 receive path no longer requires `NTLMSSP_REQUEST_TARGET`.
