@@ -45,8 +45,9 @@ invalidated. The bounded transfer state owns progress, the immutable WRITE
 snapshot, and accumulated READ bytes; each chunk is at most 64 KiB and a transfer
 is at most 1 MiB. READ short/zero responses finish normally, while positive
 partial WRITE counts advance only by the validated response count. Reserved
-fields in READ, ERROR, CLOSE, TREE_DISCONNECT and LOGOFF are ignored as required
-for SMB 2.1; their bytes remain covered by response MAC verification. No zero-value
+fields in NEGOTIATE, TREE_CONNECT, READ, ERROR, CLOSE, TREE_DISCONNECT and LOGOFF
+are ignored as required for SMB 2.1. Except for the unsigned SMB 2.1 NEGOTIATE
+response, their bytes remain covered by response MAC verification. No zero-value
 property is claimed for these ignored fields. Nonzero ERROR context counts and
 unsupported CLOSE flags remain rejected. An uncertain
 send/receive or malformed response aborts the Engine state without retry; the

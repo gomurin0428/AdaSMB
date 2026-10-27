@@ -2,8 +2,8 @@
 
 ## Latest complete proof
 
-The complete `make prove` run passed for the teardown reserved-field correction
-[`75d1753`](https://github.com/gomurin0428/AdaSMB/commit/75d1753d7f57bb003c5e4554278aacedd74db703).
+The complete `make prove` run passed for the connection reserved-field correction
+[`992f50d`](https://github.com/gomurin0428/AdaSMB/commit/992f50dbdc8db87c39fc34df588746d314ab2304).
 A focused protocol proof preceded the complete run, which started
 after `gnatprove --clean`.
 GNATprove analyzed all thirteen configured units:
@@ -17,11 +17,11 @@ GNATprove analyzed all thirteen configured units:
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 539 | 539 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,392 | 0 | 2,392 |
+| Run-time checks | 2,390 | 0 | 2,390 |
 | Assertions | 292 | 0 | 292 |
-| Functional contracts | 992 | 0 | 992 |
+| Functional contracts | 990 | 0 | 990 |
 | Termination | 159 | 153 | 6 |
-| **Total** | **4,379** | **697** | **3,682** |
+| **Total** | **4,375** | **697** | **3,678** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -512,6 +512,30 @@ proof of the native wrapper.
 
 Full unit/Samba tests, strict forced build/dependency audit, and the clean full
 proof passed. No CI or Unicode oracle rerun was performed.
+
+## Connection reserved-field conformance
+
+For dialects other than 0x0311, NEGOTIATE's NegotiateContextCount/Reserved WORD
+and NegotiateContextOffset/Reserved2 DWORD must be ignored; TREE_CONNECT's Reserved
+byte must also be ignored. AdaSMB still accepts only dialect 0x0210, so these
+fields are never interpreted as SMB 3.1.1 contexts. Minimum lengths, structure
+sizes, signing-enabled mode, security-buffer bounds, transfer limits, disk share
+type, nonzero TreeId and encryption refusal remain checked. The four fewer proof
+checks come from deleting reserved-field reads, not from weakened contracts.
+
+The `connection-reserved` selector covers 1,792 byte combinations (1,536
+NEGOTIATE and 256 TREE_CONNECT) with nonzero array bounds, checks parsed transfer
+limits and TreeId, and rejects truncation, dialect 0x0311, disabled signing,
+overlapping security buffers, unsupported share type, required encryption and
+zero TreeId. It fails against `3831eb2` with
+`SMB2.1 connection reserved fields were not ignored`.
+
+Samba's `connection-reserved-fields` proxy sets the unsigned NEGOTIATE reserved
+fields to all ones, verifies the original TREE_CONNECT MAC, changes only its
+reserved byte and re-signs it. The public client then reads the fixture and
+completes LOGOFF. Full unit/Samba tests, strict forced build/dependency audit and
+a clean full proof passed (0 unproved, 0 justified, 67 warnings). CI and the
+Unicode oracle were not run.
 
 ## Teardown reserved-field conformance
 
