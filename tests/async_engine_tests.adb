@@ -272,6 +272,38 @@ package body Async_Engine_Tests is
 
       Setup_Share (State, Message_Id, Expected, Status);
       Start_Read (State, Message_Id, Expected, Status);
+      declare
+         Final : SMB.Bytes := Final_Response (Message_Id, Session_Id, Async_Id);
+      begin
+         SMB.Wire.Put_U16 (Final, 14, 1);
+         SMB.Wire.Sign (Final, Key);
+         SMB.Engine.Accept_Response (State, Final, Nt_Status, Status);
+      end;
+      Check_Invalidated (State, SMB.Unsupported_Feature, Status);
+
+      Setup_Share (State, Message_Id, Expected, Status);
+      Start_Read (State, Message_Id, Expected, Status);
+      Packet := Pending_Response (Message_Id, Session_Id, Async_Id);
+      SMB.Wire.Put_U16 (Packet, 12, 9);
+      SMB.Engine.Inspect_Interim_Response (State, Packet, Is_Interim, Status);
+      Check_Invalidated (State, SMB.Correlation_Error, Status);
+
+      Setup_Share (State, Message_Id, Expected, Status);
+      Start_Read (State, Message_Id, Expected, Status);
+      Packet := Pending_Response (Message_Id, Session_Id, Async_Id);
+      SMB.Engine.Inspect_Interim_Response (State, Packet, Is_Interim, Status);
+      Assert (Status = SMB.Ok and then Is_Interim, "async command fixture");
+      declare
+         Final : SMB.Bytes := Final_Response (Message_Id, Session_Id, Async_Id);
+      begin
+         SMB.Wire.Put_U16 (Final, 12, 9);
+         SMB.Wire.Sign (Final, Key);
+         SMB.Engine.Accept_Response (State, Final, Nt_Status, Status);
+      end;
+      Check_Invalidated (State, SMB.Correlation_Error, Status);
+
+      Setup_Share (State, Message_Id, Expected, Status);
+      Start_Read (State, Message_Id, Expected, Status);
       Packet := Pending_Response (Message_Id, Session_Id, Async_Id);
       SMB.Engine.Inspect_Interim_Response (State, Packet, Is_Interim, Status);
       declare

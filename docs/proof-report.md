@@ -1,5 +1,56 @@
 # GNATprove and test report
 
+## Engine response-to-request correlation contracts
+
+`Response_Header_Matches_Request` is a ghost predicate over the outstanding
+request and the received header. `Inspect_Interim_Response` and
+`Accept_Response` now expose this relationship in their successful
+postconditions, rather than relying only on the lower-level
+`Core_Wire.Validate_Header` contract. The predicate binds command, MessageId,
+the requested SessionId/TreeId checks, response/async/signature flags and the
+interim/final NTSTATUS distinction to the pre-call engine state. It interprets
+bytes 32..39 as AsyncId rather than TreeId for asynchronous responses.
+
+Repeated interim responses must retain an already recorded AsyncId. A final
+response must match that saved ID, and the returned NTSTATUS must equal the
+received header. Existing failure-state clearing contracts remain intact.
+These are stronger proof contracts, not changes to the accepted protocol
+profile or a proof of cryptographic authenticity. Three focused controls also
+exercise an async final without a preceding interim, an interim for the wrong
+command, and a correctly signed final for the wrong command.
+
+### Observed validation
+
+The focused GNAT14 build and `async-responses` unit selector passed. The
+focused Engine proof passed, including 30 checks for `Accept_Response`, 9 for
+`Inspect_Interim_Response`, and 10 for `Response_Header_Matches_Request`.
+`make test`, forced strict `make check GPRBUILD="gprbuild -f"`, and the full
+root Samba integration also passed. The integration included the entropy
+recovery cases, async success and rejection/recovery cases, and existing
+adversarial, mutation, and security-buffer scenarios.
+
+The clean full proof passed across 13 units: **4,459 checks** (709 flow,
+3,750 prover), **0 unproved**, **0 justified**, **69 warnings**, and **0
+`pragma Assume`**. The 4,446-check PR41 result documented below remains
+historical; this is the fresh result for the current branch.
+
+The first full-proof attempt exposed an unproved assertion in
+`SMB.Core_Client.Prepare_Next` at the existing WRITE-payload copy check. A
+local `pragma Assert_And_Cut (Payload'Length > 0)` supplies the nonempty branch
+needed to apply `Build_Write`'s existing copy postcondition. No assumption,
+contract weakening, or protocol-policy change was introduced; focused
+`SMB.Core_Client` proof and the clean full proof passed afterward.
+
+Evidence logs: `/home/ubuntu/engine-correlation-focused-build.log`,
+`/home/ubuntu/engine-correlation-focused-unit.log`,
+`/home/ubuntu/engine-correlation-focused-proof.log`,
+`/home/ubuntu/engine-correlation-core-client-proof.log`,
+`/home/ubuntu/engine-correlation-make-test-final.log`,
+`/home/ubuntu/engine-correlation-strict-check-final.log`,
+`/home/ubuntu/engine-correlation-full-integration-final.log`, and
+`/home/ubuntu/engine-correlation-full-proof-final.log`. The full proof
+summary is also in `build/proof-obj/gnatprove/gnatprove.out`.
+
 ## Entropy failure rejection and same-object recovery
 
 Six integration cases inject failures after partially filling the requested

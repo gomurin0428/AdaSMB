@@ -154,6 +154,10 @@ is
    function Pending_Response_Is_Signed
      (State : Engine_State) return Boolean
    with Ghost;
+   function Response_Header_Matches_Request
+     (State : Engine_State; Packet : SMB.Bytes; Interim : Boolean)
+      return Boolean
+   with Ghost;
    function Pending_Request_Matches
      (State : Engine_State;
       Expected : Request_Expectation) return Boolean
@@ -347,6 +351,11 @@ is
              and then Packet'Length >= 72
              and then Current_Async_Id (State) =
                SMB.Core_Wire.Encoded_U64 (Packet, 32)
+             and then Response_Header_Matches_Request
+               (State'Old, Packet, True)
+             and then
+               (if Current_Async_Id (State'Old) /= 0 then
+                  Current_Async_Id (State) = Current_Async_Id (State'Old))
            else State = State'Old)
         else
           not Is_Interim
@@ -380,6 +389,10 @@ is
           and not Has_Open_Handles (State)
           and Signing_Key_Is_Zero (State)
         else
+          Packet'Length >= SMB.Core_Wire.Header_Size
+          and then Response_Header_Matches_Request (State'Old, Packet, False)
+          and then Nt_Status = SMB.Core_Wire.Header_Nt_Status (Packet)
+          and then
           (if Pending_Command (State'Old) = 2
                 and then Nt_Status = SMB.Success
            then True
@@ -590,6 +603,8 @@ is
    with Post => Current_Signing_Key'Result'Length = 16;
 
 private
+   use type SMB.Word;
+
    type Handle_Record is record
       Active : Boolean := False;
       Ticket : SMB.QWord := 0;
@@ -660,5 +675,41 @@ private
    function Pending_Response_Is_Signed
      (State : Engine_State) return Boolean is
      (State.Pending_Expected.Signed);
+
+   function Response_Header_Matches_Request
+     (State : Engine_State; Packet : SMB.Bytes; Interim : Boolean)
+      return Boolean is
+     (State.Pending
+      and then Packet'Length >= SMB.Core_Wire.Header_Size
+      and then Packet'Length <= SMB.Maximum_Frame_Size
+      and then SMB.Core_Wire.Encoded_U16 (Packet, 12) =
+        SMB.Word (State.Pending_Expected.Command)
+      and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
+        State.Pending_Expected.Message_Id
+      and then
+        (if State.Pending_Expected.Match_Session then
+           SMB.Core_Wire.Encoded_U64 (Packet, 40) =
+             State.Pending_Expected.Session_Id)
+      and then
+        (if State.Pending_Expected.Match_Tree
+           and not Interim and State.Pending_Async_Id = 0
+         then
+           SMB.Core_Wire.Encoded_U32 (Packet, 36) =
+             State.Pending_Expected.Tree_Id)
+      and then (SMB.Core_Wire.Encoded_U32 (Packet, 16) and 1) /= 0
+      and then ((SMB.Core_Wire.Encoded_U32 (Packet, 16) and 2) /= 0) =
+        (Interim or State.Pending_Async_Id /= 0)
+      and then (SMB.Core_Wire.Header_Nt_Status (Packet) = SMB.Status_Pending) =
+        Interim
+      and then
+        (if Interim or State.Pending_Async_Id /= 0 then
+           SMB.Core_Wire.Encoded_U64 (Packet, 32) /= 0
+           and then
+             (if State.Pending_Async_Id /= 0 then
+                SMB.Core_Wire.Encoded_U64 (Packet, 32) = State.Pending_Async_Id))
+      and then
+        (if not Interim then
+           ((SMB.Core_Wire.Encoded_U32 (Packet, 16) and 8) /= 0) =
+             State.Pending_Expected.Signed));
 
 end SMB.Engine;

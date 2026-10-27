@@ -5,7 +5,6 @@ package body SMB.Engine
   with SPARK_Mode,
        Refined_State => (Identity_Registry => Next_Owner_Id)
 is
-   use type SMB.Word;
    use type SMB.Core_Protocol.Response_Info;
 
    Next_Owner_Id : SMB.QWord := 0;

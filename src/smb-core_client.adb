@@ -2187,6 +2187,7 @@ is
                  (File_Id, Value.Position, Payload,
                   Body_Buffer, Body_Used, Field_Status);
                if Field_Status = SMB.Ok then
+                  pragma Assert_And_Cut (Payload'Length > 0);
                   pragma Assert_And_Cut
                     (for all Index in 0 .. Payload'Length - 1 =>
                        Body_Buffer (Body_Buffer'First + 48 + Index) =
