@@ -24,6 +24,12 @@ RESPONSE_MUTATIONS = {
     "signed-write-over-request": 9,
     "signed-write-structure": 9,
     "signed-write-truncated": 9,
+    "header-message-id": 8,
+    "header-command": 8,
+    "header-tree-id": 8,
+    "header-session-id": 8,
+    "header-async": 8,
+    "header-compound": 8,
 }
 
 
@@ -319,6 +325,22 @@ class AdversarialProxy:
                             struct.pack_into("<I", payload, 68, 2)
                         elif self.mode == "signed-write-structure":
                             struct.pack_into("<H", payload, 64, 16)
+                        elif self.mode == "header-message-id":
+                            value = struct.unpack_from("<Q", payload, 24)[0]
+                            struct.pack_into("<Q", payload, 24, value ^ 1)
+                        elif self.mode == "header-command":
+                            struct.pack_into("<H", payload, 12, 9)
+                        elif self.mode == "header-tree-id":
+                            value = struct.unpack_from("<I", payload, 36)[0]
+                            struct.pack_into("<I", payload, 36, value ^ 1)
+                        elif self.mode == "header-session-id":
+                            value = struct.unpack_from("<Q", payload, 40)[0]
+                            struct.pack_into("<Q", payload, 40, value ^ 1)
+                        elif self.mode == "header-async":
+                            value = struct.unpack_from("<I", payload, 16)[0]
+                            struct.pack_into("<I", payload, 16, value | 2)
+                        elif self.mode == "header-compound":
+                            struct.pack_into("<I", payload, 20, 64)
                         else:
                             raise RuntimeError("unhandled IO mutation")
                         payload[48:64] = hmac.new(

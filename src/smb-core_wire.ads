@@ -219,7 +219,24 @@ package SMB.Core_Wire is
      Post =>
        (if Status = SMB.Ok then
           Data'Length >= Header_Size
-          and then Nt_Status = Header_Nt_Status (Data));
+          and then Nt_Status = Header_Nt_Status (Data)
+          and then Data (Data'First .. Data'First + 3) =
+            SMB.Bytes'(16#FE#, 16#53#, 16#4D#, 16#42#)
+          and then Encoded_U16 (Data, 4) = Header_Size
+          and then Encoded_U16 (Data, 14) /= 0
+          and then (Encoded_U32 (Data, 16) and 1) /= 0
+          and then (Encoded_U32 (Data, 16) and 2) = 0
+          and then Encoded_U32 (Data, 20) = 0
+          and then Encoded_U16 (Data, 12) = SMB.Word (Expected.Command)
+          and then Encoded_U64 (Data, 24) = Expected.Message_Id
+          and then
+            (if Expected.Match_Tree then
+               Encoded_U32 (Data, 36) = Expected.Tree_Id)
+          and then
+            (if Expected.Match_Session then
+               Encoded_U64 (Data, 40) = Expected.Session_Id)
+          and then ((Encoded_U32 (Data, 16) and 8) /= 0) = Expected.Signed
+        else Nt_Status = 0);
 
    procedure Sign
      (Data : in out SMB.Bytes;
