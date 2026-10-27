@@ -177,6 +177,7 @@ class AdversarialProxy:
             session_key: bytes | None = None
             read_responses = 0
             error_responses = 0
+            teardown_responses: list[int] = []
             completed_logoff = False
             write_requests = 0
             write_responses = 0
@@ -237,6 +238,7 @@ class AdversarialProxy:
                             "dangling-signed-directory-second-page",
                             "read-reserved-fields",
                             "error-reserved-field",
+                            "teardown-reserved-fields",
                             "malformed-signed-set-info",
                             "malformed-signed-tree-disconnect",
                         }:
@@ -270,6 +272,10 @@ class AdversarialProxy:
                         break
                     if len(payload) >= 64 and (
                         payload[12:14] == b"\x03\x00"
+                        or (
+                            self.mode == "teardown-reserved-fields"
+                            and struct.unpack_from("<H", payload, 12)[0] in {2, 4, 6}
+                        )
                         or (
                             self.mode == "error-reserved-field"
                             and payload[12:14] == b"\x05\x00"
@@ -379,6 +385,47 @@ class AdversarialProxy:
                             client.sendall(header + payload)
                             read_responses += 1
                             mutated = True
+                            continue
+                        elif self.mode == "teardown-reserved-fields":
+                            command = struct.unpack_from("<H", payload, 12)[0]
+                            if command not in {2, 4, 6}:
+                                client.sendall(header + payload)
+                                continue
+                            length = 124 if command == 6 else 68
+                            structure = 60 if command == 6 else 4
+                            offset = 68 if command == 6 else 66
+                            width = 4 if command == 6 else 2
+                            if (
+                                len(payload) < length
+                                or struct.unpack_from("<I", payload, 8)[0] != 0
+                                or struct.unpack_from("<H", payload, 64)[0] != structure
+                            ):
+                                raise RuntimeError("expected successful teardown response")
+                            if session_key is None:
+                                raise RuntimeError("could not derive SMB signing key")
+                            if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                                raise RuntimeError("server teardown response was unsigned")
+                            original_signature = bytes(payload[48:64])
+                            payload[48:64] = b"\x00" * 16
+                            expected_signature = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            if not hmac.compare_digest(
+                                original_signature, expected_signature
+                            ):
+                                raise RuntimeError(
+                                    "derived key did not validate teardown signature"
+                                )
+                            payload[offset:offset + width] = b"\xFF" * width
+                            payload[48:64] = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            client.sendall(header + payload)
+                            teardown_responses.append(command)
+                            mutated = True
+                            if command == 2:
+                                completed_logoff = True
+                                break
                             continue
                         elif self.mode == "error-reserved-field":
                             if (
@@ -702,6 +749,19 @@ class AdversarialProxy:
                         "reserved-field ERROR exchange did not complete: "
                         f"errors={error_responses}, logoff={completed_logoff}, "
                         f"logoff_requests={logoff_requests}"
+                    )
+            if self.mode == "teardown-reserved-fields":
+                if (
+                    teardown_responses != [6, 6, 4, 2]
+                    or not completed_logoff
+                    or tree_disconnect_requests != 1
+                    or logoff_requests != 1
+                ):
+                    raise RuntimeError(
+                        "reserved-field teardown exchange did not complete: "
+                        f"responses={teardown_responses}, "
+                        f"tree_disconnect={tree_disconnect_requests}, "
+                        f"logoff={logoff_requests}"
                     )
             if self.mode in DIRECTORY_MODES:
                 if not relay_error or not isinstance(relay_error[0], EOFError):

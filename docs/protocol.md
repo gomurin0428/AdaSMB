@@ -33,7 +33,7 @@ response も全て署名されている必要があります。比較は
 
 * [MS-SMB2 3.1.4.1 Signing](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/a3e9ea1e-53c8-4cff-94bd-d98fb20417c0)
 
-## READ 応答の予約領域
+## 応答の予約領域
 
 SMB 2.1 の READ 応答にある `Reserved`（1 byte）と `Reserved2`
 （4 byte）は、仕様の受信側の規則に従い、ゼロ以外でも無視します。
@@ -53,6 +53,15 @@ ERROR 応答でも `Reserved`（1 byte）を無視します。隣接する
 NTSTATUS を呼び出し元へ返します。
 
 * [MS-SMB2 2.2.2 ERROR Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d4da8b67-c180-47e3-ba7a-d24214ac4aaa)
+
+CLOSE の予約 DWORD、TREE_DISCONNECT／LOGOFF の予約 WORD も受信時に
+無視します。CLOSE の flags（0 または POSTQUERY_ATTRIB）、各応答の
+最小長・structure size、署名と要求の対応は引き続き検査します。
+予約領域だけを理由に、正常な終了応答をプロトコルエラーへ変換しません。
+
+* [MS-SMB2 2.2.16 CLOSE Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/c0c15c57-3f3e-452b-b51c-9cc650a13f7b)
+* [MS-SMB2 2.2.12 TREE_DISCONNECT Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/aeac92de-8db3-48f8-a8b7-bfee28b9fd9e)
+* [MS-SMB2 2.2.8 LOGOFF Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/7539feb4-6fbb-4996-81ac-06863bb1a89e)
 
 ## NTLMv2/SPNEGO
 
