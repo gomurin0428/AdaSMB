@@ -2,9 +2,11 @@
 
 ## Latest complete proof
 
-The complete `make prove` run passed for the credential-preflight implementation
-[`cd65f18`](https://github.com/gomurin0428/AdaSMB/commit/cd65f185ed3943573874c2bf703a7359d52bcc4a).
-A focused authentication proof preceded the complete run.
+The complete `make prove` run passed for the directory-chain implementation
+[`34d983e`](https://github.com/gomurin0428/AdaSMB/commit/34d983effbb2a3b40b99b4cb180641e8180b87a8).
+A focused protocol proof preceded the complete run. The first full attempt
+reported a corrupt generated ALI file; after `gnatprove --clean`, the complete
+run passed with the same proof settings.
 GNATprove analyzed all thirteen configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
@@ -16,11 +18,11 @@ GNATprove analyzed all thirteen configured units:
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 539 | 539 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,393 | 0 | 2,393 |
+| Run-time checks | 2,402 | 0 | 2,402 |
 | Assertions | 293 | 0 | 293 |
-| Functional contracts | 992 | 0 | 992 |
+| Functional contracts | 995 | 0 | 995 |
 | Termination | 159 | 153 | 6 |
-| **Total** | **4,381** | **697** | **3,684** |
+| **Total** | **4,393** | **697** | **3,696** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -420,6 +422,38 @@ accepted inputs, nonzero-bound maximum-length arrays and rejected credentials.
 The full unit suite, complete Samba suite, strict build/dependency audit and
 complete proof passed. Existing Unicode converters were unchanged, so the
 Unicode oracle was not rerun. No CI was run.
+
+## Directory-chain termination
+
+`Parse_Directory_Entry` now rejects a nonzero `NextEntryOffset` equal to
+the remaining page length. Previously, that dangling link advanced the cursor
+exactly to the page end and the coordinator treated it as normal page completion.
+[MS-FSCC FileIdBothDirectoryInformation](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/1e144bff-c056-45aa-bd29-c13d214ee2ba)
+requires the final entry's link to be zero. Alignment padding remains ignored,
+including nonzero padding bytes.
+
+The strengthened contract proves that a rejected record leaves the cursor
+unchanged. On success, the cursor reaches the page end if and only if the encoded
+link is zero; otherwise its advance equals that link and remains strictly inside
+the page. This is a single-entry contract, not a claim that the unparsed remainder
+of the page is already valid. A later truncated or invalid entry is rejected when
+parsed. The full public facade and its exception/allocation behavior remain
+outside the proof.
+
+The `directory-bounds` selector passes 6,600 table cases covering truncation,
+name lengths, alignment and link boundaries, nonzero array/cursor bases, and
+arrays ending at `Natural'Last`. An additional two-entry control checks ignored
+nonzero padding and an unpadded final record. The same tests against `6457406`
+fail with `directory bounds result mismatch: available 112 name 2 next 112`.
+
+The new `dangling-signed-directory-second-page` Samba proxy mode validates
+the original server signature, forwards the first page, and changes the second
+page's final link to point exactly past its padded end before re-signing it.
+The public client rejects that page, disconnects without a third directory query,
+then reconnects, lists and reads successfully. The earlier malformed-link mode
+continues to pass. Full unit tests, Samba tests, the strict build/dependency audit
+and the clean full proof passed. Unicode conversion was unchanged and its oracle
+was not rerun. No CI was run.
 
 ## Reproduction
 

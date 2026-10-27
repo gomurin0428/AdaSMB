@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 
-from adversarial_proxy import AdversarialProxy
+from adversarial_proxy import AdversarialProxy, DIRECTORY_MODES
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -217,26 +217,26 @@ def main() -> int:
                 finally:
                     proxy.join()
                 proxy_port = PORT + 11
-                directory_mode = "malformed-signed-directory-second-page"
-                proxy = AdversarialProxy(
-                    directory_mode,
-                    proxy_port,
-                    PORT,
-                    user=USER,
-                    password=PASSWORD,
-                )
-                proxy.start()
-                directory_env = env.copy()
-                directory_env.update(
-                    SMB_TEST_HOST="127.0.0.1",
-                    SMB_TEST_PORT=str(proxy_port),
-                    SMB_TEST_BACKEND_PORT=str(PORT),
-                    SMB_TEST_MODE=directory_mode,
-                )
-                try:
-                    run([str(ROOT / "build/bin/cleanup_client")], env=directory_env)
-                finally:
-                    proxy.join()
+                for directory_mode in DIRECTORY_MODES:
+                    proxy = AdversarialProxy(
+                        directory_mode,
+                        proxy_port,
+                        PORT,
+                        user=USER,
+                        password=PASSWORD,
+                    )
+                    proxy.start()
+                    directory_env = env.copy()
+                    directory_env.update(
+                        SMB_TEST_HOST="127.0.0.1",
+                        SMB_TEST_PORT=str(proxy_port),
+                        SMB_TEST_BACKEND_PORT=str(PORT),
+                        SMB_TEST_MODE=directory_mode,
+                    )
+                    try:
+                        run([str(ROOT / "build/bin/cleanup_client")], env=directory_env)
+                    finally:
+                        proxy.join()
                 set_info_content = b"set-info-renamed-content"
                 (share / "set-info-source.txt").write_bytes(set_info_content)
                 proxy_port = PORT + 12

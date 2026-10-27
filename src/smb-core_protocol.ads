@@ -416,18 +416,29 @@ package SMB.Core_Protocol is
    with Pre => Buffer'Length <= SMB.Maximum_Frame_Size
      and then Cursor <= Buffer'Length,
      Post => Cursor <= Buffer'Length
+       and then (if Status /= SMB.Ok then Cursor = Cursor'Old)
        and then (if Status = SMB.Ok then
          Cursor > Cursor'Old
-         and Info.Next_Cursor = Cursor
-         and Info.Name_Length > 0
-         and Info.Name_Offset <= Buffer'Length
-         and Info.Name_Length <= Buffer'Length - Info.Name_Offset
-         and Info.Name_Offset = Cursor'Old + 104
-         and Info.Name_Length = Natural
+         and then Buffer'Length - Cursor'Old >= 104
+         and then
+           ((Cursor = Buffer'Length) =
+             (SMB.Core_Wire.Encoded_U32 (Buffer, Cursor'Old) = 0))
+         and then
+           (if Cursor < Buffer'Length then
+              SMB.Core_Wire.Encoded_U32 (Buffer, Cursor'Old) <
+                SMB.DWord (Buffer'Length - Cursor'Old)
+              and then Cursor - Cursor'Old =
+                Natural (SMB.Core_Wire.Encoded_U32 (Buffer, Cursor'Old)))
+         and then Info.Next_Cursor = Cursor
+         and then Info.Name_Length > 0
+         and then Info.Name_Offset <= Buffer'Length
+         and then Info.Name_Length <= Buffer'Length - Info.Name_Offset
+         and then Info.Name_Offset = Cursor'Old + 104
+         and then Info.Name_Length = Natural
            (SMB.Core_Wire.Encoded_U32 (Buffer, Cursor'Old + 60))
-         and Info.Size =
+         and then Info.Size =
            SMB.Core_Wire.Encoded_U64 (Buffer, Cursor'Old + 40)
-         and Info.Attributes = SMB.Core_Wire.Encoded_U32
+         and then Info.Attributes = SMB.Core_Wire.Encoded_U32
            (Buffer, Cursor'Old + 56));
 
    procedure Advance_Transfer

@@ -1037,7 +1037,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Name_Offset_Value : Natural;
       Name_Length_Value : Natural;
       Text_Status : SMB.Core_Status;
-      Wire_Status : SMB.Core_Status := SMB.Ok;
    begin
       Info := (others => <>);
       Status := SMB.Ok;
@@ -1050,14 +1049,13 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Status := SMB.Invalid_Length;
          return;
       end if;
-      Read_U32 (Buffer, Cursor, Next_Offset, Wire_Status);
+      Next_Offset := SMB.Core_Wire.Encoded_U32 (Buffer, Cursor);
       Info.Size := SMB.Core_Wire.Encoded_U64 (Buffer, Cursor + 40);
       Info.Attributes :=
         SMB.Core_Wire.Encoded_U32 (Buffer, Cursor + 56);
       Name_Length := SMB.Core_Wire.Encoded_U32 (Buffer, Cursor + 60);
       Short_Name_Length := Buffer (Buffer'First + Cursor + 68);
-      if Wire_Status /= SMB.Ok
-        or else not Fits (Name_Length, Remaining - 104)
+      if not Fits (Name_Length, Remaining - 104)
         or else not Fits (Name_Length, Maximum_Name_Bytes)
         or else Name_Length = 0
         or else Short_Name_Length > 24
@@ -1073,7 +1071,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
       if Next_Offset = 0 then
          Entry_Length := Remaining;
          Info.Next_Cursor := Buffer'Length;
-      elsif not Fits (Next_Offset, Remaining)
+      elsif Next_Offset >= SMB.DWord (Remaining)
         or else Next_Offset < 104
         or else Next_Offset mod 8 /= 0
       then
@@ -1084,6 +1082,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Info.Next_Cursor := Cursor + Entry_Length;
       end if;
       if Entry_Length > Remaining
+        or else (Next_Offset /= 0 and then Entry_Length = Remaining)
         or else Natural (Name_Length) > Entry_Length - 104
       then
          Status := SMB.Invalid_Offset;
