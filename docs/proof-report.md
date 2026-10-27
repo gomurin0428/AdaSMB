@@ -2,8 +2,8 @@
 
 ## Latest complete proof
 
-The complete `make prove` run passed for the ERROR reserved-byte correction
-[`606c641`](https://github.com/gomurin0428/AdaSMB/commit/606c641e8684d2b2edfc21b799e54ef011f32c42).
+The complete `make prove` run passed for the teardown reserved-field correction
+[`75d1753`](https://github.com/gomurin0428/AdaSMB/commit/75d1753d7f57bb003c5e4554278aacedd74db703).
 A focused protocol proof preceded the complete run, which started
 after `gnatprove --clean`.
 GNATprove analyzed all thirteen configured units:
@@ -19,9 +19,9 @@ GNATprove analyzed all thirteen configured units:
 | Non-aliasing | 2 | 2 | 0 |
 | Run-time checks | 2,392 | 0 | 2,392 |
 | Assertions | 292 | 0 | 292 |
-| Functional contracts | 994 | 0 | 994 |
+| Functional contracts | 992 | 0 | 992 |
 | Termination | 159 | 153 | 6 |
-| **Total** | **4,381** | **697** | **3,684** |
+| **Total** | **4,379** | **697** | **3,682** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -511,6 +511,33 @@ This facade exception/connection-preservation behavior is tested, not a formal
 proof of the native wrapper.
 
 Full unit/Samba tests, strict forced build/dependency audit, and the clean full
+proof passed. No CI or Unicode oracle rerun was performed.
+
+## Teardown reserved-field conformance
+
+CLOSE's reserved DWORD and TREE_DISCONNECT/LOGOFF's reserved WORD must be ignored
+on receipt (MS-SMB2 sections 2.2.16, 2.2.12 and 2.2.8, linked in
+`protocol.md`). Removing their reads/rejections leaves the minimum body lengths,
+structure sizes, supported CLOSE flags, signatures and receipt/state transitions
+unchanged. No contracts were removed or weakened; two call-site contract checks
+disappear with the unnecessary reads.
+
+The `teardown-reserved` selector covers 2,048 byte combinations: each reserved
+byte varies over all 256 values while the other reserved bytes are all ones.
+It uses exact-sized slices with nonzero bounds and rejects truncated bodies,
+wrong structure sizes, and unsupported CLOSE flags. The same selector against
+`2cb0e47` fails at `SMB2.1 teardown reserved fields were not ignored`.
+The existing malformed-CLOSE Engine test now uses unsupported flags rather than
+the no-longer-malformed reserved DWORD, retaining its state-invalidation check.
+
+Samba's `teardown-reserved-fields` proxy verifies each original response MAC,
+changes only reserved fields to all ones, and re-signs. It requires the complete
+response sequence CLOSE, CLOSE, TREE_DISCONNECT, LOGOFF, with exactly one request
+for each disconnect command. The public client closes and reopens the fixture,
+reads its content, closes it again, and successfully disconnects. The native
+wrapper remains a tested trust boundary rather than a completely proved facade.
+
+Full unit/Samba tests, strict forced build/dependency audit and a clean full
 proof passed. No CI or Unicode oracle rerun was performed.
 
 ## Reproduction
