@@ -1,6 +1,65 @@
 # GNATprove and test report
 
-## Latest complete proof
+## Latest complete proof: Windows default entropy and authentication diagnostics
+
+The focused `SMB.Core_Client` proof and the clean complete `make prove` run
+passed for the Windows default entropy and unverified authentication diagnostic
+changes. The Linux run selected the Unix entropy adapter. A separate Windows
+native retest of `aba1508f1e47560f89022223fb4d897b369910e5` passed using the
+default `BCryptGenRandom` adapter, without an entropy callback.
+GNATprove analyzed all thirteen configured units:
+`SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
+`SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
+`SMB.Crypto` and `SMB.Engine`.
+
+| Category | Total | Flow | Proved by provers |
+| --- | ---: | ---: | ---: |
+| Data dependencies | 2 | 2 | 0 |
+| Flow dependencies | 1 | 1 | 0 |
+| Initialization | 541 | 541 | 0 |
+| Non-aliasing | 2 | 2 | 0 |
+| Run-time checks | 2,390 | 0 | 2,390 |
+| Assertions | 292 | 0 | 292 |
+| Functional contracts | 994 | 0 | 994 |
+| Termination | 160 | 154 | 6 |
+| **Total** | **4,382** | **700** | **3,682** |
+
+There were zero unproved and zero justified checks, and no `pragma Assume`
+statements. GNATprove reported 68 flow-analysis warnings (56 in
+`SMB.Core_Client`, 6 in `SMB.Core_Protocol`, and 6 in `SMB.Core_Auth`).
+The proof includes the bounded `Unverified_Authentication_Status` helper and
+its return contract; the diagnostic remains explicitly unverified and does
+not replace signed authentication or MIC validation.
+
+The focused authentication selector passed. The complete test build,
+`make test`, strict `make check GPRBUILD="gprbuild -f"` and Samba integration passed,
+including unsigned final authentication error, success, and wrong-message-ID
+diagnostics with rejection, disconnect, reconnect and successful reauthentication.
+Python syntax compilation passed. The final clean proof summary is preserved at
+`/home/ubuntu/windows-entropy-18-proof-summary.out`; raw output is at
+`/home/ubuntu/windows-entropy-17-make-prove.log`.
+
+The Windows retest passed the native build, focused and complete unit tests,
+forced `-gnatwe` rebuild and dependency audit. Against the Windows SMB server,
+the existing integration/cleanup tests passed with default entropy, including
+large/small files, Unicode, 1,203 directory entries, rename/delete, reuse after
+errors and reconnect. Header-only observation confirmed SMB 2.1 and SIGNED on
+all 48 post-authentication requests and 48 responses in the observed flow;
+flipping one signature bit was rejected and disconnected.
+
+An actual wrong-password response carried `0xC000006D`, matching
+`Last_Unverified_Authentication_Status`; `Last_NT_Status` stayed zero and
+`Authentication_Error` explicitly labeled the peer value "unverified". The
+connection closed, reconnect cleared the hint and correct authentication reused
+the same connection object. All three added unsigned-auth proxy cases passed.
+Temporary Windows resources were deleted and settings restored. This is tested
+interoperability, not proof of OS/ABI behavior or all Windows configurations.
+The non-secret reproduction and logs are packaged as
+`AdaSMB-Windows-default-entropy-aba1508-evidence.zip` in the
+[Windows verification session](https://app.devin.ai/sessions/dce88c0d59e74afd962e092fab69f03e).
+CI was not run.
+
+## Historical complete proof: connection reserved fields
 
 The complete `make prove` run passed for the connection reserved-field correction
 [`992f50d`](https://github.com/gomurin0428/AdaSMB/commit/992f50dbdc8db87c39fc34df588746d314ab2304).

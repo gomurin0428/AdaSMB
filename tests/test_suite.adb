@@ -15,6 +15,7 @@ with SMB.Core_Transport;
 with SMB.Core_Wire;
 with SMB.Crypto;
 with SMB.Engine;
+with SMB.Entropy;
 with SMB.NTLM;
 with SMB.Text;
 with SMB.Wire;
@@ -303,10 +304,14 @@ procedure Test_Suite is
       Assert (Status = SMB.Ok, "valid share");
       SMB.Core_Text.Validate_Share ("", Status);
       Assert (Status = SMB.Invalid_Value, "empty share");
-      for C of String'("/\:" & Character'Val (0)) loop
-         SMB.Core_Text.Validate_Share ("a" & C & "b", Status);
-         Assert (Status = SMB.Invalid_Value, "share rejects forbidden bytes");
-      end loop;
+      declare
+         Forbidden : constant String := "/\:" & Character'Val (0);
+      begin
+         for C of Forbidden loop
+            SMB.Core_Text.Validate_Share ("a" & C & "b", Status);
+            Assert (Status = SMB.Invalid_Value, "share rejects forbidden bytes");
+         end loop;
+      end;
    end Test_Path_Contracts;
 
    procedure Test_Core_Clock is
@@ -1274,6 +1279,67 @@ procedure Test_Suite is
             and then not SMB.Engine.Has_Pending_Request (Failed_State),
             "malformed challenge was not distinguished and invalidated");
       end;
+
+      for Fault in 0 .. 8 loop
+         declare
+            Failed_State : SMB.Engine.Engine_State;
+            Failed_Value : SMB.Core_Client.Authentication;
+            Failed_Request : SMB.Bytes
+              (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+                (others => 0);
+            Failed_Response : SMB.Bytes (11 .. 111) := (others => 0);
+            Failed_Used : Natural;
+            Last : Natural := Failed_Response'Last;
+            Hint : SMB.DWord;
+         begin
+            Prepare_Negotiated (Failed_State);
+            Prepare_Final_Request
+              (Failed_State, Failed_Value, Failed_Request, Failed_Used);
+            Message_Id := SMB.Wire.U64 (Failed_Request, 24);
+            Failed_Response := Final_Response
+              (Message_Id, 16#C000_006D#, False, False);
+            SMB.Wire.Put_U32 (Failed_Response, 16, 1);
+            Failed_Response (59 .. 74) := (others => 0);
+            case Fault is
+               when 1 => SMB.Wire.Put_U64 (Failed_Response, 24, Message_Id + 1);
+               when 2 => SMB.Wire.Put_U64 (Failed_Response, 40, Session_Id + 1);
+               when 3 => SMB.Wire.Put_U16 (Failed_Response, 12, 3);
+               when 4 => Last := Failed_Response'First + 70;
+               when 5 => SMB.Wire.Put_U16 (Failed_Response, 64, 8);
+               when 6 => SMB.Wire.Put_U32 (Failed_Response, 8, SMB.Success);
+               when 7 => SMB.Wire.Put_U32
+                 (Failed_Response, 8, SMB.Status_More_Processing_Required);
+               when 8 => SMB.Wire.Put_U32 (Failed_Response, 16, 9);
+               when others => null;
+            end case;
+            Hint := SMB.Core_Client.Unverified_Authentication_Status
+              (Failed_Value, Failed_State,
+               Failed_Response (Failed_Response'First .. Last));
+            Assert
+              (Hint = (if Fault = 0 then 16#C000_006D# else 0),
+               "unsigned authentication hint bounds/correlation/trust fault"
+                 & Natural'Image (Fault) & " hint" & SMB.DWord'Image (Hint));
+            Assert
+              (SMB.Engine.Has_Pending_Request (Failed_State)
+               and then SMB.Engine.Has_Signing_Key (Failed_State)
+               and then not SMB.Engine.Has_Validated_Response (Failed_State),
+               "diagnostic extraction altered authentication state");
+            SMB.Core_Client.Complete_Authenticate
+              (Failed_Value, Failed_State,
+               Failed_Response (Failed_Response'First .. Last),
+               Nt_Status, Status);
+            Assert
+              (Status /= SMB.Ok and then Nt_Status = 0
+               and then SMB.Engine.Current_Phase (Failed_State) =
+                 SMB.Engine.Disconnected
+               and then SMB.Engine.Signing_Key_Is_Zero (Failed_State),
+               "unverified response advanced authentication");
+            Assert
+              (SMB.Core_Client.Unverified_Authentication_Status
+                 (Failed_Value, Failed_State, Failed_Response) = 0,
+               "stale authentication produced a diagnostic hint");
+         end;
+      end loop;
 
       for Fault in 1 .. 3 loop
          declare
@@ -4823,6 +4889,7 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "utf-capacity"
                  and then Ada.Command_Line.Argument (1) /= "engine-receipts"
                  and then Ada.Command_Line.Argument (1) /= "auth-preflight"
+                 and then Ada.Command_Line.Argument (1) /= "authentication"
                  and then Ada.Command_Line.Argument (1) /= "directory-bounds"
                  and then Ada.Command_Line.Argument (1) /= "read-reserved"
                  and then Ada.Command_Line.Argument (1) /= "error-reserved"
@@ -4846,6 +4913,9 @@ begin
       elsif Ada.Command_Line.Argument (1) = "directory-bounds" then
          Test_Directory_Bounds;
          Ada.Text_IO.Put_Line ("AdaSMB directory bounds tests passed");
+      elsif Ada.Command_Line.Argument (1) = "authentication" then
+         Test_Core_Client_Authentication;
+         Ada.Text_IO.Put_Line ("AdaSMB authentication diagnostics passed");
       elsif Ada.Command_Line.Argument (1) = "auth-preflight" then
          Test_Authentication_Preflight;
          Ada.Text_IO.Put_Line ("AdaSMB authentication preflight tests passed");
@@ -4867,6 +4937,13 @@ begin
       end if;
       return;
    end if;
+   declare
+      Empty : SMB.Bytes (1 .. 0);
+      Buffer : SMB.Bytes (11 .. 42);
+   begin
+      SMB.Entropy.Generate (Empty);
+      SMB.Entropy.Generate (Buffer);
+   end;
    Test_Crypto;
    Test_Authentication_Preflight;
    Test_Framing;

@@ -4,14 +4,12 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = "\n".join(
-    p.read_text(encoding="utf-8")
-    for p in (ROOT / "src").glob("*.ad?")
-)
+SOURCES = list((ROOT / "src").rglob("*.ad?"))
+WINDOWS_ENTROPY = ROOT / "src/platform/windows/smb-entropy.adb"
+SOURCE = "\n".join(p.read_text(encoding="utf-8") for p in SOURCES)
 FORBIDDEN = (
     "Ada.Numerics",
     "Interfaces.C",
-    "pragma Import",
     "libsmbclient",
     "OpenSSL",
     "GNUTLS",
@@ -21,6 +19,16 @@ FORBIDDEN = (
 for item in FORBIDDEN:
     if item in SOURCE:
         raise SystemExit(f"forbidden runtime dependency: {item}")
+
+for path in SOURCES:
+    content = path.read_text(encoding="utf-8")
+    if path == WINDOWS_ENTROPY:
+        allowed = 'pragma Import (Stdcall, BCryptGenRandom, "BCryptGenRandom");'
+        if content.count(allowed) != 1:
+            raise SystemExit("Windows entropy must use the reviewed OS RNG binding")
+        content = content.replace(allowed, "")
+    if "pragma Import" in content or "with Import" in content:
+        raise SystemExit(f"unexpected foreign binding: {path}")
 
 if "/dev/urandom" not in SOURCE:
     raise SystemExit("the default entropy source is not documented in code")

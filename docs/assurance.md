@@ -186,8 +186,8 @@ remain trusted.
 | `SMB.Text` | `Check`, `Output_Capacity`, `To_UTF16LE`, `From_UTF16LE`, `NTLM_Username` | Public input-limit checks before multiplication/allocation, allocation/exception adapters to `Core_Text` |
 | `SMB.Wire` | `Check`, `U16`, `U32`, `U64`, `Put_U16`, `Put_U32`, `Put_U64`, `Initialize_Header`, `Validate_Header`, `Sign`, `Verify_Signature` | Public exception adapters to `Core_Wire` |
 | `SMB.Client` | `Slice`, `Encode_Name`, `Decode_Name`, `Read.Checked_Length`, `Write.Checked_Length` | Allocation, checked copying/slicing and text-container conversion |
-| `SMB.Client` | `Last_NT_Status`, `Is_Connected` | Accessors to engine state or facade diagnostics |
-| `SMB.Client` | `Generate_Entropy`, `Get_Entropy` | OS CSPRNG or caller-provided entropy callback; no deterministic fallback |
+| `SMB.Client` | `Last_NT_Status`, `Last_Unverified_Authentication_Status`, `Is_Connected` | Accessors to engine state or facade diagnostics |
+| `SMB.Entropy`, `SMB.Client` | `Generate`, `Get_Entropy` | Unix Stream_IO or Windows BCryptGenRandom OS binding, ABI and OS CSPRNG or caller-provided callback; no deterministic fallback |
 | `SMB.Client` | `Clear_State`, `Clear_State_Preserving_Status`, `Require_Status`, `Require_Transfer_Status`, `Require_Authentication_Status`, `Cleanup_Close`, `Finalize` | Cleanup and exception/NTSTATUS translation; finalization cannot report exceptions |
 | `SMB.Client` | `Check_Handle`, `Validated_Path`, `Require_Relative_Share` | Core dispatch for handle/path validation and error translation |
 | `SMB.Client` | `Disposition_Value` | Public enum mapping |
@@ -218,7 +218,7 @@ does not make the above bodies formally verified.
   API call. Timeout/backpressure behavior is tested, not proved.
 * Cryptographic hardness, generated machine code's timing/side-channel resistance,
   secure key erasure, FIPS certification, complete SMB conformance, all servers
-  and Windows-native operation are not established.
+  and all Windows versions/configurations are not established.
 * The SET_INFO coordinator proves bounded disposition/rename body construction,
   signed command-17 request framing, validated response correlation and
   single-use receipt consumption while preserving validated file/directory
@@ -228,3 +228,20 @@ does not make the above bodies formally verified.
   semantics are not claimed.
 * No `Assume`, `False_Positive`, or SPARK-off body substitutes for proof.
   `make prove` uses checks-as-errors. CI is not run automatically.
+
+## Unverified authentication diagnostics
+
+`Core_Client.Unverified_Authentication_Status` is a read-only SPARK helper. It
+requires the current sent authentication context, matches the unsigned response
+header against the pending request, parses the error body and returns only an
+error-severity NTSTATUS (or zero). Its contract establishes bounded access and
+correspondence to the packet status, not authenticity. It never creates a receipt,
+changes Engine state or marks a session authenticated. Normal `Complete_Authenticate`
+still rejects the response and invalidates keys/state. The trusted facade saves
+the hint separately across that failure cleanup and labels the exception text
+"unverified". `Last_NT_Status` semantics and all signature/MIC requirements remain
+unchanged. Connect/Disconnect clear the hint. This is not a verified server error.
+
+The Windows OS binding is outside SPARK, like the Unix entropy adapter. The source
+audit permits only that named `BCryptGenRandom` import rather than permitting
+foreign calls throughout the protocol/crypto implementation.

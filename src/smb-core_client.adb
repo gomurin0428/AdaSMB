@@ -2290,6 +2290,43 @@ is
       Status := SMB.Ok;
    end Prepare_Next;
 
+   function Unverified_Authentication_Status
+     (Value : Authentication;
+      State : SMB.Engine.Engine_State;
+      Packet : SMB.Bytes) return SMB.DWord
+   is
+      Nt_Status : SMB.DWord;
+      Status : SMB.Core_Status;
+      Info : SMB.Core_Protocol.Response_Info;
+   begin
+      if Packet'Length < 72
+        or else Value.Stage /= Authenticate_Sent
+        or else not Authentication_Context_Matches (Value, State)
+        or else not SMB.Engine.Pending_Request_Matches (State, Value.Expected)
+        or else Value.Expected.Command /= 1
+      then
+         return 0;
+      end if;
+      SMB.Core_Wire.Validate_Header
+        (Packet,
+         (Command => 1,
+          Message_Id => Value.Expected.Message_Id,
+          Tree_Id => Value.Expected.Tree_Id,
+          Session_Id => Value.Expected.Session_Id,
+          Match_Tree => True,
+          Match_Session => True,
+          Signed => False),
+         Nt_Status, Status);
+      if Status /= SMB.Ok
+        or else Nt_Status = SMB.Status_More_Processing_Required
+        or else (Nt_Status and 16#C000_0000#) /= 16#C000_0000#
+      then
+         return 0;
+      end if;
+      SMB.Core_Protocol.Parse_Response (Packet, 1, Nt_Status, Info, Status);
+      return (if Status = SMB.Ok then Nt_Status else 0);
+   end Unverified_Authentication_Status;
+
    procedure Transfer_Send_Succeeded
      (Value : in out Transfer;
       State : SMB.Engine.Engine_State;

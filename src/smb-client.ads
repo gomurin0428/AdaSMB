@@ -59,6 +59,10 @@ package SMB.Client is
    procedure Disconnect (Client : in out Connection);
 
    function Last_NT_Status (Client : Connection) return SMB.DWord;
+   --  Diagnostic only: unauthenticated peer claim, never a trusted NTSTATUS.
+   --  Zero means absent. Cleared by Connect or Disconnect.
+   function Last_Unverified_Authentication_Status
+     (Client : Connection) return SMB.DWord;
    function Is_Connected (Client : Connection) return Boolean;
    overriding procedure Finalize (Client : in out Connection);
 
@@ -69,6 +73,7 @@ private
       Host : Ada.Strings.Unbounded.Unbounded_String;
       Entropy : Entropy_Source := null;
       Last_Status : SMB.DWord := SMB.Success;
+      Unverified_Authentication_Status : SMB.DWord := 0;
    end record;
 
    type Handle is limited record

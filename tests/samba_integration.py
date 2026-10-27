@@ -366,6 +366,24 @@ def main() -> int:
                     )
                 finally:
                     proxy.join()
+                for index, mode in enumerate(
+                    ("unsigned-auth-error", "unsigned-auth-success", "unsigned-auth-wrong-id"),
+                    start=18,
+                ):
+                    proxy_port = PORT + index
+                    proxy = AdversarialProxy(mode, proxy_port, PORT)
+                    proxy.start()
+                    diagnostic_env = env.copy()
+                    diagnostic_env.update(
+                        SMB_TEST_PORT=str(proxy_port),
+                        SMB_TEST_BACKEND_PORT=str(PORT),
+                        SMB_TEST_MODE=mode,
+                    )
+                    try:
+                        run([str(ROOT / "build/bin/auth_diagnostic_client")],
+                            env=diagnostic_env)
+                    finally:
+                        proxy.join()
             finally:
                 try:
                     os.killpg(daemon.pid, signal.SIGTERM)
