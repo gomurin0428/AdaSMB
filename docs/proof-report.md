@@ -1,5 +1,41 @@
 # GNATprove and test report
 
+## Atomic rejection of handle registration and closure
+
+`Register_Handle` now guarantees the entire `Engine_State` remains unchanged
+on failure, in addition to clearing the returned token. `Close_Handle` now
+guarantees every failure returns `Invalid_Handle_Status` and leaves the entire
+state unchanged. This includes handle entries, counters, pending requests and
+validated response receipts. A loop invariant records the already-established
+successful lookup during the CLOSE mutation pass; executable behavior and
+the existing success guarantees are unchanged.
+
+The focused test exercises 14 registration failures (disconnected, absent or
+pending receipt, bad lengths and first/last FileId bytes at ordinary and near-
+`Natural'Last` bounds, consumed receipt) and nine CLOSE failures (absent or
+pending receipt, mismatched confirmation/receipt/token fields, consumed
+receipt). Full state snapshots must match after every rejection. Valid retries
+must still consume their receipts successfully, and the other live handle
+must remain usable. These are internal Engine guarantees: `Core_Client`
+continues to invalidate after a failed post-wire registration, and malformed
+or untrusted wire responses still fail closed.
+
+The Candidate GNAT14 strict test build and `engine-receipts` selector passed;
+the selector reported 74 handle-validation cases, handle-capacity coverage,
+and **23 rejected calls** in the new failure-atomicity test. The focused
+`SMB.Engine` proof exited 0 and proved the strengthened registration and
+closure postconditions. `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and full Samba integration passed.
+
+The first full `make prove` attempt exited 2 while GNAT was compiling
+`smb-core_client.adb`, with `Constraint_Error bad input for 'Value: "0GG"`
+from a malformed generated ALI. I preserved the failure log and affected
+unit artifacts, removed only the recursive generated Core_Client proof cache,
+and replayed that unit with progressive proof. The replay exited 0 and proved
+the `Prepare_Next` assertion at `smb-core_client.adb:2281`. The recovered full
+`make prove` exited 0 with **4,473 checks** (**709 flow**, **3,764 prover**),
+**0 unproved**, **0 justified**, **69 warnings**, and **0 `pragma Assume`**.
+
 ## Handle capacity rejection and slot reuse
 
 The existing 256-handle preflight limit is exercised through the coordinator

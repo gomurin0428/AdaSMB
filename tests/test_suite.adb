@@ -2822,6 +2822,140 @@ procedure Test_Suite is
            ("handle capacity: 256 opens, overflow rejection and slot reuse passed");
       end Test_Handle_Capacity;
 
+      procedure Test_Handle_Failure_Atomicity is
+         use type SMB.Engine.Engine_State;
+         Target : SMB.Engine.Engine_State;
+         First_Token, Second_Token : SMB.Engine.Handle_Token;
+         Registration_Failures, Close_Failures : Natural := 0;
+         Lengths : constant array (Positive range <>) of Natural := (0, 15, 17);
+
+         procedure Reject_Registration
+           (Input : SMB.Bytes;
+            Expected_Status : SMB.Core_Status) is
+            Before : constant SMB.Engine.Engine_State := Target;
+            Output_Token : SMB.Engine.Handle_Token := (others => 16#A5#);
+         begin
+            SMB.Engine.Register_Handle
+              (Target, Input, SMB.Engine.Read_Only, False, Output_Token, Status);
+            Assert
+              (Status = Expected_Status and then Target = Before
+               and then Output_Token.Owner = 0 and then Output_Token.Epoch = 0
+               and then Output_Token.Ticket = 0,
+               "rejected registration changed state or retained a token");
+            Registration_Failures := Registration_Failures + 1;
+         end Reject_Registration;
+
+         procedure Reject_Close
+           (Input, Confirmation : SMB.Engine.Handle_Token) is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            SMB.Engine.Close_Handle (Target, Input, Status, Confirmation);
+            Assert
+              (Status = SMB.Invalid_Handle_Status and then Target = Before,
+               "rejected CLOSE changed state or consumed its receipt");
+            Close_Failures := Close_Failures + 1;
+         end Reject_Close;
+      begin
+         Reject_Registration (SMB.Bytes'(1 .. 0 => 0), SMB.Invalid_State_Status);
+         Reconnect_Share (Target);
+         Reject_Registration (File_Id, SMB.Invalid_State_Status);
+         SMB.Engine.Begin_Request
+           (Target, 5, True, True, Message_Id, Expected, Status);
+         Assert (Status = SMB.Ok, "atomic registration begin CREATE");
+         Reject_Registration (File_Id, SMB.Invalid_State_Status);
+         declare
+            Response : SMB.Bytes (0 .. 151) := (others => 0);
+         begin
+            Prepare_Response (Response, 5, Message_Id, Tree_Id, Session_Id, True);
+            Response (64) := 89;
+            Response (128 .. 143) := File_Id;
+            SMB.Wire.Sign (Response, Key);
+            SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+            Assert (Status = SMB.Ok, "atomic registration accept CREATE");
+         end;
+         for High_Bounds in Boolean loop
+            for Length of Lengths loop
+               declare
+                  First : constant Natural :=
+                    (if High_Bounds then Natural'Last - Length else 1);
+                  Input : constant SMB.Bytes (First .. First + Length - 1) :=
+                    (others => 16#A5#);
+               begin
+                  Reject_Registration (Input, SMB.Invalid_Length);
+               end;
+            end loop;
+            for Last_Byte in Boolean loop
+               declare
+                  First : constant Natural :=
+                    (if High_Bounds then Natural'Last - 16 else 1);
+                  Input : SMB.Bytes (First .. First + 15) := File_Id;
+                  Changed : constant Natural := First + (if Last_Byte then 15 else 0);
+               begin
+                  Input (Changed) := Input (Changed) xor 1;
+                  Reject_Registration (Input, SMB.Invalid_Value);
+               end;
+            end loop;
+         end loop;
+         SMB.Engine.Register_Handle
+           (Target, File_Id, SMB.Engine.Read_Only, False, First_Token, Status);
+         Assert (Status = SMB.Ok, "registration failures consumed valid receipt");
+         Reject_Registration (File_Id, SMB.Invalid_State_Status);
+         declare
+            Operation : SMB.Core_Client.Operation;
+         begin
+            Create_Directory_Handle
+              (Target, Operation, Second_Token, Is_Directory => False);
+         end;
+         Reject_Close (First_Token, First_Token);
+         SMB.Engine.Begin_Request
+           (Target, 6, True, True, Message_Id, Expected, Status,
+            Close_Token => First_Token);
+         Assert (Status = SMB.Ok, "atomic CLOSE begin request");
+         Reject_Close (First_Token, First_Token);
+         declare
+            Response : SMB.Bytes (0 .. 123) := (others => 0);
+         begin
+            Prepare_Response (Response, 6, Message_Id, Tree_Id, Session_Id, True);
+            Response (64) := 60;
+            SMB.Wire.Sign (Response, Key);
+            SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+            Assert (Status = SMB.Ok, "atomic CLOSE accept receipt");
+         end;
+         Reject_Close (First_Token, Second_Token);
+         Reject_Close (Second_Token, Second_Token);
+         for Field in 1 .. 4 loop
+            declare
+               Bad_Token : SMB.Engine.Handle_Token := First_Token;
+            begin
+               case Field is
+                  when 1 => Bad_Token.Owner := Bad_Token.Owner + 1;
+                  when 2 => Bad_Token.Epoch := Bad_Token.Epoch + 1;
+                  when 3 => Bad_Token.Ticket := 0;
+                  when 4 => Bad_Token.Ticket := SMB.QWord'Last;
+               end case;
+               Reject_Close (Bad_Token, Bad_Token);
+            end;
+         end loop;
+         SMB.Engine.Close_Handle (Target, First_Token, Status, First_Token);
+         Assert (Status = SMB.Ok, "CLOSE failures consumed valid receipt");
+         Reject_Close (First_Token, First_Token);
+         declare
+            Output_Id : SMB.Bytes (0 .. 15);
+            Output_Access : SMB.Engine.Access_Kind;
+            Output_Directory : Boolean;
+         begin
+            SMB.Engine.Validate_Handle
+              (Target, Second_Token, True, False,
+               Output_Id, Output_Access, Output_Directory, Status);
+            Assert (Status = SMB.Ok and then Output_Id = File_Id,
+                    "CLOSE retry changed the other handle");
+         end;
+         Assert
+           (Registration_Failures = 14 and then Close_Failures = 9,
+            "handle failure atomicity coverage");
+         Ada.Text_IO.Put_Line ("handle failure atomicity: 23 rejected calls passed");
+      end Test_Handle_Failure_Atomicity;
+
       procedure Test_Connection_Coordinator is
          Operation, Tree_Operation, Disconnect_Operation,
            Tree_Error_Operation, Logoff_Error_Operation,
@@ -3926,6 +4060,7 @@ procedure Test_Suite is
       end loop;
       Test_Handle_Outcomes;
       Test_Handle_Capacity;
+      Test_Handle_Failure_Atomicity;
       declare
          Response : SMB.Bytes (0 .. 127) := (others => 0);
       begin
