@@ -1,5 +1,75 @@
 # GNATprove and test report
 
+## Header acceptance contracts and mutation regression scope
+
+`SMB.Core_Wire.Validate_Header` now specifies the successful response's
+protocol marker, StructureSize, credit availability, server-response and
+non-async flags, absence of a compound offset, exact command/MessageId, optional
+TreeId/SessionId matching and the expected SIGNED flag. Rejection must leave
+NTSTATUS zero. This strengthens the declared contract without changing the
+implementation. It is not a proof of HMAC verification: `Validate_Header` checks
+header syntax/correlation, while `SMB.Engine.Accept_Response` separately calls
+`Verify_Signature` before accepting signed data.
+
+`test_suite header-mutations` varies each byte of the marker, StructureSize,
+command, compound offset, MessageId, TreeId and SessionId through all 256 values;
+checks flag bytes, truncation, optional ID matching, and unsigned signature
+bytes; and repeats with rebased arrays. It checks exact rejection status and
+zero NTSTATUS, not just failure. Unknown flag bits retain existing acceptance;
+async and compound remain unsupported client features, not malformed SMB in
+general. Command matching follows
+[Processing the Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/158e87ff-e898-4e51-a8fa-18f35630929c).
+
+Six added Samba modes change MessageId, command, TreeId, SessionId, ASYNC or
+NextCommand on a real READ reply and recompute its valid HMAC. They reuse the
+public-API rejection, client-caused disconnect without extra requests,
+reconnect and stale-handle checks from the body-mutation tests. This distinguishes
+correlation rejection from merely breaking the signature.
+
+## Linux validation: header mutation tests
+
+The focused build passed and `test_suite header-mutations` passed all 18,838
+cases, checking exact status and NTSTATUS on the successful and rejecting
+header paths. The first build reported an unused `use type SMB.QWord` clause
+in the new test (`/home/ubuntu/header-mutation-01-focused-build.log`); removing
+that unused clause resolved the warning. The subsequent focused build, Python
+syntax compilation, `make test`, and strict
+`make check GPRBUILD="gprbuild -f"` all passed.
+
+The Samba integration passed all existing cases and all fourteen response
+mutation modes. For each of the six new header modes
+(`header-message-id`, `header-command`, `header-tree-id`,
+`header-session-id`, `header-async`, and `header-compound`), the proxy verified
+the backend signature, changed the selected header field, re-signed the valid
+HMAC, and observed the client disconnect without sending another request. The
+public client rejected each response, reconnected, and rejected the stale
+handle.
+
+The focused `SMB.Core_Wire` proof passed. The final per-unit proof summary
+records 298 proved `SMB.Core_Wire` checks, including 32 for `Validate_Header`.
+The single clean full proof passed with 4,394 checks: 700 flow and 3,694
+prover checks, zero unproved and zero justified. Categories were 2 data
+dependencies, 1 flow dependency, 541 initialization, 2 non-aliasing, 2,392
+run-time checks, 292 assertions, 1,004 functional contracts, and 160
+termination checks (154 flow, 6 prover). The strengthened `Validate_Header`
+success conditions and zero-NTSTATUS-on-failure condition were proved. The
+full run reported 68 GNATprove warnings: 56 in `SMB.Core_Client`, 6 in
+`SMB.Core_Protocol`, and 6 in `SMB.Core_Auth`.
+
+Raw evidence is preserved under `/home/ubuntu`: focused build
+`header-mutation-02-focused-build.log`, selector
+`header-mutation-03-selector.log`, focused proof
+`header-mutation-04-focused-proof.log`, Python syntax
+`header-mutation-05-pycompile.log`, `make test`
+`header-mutation-06-make-test.log`, strict check
+`header-mutation-07-make-check.log`, Samba integration
+`header-mutation-08-samba-integration.log`, proof cleanup
+`header-mutation-09-proof-clean.log`, full proof
+`header-mutation-10-make-prove.log`, and summary
+`header-mutation-11-proof-summary.out`; final whitespace check
+`header-mutation-12-diff-check.log`. The change adds no implementation
+behavior and makes no claim that `Validate_Header` verifies the HMAC.
+
 ## Response-body mutation regression scope
 
 `test_suite response-mutations` checks all eleven supported successful response
