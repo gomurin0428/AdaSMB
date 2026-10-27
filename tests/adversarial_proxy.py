@@ -40,7 +40,41 @@ SECURITY_BUFFER_MUTATIONS = {
     "challenge-buffer-length": (1, 0xC0000016, 68, 72, False),
     "final-buffer-offset": (1, 0, 68, 72, True),
     "final-buffer-length": (1, 0, 68, 72, True),
+    "final-spnego-mic": (1, 0, 68, 72, True),
+    "final-spnego-state": (1, 0, 68, 72, True),
+    "final-spnego-duplicate-state": (1, 0, 68, 72, True),
+    "final-spnego-missing-mic": (1, 0, 68, 72, True),
 }
+
+
+def _mutate_final_spnego(token: bytes, session_key: bytes, mode: str) -> bytes:
+    magic = b"session key to server-to-client signing key magic constant\x00"
+    signing_key = hashlib.md5(session_key + magic).digest()
+    mechanism_list = bytes.fromhex("300c060a2b06010401823702020a")
+    checksum = hmac.new(signing_key, b"\x00" * 4 + mechanism_list, hashlib.md5).digest()[:8]
+    mic = b"\x01\x00\x00\x00" + checksum + b"\x00" * 4
+    state = bytes.fromhex("a0030a0100")
+    mic_field = b"\xa3\x12\x04\x10" + mic
+
+    def wrap(fields: bytes) -> bytes:
+        return bytes((0xA1, len(fields) + 2, 0x30, len(fields))) + fields
+
+    valid_tokens = {
+        wrap(state + mechanism + response + mic_field)
+        for mechanism in (b"", bytes.fromhex("a10c060a2b06010401823702020a"))
+        for response in (b"", bytes.fromhex("a2020400"))
+    }
+    if token not in valid_tokens:
+        raise RuntimeError("original final SPNEGO token did not match verified mechanism MIC")
+    if mode == "final-spnego-mic":
+        return wrap(state + mic_field[:-1] + bytes((mic_field[-1] ^ 1,)))
+    if mode == "final-spnego-state":
+        return wrap(state[:-1] + b"\x01" + mic_field)
+    if mode == "final-spnego-duplicate-state":
+        return wrap(state + state + mic_field)
+    if mode == "final-spnego-missing-mic":
+        return wrap(state)
+    raise RuntimeError("unknown final SPNEGO mutation")
 
 
 def _validate_negotiate_response(payload: bytes | bytearray) -> None:
@@ -382,7 +416,13 @@ class AdversarialProxy:
                                 raise RuntimeError("invalid original authentication signature")
                         elif any(payload[48:64]):
                             raise RuntimeError("unexpected unsigned authentication signature bytes")
-                        if self.mode.endswith("-offset"):
+                        if self.mode.startswith("final-spnego-"):
+                            token = _mutate_final_spnego(
+                                bytes(payload[offset:offset + length]), session_key, self.mode
+                            )
+                            payload = payload[:offset] + token + payload[offset + length:]
+                            struct.pack_into("<H", payload, field + 2, len(token))
+                        elif self.mode.endswith("-offset"):
                             struct.pack_into("<HH", payload, field, fixed_end - 1, 1)
                         else:
                             struct.pack_into("<HH", payload, field, fixed_end, 0xFFFF)
