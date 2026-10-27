@@ -18,7 +18,8 @@ package body SMB.Core_Text is
        Post => Position <= Value'Length
          and then (if Status = SMB.Ok then
            Position > Position'Old and then Scalar in 1 .. 16#10FFFF#
-           and then Scalar not in 16#D800# .. 16#DFFF#);
+           and then Scalar not in 16#D800# .. 16#DFFF#
+           and then (if Scalar > 16#FFFF# then Position = Position'Old + 4));
 
    procedure Decode_UTF8
      (Value : String;
@@ -125,13 +126,12 @@ package body SMB.Core_Text is
       for Index in Output'Range loop
          Output (Index) := 0;
       end loop;
-      if Output'Length < 2 * Input'Length then
-         Status := SMB.Invalid_Length;
-         return;
-      end if;
       while Position < Input'Length loop
          pragma Loop_Invariant (Position <= Input'Length);
          pragma Loop_Invariant (Used <= Output'Length);
+         pragma Loop_Invariant (Used <= 2 * Position);
+         pragma Loop_Invariant (Used mod 2 = 0);
+         pragma Loop_Invariant ((Used = 0) = (Position = 0));
          pragma Loop_Variant (Increases => Position);
          Decode_UTF8 (Input, Position, Scalar, Decode_Status);
          if Decode_Status /= SMB.Ok then
@@ -204,9 +204,7 @@ package body SMB.Core_Text is
       for Index in Output'Range loop
          Output (Index) := Character'Val (0);
       end loop;
-      if Input'Length mod 2 /= 0
-        or else Output'Length < 2 * Input'Length
-      then
+      if Input'Length mod 2 /= 0 then
          Status := SMB.Invalid_Length;
          return;
       end if;
@@ -214,6 +212,8 @@ package body SMB.Core_Text is
          pragma Loop_Invariant (Offset <= Input'Length);
          pragma Loop_Invariant (Offset mod 2 = 0);
          pragma Loop_Invariant (Used <= Output'Length);
+         pragma Loop_Invariant (Used <= 2 * Offset);
+         pragma Loop_Invariant ((Used = 0) = (Offset = 0));
          pragma Loop_Variant (Increases => Offset);
          First := Natural (Input (Input'First + Offset))
            + Natural (Input (Input'First + Offset + 1)) * 256;

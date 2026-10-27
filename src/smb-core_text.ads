@@ -9,7 +9,9 @@ package SMB.Core_Text is
    with Pre =>
      Input'Length <= SMB.Maximum_Frame_Size
      and Output'Length <= 2 * SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post => Used <= Output'Length and then Used <= 2 * Input'Length
+       and then Used mod 2 = 0
+       and then (if Status = SMB.Ok then (Used = 0) = (Input'Length = 0));
 
    procedure UTF16_To_UTF8
      (Input : SMB.Bytes;
@@ -19,7 +21,9 @@ package SMB.Core_Text is
    with Pre =>
      Input'Length <= SMB.Maximum_Frame_Size
      and Output'Length <= 2 * SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post => Used <= Output'Length and then Used <= 2 * Input'Length
+       and then (if Status = SMB.Ok then Input'Length mod 2 = 0
+         and then (Used = 0) = (Input'Length = 0));
 
    procedure Validate_UTF16
      (Input : SMB.Bytes;

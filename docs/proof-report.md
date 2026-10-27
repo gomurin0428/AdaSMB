@@ -3,8 +3,8 @@
 ## Final clean proof
 
 `gnatprove -P proof.gpr --clean` and the subsequent complete `make prove`
-run passed for the path/share contract implementation
-[`ee45904`](https://github.com/gomurin0428/AdaSMB/commit/ee45904f3d5f1d68b142d35d76163ac49d99195b).
+run passed for the UTF-capacity implementation
+[`429c98d`](https://github.com/gomurin0428/AdaSMB/commit/429c98d4072a20aa6fbbe35f409d6a9a0c159e2e).
 GNATprove analyzed all thirteen configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
@@ -16,11 +16,11 @@ GNATprove analyzed all thirteen configured units:
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 538 | 538 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,388 | 0 | 2,388 |
-| Assertions | 291 | 0 | 291 |
+| Run-time checks | 2,398 | 0 | 2,398 |
+| Assertions | 301 | 0 | 301 |
 | Functional contracts | 987 | 0 | 987 |
 | Termination | 159 | 153 | 6 |
-| **Total** | **4,367** | **695** | **3,672** |
+| **Total** | **4,387** | **695** | **3,692** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -122,6 +122,15 @@ This does not prove server path resolution, Unicode normalization, or filesystem
 containment. UTF encoder/decoder semantics remain covered by tests rather than
 these new lexical contracts.
 
+UTF conversion now uses actual per-scalar capacity, permitting valid exact-fit
+buffers smaller than the former conservative `2 * Input'Length` requirement.
+Strengthened contracts prove bounded `Used` even on failure, even-length
+UTF-16 output, and successful empty/nonempty correspondence. The UTF-8 decoder
+also proves four-byte consumption for non-BMP scalars. This remains short of a
+proof of complete Unicode encoding correspondence. Public `SMB.Text` adapters
+now check input limits before output-size multiplication/allocation; these
+non-SPARK guards are covered by explicit exception regressions.
+
 The proof does not establish the trusted socket/allocation/exception adapter,
 complete public-facade correctness, cryptographic hardness, server rollback, or
 exactly-once behavior after an uncertain write.
@@ -175,12 +184,17 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   invalid century/day/month/range inputs, maximum accepted date, leap-second
   normalization, subsecond rounding boundaries and a public-clock smoke test.
   `gprbuild -p -P smb_tests.gpr test_suite.adb` followed by
-  `./build/bin/test_suite path-contracts` passed as the focused test. Path
+  `./build/bin/test_suite utf-capacity` passed as the focused test. Path
   fixtures exhaustively compare strings of length 0..4 over six characters with
   the prior component-based rules, under both empty-input policies; additionally
   they cover literal rejection/normalization cases, UTF-8 byte preservation,
   maximum size, differing/nonzero/near-`Integer'Last` lower bounds, and share
-  restrictions. A focused
+  restrictions. UTF fixtures cover empty, ASCII, two-/three-/four-byte scalars,
+  mixed prefixes, exact-fit and one-byte-short buffers, no partial scalar writes,
+  and nonzero bounds. A 49,152-byte UTF-8 name is successfully converted into
+  32,768 UTF-16 bytes in a 65,534-byte buffer. Public oversized text/username
+  inputs raise the documented errors before core precondition failures.
+  A focused
   `gnatprove -P proof.gpr -u smb-core_text.adb --mode=all --level=2
   --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4`
   also passed before the clean full proof.

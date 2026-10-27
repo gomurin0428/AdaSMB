@@ -111,6 +111,16 @@ pre/postconditions remain enabled. These are lexical byte rules, not proof of
 Unicode conversion semantics, server canonicalization, symlink/DFS behavior,
 or filesystem containment.
 
+UTF conversion checks capacity for each decoded scalar rather than requiring a
+worst-case-size buffer before decoding. The contracts bound `Used` by both the
+output capacity and twice the input length, including on failure; UTF-16 output
+is always word-aligned. Successful conversion is empty exactly when its input
+is empty, and successful UTF-16 input is even-length. Scalar-atomic short-buffer
+behavior and exact encoding bytes are tested, not a complete Unicode semantic
+proof. Callers must discard partial output on error. The public text adapters
+check the 1-MiB input bound before allocating worst-case-sized result buffers;
+these adapter guards are reviewed/tested rather than GNATprove-verified.
+
 Proof covers language-defined run-time checks, initialization, flow analysis and
 the contracts actually written in the source. It does not prove that every
 encoded bit matches SMB, or that a hash has the mathematical/security properties
@@ -141,7 +151,7 @@ remain trusted.
 | `SMB.Transport` | `Wait_For`, `Read_Exact`, `Write_Exact`, `Connect`, `Send_Frame`, `Receive_Frame`, `Close`, `Is_Open` | GNAT sockets/selectors, nonblocking I/O, deadlines, allocation/initialization, slice dispatch, retry and exception cleanup. Native frame copying and progress use `Core_Transport`; frame type/length use `Core_Framing`. DNS resolution is outside the deadline. |
 | `SMB.Clock` | `Current_Filetime` | OS calendar retrieval/UTC splitting, core dispatch and exception translation; date/seconds/subseconds arithmetic uses `Core_Clock` |
 | `SMB.NTLM` | `Negotiate_Token`, `Authenticate` | Allocation, `Core_Auth` dispatch and exceptions |
-| `SMB.Text` | `Check`, `To_UTF16LE`, `From_UTF16LE`, `NTLM_Username` | Public allocation/exception adapters to `Core_Text` |
+| `SMB.Text` | `Check`, `Output_Capacity`, `To_UTF16LE`, `From_UTF16LE`, `NTLM_Username` | Public input-limit checks before multiplication/allocation, allocation/exception adapters to `Core_Text` |
 | `SMB.Wire` | `Check`, `U16`, `U32`, `U64`, `Put_U16`, `Put_U32`, `Put_U64`, `Initialize_Header`, `Validate_Header`, `Sign`, `Verify_Signature` | Public exception adapters to `Core_Wire` |
 | `SMB.Client` | `Slice`, `Encode_Name`, `Decode_Name`, `Read.Checked_Length`, `Write.Checked_Length` | Allocation, checked copying/slicing and text-container conversion |
 | `SMB.Client` | `Last_NT_Status`, `Is_Connected` | Accessors to engine state or facade diagnostics |
