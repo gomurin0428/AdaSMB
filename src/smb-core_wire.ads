@@ -178,6 +178,9 @@ package SMB.Core_Wire is
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
        (if Status = SMB.Ok then
+          Encoded_U16 (Data, 4) = Header_Size
+          and then Encoded_U16 (Data, 6) = 1
+          and then
           Encoded_U16 (Data, 12) = SMB.Word (Command)
           and then Encoded_U64 (Data, 24) = Message_Id
           and then Encoded_U32 (Data, 36) = Tree_Id

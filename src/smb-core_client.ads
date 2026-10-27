@@ -15,6 +15,8 @@ is
    use type SMB.Engine.Phase;
    use type SMB.Core_Protocol.Response_Info;
    use type SMB.Engine.Engine_State;
+   use type SMB.Engine.Handle_Token;
+   use type SMB.Engine.Request_Expectation;
    pragma Unevaluated_Use_Of_Old (Allow);
    type Operation_Kind is (No_Operation, Create_Operation, Close_Operation);
    type Operation_Stage is (Idle, Prepared, Sent, Finished, Failed);
@@ -38,6 +40,23 @@ is
       Directory_Finished,
       Directory_Failed);
    type Directory_Enumeration is limited private;
+   type Metadata_Kind is
+     (No_Metadata, Rename_Metadata, Disposition_Metadata);
+   type Metadata_Stage is
+     (Metadata_Idle, Metadata_Prepared, Metadata_Sent,
+      Metadata_Finished, Metadata_Failed);
+   type Metadata_Operation is limited private;
+   type Metadata_State_Snapshot is record
+      Kind : Metadata_Kind;
+      Stage : Metadata_Stage;
+      Owner, Epoch : SMB.QWord;
+      Token : SMB.Engine.Handle_Token;
+      File_Id : SMB.Bytes (0 .. 15);
+      Access_Mode : SMB.Engine.Access_Kind;
+      Directory, Delete_File : Boolean;
+      Name_Length : Natural;
+      Expected : SMB.Engine.Request_Expectation;
+   end record;
    Directory_Request_Size : constant Natural :=
      SMB.Core_Wire.Header_Size + 34;
    type Directory_State_Snapshot is record
@@ -1061,6 +1080,315 @@ is
             and then Directory_Stage_Of (Value)'Old in
               Query_Ready | Query_Prepared | Query_Sent | Page_Ready);
 
+   function Metadata_Stage_Of
+     (Value : Metadata_Operation) return Metadata_Stage;
+   function Metadata_Kind_Of
+     (Value : Metadata_Operation) return Metadata_Kind;
+   function Metadata_Snapshot_Of
+     (Value : Metadata_Operation) return Metadata_State_Snapshot;
+   function Metadata_Expected_Of
+     (Value : Metadata_Operation) return SMB.Engine.Request_Expectation
+   with Ghost;
+   function Metadata_Preparation_Context_Matches
+     (Snapshot : Metadata_State_Snapshot;
+      State : SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token) return Boolean
+   with Ghost;
+   function Metadata_Continuation_Context_Matches
+     (Snapshot : Metadata_State_Snapshot;
+      State : SMB.Engine.Engine_State) return Boolean
+   with Ghost;
+   function Metadata_Packet_Matches
+     (Value : Metadata_Operation;
+      State : SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Used : Natural) return Boolean
+   with Ghost,
+     Pre => Packet'Length <= SMB.Maximum_Frame_Size;
+   procedure Prepare_Disposition
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token;
+      Delete_File : Boolean;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with Pre => Output'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Used <= Output'Length
+       and then
+         (if not Metadata_Preparation_Context_Matches
+               (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+             or else Output'Length < SMB.Core_Wire.Header_Size + 33
+          then Status /= SMB.Ok
+            and then Metadata_Snapshot_Of (Value) =
+              Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old and then Used = 0)
+       and then
+         (if Status = SMB.Invalid_State_Status
+              and then not Metadata_Preparation_Context_Matches
+                (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+          then Metadata_Snapshot_Of (Value) =
+                 Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Used = 0)
+       and then
+         (if Status in SMB.Invalid_Length | SMB.Resource_Limit
+              and then Metadata_Stage_Of (Value) =
+                Metadata_Stage_Of (Value)'Old
+          then Metadata_Snapshot_Of (Value) =
+                 Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Used = 0)
+       and then
+         (if Status = SMB.Ok then
+            Metadata_Stage_Of (Value) = Metadata_Prepared
+            and then Metadata_Kind_Of (Value) = Disposition_Metadata
+            and then Used = 97
+            and then SMB.Engine.Pending_Request_Matches
+              (State, Metadata_Expected_Of (Value))
+            and then Metadata_Packet_Matches (Value, State, Output, Used)
+            and then SMB.Engine.Handle_Matches_In_States
+              (State'Old, State, Token,
+               Metadata_Snapshot_Of (Value).File_Id,
+               Metadata_Snapshot_Of (Value).Access_Mode,
+               Metadata_Snapshot_Of (Value).Directory)
+            and then SMB.Engine.Handle_Matches
+              (State, Token, Metadata_Snapshot_Of (Value).File_Id,
+               Metadata_Snapshot_Of (Value).Access_Mode,
+               Metadata_Snapshot_Of (Value).Directory)
+            and then Metadata_Snapshot_Of (Value).Token = Token
+            and then Metadata_Snapshot_Of (Value).Delete_File = Delete_File
+            and then Metadata_Snapshot_Of (Value).Name_Length = 0);
+   procedure Prepare_Rename
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token;
+      Name : SMB.Bytes;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with Pre => Name'Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+     and then Output'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Used <= Output'Length
+       and then
+         (if not Metadata_Preparation_Context_Matches
+               (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+             or else Name'Length = 0 or else Name'Length mod 2 /= 0
+             or else Output'Length <
+               SMB.Core_Wire.Header_Size + 52 + Name'Length
+          then Status /= SMB.Ok
+            and then Metadata_Snapshot_Of (Value) =
+              Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old and then Used = 0)
+       and then
+         (if Status = SMB.Invalid_State_Status
+              and then not Metadata_Preparation_Context_Matches
+                (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+          then Metadata_Snapshot_Of (Value) =
+                 Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Used = 0)
+       and then
+         (if Status in SMB.Invalid_Length | SMB.Resource_Limit
+              and then Metadata_Stage_Of (Value) =
+                Metadata_Stage_Of (Value)'Old
+          then Metadata_Snapshot_Of (Value) =
+                 Metadata_Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Used = 0)
+       and then
+         (if Status = SMB.Ok then
+            Metadata_Stage_Of (Value) = Metadata_Prepared
+            and then Metadata_Kind_Of (Value) = Rename_Metadata
+            and then Used = SMB.Core_Wire.Header_Size + 52 + Name'Length
+            and then SMB.Engine.Pending_Request_Matches
+              (State, Metadata_Expected_Of (Value))
+            and then Metadata_Packet_Matches (Value, State, Output, Used)
+            and then SMB.Engine.Handle_Matches_In_States
+              (State'Old, State, Token,
+               Metadata_Snapshot_Of (Value).File_Id,
+               Metadata_Snapshot_Of (Value).Access_Mode,
+               Metadata_Snapshot_Of (Value).Directory)
+            and then SMB.Engine.Handle_Matches
+              (State, Token, Metadata_Snapshot_Of (Value).File_Id,
+               Metadata_Snapshot_Of (Value).Access_Mode,
+               Metadata_Snapshot_Of (Value).Directory)
+            and then Metadata_Snapshot_Of (Value).Token = Token
+            and then Metadata_Snapshot_Of (Value).Delete_File = False
+            and then Metadata_Snapshot_Of (Value).Name_Length =
+              Name'Length
+            and then Name'Length > 0
+            and then Name'Length mod 2 = 0
+            and then
+              (for all Index in 0 .. Name'Length - 1 =>
+                 Output
+                   (Output'First + SMB.Core_Wire.Header_Size + 52 + Index) =
+                     Name (Name'First + Index)));
+   procedure Metadata_Send_Succeeded
+     (Value : in out Metadata_Operation;
+      State : SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status)
+   with Post =>
+     (if Status = SMB.Ok then
+        Metadata_Continuation_Context_Matches
+          (Metadata_Snapshot_Of (Value), State))
+     and then
+     (if Status = SMB.Invalid_State_Status then
+        Metadata_Snapshot_Of (Value).Stage =
+          Metadata_Snapshot_Of (Value)'Old.Stage
+        and then Metadata_Snapshot_Of (Value).Kind =
+          Metadata_Snapshot_Of (Value)'Old.Kind
+        and then Metadata_Snapshot_Of (Value).Owner =
+          Metadata_Snapshot_Of (Value)'Old.Owner
+        and then Metadata_Snapshot_Of (Value).Epoch =
+          Metadata_Snapshot_Of (Value)'Old.Epoch
+        and then Metadata_Snapshot_Of (Value).Token =
+          Metadata_Snapshot_Of (Value)'Old.Token
+        and then Metadata_Snapshot_Of (Value).File_Id =
+          Metadata_Snapshot_Of (Value)'Old.File_Id
+        and then Metadata_Snapshot_Of (Value).Access_Mode =
+          Metadata_Snapshot_Of (Value)'Old.Access_Mode
+        and then Metadata_Snapshot_Of (Value).Directory =
+          Metadata_Snapshot_Of (Value)'Old.Directory
+            and then Metadata_Snapshot_Of (Value).Expected =
+              Metadata_Snapshot_Of (Value)'Old.Expected
+            and then Metadata_Snapshot_Of (Value).Delete_File =
+              Metadata_Snapshot_Of (Value)'Old.Delete_File
+            and then Metadata_Snapshot_Of (Value).Name_Length =
+              Metadata_Snapshot_Of (Value)'Old.Name_Length
+     elsif Status = SMB.Ok then
+        Metadata_Stage_Of (Value) = Metadata_Sent
+        and then Metadata_Stage_Of (Value)'Old = Metadata_Prepared
+        and then Metadata_Snapshot_Of (Value).Kind =
+          Metadata_Snapshot_Of (Value)'Old.Kind
+        and then Metadata_Snapshot_Of (Value).Owner =
+          Metadata_Snapshot_Of (Value)'Old.Owner
+        and then Metadata_Snapshot_Of (Value).Epoch =
+          Metadata_Snapshot_Of (Value)'Old.Epoch
+        and then Metadata_Snapshot_Of (Value).Token =
+          Metadata_Snapshot_Of (Value)'Old.Token
+        and then Metadata_Snapshot_Of (Value).File_Id =
+          Metadata_Snapshot_Of (Value)'Old.File_Id
+        and then Metadata_Snapshot_Of (Value).Access_Mode =
+          Metadata_Snapshot_Of (Value)'Old.Access_Mode
+        and then Metadata_Snapshot_Of (Value).Directory =
+          Metadata_Snapshot_Of (Value)'Old.Directory
+        and then Metadata_Snapshot_Of (Value).Expected =
+          Metadata_Snapshot_Of (Value)'Old.Expected
+        and then Metadata_Snapshot_Of (Value).Delete_File =
+          Metadata_Snapshot_Of (Value)'Old.Delete_File
+        and then Metadata_Snapshot_Of (Value).Name_Length =
+          Metadata_Snapshot_Of (Value)'Old.Name_Length);
+   procedure Complete_Metadata
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Nt_Status : out SMB.DWord;
+      Status : out SMB.Core_Status)
+   with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       (if Metadata_Stage_Of (Value)'Old /= Metadata_Sent
+                or else not Metadata_Continuation_Context_Matches
+                  (Metadata_Snapshot_Of (Value)'Old, State'Old)
+        then Status = SMB.Invalid_State_Status
+          and then Metadata_Snapshot_Of (Value) = Metadata_Snapshot_Of (Value)'Old
+          and then State = State'Old)
+       and then
+       (if Status = SMB.Invalid_State_Status
+             and then Metadata_Stage_Of (Value) =
+               Metadata_Stage_Of (Value)'Old
+        then
+          Metadata_Snapshot_Of (Value) = Metadata_Snapshot_Of (Value)'Old
+          and then State = State'Old
+          and then Nt_Status = 0
+        elsif Status = SMB.Ok then
+          Metadata_Stage_Of (Value) = Metadata_Finished
+          and then Metadata_Stage_Of (Value)'Old = Metadata_Sent
+          and then Metadata_Snapshot_Of (Value).Kind =
+            Metadata_Snapshot_Of (Value)'Old.Kind
+          and then Metadata_Snapshot_Of (Value).Owner =
+            Metadata_Snapshot_Of (Value)'Old.Owner
+          and then Metadata_Snapshot_Of (Value).Epoch =
+            Metadata_Snapshot_Of (Value)'Old.Epoch
+          and then Metadata_Snapshot_Of (Value).Token =
+            Metadata_Snapshot_Of (Value)'Old.Token
+          and then Metadata_Snapshot_Of (Value).File_Id =
+            Metadata_Snapshot_Of (Value)'Old.File_Id
+          and then Metadata_Snapshot_Of (Value).Access_Mode =
+            Metadata_Snapshot_Of (Value)'Old.Access_Mode
+          and then Metadata_Snapshot_Of (Value).Directory =
+            Metadata_Snapshot_Of (Value)'Old.Directory
+          and then Metadata_Snapshot_Of (Value).Delete_File =
+            Metadata_Snapshot_Of (Value)'Old.Delete_File
+          and then Metadata_Snapshot_Of (Value).Name_Length =
+            Metadata_Snapshot_Of (Value)'Old.Name_Length
+          and then Metadata_Snapshot_Of (Value).Expected =
+            Metadata_Snapshot_Of (Value)'Old.Expected
+          and then SMB.Engine.Current_Owner_Id (State) =
+            Metadata_Snapshot_Of (Value).Owner
+          and then SMB.Engine.Current_Epoch (State) =
+            Metadata_Snapshot_Of (Value).Epoch
+          and then SMB.Engine.Current_Phase (State) =
+            SMB.Engine.Share_Connected
+          and then SMB.Engine.Handle_Matches
+            (State, Metadata_Snapshot_Of (Value).Token,
+             Metadata_Snapshot_Of (Value).File_Id,
+             Metadata_Snapshot_Of (Value).Access_Mode,
+             Metadata_Snapshot_Of (Value).Directory)
+          and then not SMB.Engine.Has_Pending_Request (State)
+          and then not SMB.Engine.Has_Validated_Response (State)
+        else Metadata_Stage_Of (Value) = Metadata_Failed
+          and then SMB.Engine.Current_Phase (State) =
+            SMB.Engine.Disconnected);
+   procedure Abort_Metadata
+     (Value : in out Metadata_Operation;
+      State : in out SMB.Engine.Engine_State;
+      Status : out SMB.Core_Status)
+   with Post =>
+     (if Metadata_Snapshot_Of (Value)'Old.Stage not in
+           Metadata_Prepared | Metadata_Sent
+          or else Metadata_Snapshot_Of (Value)'Old.Owner /=
+            SMB.Engine.Current_Owner_Id (State'Old)
+          or else Metadata_Snapshot_Of (Value)'Old.Epoch /=
+            SMB.Engine.Current_Epoch (State'Old)
+          or else not SMB.Engine.Pending_Request_Matches
+            (State'Old, Metadata_Snapshot_Of (Value)'Old.Expected)
+      then Status = SMB.Invalid_State_Status
+        and then Metadata_Snapshot_Of (Value) =
+          Metadata_Snapshot_Of (Value)'Old
+        and then State = State'Old)
+     and then
+     (if Status = SMB.Invalid_State_Status then
+        Metadata_Snapshot_Of (Value).Stage =
+          Metadata_Snapshot_Of (Value)'Old.Stage
+        and then Metadata_Snapshot_Of (Value).Kind =
+          Metadata_Snapshot_Of (Value)'Old.Kind
+        and then Metadata_Snapshot_Of (Value).Owner =
+          Metadata_Snapshot_Of (Value)'Old.Owner
+        and then Metadata_Snapshot_Of (Value).Epoch =
+          Metadata_Snapshot_Of (Value)'Old.Epoch
+        and then Metadata_Snapshot_Of (Value).Token =
+          Metadata_Snapshot_Of (Value)'Old.Token
+        and then Metadata_Snapshot_Of (Value).File_Id =
+          Metadata_Snapshot_Of (Value)'Old.File_Id
+        and then Metadata_Snapshot_Of (Value).Access_Mode =
+          Metadata_Snapshot_Of (Value)'Old.Access_Mode
+        and then Metadata_Snapshot_Of (Value).Directory =
+          Metadata_Snapshot_Of (Value)'Old.Directory
+        and then Metadata_Snapshot_Of (Value).Expected =
+          Metadata_Snapshot_Of (Value)'Old.Expected
+        and then Metadata_Snapshot_Of (Value).Delete_File =
+          Metadata_Snapshot_Of (Value)'Old.Delete_File
+        and then Metadata_Snapshot_Of (Value).Name_Length =
+          Metadata_Snapshot_Of (Value)'Old.Name_Length
+        and then State = State'Old
+      elsif Status = SMB.Ok then
+        Metadata_Stage_Of (Value) = Metadata_Failed
+        and then SMB.Engine.Current_Phase (State) =
+          SMB.Engine.Disconnected);
+
    function Access_Mask
      (Mode : SMB.Engine.Access_Kind;
       Delete_Access : Boolean) return SMB.DWord is
@@ -1412,6 +1740,122 @@ private
       Close_Token : SMB.Engine.Handle_Token := (others => 0);
       File_Id : SMB.Bytes (0 .. 15) := (others => 0);
    end record;
+
+   type Metadata_Operation is limited record
+      Kind : Metadata_Kind := No_Metadata;
+      Stage : Metadata_Stage := Metadata_Idle;
+      Owner, Epoch : SMB.QWord := 0;
+      Token : SMB.Engine.Handle_Token := (others => 0);
+      File_Id : SMB.Bytes (0 .. 15) := (others => 0);
+      Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      Directory : Boolean := False;
+      Delete_File : Boolean := False;
+      Name_Length : Natural := 0;
+      Expected : SMB.Engine.Request_Expectation;
+   end record;
+
+   function Metadata_Preparation_Context_Matches
+     (Snapshot : Metadata_State_Snapshot;
+      State : SMB.Engine.Engine_State;
+      Token : SMB.Engine.Handle_Token) return Boolean is
+     (Snapshot.Stage = Metadata_Idle
+      and then SMB.Engine.Current_Phase (State) =
+        SMB.Engine.Share_Connected
+      and then not SMB.Engine.Has_Pending_Request (State)
+      and then not SMB.Engine.Has_Validated_Response (State)
+      and then Token.Owner = SMB.Engine.Current_Owner_Id (State)
+      and then Token.Epoch = SMB.Engine.Current_Epoch (State)
+      and then Token.Ticket /= 0
+      and then SMB.Engine.Valid_Handle (State, Token, False, False));
+
+   function Metadata_Continuation_Context_Matches
+     (Snapshot : Metadata_State_Snapshot;
+      State : SMB.Engine.Engine_State) return Boolean is
+     (Snapshot.Stage = Metadata_Sent
+      and then Snapshot.Expected.Command = 17
+      and then Snapshot.Expected.Signed
+      and then Snapshot.Expected.Request_Signed
+      and then Snapshot.Owner = SMB.Engine.Current_Owner_Id (State)
+      and then Snapshot.Epoch = SMB.Engine.Current_Epoch (State)
+      and then SMB.Engine.Current_Phase (State) =
+        SMB.Engine.Share_Connected
+      and then SMB.Engine.Handle_Matches
+        (State, Snapshot.Token, Snapshot.File_Id, Snapshot.Access_Mode,
+         Snapshot.Directory)
+      and then SMB.Engine.Pending_Request_Matches
+        (State, Snapshot.Expected));
+
+   function Metadata_Packet_Matches
+     (Value : Metadata_Operation;
+      State : SMB.Engine.Engine_State;
+      Packet : SMB.Bytes;
+      Used : Natural) return Boolean is
+     (Value.Stage = Metadata_Prepared
+      and then Value.Kind in Rename_Metadata | Disposition_Metadata
+      and then Value.Owner = SMB.Engine.Current_Owner_Id (State)
+      and then Value.Epoch = SMB.Engine.Current_Epoch (State)
+      and then Value.Token.Owner = Value.Owner
+      and then Value.Token.Epoch = Value.Epoch
+      and then Value.Token.Ticket /= 0
+      and then SMB.Engine.Pending_Request_Matches (State, Value.Expected)
+      and then Value.Expected.Command = 17
+      and then Value.Expected.Request_Signed
+      and then Value.Expected.Signed
+      and then Value.Expected.Request_Amount = 0
+      and then Value.Name_Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+      and then Used <= Packet'Length
+      and then Used =
+        (if Value.Kind = Disposition_Metadata
+         then SMB.Core_Wire.Header_Size + 33
+         else SMB.Core_Wire.Header_Size + 52 + Value.Name_Length)
+      and then SMB.Core_Wire.Encoded_U16 (Packet, 4) =
+        SMB.Word (SMB.Core_Wire.Header_Size)
+      and then SMB.Core_Wire.Encoded_U16 (Packet, 12) = 17
+      and then SMB.Core_Wire.Encoded_U32 (Packet, 16) = 8
+      and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
+        Value.Expected.Message_Id
+      and then SMB.Core_Wire.Encoded_U32 (Packet, 36) =
+        Value.Expected.Tree_Id
+      and then SMB.Core_Wire.Encoded_U64 (Packet, 40) =
+        Value.Expected.Session_Id
+      and then SMB.Core_Wire.Encoded_U16
+        (Packet, SMB.Core_Wire.Header_Size) = 33
+      and then Packet
+        (Packet'First + SMB.Core_Wire.Header_Size + 2) = 1
+      and then SMB.Core_Wire.Encoded_U16
+        (Packet, SMB.Core_Wire.Header_Size + 8) = 96
+      and then
+        (for all Index in 10 .. 15 =>
+           Packet
+             (Packet'First + SMB.Core_Wire.Header_Size + Index) = 0)
+      and then
+        (for all Index in 0 .. 15 =>
+           Packet
+             (Packet'First + SMB.Core_Wire.Header_Size + 16 + Index) =
+               Value.File_Id (Value.File_Id'First + Index))
+      and then
+        (if Value.Kind = Disposition_Metadata then
+           Packet
+             (Packet'First + SMB.Core_Wire.Header_Size + 3) = 13
+           and then SMB.Core_Wire.Encoded_U32
+             (Packet, SMB.Core_Wire.Header_Size + 4) = 1
+           and then Packet
+             (Packet'First + SMB.Core_Wire.Header_Size + 32) =
+               (if Value.Delete_File then 1 else 0)
+         else
+           Value.Name_Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+           and then Packet
+             (Packet'First + SMB.Core_Wire.Header_Size + 3) = 10
+           and then SMB.Core_Wire.Encoded_U32
+             (Packet, SMB.Core_Wire.Header_Size + 4) =
+               SMB.DWord (20 + Value.Name_Length)
+           and then
+             (for all Index in 32 .. 47 =>
+                Packet
+                  (Packet'First + SMB.Core_Wire.Header_Size + Index) = 0)
+           and then SMB.Core_Wire.Encoded_U32
+             (Packet, SMB.Core_Wire.Header_Size + 48) =
+               SMB.DWord (Value.Name_Length)));
 
    function Identity_Of (Value : Transfer) return Transfer_Identity is
      ((Kind => Value.Kind, Owner => Value.Owner, Epoch => Value.Epoch,

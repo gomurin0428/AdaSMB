@@ -21,7 +21,7 @@ These are the implementations called by `SMB.Client`, not a parallel model.
 | `SMB.Core_Wire` | Bounded integer readers/writers, SMB header construction/correlation validation and signing |
 | `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, transfer arithmetic and pagination limits |
-| `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; packet construction/signing, send acknowledgement, validated completion and handle updates |
+| `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Engine` | Phases, pending requests, signed response acceptance, single-use response receipts and handle identity/lifetime |
 
 Supported response bodies are parsed in the core after header/correlation and
@@ -49,9 +49,19 @@ sequence, restart flag, bounded 64-KiB validated page snapshot, entry cursor,
 and page/entry limits. It validates and copies each page before parsing entries
 from the owned snapshot. `List_Directory` pumps socket frames and extracts
 owned UTF-16 names; decoding, dot-entry filtering, vector insertion, folder
-lifetime, and cleanup remain trusted facade responsibilities. Other public
-operation paths remain on the legacy `SMB.Client.Exchange` adapter and are not
-claimed as migrated by this stage.
+lifetime, and cleanup remain trusted facade responsibilities.
+
+`SMB.Client` disposition and rename paths now use the separate
+`SMB.Core_Client.Metadata_Operation` lifecycle for SET_INFO request construction,
+signing, response validation, and receipt consumption. `Execute_Metadata`
+remains a trusted socket pump; path validation and UTF-16 conversion,
+allocation, temporary-handle lifetime, cleanup, and exception/NTSTATUS
+translation stay in the facade. Engine access flags do not prove DELETE
+authorization, and no server-side effect, rollback, or exactly-once guarantee
+is claimed. The public `Open_File`, `Close`, `Make_Directory`, `Remove_File`,
+and `Remove_Directory` wrappers use typed CREATE/CLOSE/SET_INFO flows while
+retaining trusted path and object-lifetime orchestration. `Connect`,
+`Connect_Share`, and `Disconnect` remain on the legacy `Exchange` adapter.
 
 Proof covers language-defined run-time checks, initialization, flow analysis and
 the contracts actually written in the source. It does not prove that every
@@ -83,7 +93,9 @@ understate this boundary.
 | `SMB.Client` | `Read`, `Write` | I/O pump around the typed coordinator, exact returned packet forwarding, allocation, exception/NTSTATUS translation, and cleanup of invalidated transports |
 | `SMB.Client` | `Authenticate` | I/O pump for `SMB.Core_Client` authentication steps; caller/OS entropy, clock input, exception/NTSTATUS translation and transport cleanup |
 | `SMB.Client` | `List_Directory` | Trusted folder lifetime and cleanup, UTF-16 decoding, dot-entry filtering, vector allocation/insertion, exception translation and socket pumping around the typed directory coordinator. |
-| `SMB.Client` | `Set_Disposition`, `Connect`, `Connect_Share`, `Open_File`, `Close`, `Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename`, `Disconnect` | Legacy operation sequencing, local object lifetime and recovery. These paths remain unmigrated; their existing `Exchange` adapter is outside the authentication, CREATE/CLOSE, READ/WRITE and directory-enumeration proof scopes. |
+| `SMB.Client` | `Open_File`, `Close`, `Make_Directory`, `Remove_File`, `Remove_Directory` | Public wrappers over typed CREATE/CLOSE/SET_INFO flows; path validation/conversion, local object and temporary-handle lifetime, cleanup, and exception/NTSTATUS translation remain trusted. |
+| `SMB.Client` | `Connect`, `Connect_Share`, `Disconnect` | Legacy operation sequencing and recovery through the trusted `Exchange` adapter. |
+| `SMB.Client` | `Execute_Metadata`, `Set_Disposition`, `Rename` | Trusted SET_INFO socket orchestration, path validation and UTF-16 encoding, allocation, temporary-handle lifetime, cleanup, and exception/NTSTATUS translation. DELETE authorization and server-side disposition/rename effects are outside the proof. |
 
 Tests and the example are outside the proof project. Their successful execution
 does not make the above bodies formally verified.
@@ -105,5 +117,12 @@ does not make the above bodies formally verified.
 * Cryptographic hardness, generated machine code's timing/side-channel resistance,
   secure key erasure, FIPS certification, complete SMB conformance, all servers
   and Windows-native operation are not established.
+* The SET_INFO coordinator proves bounded disposition/rename body construction,
+  signed command-17 request framing, validated response correlation and
+  single-use receipt consumption while preserving validated file/directory
+  handle identity. The facade pump remains trusted. Integration demonstrates a
+  remote rename effect even when a deliberately malformed signed response
+  causes local `Protocol_Error` and disconnect; rollback and exactly-once
+  semantics are not claimed.
 * No `Assume`, `False_Positive`, or SPARK-off body substitutes for proof.
   `make prove` uses checks-as-errors. CI is not run automatically.

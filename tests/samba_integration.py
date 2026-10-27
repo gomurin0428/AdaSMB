@@ -237,6 +237,31 @@ def main() -> int:
                     run([str(ROOT / "build/bin/cleanup_client")], env=directory_env)
                 finally:
                     proxy.join()
+                set_info_content = b"set-info-renamed-content"
+                (share / "set-info-source.txt").write_bytes(set_info_content)
+                proxy_port = PORT + 12
+                set_info_mode = "malformed-signed-set-info"
+                proxy = AdversarialProxy(
+                    set_info_mode, proxy_port, PORT, user=USER, password=PASSWORD
+                )
+                proxy.start()
+                set_info_env = env.copy()
+                set_info_env.update(
+                    SMB_TEST_HOST="127.0.0.1",
+                    SMB_TEST_PORT=str(proxy_port),
+                    SMB_TEST_BACKEND_PORT=str(PORT),
+                    SMB_TEST_MODE=set_info_mode,
+                )
+                try:
+                    run([str(ROOT / "build/bin/cleanup_client")], env=set_info_env)
+                finally:
+                    proxy.join()
+                renamed = share / "set-info-renamed.txt"
+                if (share / "set-info-source.txt").exists():
+                    raise RuntimeError("SET_INFO source file still exists after rename")
+                if not renamed.is_file() or renamed.read_bytes() != set_info_content:
+                    raise RuntimeError("SET_INFO remote rename effect/content mismatch")
+                renamed.unlink()
             finally:
                 try:
                     os.killpg(daemon.pid, signal.SIGTERM)

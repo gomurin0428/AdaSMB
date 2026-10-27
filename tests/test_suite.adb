@@ -1118,6 +1118,8 @@ procedure Test_Suite is
 
    procedure Test_Engine_Receipts is
       use type SMB.Core_Client.Directory_Stage;
+      use type SMB.Core_Client.Metadata_Stage;
+      use type SMB.Core_Client.Metadata_State_Snapshot;
       State : SMB.Engine.Engine_State;
       Foreign_State : SMB.Engine.Engine_State;
       Status : SMB.Core_Status;
@@ -1266,7 +1268,8 @@ procedure Test_Suite is
       procedure Create_Directory_Handle
         (Target : in out SMB.Engine.Engine_State;
          Create_Operation : in out SMB.Core_Client.Operation;
-         Result_Token : out SMB.Engine.Handle_Token)
+         Result_Token : out SMB.Engine.Handle_Token;
+         Is_Directory : Boolean := True)
       is
          Request : SMB.Bytes (0 .. 121) := (others => 0);
          Response : SMB.Bytes (0 .. 151) := (others => 0);
@@ -1274,7 +1277,8 @@ procedure Test_Suite is
       begin
          SMB.Core_Client.Prepare_Create
            (Create_Operation, Target, SMB.Bytes'(0, 0),
-            SMB.Engine.Read_Only, False, 1, True, Request, Used, Status);
+            SMB.Engine.Read_Only, False, 1, Is_Directory,
+            Request, Used, Status);
          Assert (Status = SMB.Ok and then Used = Request'Length,
                  "prepare directory test handle");
          SMB.Core_Client.Send_Succeeded (Create_Operation, Target, Status);
@@ -2496,6 +2500,560 @@ procedure Test_Suite is
             "tampered transfer response advanced progress or kept the session");
       end;
       Test_Directory_Coordinator;
+      Reconnect_Share;
+      declare
+         Metadata : SMB.Core_Client.Metadata_Operation;
+         False_Metadata : SMB.Core_Client.Metadata_Operation;
+         Rename_Metadata : SMB.Core_Client.Metadata_Operation;
+         Error_Metadata : SMB.Core_Client.Metadata_Operation;
+         Malformed_Metadata : SMB.Core_Client.Metadata_Operation;
+         Bad_Signature_Metadata : SMB.Core_Client.Metadata_Operation;
+         Create_Op : SMB.Core_Client.Operation;
+         File_Create_Op : SMB.Core_Client.Operation;
+         Signature_Create_Op : SMB.Core_Client.Operation;
+         Metadata_Token : SMB.Engine.Handle_Token;
+         File_Token : SMB.Engine.Handle_Token;
+         Signature_Token : SMB.Engine.Handle_Token;
+         Request : SMB.Bytes (0 .. 96) := (others => 0);
+         Rename_Request : SMB.Bytes (3 .. 122) := (others => 0);
+         Short_Request : SMB.Bytes (0 .. 95) := (others => 0);
+         Response : SMB.Bytes (0 .. 71) := (others => 0);
+         Metadata_Used : Natural;
+         Checked_Id : SMB.Bytes (0 .. 15);
+         Checked_Access : SMB.Engine.Access_Kind;
+         Checked_Directory : Boolean;
+         Expected_Metadata : SMB.Engine.Request_Expectation;
+         Before_Metadata_State : SMB.Engine.Engine_State;
+         Before_Metadata_Context : SMB.Core_Client.Metadata_State_Snapshot;
+         Before_Invalid_State : SMB.Engine.Engine_State;
+         Before_Invalid_Context : SMB.Core_Client.Metadata_State_Snapshot;
+         Name : constant SMB.Bytes (7 .. 10) := (16#41#, 0, 16#42#, 0);
+         Odd_Name : constant SMB.Bytes (4 .. 6) := (16#41#, 0, 16#42#);
+      begin
+         Create_Directory_Handle (State, Create_Op, Metadata_Token);
+         SMB.Core_Client.Prepare_Disposition
+           (Metadata, State, Metadata_Token, True, Request,
+            Metadata_Used, Status);
+         Expected_Metadata :=
+           (Command => SMB.Core_Wire.Command_Code (17),
+            Message_Id => SMB.Wire.U64 (Request, 24),
+            Tree_Id => Tree_Id,
+            Session_Id => Session_Id,
+            Match_Tree => True,
+            Match_Session => True,
+            Request_Signed => True,
+            Signed => True,
+            Request_Amount => 0,
+            Close_Token => (others => 0));
+         Assert
+           (Status = SMB.Ok and then Metadata_Used = 97
+            and then SMB.Core_Wire.Encoded_U16 (Request, 4) = 64
+            and then SMB.Core_Wire.Encoded_U16 (Request, 6) = 1
+            and then SMB.Core_Wire.Encoded_U16 (Request, 12) = 17
+            and then SMB.Core_Wire.Encoded_U32 (Request, 16) = 8
+            and then SMB.Core_Wire.Encoded_U32 (Request, 36) = Tree_Id
+            and then SMB.Core_Wire.Encoded_U64 (Request, 40) = Session_Id
+            and then SMB.Core_Wire.Encoded_U16 (Request, 64) = 33
+            and then Request (66) = 1 and then Request (67) = 13
+            and then SMB.Core_Wire.Encoded_U32 (Request, 68) = 1
+            and then SMB.Core_Wire.Encoded_U16 (Request, 72) = 96
+            and then SMB.Core_Wire.Encoded_U16 (Request, 74) = 0
+            and then SMB.Core_Wire.Encoded_U32 (Request, 76) = 0
+            and then Request (80 .. 95) = File_Id
+            and then Request (96) = 1
+            and then SMB.Engine.Pending_Request_Matches
+              (State, Expected_Metadata),
+            "SET_INFO disposition packet");
+         Assert
+           (SMB.Wire.Verify_Signature
+              (Request, SMB.Engine.Current_Signing_Key (State)),
+            "signed SET_INFO disposition request");
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Before_Metadata_State := State;
+         Before_Metadata_Context :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Metadata);
+         SMB.Core_Client.Complete_Metadata
+           (Metadata, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Metadata_Stage_Of (Metadata) =
+              SMB.Core_Client.Metadata_Prepared
+            and then SMB.Engine.Has_Pending_Request (State)
+            and then SMB.Engine."=" (State, Before_Metadata_State)
+            and then SMB.Core_Client.Metadata_Snapshot_Of (Metadata) =
+              Before_Metadata_Context,
+            "SET_INFO completion before acknowledgement made progress");
+         SMB.Core_Client.Metadata_Send_Succeeded
+           (Metadata, State, Status);
+         Assert (Status = SMB.Ok, "SET_INFO send acknowledgement");
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 2;
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete_Metadata
+           (Metadata, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Core_Client.Metadata_Stage_Of (Metadata) =
+              SMB.Core_Client.Metadata_Finished
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State),
+            "SET_INFO completion status and receipt");
+         SMB.Engine.Validate_Handle
+           (State, Metadata_Token, False, False, Checked_Id,
+            Checked_Access, Checked_Directory, Status);
+         Assert
+           (Status = SMB.Ok and then Checked_Id = File_Id
+            and then Checked_Directory,
+            "SET_INFO completion preserves handle");
+         Before_Metadata_State := State;
+         Before_Metadata_Context :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Metadata);
+         SMB.Core_Client.Complete_Metadata
+           (Metadata, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Metadata_Stage_Of (Metadata) =
+              SMB.Core_Client.Metadata_Finished
+            and then SMB.Engine."=" (State, Before_Metadata_State)
+            and then SMB.Core_Client.Metadata_Snapshot_Of (Metadata) =
+              Before_Metadata_Context,
+            "SET_INFO duplicate completion made progress");
+         SMB.Core_Client.Prepare_Disposition
+           (False_Metadata, State, Metadata_Token, False, Request,
+            Metadata_Used, Status);
+         Assert (Status = SMB.Ok and then Request (96) = 0,
+                 "SET_INFO disposition false");
+         SMB.Core_Client.Metadata_Send_Succeeded
+           (False_Metadata, State, Status);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 2;
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete_Metadata
+           (False_Metadata, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State),
+            "SET_INFO false disposition completion");
+         SMB.Core_Client.Prepare_Rename
+           (Rename_Metadata, State, Metadata_Token, Name, Rename_Request,
+            Metadata_Used, Status);
+         Expected_Metadata :=
+           (Command => SMB.Core_Wire.Command_Code (17),
+            Message_Id => SMB.Wire.U64 (Rename_Request, 24),
+            Tree_Id => Tree_Id,
+            Session_Id => Session_Id,
+            Match_Tree => True,
+            Match_Session => True,
+            Request_Signed => True,
+            Signed => True,
+            Request_Amount => 0,
+            Close_Token => (others => 0));
+         Assert
+            (Status = SMB.Ok and then Metadata_Used = 120
+            and then SMB.Core_Wire.Encoded_U16 (Rename_Request, 4) = 64
+            and then SMB.Core_Wire.Encoded_U16 (Rename_Request, 6) = 1
+            and then SMB.Core_Wire.Encoded_U16 (Rename_Request, 12) = 17
+            and then SMB.Core_Wire.Encoded_U32 (Rename_Request, 16) = 8
+            and then SMB.Core_Wire.Encoded_U32 (Rename_Request, 36) = Tree_Id
+            and then SMB.Core_Wire.Encoded_U64 (Rename_Request, 40) =
+              Session_Id
+            and then SMB.Core_Wire.Encoded_U16 (Rename_Request, 64) = 33
+            and then Rename_Request (Rename_Request'First + 66) = 1
+            and then Rename_Request (Rename_Request'First + 67) = 10
+            and then SMB.Core_Wire.Encoded_U32 (Rename_Request, 68) = 24
+            and then SMB.Core_Wire.Encoded_U16 (Rename_Request, 72) = 96
+            and then SMB.Core_Wire.Encoded_U16 (Rename_Request, 74) = 0
+            and then SMB.Core_Wire.Encoded_U32 (Rename_Request, 76) = 0
+            and then Rename_Request (Rename_Request'First + 80 ..
+                                     Rename_Request'First + 95) = File_Id
+            and then Rename_Request (Rename_Request'First + 96) = 0
+            and then Rename_Request (Rename_Request'First + 97) = 0
+            and then SMB.Core_Wire.Encoded_U16 (Rename_Request, 98) = 0
+            and then SMB.Core_Wire.Encoded_U64 (Rename_Request, 104) = 0
+            and then Rename_Request (Rename_Request'First + 66) = 1
+            and then SMB.Wire.U32 (Rename_Request, 112) = 4
+            and then Rename_Request (Rename_Request'First + 116 ..
+                                     Rename_Request'First + 119) = Name
+            and then SMB.Engine.Pending_Request_Matches
+              (State, Expected_Metadata),
+            "SET_INFO rename body and nonzero bounds");
+         Assert
+           (SMB.Wire.Verify_Signature
+              (Rename_Request, SMB.Engine.Current_Signing_Key (State)),
+            "signed SET_INFO rename request");
+         SMB.Core_Client.Metadata_Send_Succeeded
+           (Rename_Metadata, State, Status);
+         Assert (Status = SMB.Ok, "SET_INFO rename acknowledgement");
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Rename_Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 2;
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete_Metadata
+           (Rename_Metadata, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Core_Client.Metadata_Stage_Of (Rename_Metadata) =
+              SMB.Core_Client.Metadata_Finished,
+            "SET_INFO rename completion");
+
+         Create_Directory_Handle
+           (State, File_Create_Op, File_Token, Is_Directory => False);
+         SMB.Core_Client.Prepare_Disposition
+           (Error_Metadata, State, File_Token, True, Request,
+            Metadata_Used, Status);
+         Assert (Status = SMB.Ok, "SET_INFO file disposition preparation");
+         SMB.Core_Client.Metadata_Send_Succeeded
+           (Error_Metadata, State, Status);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         SMB.Wire.Put_U32 (Response, 8, SMB.Status_Access_Denied);
+         Response (64) := 9;
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete_Metadata
+           (Error_Metadata, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Status_Access_Denied
+            and then SMB.Core_Client.Metadata_Stage_Of (Error_Metadata) =
+              SMB.Core_Client.Metadata_Finished
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State),
+            "SET_INFO signed NTSTATUS preserves usable state");
+         SMB.Engine.Validate_Handle
+           (State, File_Token, False, False, Checked_Id,
+            Checked_Access, Checked_Directory, Status);
+         Assert
+           (Status = SMB.Ok and then Checked_Id = File_Id
+            and then Checked_Access = SMB.Engine.Read_Only
+            and then not Checked_Directory,
+            "SET_INFO file handle remains usable after NTSTATUS");
+
+         Before_Invalid_State := State;
+         Before_Invalid_Context :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Malformed_Metadata);
+         SMB.Core_Client.Prepare_Rename
+           (Malformed_Metadata, State, File_Token, Odd_Name, Rename_Request,
+            Metadata_Used, Status);
+         Assert
+           (Status = SMB.Invalid_Length and then Metadata_Used = 0
+            and then SMB.Core_Client.Metadata_Stage_Of (Malformed_Metadata) =
+              SMB.Core_Client.Metadata_Idle
+            and then SMB.Engine."=" (State, Before_Invalid_State)
+            and then SMB.Core_Client.Metadata_Snapshot_Of
+              (Malformed_Metadata) = Before_Invalid_Context,
+            "SET_INFO odd rename rejected without progress");
+         SMB.Core_Client.Prepare_Rename
+           (Malformed_Metadata, State, File_Token, SMB.Bytes'(1 .. 0 => 0),
+            Rename_Request, Metadata_Used, Status);
+         Assert
+           (Status = SMB.Invalid_Length and then Metadata_Used = 0
+            and then SMB.Engine."=" (State, Before_Invalid_State)
+            and then SMB.Core_Client.Metadata_Snapshot_Of
+              (Malformed_Metadata) = Before_Invalid_Context,
+                 "SET_INFO empty rename rejected");
+         SMB.Core_Client.Prepare_Rename
+           (Malformed_Metadata, State, File_Token, Name, Short_Request,
+            Metadata_Used, Status);
+         Assert
+           (Status = SMB.Resource_Limit and then Metadata_Used = 0
+            and then SMB.Engine."=" (State, Before_Invalid_State)
+            and then SMB.Core_Client.Metadata_Snapshot_Of
+              (Malformed_Metadata) = Before_Invalid_Context,
+            "SET_INFO short output rejected");
+         SMB.Core_Client.Prepare_Rename
+           (Malformed_Metadata, State, File_Token, Name, Rename_Request,
+            Metadata_Used, Status);
+         SMB.Core_Client.Metadata_Send_Succeeded
+           (Malformed_Metadata, State, Status);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Rename_Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 3;
+         SMB.Wire.Sign (Response, Key);
+         SMB.Core_Client.Complete_Metadata
+           (Malformed_Metadata, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_Protocol
+            and then SMB.Core_Client.Metadata_Stage_Of (Malformed_Metadata) =
+              SMB.Core_Client.Metadata_Failed
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected,
+            "SET_INFO malformed signed success invalidated state");
+         SMB.Core_Client.Prepare_Disposition
+           (Malformed_Metadata, State, File_Token, False, Request,
+            Metadata_Used, Status);
+         Assert (Status = SMB.Invalid_State_Status and then Metadata_Used = 0,
+                 "SET_INFO failed operation cannot be retried");
+
+         Reconnect_Share;
+         Create_Directory_Handle
+           (State, Signature_Create_Op, Signature_Token,
+            Is_Directory => False);
+         SMB.Core_Client.Prepare_Disposition
+           (Bad_Signature_Metadata, State, Signature_Token, False, Request,
+            Metadata_Used, Status);
+         SMB.Core_Client.Metadata_Send_Succeeded
+           (Bad_Signature_Metadata, State, Status);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 2;
+         SMB.Wire.Sign (Response, Key);
+         Response (48) := Response (48) xor 1;
+         SMB.Core_Client.Complete_Metadata
+           (Bad_Signature_Metadata, State, Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Signature_Error
+            and then SMB.Core_Client.Metadata_Stage_Of
+              (Bad_Signature_Metadata) = SMB.Core_Client.Metadata_Failed
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected,
+            "SET_INFO tampered signature did not invalidate state");
+         SMB.Core_Client.Prepare_Disposition
+           (Bad_Signature_Metadata, State, Signature_Token, False, Request,
+            Metadata_Used, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status and then Metadata_Used = 0,
+            "SET_INFO signature failure cannot be retried");
+      end;
+      declare
+         Owner_Create : SMB.Core_Client.Operation;
+         Foreign_Create : SMB.Core_Client.Operation;
+         Owner_Metadata : SMB.Core_Client.Metadata_Operation;
+         Foreign_Metadata : SMB.Core_Client.Metadata_Operation;
+         Owner_Token : SMB.Engine.Handle_Token;
+         Foreign_Metadata_Token : SMB.Engine.Handle_Token;
+         Owner_Packet : SMB.Bytes (0 .. 96) := (others => 0);
+         Foreign_Packet : SMB.Bytes (0 .. 96) := (others => 0);
+         Metadata_Response : SMB.Bytes (0 .. 71) := (others => 0);
+         Owner_Used : Natural;
+         Foreign_Used : Natural;
+         Owner_State_Before : SMB.Engine.Engine_State;
+         Foreign_State_Before : SMB.Engine.Engine_State;
+         Owner_Metadata_Before : SMB.Core_Client.Metadata_State_Snapshot;
+         Foreign_Metadata_Before : SMB.Core_Client.Metadata_State_Snapshot;
+         Owner_Id_Before : SMB.QWord;
+         Owner_Epoch_Before : SMB.QWord;
+      begin
+         Reconnect_Share (State);
+         Reconnect_Share (Foreign_State);
+         Create_Directory_Handle
+           (State, Owner_Create, Owner_Token, Is_Directory => False);
+         Create_Directory_Handle
+           (Foreign_State, Foreign_Create, Foreign_Metadata_Token,
+            Is_Directory => False);
+         SMB.Core_Client.Prepare_Disposition
+           (Owner_Metadata, State, Owner_Token, False, Owner_Packet,
+            Owner_Used, Status);
+         Assert (Status = SMB.Ok, "SET_INFO owner context prepared");
+         SMB.Core_Client.Prepare_Disposition
+           (Foreign_Metadata, Foreign_State, Foreign_Metadata_Token, False,
+            Foreign_Packet, Foreign_Used, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Wire.U64 (Owner_Packet, 24) =
+              SMB.Wire.U64 (Foreign_Packet, 24),
+            "SET_INFO foreign contexts have colliding request ids");
+         Owner_State_Before := State;
+         Foreign_State_Before := Foreign_State;
+         Owner_Metadata_Before :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata);
+         Foreign_Metadata_Before :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Foreign_Metadata);
+         SMB.Core_Client.Metadata_Send_Succeeded
+           (Owner_Metadata, Foreign_State, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine."=" (State, Owner_State_Before)
+            and then SMB.Engine."=" (Foreign_State, Foreign_State_Before)
+            and then SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata) =
+              Owner_Metadata_Before
+            and then SMB.Core_Client.Metadata_Snapshot_Of
+              (Foreign_Metadata) = Foreign_Metadata_Before,
+            "SET_INFO foreign send context caused no damage");
+
+         SMB.Core_Client.Metadata_Send_Succeeded
+           (Owner_Metadata, State, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Metadata_Stage_Of (Owner_Metadata) =
+              SMB.Core_Client.Metadata_Sent,
+            "SET_INFO owner context acknowledged");
+         Prepare_Response
+           (Metadata_Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Owner_Packet, 24), Tree_Id, Session_Id, True);
+         Metadata_Response (64) := 2;
+         SMB.Wire.Sign (Metadata_Response, Key);
+         Owner_State_Before := State;
+         Foreign_State_Before := Foreign_State;
+         Owner_Metadata_Before :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata);
+         Foreign_Metadata_Before :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Foreign_Metadata);
+         SMB.Core_Client.Complete_Metadata
+           (Owner_Metadata, Foreign_State, Metadata_Response, Nt_Status,
+            Status);
+         Assert
+           (Status = SMB.Invalid_State_Status and then Nt_Status = 0
+            and then SMB.Engine."=" (State, Owner_State_Before)
+            and then SMB.Engine."=" (Foreign_State, Foreign_State_Before)
+            and then SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata) =
+              Owner_Metadata_Before
+            and then SMB.Core_Client.Metadata_Snapshot_Of
+              (Foreign_Metadata) = Foreign_Metadata_Before,
+            "SET_INFO foreign completion context caused no damage");
+         SMB.Core_Client.Abort_Metadata
+           (Owner_Metadata, Foreign_State, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine."=" (State, Owner_State_Before)
+            and then SMB.Engine."=" (Foreign_State, Foreign_State_Before)
+            and then SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata) =
+              Owner_Metadata_Before
+            and then SMB.Core_Client.Metadata_Snapshot_Of
+              (Foreign_Metadata) = Foreign_Metadata_Before,
+            "SET_INFO foreign abort context caused no damage");
+
+         SMB.Engine.Accept_Response
+           (State, Metadata_Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Engine.Has_Validated_Response (State)
+            and then not SMB.Engine.Has_Pending_Request (State),
+            "SET_INFO receipt-preservation fixture response accepted");
+         Owner_State_Before := State;
+         Owner_Metadata_Before :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata);
+         SMB.Core_Client.Abort_Metadata
+           (Owner_Metadata, State, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine."=" (State, Owner_State_Before)
+            and then SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata) =
+              Owner_Metadata_Before,
+            "SET_INFO abort preserves unrelated validated receipt");
+         SMB.Engine.Discard_Response_Receipt (State, Status);
+         Assert
+           (Status = SMB.Ok
+            and then not SMB.Engine.Has_Validated_Response (State),
+            "SET_INFO receipt-preservation fixture receipt discarded");
+
+         SMB.Engine.Begin_Request
+           (State, SMB.Core_Wire.Command_Code (17), True, True,
+            Message_Id, Expected, Status);
+         Assert
+           (Status = SMB.Ok
+            and then Message_Id /= SMB.Wire.U64 (Owner_Packet, 24),
+            "SET_INFO unrelated request has a different message id");
+         Metadata_Response := (others => 0);
+         Prepare_Response
+           (Metadata_Response, SMB.Core_Wire.Command_Code (17),
+            SMB.Wire.U64 (Owner_Packet, 24), Tree_Id, Session_Id, True);
+         Metadata_Response (64) := 2;
+         SMB.Wire.Sign (Metadata_Response, Key);
+         Owner_State_Before := State;
+         Owner_Metadata_Before :=
+           SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata);
+         SMB.Core_Client.Complete_Metadata
+           (Owner_Metadata, State, Metadata_Response, Nt_Status, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status and then Nt_Status = 0
+            and then SMB.Engine."=" (State, Owner_State_Before)
+            and then SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata) =
+              Owner_Metadata_Before,
+            "SET_INFO completion preserves unrelated pending request");
+         SMB.Core_Client.Abort_Metadata
+           (Owner_Metadata, State, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Engine."=" (State, Owner_State_Before)
+            and then SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata) =
+              Owner_Metadata_Before,
+            "SET_INFO abort preserves unrelated pending request");
+
+         Owner_Id_Before := SMB.Engine.Current_Owner_Id (State);
+         Owner_Epoch_Before := SMB.Engine.Current_Epoch (State);
+         SMB.Engine.Invalidate (State, Status);
+         Assert (Status = SMB.Ok, "SET_INFO epoch fixture invalidated");
+         Reconnect_Share (State, Initialize_State => False);
+         Assert
+           (SMB.Engine.Current_Owner_Id (State) = Owner_Id_Before
+            and then SMB.Engine.Current_Epoch (State) /= Owner_Epoch_Before,
+            "SET_INFO same owner reconnected in a new epoch");
+         declare
+            Fresh_Create : SMB.Core_Client.Operation;
+            Fresh_Metadata : SMB.Core_Client.Metadata_Operation;
+            Fresh_Token : SMB.Engine.Handle_Token;
+            Fresh_Packet : SMB.Bytes (0 .. 96) := (others => 0);
+            Fresh_Used : Natural;
+            Fresh_State_Before : SMB.Engine.Engine_State;
+            Fresh_Metadata_Before :
+              SMB.Core_Client.Metadata_State_Snapshot;
+            Old_Metadata_Context : constant
+              SMB.Core_Client.Metadata_State_Snapshot :=
+                SMB.Core_Client.Metadata_Snapshot_Of (Owner_Metadata);
+         begin
+            Create_Directory_Handle
+              (State, Fresh_Create, Fresh_Token, Is_Directory => False);
+            SMB.Core_Client.Prepare_Disposition
+              (Fresh_Metadata, State, Fresh_Token, False, Fresh_Packet,
+               Fresh_Used, Status);
+            Assert
+              (Status = SMB.Ok and then Fresh_Used = 97
+               and then SMB.Wire.U64 (Fresh_Packet, 24) =
+                 SMB.Wire.U64 (Owner_Packet, 24)
+               and then SMB.Engine.Current_Owner_Id (State) = Owner_Id_Before
+               and then SMB.Engine.Current_Epoch (State) /= Owner_Epoch_Before
+               and then Old_Metadata_Context.Stage =
+                 SMB.Core_Client.Metadata_Sent
+               and then Old_Metadata_Context.Owner = Owner_Id_Before
+               and then Old_Metadata_Context.Epoch = Owner_Epoch_Before
+               and then SMB.Engine.Pending_Request_Matches
+                 (State, Old_Metadata_Context.Expected),
+              "SET_INFO stale metadata collides with live wire context");
+            Metadata_Response := (others => 0);
+            Prepare_Response
+              (Metadata_Response, SMB.Core_Wire.Command_Code (17),
+               SMB.Wire.U64 (Owner_Packet, 24), Tree_Id, Session_Id, True);
+            Metadata_Response (64) := 2;
+            SMB.Wire.Sign (Metadata_Response, Key);
+            Fresh_State_Before := State;
+            Fresh_Metadata_Before :=
+              SMB.Core_Client.Metadata_Snapshot_Of (Fresh_Metadata);
+            SMB.Core_Client.Complete_Metadata
+              (Owner_Metadata, State, Metadata_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status and then Nt_Status = 0
+               and then SMB.Engine."=" (State, Fresh_State_Before)
+               and then SMB.Core_Client.Metadata_Snapshot_Of
+                 (Fresh_Metadata) = Fresh_Metadata_Before
+               and then SMB.Core_Client.Metadata_Snapshot_Of
+                 (Owner_Metadata) = Old_Metadata_Context,
+              "SET_INFO stale completion preserves live new-epoch operation");
+            SMB.Core_Client.Abort_Metadata
+              (Owner_Metadata, State, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status
+               and then SMB.Engine."=" (State, Fresh_State_Before)
+               and then SMB.Core_Client.Metadata_Snapshot_Of
+                 (Fresh_Metadata) = Fresh_Metadata_Before
+               and then SMB.Core_Client.Metadata_Snapshot_Of
+                 (Owner_Metadata) = Old_Metadata_Context,
+              "SET_INFO stale abort preserves live new-epoch operation");
+         end;
+         SMB.Engine.Invalidate (State, Status);
+         Assert (Status = SMB.Ok, "SET_INFO state cleanup");
+         SMB.Engine.Invalidate (Foreign_State, Status);
+         Assert (Status = SMB.Ok, "SET_INFO foreign state cleanup");
+      end;
    end Test_Engine_Receipts;
 
    procedure Test_Engine_Malformed_Close is
