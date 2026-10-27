@@ -1,5 +1,45 @@
 # GNATprove and test report
 
+## Exact partial-transport outcomes
+
+`Core_Transport.Receive_Chunk` and `Advance_Write` now specify exact statuses:
+an already complete or out-of-range position returns `Invalid_Offset`; a
+non-progressing/out-of-range native result or an oversized receive chunk
+returns `Invalid_Length`; every valid transfer returns `Ok`. The existing
+byte-copy, untouched-prefix/tail and failure-preservation guarantees remain.
+`Prepare_Write` also specifies its canonical output index on failure.
+
+Focused controls cover extreme native offsets, invalid positions up to
+`Natural'Last`, error precedence, and empty arrays at upper permitted bounds.
+The existing byte-exact partial transfers and maximum frame controls remain.
+No implementation algorithm or accepted protocol policy is changed.
+
+### Validation
+
+The Candidate GNAT14 build, `transport-core` selector, and focused proof of
+`smb-core_transport.adb` passed. To avoid a GNAT 14.1 compiler crash during
+data-representation generation, the exact `Advance_Write` status mapping is
+stated as equivalent status predicates instead of a conditional expression;
+the focused proof completed all three analysis phases.
+
+`make test`, forced strict `make check GPRBUILD="gprbuild -f"`,
+`make transport-test`, and the full root Samba integration passed.
+
+The clean full GNATprove run completed analysis but returned failure because
+one check remained unproved: `SMB.Core_Connection.Prepare_Tree_Connect` at
+`smb-core_connection.ads:142` (`Used <= Output'Length`). That source is
+unchanged and does not directly reference `Core_Transport`; the saved
+preceding proof output marked this postcondition proved, while a targeted
+proof of the unchanged connection unit also failed at this check. This is
+recorded as a localized proof barrier, not waived or weakened. The run
+reported **4,470 checks**
+(709 flow, 3,760 prover), **1 unproved**, **0 justified**, **69 warnings**,
+and **0 `pragma Assume`**. CI and native Windows validation were not run.
+
+Evidence logs are under `/home/ubuntu/transport-progress-outcomes-*`,
+including focused build/unit/proof, final unit/strict/transport/integration
+runs, and the clean full-proof output and summary.
+
 ## Transport loss after an asynchronous interim response
 
 Two additional Samba-backed async proxy modes send a valid `STATUS_PENDING`

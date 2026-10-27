@@ -482,10 +482,71 @@ procedure Test_Suite is
       SMB.Core_Transport.Advance_Write (Chunk, 11, Position, Status);
       Assert (Status = SMB.Ok and then Position = 5, "complete partial send");
       SMB.Core_Transport.Prepare_Write (Chunk, Position, First, Status);
-      Assert (Status = SMB.Invalid_Offset, "completed send has no next slice");
+      Assert (Status = SMB.Invalid_Offset and then First = Chunk'First,
+              "completed send has a canonical failed slice");
       SMB.Core_Transport.Advance_Write (Chunk, 11, Position, Status);
       Assert (Status = SMB.Invalid_Offset and then Position = 5,
               "duplicate completion does not advance");
+      declare
+         Ends : constant array (Positive range 1 .. 4) of
+           Ada.Streams.Stream_Element_Offset :=
+             (Ada.Streams.Stream_Element_Offset'First, 6, 12,
+              Ada.Streams.Stream_Element_Offset'Last);
+         Positions : constant array (Positive range 1 .. 4) of Natural :=
+           (0, 4, 6, Natural'Last);
+         Before : constant SMB.Bytes := Buffer;
+      begin
+         for Initial of Positions loop
+            SMB.Core_Transport.Prepare_Write (Chunk, Initial, First, Status);
+            Assert
+              ((if Initial < Chunk'Length then
+                 Status = SMB.Ok and then First = Chunk'First +
+                   Ada.Streams.Stream_Element_Offset (Initial)
+               else Status = SMB.Invalid_Offset and then First = Chunk'First),
+               "send slice result at boundary position");
+            for Last of Ends loop
+               Position := Initial;
+               SMB.Core_Transport.Receive_Chunk
+                 (Chunk, Last, Buffer, Position, Status);
+               Assert
+                 (Status = (if Initial >= Buffer'Length then SMB.Invalid_Offset
+                            else SMB.Invalid_Length)
+                  and then Position = Initial and then Buffer = Before,
+                  "receive failure status precedence and preservation");
+               Position := Initial;
+               SMB.Core_Transport.Advance_Write (Chunk, Last, Position, Status);
+               Assert
+                 (Status = (if Initial >= Chunk'Length then SMB.Invalid_Offset
+                            else SMB.Invalid_Length)
+                  and then Position = Initial,
+                  "send failure status precedence and preservation");
+            end loop;
+         end loop;
+      end;
+      declare
+         Empty : constant Ada.Streams.Stream_Element_Array
+           (SMB.Core_Transport.Maximum_Wire_Size + 1 ..
+            SMB.Core_Transport.Maximum_Wire_Size) := (others => 0);
+         Empty_Buffer : SMB.Bytes (Natural'Last .. Natural'Last - 1) :=
+           (others => 0);
+         Before : constant SMB.Bytes := Buffer;
+      begin
+         Position := 0;
+         SMB.Core_Transport.Receive_Chunk
+           (Empty, Empty'Last, Buffer, Position, Status);
+         Assert (Status = SMB.Invalid_Length and then Position = 0
+                 and then Buffer = Before, "empty chunk preserves receive state");
+         SMB.Core_Transport.Receive_Chunk
+           (Empty, Empty'Last, Empty_Buffer, Position, Status);
+         Assert (Status = SMB.Invalid_Offset and then Position = 0,
+                 "empty destination precedes invalid chunk length");
+         SMB.Core_Transport.Prepare_Write (Empty, Position, First, Status);
+         Assert (Status = SMB.Invalid_Offset and then First = Empty'First,
+                 "empty send canonical slice at maximum bound");
+         SMB.Core_Transport.Advance_Write (Empty, Empty'Last, Position, Status);
+         Assert (Status = SMB.Invalid_Offset and then Position = 0,
+                 "empty send keeps position");
+      end;
    end Test_Core_Transport;
 
    procedure Test_Framing is
