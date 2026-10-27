@@ -169,6 +169,8 @@ package body SMB.Core_NTLM is
       State_Seen : Boolean := False;
       Mechanism_Seen : Boolean := False;
       Response_Seen : Boolean := False;
+      Candidate_Offset : Natural := 0;
+      Candidate_Length : Natural := 0;
       Parse_Status : SMB.Core_Status;
       SPNEGO_OID : constant SMB.Bytes :=
         (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#02#);
@@ -240,11 +242,12 @@ package body SMB.Core_NTLM is
       Position := Sequence_Offset;
       while Position < Sequence_End loop
          pragma Loop_Invariant (Position <= Sequence_End);
-         pragma Loop_Invariant (Type2_Offset <= Token'Length);
+         pragma Loop_Invariant (Candidate_Offset <= Token'Length);
          pragma Loop_Invariant
-           (Type2_Length <= Token'Length - Type2_Offset);
+           (Candidate_Length <= Token'Length - Candidate_Offset);
          pragma Loop_Invariant
-           (not Response_Seen or else Type2_Length >= 48);
+           (not Response_Seen or else
+              Challenge_Slice_Valid (Token, Candidate_Offset, Candidate_Length));
          pragma Loop_Variant (Increases => Position);
          Read_TLV
            (Token, Position, Tag, Field_Offset, Field_Length, Parse_Status);
@@ -324,8 +327,8 @@ package body SMB.Core_NTLM is
                Status := SMB.Invalid_Protocol;
                return;
             end if;
-            Type2_Offset := Inner_Offset;
-            Type2_Length := Inner_Length;
+            Candidate_Offset := Inner_Offset;
+            Candidate_Length := Inner_Length;
             Response_Seen := True;
          else
             Status := SMB.Invalid_Protocol;
@@ -342,6 +345,8 @@ package body SMB.Core_NTLM is
          Status := SMB.Invalid_Encoding;
          return;
       end if;
+      Type2_Offset := Candidate_Offset;
+      Type2_Length := Candidate_Length;
       Status := SMB.Ok;
    end Extract_Challenge;
 

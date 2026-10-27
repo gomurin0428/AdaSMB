@@ -3,6 +3,16 @@ with SMB.Crypto;
 package SMB.Core_NTLM is
    pragma SPARK_Mode (On);
 
+   function Challenge_Slice_Valid
+     (Token : SMB.Bytes; Offset, Length : Natural) return Boolean is
+     (Offset <= Token'Length
+      and then Length <= Token'Length - Offset
+      and then Length >= 48
+      and then Token (Token'First + Offset .. Token'First + Offset + 11) =
+        SMB.Bytes'(16#4E#, 16#54#, 16#4C#, 16#4D#, 16#53#, 16#53#,
+                   16#50#, 0, 2, 0, 0, 0))
+   with Ghost, Pre => Token'Length <= 65_535;
+
    function Mechanism_List_MIC
      (Session_Key : SMB.Crypto.Digest_128;
       From_Server : Boolean) return SMB.Crypto.Digest_128;
@@ -16,7 +26,9 @@ package SMB.Core_NTLM is
      Post =>
        Type2_Offset <= Token'Length
        and then Type2_Length <= Token'Length - Type2_Offset
-       and then (if Status = SMB.Ok then Type2_Length >= 48);
+       and then (if Status = SMB.Ok then
+         Challenge_Slice_Valid (Token, Type2_Offset, Type2_Length)
+         else Type2_Offset = 0 and then Type2_Length = 0);
 
    procedure Validate_Final_Token
      (Token : SMB.Bytes;

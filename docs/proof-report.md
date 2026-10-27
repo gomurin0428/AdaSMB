@@ -1,5 +1,62 @@
 # GNATprove and test report
 
+## Challenge extraction contract and malformed-token regression
+
+`SMB.Core_NTLM.Extract_Challenge` now binds successful output to an in-bounds
+slice of at least 48 bytes with the exact NTLMSSP marker and little-endian
+message type 2. Failed extraction returns zero offset and length, including
+late failures after a candidate response field was parsed. A candidate slice
+is published only after the whole supported wrapper is accepted; the accepted
+token language is unchanged.
+
+`challenge-mutations` tests direct NegTokenResp and GSS-wrapped forms with
+rebased arrays. It varies all prefix/header bytes, verifies accept-incomplete
+and request-MIC challenge states, checks all truncations, tests late failures,
+and covers canonical DER length boundaries through the 65,535-byte token limit.
+The payload here is a synthetic Type 2 header fixture: acceptance by this
+extractor does not assert that its credentials, flags or AV pairs are valid.
+Separate Samba modes corrupt the inner NTLM marker or message type while
+leaving the outer SMB security-buffer metadata valid. They must stop before
+sending Type 3, disconnect, clear diagnostics and reconnect/read successfully.
+These unsigned challenges do not establish server authenticity.
+
+### Observed validation
+
+The focused build and `challenge-mutations` selector passed with 45,396 cases.
+A detached baseline at `b9a1a6132c2d47661c671ccaf90114d907f6dd9f` used the
+current tests and the original `src/smb-core_ntlm.ads` and
+`src/smb-core_ntlm.adb`. Its build passed; the selector exited 1 with
+`PROGRAM_ERROR: failed challenge extraction published a partial slice`. This
+is the expected late-error regression: the original parser had extracted the
+valid response before rejecting a later field, leaving nonzero outputs. It was
+not a build/setup failure.
+
+Python syntax compilation, `make test`, and strict
+`make check GPRBUILD="gprbuild -f"` passed. The full local Samba integration
+passed all existing scenarios, including both public challenge modes:
+`challenge-ntlm-signature` and `challenge-ntlm-type`. Each mode rejected the
+mutated challenge before Type 3, disconnected with diagnostics cleared and no
+additional request, then reconnected and read the fixture successfully.
+
+The single clean full proof passed with 4,411 checks: 699 flow and 3,712 prover
+checks, 0 unproved, 0 justified, and 68 GNATprove warnings. Categories: 2 data
+dependencies, 1 flow dependency, 539 initialization, 2 non-aliasing, 2,401
+run-time checks, 292 assertions, 1,013 functional contracts, and 161
+termination checks (155 flow, 6 prover). The `Extract_Challenge` postcondition
+was proved at `smb-core_ntlm.ads:27`.
+
+Evidence logs: `/home/ubuntu/challenge-contract-01-focused-build.log`,
+`/home/ubuntu/challenge-contract-02-selector.log`,
+`/home/ubuntu/challenge-contract-03-baseline-build.log`,
+`/home/ubuntu/challenge-contract-04-baseline-selector.log`,
+`/home/ubuntu/challenge-contract-05-pycompile.log`,
+`/home/ubuntu/challenge-contract-06-make-test.log`,
+`/home/ubuntu/challenge-contract-07-make-check.log`,
+`/home/ubuntu/challenge-contract-08-samba-integration.log`,
+`/home/ubuntu/challenge-contract-09-proof-clean.log`,
+`/home/ubuntu/challenge-contract-10-make-prove.log`, and
+`/home/ubuntu/challenge-contract-11-proof-summary.out`.
+
 ## Final SPNEGO mutation regression scope
 
 `test_suite final-spnego` checks each byte of the known-answer final SPNEGO
