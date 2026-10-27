@@ -178,6 +178,7 @@ class AdversarialProxy:
             read_responses = 0
             error_responses = 0
             teardown_responses: list[int] = []
+            connection_responses: list[int] = []
             completed_logoff = False
             write_requests = 0
             write_responses = 0
@@ -239,6 +240,7 @@ class AdversarialProxy:
                             "read-reserved-fields",
                             "error-reserved-field",
                             "teardown-reserved-fields",
+                            "connection-reserved-fields",
                             "malformed-signed-set-info",
                             "malformed-signed-tree-disconnect",
                         }:
@@ -262,7 +264,11 @@ class AdversarialProxy:
                         recv_exact(backend, int.from_bytes(header[1:4], "big"))
                     )
                     if (
-                        self.mode in {"read-reserved-fields", "error-reserved-field"}
+                        self.mode in {
+                            "read-reserved-fields",
+                            "error-reserved-field",
+                            "connection-reserved-fields",
+                        }
                         and payload[12:14] == b"\x02\x00"
                     ):
                         if len(payload) < 68 or struct.unpack_from("<I", payload, 8)[0]:
@@ -270,6 +276,24 @@ class AdversarialProxy:
                         client.sendall(header + payload)
                         completed_logoff = True
                         break
+                    if (
+                        self.mode == "connection-reserved-fields"
+                        and payload[12:14] == b"\x00\x00"
+                    ):
+                        if (
+                            len(payload) < 128
+                            or struct.unpack_from("<I", payload, 8)[0] != 0
+                            or struct.unpack_from("<I", payload, 16)[0] & 8
+                            or struct.unpack_from("<H", payload, 64)[0] != 65
+                            or struct.unpack_from("<H", payload, 68)[0] != 0x0210
+                        ):
+                            raise RuntimeError("expected unsigned SMB2.1 NEGOTIATE")
+                        payload[70:72] = b"\xFF" * 2
+                        payload[124:128] = b"\xFF" * 4
+                        client.sendall(header + payload)
+                        connection_responses.append(0)
+                        mutated = True
+                        continue
                     if len(payload) >= 64 and (
                         payload[12:14] == b"\x03\x00"
                         or (
@@ -384,6 +408,36 @@ class AdversarialProxy:
                             ).digest()[:16]
                             client.sendall(header + payload)
                             read_responses += 1
+                            mutated = True
+                            continue
+                        elif self.mode == "connection-reserved-fields":
+                            if (
+                                len(payload) < 80
+                                or struct.unpack_from("<I", payload, 8)[0] != 0
+                                or struct.unpack_from("<H", payload, 64)[0] != 16
+                            ):
+                                raise RuntimeError("expected successful TREE_CONNECT")
+                            if session_key is None:
+                                raise RuntimeError("could not derive SMB signing key")
+                            if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                                raise RuntimeError("server TREE_CONNECT was unsigned")
+                            original_signature = bytes(payload[48:64])
+                            payload[48:64] = b"\x00" * 16
+                            expected_signature = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            if not hmac.compare_digest(
+                                original_signature, expected_signature
+                            ):
+                                raise RuntimeError(
+                                    "derived key did not validate TREE_CONNECT signature"
+                                )
+                            payload[67] = 0xFF
+                            payload[48:64] = hmac.new(
+                                session_key, payload, hashlib.sha256
+                            ).digest()[:16]
+                            client.sendall(header + payload)
+                            connection_responses.append(3)
                             mutated = True
                             continue
                         elif self.mode == "teardown-reserved-fields":
@@ -762,6 +816,16 @@ class AdversarialProxy:
                         f"responses={teardown_responses}, "
                         f"tree_disconnect={tree_disconnect_requests}, "
                         f"logoff={logoff_requests}"
+                    )
+            if self.mode == "connection-reserved-fields":
+                if (
+                    connection_responses != [0, 3]
+                    or not completed_logoff
+                    or logoff_requests != 1
+                ):
+                    raise RuntimeError(
+                        "reserved-field connection exchange did not complete: "
+                        f"responses={connection_responses}, logoff={logoff_requests}"
                     )
             if self.mode in DIRECTORY_MODES:
                 if not relay_error or not isinstance(relay_error[0], EOFError):

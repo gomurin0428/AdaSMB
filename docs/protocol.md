@@ -63,6 +63,14 @@ CLOSE の予約 DWORD、TREE_DISCONNECT／LOGOFF の予約 WORD も受信時に
 * [MS-SMB2 2.2.12 TREE_DISCONNECT Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/aeac92de-8db3-48f8-a8b7-bfee28b9fd9e)
 * [MS-SMB2 2.2.8 LOGOFF Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/7539feb4-6fbb-4996-81ac-06863bb1a89e)
 
+NEGOTIATE の `NegotiateContextCount/Reserved` と `NegotiateContextOffset/Reserved2`、
+TREE_CONNECT の `Reserved` も受信時に無視します。方言は 0x0210 だけを受理するため、
+SMB 3.1.1 のコンテキストとして解釈しません。署名有効、セキュリティバッファの境界、
+共有種別、TreeId、暗号化要求の拒否は引き続き検査します。
+
+* [MS-SMB2 2.2.4 NEGOTIATE Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/63abf97c-0d09-47e2-88d6-6bfa552949a5)
+* [MS-SMB2 2.2.10 TREE_CONNECT Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/dd34e26c-a75e-47fa-aab2-6efc27502e96)
+
 ## NTLMv2/SPNEGO
 
 クライアントが出す SPNEGO は NTLM OID だけを含みます。応答は DER の

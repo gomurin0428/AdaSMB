@@ -1387,6 +1387,92 @@ procedure Test_Suite is
       Assert (Status /= SMB.Ok, "duplicate SPNEGO state accepted");
    end Test_Final_Spnego;
 
+   procedure Test_Connection_Reserved is
+      Negotiate : SMB.Bytes (11 .. 138) := (others => 0);
+      Tree : SMB.Bytes (11 .. 90) := (others => 0);
+      type Offset_Array is array (Positive range <>) of Natural;
+      Offsets : constant Offset_Array := (70, 71, 124, 125, 126, 127);
+      Info : SMB.Core_Protocol.Response_Info;
+      Status : SMB.Core_Status;
+   begin
+      SMB.Wire.Put_U16 (Negotiate, 64, 65);
+      SMB.Wire.Put_U16 (Negotiate, 66, 1);
+      SMB.Wire.Put_U16 (Negotiate, 68, SMB.SMB2_Dialect_0210);
+      SMB.Wire.Put_U32 (Negotiate, 96, 65_536);
+      SMB.Wire.Put_U32 (Negotiate, 100, 65_536);
+      for Offset of Offsets loop
+         Negotiate (Negotiate'First + 70 .. Negotiate'First + 71) :=
+           (others => 16#FF#);
+         Negotiate (Negotiate'First + 124 .. Negotiate'First + 127) :=
+           (others => 16#FF#);
+         for Reserved in SMB.Byte loop
+            Negotiate (Negotiate'First + Offset) := Reserved;
+            SMB.Core_Protocol.Parse_Response
+              (Negotiate, SMB.Core_Wire.Command_Code (0),
+               SMB.Success, Info, Status);
+            Assert
+              (Status = SMB.Ok,
+               "SMB2.1 connection reserved fields were not ignored");
+            Assert
+              (Info.Max_Read = 65_536 and then Info.Max_Write = 65_536,
+               "NEGOTIATE reserved fields altered transfer limits");
+         end loop;
+      end loop;
+      SMB.Core_Protocol.Parse_Response
+        (Negotiate (Negotiate'First .. Negotiate'Last - 1),
+         SMB.Core_Wire.Command_Code (0), SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "NEGOTIATE accepted truncated response");
+      SMB.Wire.Put_U16 (Negotiate, 68, 16#0311#);
+      SMB.Core_Protocol.Parse_Response
+        (Negotiate, SMB.Core_Wire.Command_Code (0),
+         SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "NEGOTIATE accepted unsupported dialect");
+      SMB.Wire.Put_U16 (Negotiate, 68, SMB.SMB2_Dialect_0210);
+      SMB.Wire.Put_U16 (Negotiate, 66, 0);
+      SMB.Core_Protocol.Parse_Response
+        (Negotiate, SMB.Core_Wire.Command_Code (0),
+         SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "NEGOTIATE accepted disabled signing");
+      SMB.Wire.Put_U16 (Negotiate, 66, 1);
+      SMB.Wire.Put_U16 (Negotiate, 120, 127);
+      SMB.Wire.Put_U16 (Negotiate, 122, 1);
+      SMB.Core_Protocol.Parse_Response
+        (Negotiate, SMB.Core_Wire.Command_Code (0),
+         SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "NEGOTIATE accepted overlapping security buffer");
+
+      SMB.Wire.Put_U16 (Tree, 64, 16);
+      Tree (Tree'First + 66) := 1;
+      SMB.Wire.Put_U32 (Tree, 36, 7);
+      for Reserved in SMB.Byte loop
+         Tree (Tree'First + 67) := Reserved;
+         SMB.Core_Protocol.Parse_Response
+           (Tree, SMB.Core_Wire.Command_Code (3),
+            SMB.Success, Info, Status);
+         Assert
+           (Status = SMB.Ok and then Info.Tree_Id = 7,
+            "TREE_CONNECT reserved byte changed acceptance or TreeId");
+      end loop;
+      SMB.Core_Protocol.Parse_Response
+        (Tree (Tree'First .. Tree'Last - 1),
+         SMB.Core_Wire.Command_Code (3), SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "TREE_CONNECT accepted truncated response");
+      Tree (Tree'First + 66) := 2;
+      SMB.Core_Protocol.Parse_Response
+        (Tree, SMB.Core_Wire.Command_Code (3), SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "TREE_CONNECT accepted unsupported share type");
+      Tree (Tree'First + 66) := 1;
+      SMB.Wire.Put_U32 (Tree, 68, 16#8000#);
+      SMB.Core_Protocol.Parse_Response
+        (Tree, SMB.Core_Wire.Command_Code (3), SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "TREE_CONNECT accepted encryption requirement");
+      SMB.Wire.Put_U32 (Tree, 68, 0);
+      SMB.Wire.Put_U32 (Tree, 36, 0);
+      SMB.Core_Protocol.Parse_Response
+        (Tree, SMB.Core_Wire.Command_Code (3), SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "TREE_CONNECT accepted zero TreeId");
+   end Test_Connection_Reserved;
+
    procedure Test_Teardown_Reserved is
       type Command_Array is array (Positive range <>) of
         SMB.Core_Wire.Command_Code;
@@ -1698,7 +1784,7 @@ procedure Test_Suite is
       SMB.Core_Protocol.Parse_Response
         (Negotiate_Packet, SMB.Core_Wire.Command_Code (0),
          SMB.Success, Info, Status);
-      Assert (Status /= SMB.Ok, "nonzero NEGOTIATE reserved DWORD accepted");
+      Assert (Status = SMB.Ok, "nonzero NEGOTIATE reserved DWORD rejected");
       Negotiate_Packet (124) := 0;
 
       Packet (64) := 17;
@@ -4740,11 +4826,15 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "directory-bounds"
                  and then Ada.Command_Line.Argument (1) /= "read-reserved"
                  and then Ada.Command_Line.Argument (1) /= "error-reserved"
-                 and then Ada.Command_Line.Argument (1) /= "teardown-reserved")
+                 and then Ada.Command_Line.Argument (1) /= "teardown-reserved"
+                 and then Ada.Command_Line.Argument (1) /= "connection-reserved")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "teardown-reserved" then
+      if Ada.Command_Line.Argument (1) = "connection-reserved" then
+         Test_Connection_Reserved;
+         Ada.Text_IO.Put_Line ("AdaSMB connection reserved-field tests passed");
+      elsif Ada.Command_Line.Argument (1) = "teardown-reserved" then
          Test_Teardown_Reserved;
          Ada.Text_IO.Put_Line ("AdaSMB teardown reserved-field tests passed");
       elsif Ada.Command_Line.Argument (1) = "error-reserved" then
@@ -4792,6 +4882,7 @@ begin
    Test_Read_Reserved;
    Test_Error_Reserved;
    Test_Teardown_Reserved;
+   Test_Connection_Reserved;
    Test_Directory_Bounds;
    Test_Engine_Malformed_Close;
    Test_Engine_Receipts;
