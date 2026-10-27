@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MS-NLMP 2.2.1.2: ignore TargetNameFields when REQUEST_TARGET is clear.
+"""MS-NLMP 2.2.1.2: optional names, fixed headers and payload placement.
 
 The raw challenge is still part of the MIC transcript. Other negotiation
 requirements and active TargetName/TargetInfo bounds remain enforced.
@@ -8,6 +8,7 @@ requirements and active TargetName/TargetInfo bounds remain enforced.
 from __future__ import annotations
 
 import struct
+from itertools import product
 
 from ntlm_av_conformance import (
     COMPUTER, DOMAIN, EOL, FLAGS, av, challenge_token, expected_auth,
@@ -71,6 +72,62 @@ def fixtures() -> list[tuple[str, str]]:
         raw = ignored.copy()
         struct.pack_into("<I", raw, 44, offset)
         add("TargetInfo offset remains validated", raw, False)
+
+    info = b"".join(av(k, v) for k, v in pairs) + EOL
+
+    def layout(version: bytes | None, reverse: bool = False,
+               prefix: int = 0, gap: int = 0, suffix: int = 0) -> bytearray:
+        raw = bytearray(original[:48])
+        if version is not None:
+            struct.pack_into("<I", raw, 20, FLAGS | 0x02000000)
+            raw.extend(version)
+        raw.extend(b"\xa5" * prefix)
+        order = ((40, info), (12, DOMAIN)) if reverse else ((12, DOMAIN), (40, info))
+        for index, (field, data) in enumerate(order):
+            if index:
+                raw.extend(b"\xa5" * gap)
+            if field == 12 and len(raw) % 2:
+                raw.append(0xA5)
+            struct.pack_into("<HHI", raw, field, len(data), len(data), len(raw))
+            raw.extend(data)
+        raw.extend(b"\xa5" * suffix)
+        return raw
+
+    for version in (None, b"\0" * 8, bytes.fromhex("0a00654a0000000f"), b"\xff" * 8):
+        flags = FLAGS if version is None else FLAGS | 0x02000000
+        for reverse, prefix, gap, suffix in product((False, True), (0, 1, 4), (0, 1, 4), (0, 1, 4)):
+            add("payload order/padding and ignored Version", layout(version, reverse, prefix, gap, suffix), True, flags)
+        base = layout(version)
+        header = 48 if version is None else 56
+        for field in (12, 40):
+            for offset in range(header):
+                raw = base.copy()
+                struct.pack_into("<I", raw, field + 4, offset)
+                add("nonempty field points into fixed header", raw, False)
+            for offset in (len(base), len(base) + 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF):
+                raw = base.copy()
+                struct.pack_into("<I", raw, field + 4, offset)
+                add("nonempty field points beyond storage", raw, False)
+            raw = base.copy()
+            struct.pack_into("<H", raw, field, 65535)
+            add("field length exceeds storage", raw, False)
+        raw = base.copy()
+        struct.pack_into("<H", raw, 40, 0)
+        add("TargetInfo remains required", raw, False)
+        for size in ((0, 8, 12, 20, 40, 47) if version is None else range(48, 56)):
+            add("fixed header truncated", base[:size], False)
+        for value in (1, 128, 255):
+            raw = base.copy()
+            raw[32:40] = bytes((value,)) * 8
+            add("reserved bytes ignored but MIC covered", raw, True, flags)
+        raw = base.copy()
+        struct.pack_into("<H", raw, 12, 0)
+        struct.pack_into("<I", raw, 16, len(raw))
+        add("empty target name at payload end", raw, True, flags)
+        raw = base.copy()
+        info_offset = struct.unpack_from("<I", raw, 44)[0]
+        struct.pack_into("<I", raw, 16, info_offset + len(av(1, COMPUTER)) + 4)
+        add("bounded name alias inside domain AV", raw, True, flags)
     return cases
 
 

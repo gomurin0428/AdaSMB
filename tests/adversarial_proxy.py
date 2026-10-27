@@ -43,6 +43,9 @@ SECURITY_BUFFER_MUTATIONS = {
     "challenge-av-timestamp-length": (1, 0xC0000016, 68, 72, False),
     "challenge-av-name-encoding": (1, 0xC0000016, 68, 72, False),
     "challenge-av-terminator": (1, 0xC0000016, 68, 72, False),
+    "challenge-layout-name-header": (1, 0xC0000016, 68, 72, False),
+    "challenge-layout-info-offset": (1, 0xC0000016, 68, 72, False),
+    "challenge-layout-info-length": (1, 0xC0000016, 68, 72, False),
     "final-buffer-offset": (1, 0, 68, 72, True),
     "final-buffer-length": (1, 0, 68, 72, True),
     "final-spnego-mic": (1, 0, 68, 72, True),
@@ -50,6 +53,33 @@ SECURITY_BUFFER_MUTATIONS = {
     "final-spnego-duplicate-state": (1, 0, 68, 72, True),
     "final-spnego-missing-mic": (1, 0, 68, 72, True),
 }
+
+
+def _mutate_challenge_layout(token: bytes, mode: str) -> bytes:
+    marker = b"NTLMSSP\x00\x02\x00\x00\x00"
+    if token.count(marker) != 1:
+        raise RuntimeError("expected a single original NTLM Type 2 message")
+    start = token.index(marker)
+    if len(token) - start < 48:
+        raise RuntimeError("original NTLM challenge is too short")
+    flags = struct.unpack_from("<I", token, start + 20)[0]
+    header = 56 if flags & 0x02000000 else 48
+    size, _, offset = struct.unpack_from("<HHI", token, start + 40)
+    if offset < header or size == 0 or start + offset + size > len(token):
+        raise RuntimeError("original TargetInfo bounds invalid")
+    mutated = bytearray(token)
+    if mode == "challenge-layout-name-header":
+        if not flags & 4:
+            raise RuntimeError("original challenge does not request TargetName")
+        struct.pack_into("<H", mutated, start + 12, 2)
+        struct.pack_into("<I", mutated, start + 16, header - 2)
+    elif mode == "challenge-layout-info-offset":
+        struct.pack_into("<I", mutated, start + 44, 0xFFFFFFFF)
+    elif mode == "challenge-layout-info-length":
+        struct.pack_into("<H", mutated, start + 40, 0xFFFF)
+    else:
+        raise RuntimeError("unknown challenge layout mutation")
+    return bytes(mutated)
 
 
 def _mutate_challenge_av(token: bytes, mode: str) -> bytes:
@@ -473,6 +503,10 @@ class AdversarialProxy:
                             )
                             payload = payload[:offset] + token + payload[offset + length:]
                             struct.pack_into("<H", payload, field + 2, len(token))
+                        elif self.mode.startswith("challenge-layout-"):
+                            payload[offset:offset + length] = _mutate_challenge_layout(
+                                bytes(payload[offset:offset + length]), self.mode
+                            )
                         elif self.mode.startswith("challenge-av-"):
                             payload[offset:offset + length] = _mutate_challenge_av(
                                 bytes(payload[offset:offset + length]), self.mode
