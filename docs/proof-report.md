@@ -346,6 +346,29 @@ Focused and full proofs, the full unit suite, all-executable builds, forced
 warnings-as-errors builds, dependency audit and the complete Samba suite passed.
 No CI was run.
 
+## Public share preflight regression
+
+`Connect_Share` completes share-name validation and UNC UTF-16 encoding in
+its declaration preflight, before its communication-failure handler. The
+public signature and post-send prepare/execute/status/abort policy are
+unchanged, as is rejection of a repeated valid share connection.
+
+The added integration test reproduced the previous defect at base `46cc12f`
+with `invalid share preflight disconnected client`. It rejects an empty
+name, a slash-containing name, malformed UTF-8 and a 256-byte name in both
+authenticated and share-connected states: eight rejection checks, each
+preserving the connection and last NTSTATUS. The authenticated connection
+then connects to the valid share; the active-share test retains and reads its
+previously opened fixture handle.
+
+After the separate checked-buffer fix above, all test executables, the
+complete Samba suite (including lost-WRITE recovery), full unit tests, forced
+warnings-as-errors builds and runtime dependency audit pass. No SPARK units
+changed in this preflight correction; the 4,370-check result above remains
+applicable. This is native exception-ordering regression coverage, not an
+extension of that proof. Allocation-failure injection was not performed.
+No CI was run.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:

@@ -675,36 +675,36 @@ package body SMB.Client is
    end Authenticate;
 
    procedure Connect_Share (Client : in out Connection; Share : String) is
+      function Encoded_Path return SMB.Bytes is
+      begin
+         Require_Relative_Share (Share);
+         return Encode_Name
+           ("\\" & Ada.Strings.Unbounded.To_String (Client.Host) & "\" & Share);
+      end Encoded_Path;
+      Name : constant SMB.Bytes := Encoded_Path;
+      Packet : SMB.Bytes
+        (0 .. SMB.Core_Wire.Header_Size + 8 + Name'Length - 1) :=
+          (others => 0);
+      Used : Natural;
+      Engine_Status : SMB.Core_Status;
       Operation : SMB.Core_Connection.Connection_Operation;
       Core_Status : SMB.Core_Status;
    begin
-      Require_Relative_Share (Share);
-      declare
-         UNC : constant String :=
-           "\\" & Ada.Strings.Unbounded.To_String (Client.Host) & "\" & Share;
-         Name : constant SMB.Bytes := Encode_Name (UNC);
-         Packet : SMB.Bytes
-           (0 .. SMB.Core_Wire.Header_Size + 8 + Name'Length - 1) :=
-             (others => 0);
-         Used : Natural;
-         Engine_Status : SMB.Core_Status;
-      begin
-         SMB.Core_Connection.Prepare_Tree_Connect
-           (Operation, Client.Engine_Core, Name, Packet, Used, Engine_Status);
-         if Engine_Status /= SMB.Ok then
-            if (Engine_Status = SMB.Invalid_State_Status
-                or else Engine_Status = SMB.Counter_Exhausted)
-              and then SMB.Core_Connection.Stage_Of (Operation) =
-                SMB.Core_Connection.Idle
-            then
-               raise SMB.Invalid_State with
-                 "session engine rejected tree connect";
-            end if;
-            raise SMB.Protocol_Error with "share name exceeds SMB limits";
+      SMB.Core_Connection.Prepare_Tree_Connect
+        (Operation, Client.Engine_Core, Name, Packet, Used, Engine_Status);
+      if Engine_Status /= SMB.Ok then
+         if (Engine_Status = SMB.Invalid_State_Status
+             or else Engine_Status = SMB.Counter_Exhausted)
+           and then SMB.Core_Connection.Stage_Of (Operation) =
+             SMB.Core_Connection.Idle
+         then
+            raise SMB.Invalid_State with
+              "session engine rejected tree connect";
          end if;
-         Execute_Connection (Client, Operation, Packet, Used);
-         Require_Status (Client, Client.Last_Status);
-      end;
+         raise SMB.Protocol_Error with "share name exceeds SMB limits";
+      end if;
+      Execute_Connection (Client, Operation, Packet, Used);
+      Require_Status (Client, Client.Last_Status);
    exception
       when E : others =>
          if SMB.Core_Connection.Stage_Of (Operation) in
