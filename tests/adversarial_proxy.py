@@ -38,6 +38,8 @@ SECURITY_BUFFER_MUTATIONS = {
     "negotiate-buffer-length": (0, 0, 120, 128, False),
     "challenge-buffer-offset": (1, 0xC0000016, 68, 72, False),
     "challenge-buffer-length": (1, 0xC0000016, 68, 72, False),
+    "challenge-ntlm-signature": (1, 0xC0000016, 68, 72, False),
+    "challenge-ntlm-type": (1, 0xC0000016, 68, 72, False),
     "final-buffer-offset": (1, 0, 68, 72, True),
     "final-buffer-length": (1, 0, 68, 72, True),
     "final-spnego-mic": (1, 0, 68, 72, True),
@@ -422,6 +424,16 @@ class AdversarialProxy:
                             )
                             payload = payload[:offset] + token + payload[offset + length:]
                             struct.pack_into("<H", payload, field + 2, len(token))
+                        elif self.mode.startswith("challenge-ntlm-"):
+                            token = bytes(payload[offset:offset + length])
+                            marker = b"NTLMSSP\x00\x02\x00\x00\x00"
+                            if token.count(marker) != 1:
+                                raise RuntimeError("expected a single original NTLM Type 2 message")
+                            start = token.index(marker)
+                            if len(token) - start < 48:
+                                raise RuntimeError("original NTLM challenge is too short")
+                            field_offset = 8 if self.mode == "challenge-ntlm-type" else 0
+                            payload[offset + start + field_offset] ^= 1
                         elif self.mode.endswith("-offset"):
                             struct.pack_into("<HH", payload, field, fixed_end - 1, 1)
                         else:
