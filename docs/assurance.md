@@ -121,6 +121,13 @@ folder/file acquisition also follows buffer initialization. This is reviewed
 and regression-tested native adapter ordering, not an extension of the SPARK
 proof or a proof of allocation/exception behavior.
 
+`Connect_Share` likewise validates the share name and encodes the UNC path in
+declaration preflight. Local syntax, length or UTF errors preserve the
+authenticated/share-connected session and last NTSTATUS; regression tests
+also check that an existing handle remains usable. The post-send abort and
+disconnect policy is unchanged. This remains native adapter testing, not a
+formal proof of the facade's exception semantics.
+
 UTF conversion checks capacity for each decoded scalar rather than requiring a
 worst-case-size buffer before decoding. The contracts bound `Used` by both the
 output capacity and twice the input length, including on failure; UTF-16 output
