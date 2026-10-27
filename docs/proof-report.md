@@ -1,5 +1,61 @@
 # GNATprove and test report
 
+## NTLM AV-pair conformance and recovery scope
+
+`make ntlm-test` uses a Python reference encoder and HMAC-MD5 implementation
+to generate complete deterministic expected Type 3/SPNEGO tokens and session
+keys. Only fixed public test-vector credentials are used. The Ada probe checks
+both `SMB.Core_Auth.Authenticate` and the public `SMB.NTLM.Authenticate` with
+zero and nonzero array lower bounds. Malformed AV lists must expose neither
+a used output nor a session key, and must raise the public protocol exception.
+
+The fixtures follow [MS-NLMP AV_PAIR](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/83f5e789-660d-4781-8491-5f8c6641f75e)
+and [client challenge processing](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/c0250a97-2940-40c7-82fb-20d208c71e96):
+arbitrary AV ordering, server timestamp precedence (including zero), clock
+fallback when absent, zero LM response with a server timestamp, and insertion
+or preservation of flags with the MIC bit set. Name encoding, fixed-width AV
+lengths, missing mandatory names, duplicates, truncation and EOL rules are
+covered. Nonzero channel bindings remain explicitly unsupported, not silently
+accepted as verified bindings. No new channel-binding or SPN feature is added.
+
+The Python oracle is checked against existing known-answer keys, and the
+probe must reject deliberately corrupted expected output and a deliberately
+incorrect rejection expectation. Separate Samba modes mutate a real
+challenge's timestamp length, computer-name encoding and EOL tag without
+changing the outer SMB or SPNEGO bounds. The public client must refuse to send
+Type 3, disconnect/clear diagnostics and reconnect/read successfully.
+
+This stage changes only tests and their build/documentation wiring. It does
+not rerun or extend the preceding 4,411-check formal proof, and does not prove
+cryptographic strength or authenticate an unsigned challenge.
+
+### Observed validation
+
+`make ntlm-test` passed 211 AV fixtures across 422 rebased cases, checking
+both the core and public authentication APIs. Both sensitivity checks behaved
+as required: the probe rejected a corrupted expected token and rejected a
+deliberately incorrect rejection expectation. The initial build warned that
+the probe's `Input` could be constant; it was made constant, and the focused
+target passed again without that warning.
+
+Python syntax compilation passed. `make test` and strict
+`make check GPRBUILD="gprbuild -f"` passed. The full Samba integration passed
+all existing scenarios and all three new modes:
+`challenge-av-timestamp-length`, `challenge-av-name-encoding`, and
+`challenge-av-terminator`. The public client rejected each malformed challenge
+without sending Type 3, disconnected with diagnostics cleared, then reconnected
+and read the fixture successfully.
+
+No GNATprove run was performed because this stage changes no production or
+proof source. No CI was run.
+
+Evidence logs: `/home/ubuntu/ntlm-av-01-ntlm-test.log`,
+`/home/ubuntu/ntlm-av-02-ntlm-test-after-constant.log`,
+`/home/ubuntu/ntlm-av-03-pycompile.log`,
+`/home/ubuntu/ntlm-av-04-make-test.log`,
+`/home/ubuntu/ntlm-av-05-make-check.log`, and
+`/home/ubuntu/ntlm-av-06-samba-integration.log`.
+
 ## Challenge extraction contract and malformed-token regression
 
 `SMB.Core_NTLM.Extract_Challenge` now binds successful output to an in-bounds

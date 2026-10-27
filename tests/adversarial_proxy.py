@@ -40,6 +40,9 @@ SECURITY_BUFFER_MUTATIONS = {
     "challenge-buffer-length": (1, 0xC0000016, 68, 72, False),
     "challenge-ntlm-signature": (1, 0xC0000016, 68, 72, False),
     "challenge-ntlm-type": (1, 0xC0000016, 68, 72, False),
+    "challenge-av-timestamp-length": (1, 0xC0000016, 68, 72, False),
+    "challenge-av-name-encoding": (1, 0xC0000016, 68, 72, False),
+    "challenge-av-terminator": (1, 0xC0000016, 68, 72, False),
     "final-buffer-offset": (1, 0, 68, 72, True),
     "final-buffer-length": (1, 0, 68, 72, True),
     "final-spnego-mic": (1, 0, 68, 72, True),
@@ -47,6 +50,52 @@ SECURITY_BUFFER_MUTATIONS = {
     "final-spnego-duplicate-state": (1, 0, 68, 72, True),
     "final-spnego-missing-mic": (1, 0, 68, 72, True),
 }
+
+
+def _mutate_challenge_av(token: bytes, mode: str) -> bytes:
+    marker = b"NTLMSSP\x00\x02\x00\x00\x00"
+    if token.count(marker) != 1:
+        raise RuntimeError("expected a single original NTLM Type 2 message")
+    start = token.index(marker)
+    if len(token) - start < 48:
+        raise RuntimeError("original NTLM challenge is too short")
+    length, _, offset = struct.unpack_from("<HHI", token, start + 40)
+    end = start + offset + length
+    if offset < 48 or length < 4 or end > len(token):
+        raise RuntimeError("original TargetInfo bounds invalid")
+    position = start + offset
+    fields = {}
+    while position < end:
+        if end - position < 4:
+            raise RuntimeError("original AV header truncated")
+        kind, size = struct.unpack_from("<HH", token, position)
+        if kind in fields or position + 4 + size > end:
+            raise RuntimeError("original AV duplicates or bounds invalid")
+        fields[kind] = (position, size)
+        position += 4 + size
+        if kind == 0:
+            if size != 0 or position != end:
+                raise RuntimeError("original AV terminator invalid")
+            break
+    if 0 not in fields:
+        raise RuntimeError("original AV terminator missing")
+    mutated = bytearray(token)
+    if mode == "challenge-av-timestamp-length":
+        position, size = fields[7]
+        if size != 8:
+            raise RuntimeError("original timestamp length invalid")
+        struct.pack_into("<H", mutated, position + 2, 7)
+    elif mode == "challenge-av-name-encoding":
+        position, size = fields[1]
+        if size < 2 or "\0" in token[position + 4:position + 4 + size].decode("utf-16le"):
+            raise RuntimeError("original computer name invalid")
+        mutated[position + 4:position + 6] = b"\x00\xdc"
+    elif mode == "challenge-av-terminator":
+        position, _ = fields[0]
+        struct.pack_into("<H", mutated, position, 0xFFFF)
+    else:
+        raise RuntimeError("unknown challenge AV mutation")
+    return bytes(mutated)
 
 
 def _mutate_final_spnego(token: bytes, session_key: bytes, mode: str) -> bytes:
@@ -424,6 +473,10 @@ class AdversarialProxy:
                             )
                             payload = payload[:offset] + token + payload[offset + length:]
                             struct.pack_into("<H", payload, field + 2, len(token))
+                        elif self.mode.startswith("challenge-av-"):
+                            payload[offset:offset + length] = _mutate_challenge_av(
+                                bytes(payload[offset:offset + length]), self.mode
+                            )
                         elif self.mode.startswith("challenge-ntlm-"):
                             token = bytes(payload[offset:offset + length])
                             marker = b"NTLMSSP\x00\x02\x00\x00\x00"
