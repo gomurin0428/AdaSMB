@@ -26,6 +26,7 @@ from adversarial_proxy import (
 )
 from async_proxy import AsyncProxy, NEGATIVE_MODES
 from directory_limit_proxy import DirectoryLimitProxy, MODES as DIRECTORY_LIMIT_MODES
+from counting_proxy import RequestCountingProxy
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -76,6 +77,35 @@ def run_directory_limit_cases(env: dict[str, str]) -> None:
             run([str(ROOT / "build/bin/cleanup_client")], env=limit_env, timeout=180)
         finally:
             proxy.join()
+
+
+def run_handle_capacity_case(env: dict[str, str]) -> None:
+    proxy = RequestCountingProxy(0, PORT)
+    proxy.start()
+    case_env = env.copy()
+    case_env.update(
+        SMB_TEST_PORT=str(proxy.listener.getsockname()[1]),
+        SMB_TEST_BACKEND_PORT=str(PORT), SMB_TEST_MODE="handle-capacity",
+    )
+    try:
+        run([str(ROOT / "build/bin/cleanup_client")], env=case_env, timeout=60)
+    finally:
+        proxy.join()
+    # One setup directory, 256 files, one enumeration, one replacement, one removal.
+    if (proxy.commands[5] != 260 or proxy.commands[6] != 260
+            or proxy.peak_handles != 256 or proxy.open_handles != 0
+            or proxy.commands[17] != 1 or proxy.commands[4] != 1
+            or proxy.commands[2] != 1):
+        raise RuntimeError(f"unexpected handle-capacity request counts: {proxy.commands}")
+    share = pathlib.Path(env["SMB_TEST_PATH"])
+    if (share / "fixture.txt").read_text(encoding="utf-8") != "AdaSMB integration fixture\n":
+        raise RuntimeError("capacity refusal modified the fixture")
+    if any((share / name).exists() for name in (
+        "capacity-created.txt", "capacity-new-dir", "capacity-renamed.txt",
+        "capacity-retained-dir",
+    )):
+        raise RuntimeError("capacity test left an unexpected filesystem change")
+    print("handle capacity: peak 256, exactly 260 CREATE/CLOSE, no excess CREATE")
 
 
 def run_entropy_cases(env: dict[str, str]) -> None:
@@ -221,6 +251,9 @@ def main() -> int:
                     run_directory_mutation_cases(env)
                     print("local Samba directory mutation/recovery tests passed")
                     return 0
+                if os.environ.get("ADASMB_HANDLES_ONLY") == "1":
+                    run_handle_capacity_case(env)
+                    return 0
                 if os.environ.get("ADASMB_DIRECTORY_LIMITS_ONLY") == "1":
                     run_directory_limit_cases(env)
                     print("local Samba directory limit/recovery tests passed")
@@ -230,6 +263,7 @@ def main() -> int:
                     print("local Samba entropy failure/recovery tests passed")
                     return 0
                 if os.environ.get("ADASMB_ASYNC_ONLY") != "1":
+                    run_handle_capacity_case(env)
                     run_entropy_cases(env)
                 try:
                     run([str(ROOT / "build/bin/integration_client")], env=env)

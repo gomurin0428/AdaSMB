@@ -1,5 +1,45 @@
 # GNATprove and test report
 
+## Handle capacity rejection and slot reuse
+
+The existing 256-handle preflight limit is exercised through the coordinator
+and public API. The coordinator test fills the table, checks exact
+`Resource_Limit`/zero output/unchanged state, closes a middle slot and reuses
+it with a fresh ticket, rejects the old token and validates every live handle.
+
+The Samba case fills all 256 slots and rejects eight operations requiring
+another CREATE: existing/new/truncated files, listing, directory creation,
+rename, file deletion and directory deletion. Every refusal preserves the
+connection, a nonzero EOF status and readable handles. Closing one file allows
+listing and a replacement file. A transparent proxy counts exactly 260
+CREATE/CLOSE requests overall and a peak of 256 live handles; it does not
+change real Samba responses or capture credentials. The final counts were 260
+CREATE, 260 CLOSE, peak 256 and zero handles at disconnect, with one SET_INFO,
+TREE_DISCONNECT and LOGOFF. Filesystem checks reject unintended creation,
+truncation, rename or deletion. `ADASMB_HANDLES_ONLY=1` selects this case
+independently.
+
+The corrected existing-file Action 1 uses `Read_Only`; Actions 2 and 3 retain
+`Read_Write`. Its strict Candidate GNAT14 rebuild and focused
+`ADASMB_HANDLES_ONLY=1` integration passed with the counts above. The earlier
+unit, full `make test`, forced strict `make check GPRBUILD="gprbuild -f"`, and
+full integration results remain unchanged.
+
+For the sensitivity control, only `Begin_Request`'s `if not Free then`
+preflight was replaced by `if False then`; the `Register_Handle` guard was
+untouched. The mutant cleanup-client build succeeded. The corrected public
+integration failed with `SMB.PROTOCOL_ERROR : SMB CREATE response was
+rejected`, rather than the former permission error. This is the local
+completion/registration-disconnect result after the extra existing-file CREATE
+was admitted past preflight; the proxy's `EOFError` is the secondary
+observation of that intentional client disconnect. The original
+`src/smb-engine.adb` was restored byte-for-byte, SHA-256
+`3ffb7e21eb32af62eb220ccfea6cc2c8cebd7d2508633cb5c822a10cabe4bb27`.
+After restoration, `cleanup_client` was force-rebuilt with strict warnings
+and the focused Samba integration passed again.
+
+Formal proof, native Windows and CI were not run for this tests-only change.
+
 ## Exact handle validation outcomes
 
 For a 16-byte output buffer, `Validate_Handle` retains the success equivalence:

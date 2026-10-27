@@ -2737,6 +2737,91 @@ procedure Test_Suite is
          Ada.Text_IO.Put_Line ("handle validation cases:" & Natural'Image (Cases));
       end Test_Handle_Outcomes;
 
+      procedure Test_Handle_Capacity is
+         use type SMB.Engine.Engine_State;
+         use type SMB.Core_Client.Operation_Stage;
+         Target : SMB.Engine.Engine_State;
+         Tokens : array (1 .. SMB.Engine.Maximum_Handles) of
+           SMB.Engine.Handle_Token;
+         Middle : constant Positive := Tokens'Length / 2;
+         Old_Token : SMB.Engine.Handle_Token;
+         Output_Id : SMB.Bytes (0 .. 15);
+         Output_Access : SMB.Engine.Access_Kind;
+         Output_Directory : Boolean;
+      begin
+         Reconnect_Share (Target);
+         for Index in Tokens'Range loop
+            declare
+               Operation : SMB.Core_Client.Operation;
+            begin
+               Create_Directory_Handle
+                 (Target, Operation, Tokens (Index), Is_Directory => False);
+            end;
+         end loop;
+         declare
+            Before : constant SMB.Engine.Engine_State := Target;
+            Operation : SMB.Core_Client.Operation;
+            Request : SMB.Bytes (0 .. 127) := (others => 16#A5#);
+            Used : Natural;
+         begin
+            SMB.Core_Client.Prepare_Create
+              (Operation, Target, SMB.Bytes'(0 => 65, 1 => 0),
+               SMB.Engine.Read_Only, False, 1, False, Request, Used, Status);
+            Assert
+              (Status = SMB.Resource_Limit and then Used = 0
+               and then SMB.Core_Client.Stage_Of (Operation) = SMB.Core_Client.Failed
+               and then Target = Before
+               and then (for all Byte of Request => Byte = 0),
+               "full handle table changed state or prepared a request");
+         end;
+         Old_Token := Tokens (Middle);
+         declare
+            Operation : SMB.Core_Client.Operation;
+            Request : SMB.Bytes (0 .. 87);
+            Response : SMB.Bytes (0 .. 123) := (others => 0);
+            Used : Natural;
+            Ignored_Token : SMB.Engine.Handle_Token;
+         begin
+            SMB.Core_Client.Prepare_Close
+              (Operation, Target, Old_Token, Request, Used, Status);
+            Assert (Status = SMB.Ok, "capacity CLOSE preparation");
+            SMB.Core_Client.Send_Succeeded (Operation, Target, Status);
+            Assert (Status = SMB.Ok, "capacity CLOSE send");
+            Prepare_Response
+              (Response, 6, SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+            Response (64) := 60;
+            SMB.Wire.Sign (Response, Key);
+            SMB.Core_Client.Complete
+              (Operation, Target, Response, Nt_Status, Ignored_Token, Status);
+            Assert (Status = SMB.Ok, "capacity CLOSE completion");
+         end;
+         declare
+            Operation : SMB.Core_Client.Operation;
+         begin
+            Create_Directory_Handle
+              (Target, Operation, Tokens (Middle), Is_Directory => False);
+         end;
+         Assert (Tokens (Middle).Ticket /= Old_Token.Ticket,
+                 "reused slot recycled the old ticket");
+         SMB.Engine.Validate_Handle
+           (Target, Old_Token, False, False,
+            Output_Id, Output_Access, Output_Directory, Status);
+         Assert (Status = SMB.Invalid_Handle_Status,
+                 "reused slot revived a stale token");
+         for Token of Tokens loop
+            SMB.Engine.Validate_Handle
+              (Target, Token, True, False,
+               Output_Id, Output_Access, Output_Directory, Status);
+            Assert
+              (Status = SMB.Ok and then Output_Id = File_Id
+               and then Output_Access = SMB.Engine.Read_Only
+               and then not Output_Directory,
+               "capacity handling changed a registered handle");
+         end loop;
+         Ada.Text_IO.Put_Line
+           ("handle capacity: 256 opens, overflow rejection and slot reuse passed");
+      end Test_Handle_Capacity;
+
       procedure Test_Connection_Coordinator is
          Operation, Tree_Operation, Disconnect_Operation,
            Tree_Error_Operation, Logoff_Error_Operation,
@@ -3840,6 +3925,7 @@ procedure Test_Suite is
          Key (Index) := SMB.Byte (Index);
       end loop;
       Test_Handle_Outcomes;
+      Test_Handle_Capacity;
       declare
          Response : SMB.Bytes (0 .. 127) := (others => 0);
       begin
