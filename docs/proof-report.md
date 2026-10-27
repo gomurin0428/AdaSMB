@@ -18,8 +18,8 @@ and the existing file handle. Exhaustion must specifically report
 `RESOURCE_LIMIT`, disconnect, reconnect the same object, enumerate/read again,
 and reject the stale handle without damaging the recovered connection.
 
-Candidate GNAT14 Python syntax compilation and `cleanup_client.adb` build
-passed. The focused `ADASMB_DIRECTORY_LIMITS_ONLY=1` integration passed all
+Python syntax compilation and the Candidate GNAT14 `cleanup_client.adb`
+build passed. The focused `ADASMB_DIRECTORY_LIMITS_ONLY=1` integration passed all
 four scenarios.
 
 All four sensitivity controls behaved as expected. Each one-constant mutant
