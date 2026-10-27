@@ -513,7 +513,10 @@ package SMB.Core_Protocol is
      (Pages : in out Natural;
       Status : out SMB.Core_Status)
    with Pre => Pages <= Maximum_Directory_Pages,
-     Post => Pages <= Maximum_Directory_Pages
+     Post => Status =
+       (if Pages'Old = Maximum_Directory_Pages then SMB.Resource_Limit
+        else SMB.Ok)
+       and then Pages <= Maximum_Directory_Pages
        and then (if Status = SMB.Ok then Pages = Pages'Old + 1
          else Pages = Pages'Old);
 
@@ -521,7 +524,10 @@ package SMB.Core_Protocol is
      (Entries : in out Natural;
       Status : out SMB.Core_Status)
    with Pre => Entries <= Maximum_Directory_Entries,
-     Post => Entries <= Maximum_Directory_Entries
+     Post => Status =
+       (if Entries'Old = Maximum_Directory_Entries then SMB.Resource_Limit
+        else SMB.Ok)
+       and then Entries <= Maximum_Directory_Entries
        and then (if Status = SMB.Ok then Entries = Entries'Old + 1
          else Entries = Entries'Old);
 end SMB.Core_Protocol;

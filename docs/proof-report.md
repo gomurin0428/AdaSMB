@@ -1,5 +1,41 @@
 # GNATprove and test report
 
+## Exact directory counter outcomes
+
+`Count_Directory_Page` and `Count_Directory_Entry` now specify exact status
+results: every allowed count below the limit succeeds and advances by one;
+at the limit they return `Resource_Limit` and preserve the count. The existing
+bounds and failure-preservation contracts remain in place. The implementation
+and the limits (4,096 pages and 100,000 entries) are unchanged.
+
+The `directory-counters` unit selector checks all **104,098** admissible
+starting counts, including zero, the final successful increment, and refusal
+at each limit. It compares resulting counts with saturating addition rather
+than only checking that successful calls increment.
+
+The Candidate GNAT14 build, `directory-counters` selector
+(**104,098 cases**), and focused progressive proof of
+`smb-core_protocol.adb` passed. `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and full root Samba integration also
+passed.
+
+The first incremental `make prove` attempt exited 2 in the `smb-core_client`
+worker with a GNAT bug:
+`Constraint_Error bad input for 'Value: "0GG"`. Its generated phase-1 ALI
+had adjacent `GG` records without a line break, and the Core_Client `.spark`
+was stale. Although that run printed the cached **4,470-check** summary with
+0 unproved checks, its nonzero exit meant it was not accepted as a proof
+result. The worker stderr, ALIs, stale `.spark`, and proof summary were
+preserved under `/home/ubuntu/directory-counter-*`; only the recursive
+generated `smb-core_client*` cache was cleared. An isolated progressive
+replay of `smb-core_client.adb` then passed and regenerated its `.spark`.
+The subsequent incremental full `make prove` exited **0** and reported
+**4,470 checks** (709 flow, 3,761 prover), **0 unproved**, **0 justified**,
+**69 warnings**, and **0 `pragma Assume`**. No source or contract changes
+were made to address the tool failure.
+
+CI and native Windows validation were not run for this branch.
+
 ## NTLM negotiation profile combinations
 
 The challenge-field differential fixtures now cover all 64 subsets of the

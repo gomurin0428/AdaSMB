@@ -2271,6 +2271,38 @@ procedure Test_Suite is
          "zero transfer limit accepted");
    end Test_Core_Protocol;
 
+   procedure Test_Directory_Counters is
+      Count : Natural;
+      Status : SMB.Core_Status;
+      Cases : Natural := 0;
+   begin
+      for Before in 0 .. SMB.Core_Protocol.Maximum_Directory_Pages loop
+         Count := Before;
+         SMB.Core_Protocol.Count_Directory_Page (Count, Status);
+         Assert
+           (Status = (if Before < SMB.Core_Protocol.Maximum_Directory_Pages
+                      then SMB.Ok else SMB.Resource_Limit)
+            and then Count = Natural'Min
+              (Before + 1, SMB.Core_Protocol.Maximum_Directory_Pages),
+            "exact directory page count outcome");
+         Cases := Cases + 1;
+      end loop;
+      for Before in 0 .. SMB.Core_Protocol.Maximum_Directory_Entries loop
+         Count := Before;
+         SMB.Core_Protocol.Count_Directory_Entry (Count, Status);
+         Assert
+           (Status = (if Before < SMB.Core_Protocol.Maximum_Directory_Entries
+                      then SMB.Ok else SMB.Resource_Limit)
+            and then Count = Natural'Min
+              (Before + 1, SMB.Core_Protocol.Maximum_Directory_Entries),
+            "exact directory entry count outcome");
+         Cases := Cases + 1;
+      end loop;
+      Assert (Cases = 104_098, "directory counter state space coverage");
+      Ada.Text_IO.Put_Line
+        ("AdaSMB directory counter tests passed:" & Cases'Image & " cases");
+   end Test_Directory_Counters;
+
    procedure Test_Transfer_Progress is
       Lengths : constant array (Positive range <>) of Natural :=
         (0, 1, 2, SMB.Core_Protocol.Maximum_IO_Chunk - 1,
@@ -5267,6 +5299,7 @@ begin
       if Ada.Command_Line.Argument_Count /= 1
         or else (Ada.Command_Line.Argument (1) /= "transport-core"
                  and then Ada.Command_Line.Argument (1) /= "transfer-progress"
+                 and then Ada.Command_Line.Argument (1) /= "directory-counters"
                  and then Ada.Command_Line.Argument (1) /= "clock-core"
                  and then Ada.Command_Line.Argument (1) /= "path-contracts"
                  and then Ada.Command_Line.Argument (1) /= "utf-capacity"
@@ -5288,7 +5321,9 @@ begin
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "transfer-progress" then
+      if Ada.Command_Line.Argument (1) = "directory-counters" then
+         Test_Directory_Counters;
+      elsif Ada.Command_Line.Argument (1) = "transfer-progress" then
          Test_Transfer_Progress;
       elsif Ada.Command_Line.Argument (1) = "async-responses" then
          Async_Engine_Tests.Run;
@@ -5368,6 +5403,7 @@ begin
    Challenge_Mutation_Tests;
    Test_Core_Protocol;
    Test_Transfer_Progress;
+   Test_Directory_Counters;
    Response_Mutation_Tests;
    Header_Mutation_Tests;
    Security_Buffer_Tests;
