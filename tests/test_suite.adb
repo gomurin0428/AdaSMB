@@ -3,6 +3,8 @@ with Ada.Streams;
 with Ada.Command_Line;
 with SMB;
 with SMB.Core_Auth;
+with SMB.Clock;
+with SMB.Core_Clock;
 with SMB.Core_Client;
 with SMB.Core_Connection;
 with SMB.Core_Framing;
@@ -37,6 +39,67 @@ procedure Test_Suite is
          raise Program_Error with Message;
       end if;
    end Assert;
+
+   procedure Test_Core_Clock is
+      Value : SMB.QWord;
+      Status : SMB.Core_Status;
+      Now : SMB.QWord;
+   begin
+      SMB.Core_Clock.To_Filetime (1601, 1, 1, 0, 0, Value, Status);
+      Assert (Status = SMB.Ok and then Value = 0, "FILETIME epoch");
+      SMB.Core_Clock.To_Filetime (1970, 1, 1, 0, 0, Value, Status);
+      Assert (Status = SMB.Ok and then Value = 116_444_736_000_000_000,
+              "FILETIME Unix epoch");
+      SMB.Core_Clock.To_Filetime (2000, 3, 1, 1, 9_999_999, Value, Status);
+      Assert (Status = SMB.Ok
+              and then Value = 125_963_424_019_999_999,
+              "FILETIME leap century and ticks");
+      SMB.Core_Clock.To_Filetime (2016, 12, 31, 86_400, 0, Value, Status);
+      Assert (Status = SMB.Ok
+              and then Value = 131_277_024_000_000_000,
+              "FILETIME leap second maps to next day");
+      SMB.Core_Clock.To_Filetime
+        (9999, 12, 31, 86_400, 9_999_999, Value, Status);
+      Assert (Status = SMB.Ok
+              and then Value = 2_650_467_744_009_999_999,
+              "FILETIME maximum accepted time");
+      SMB.Core_Clock.To_Filetime (1900, 2, 29, 0, 0, Value, Status);
+      Assert (Status = SMB.Invalid_Value and then Value = 0,
+              "FILETIME rejects non-leap century day");
+      SMB.Core_Clock.To_Filetime (1600, 12, 31, 0, 0, Value, Status);
+      Assert (Status = SMB.Invalid_Value and then Value = 0,
+              "FILETIME rejects years before 1601");
+      SMB.Core_Clock.To_Filetime (2024, 4, 31, 0, 0, Value, Status);
+      Assert (Status = SMB.Invalid_Value, "FILETIME rejects invalid day");
+      SMB.Core_Clock.To_Filetime (2024, 13, 1, 0, 0, Value, Status);
+      Assert (Status = SMB.Invalid_Value, "FILETIME rejects invalid month");
+      SMB.Core_Clock.To_Filetime (2024, 1, 1, 86_401, 0, Value, Status);
+      Assert (Status = SMB.Invalid_Value, "FILETIME rejects invalid seconds");
+      SMB.Core_Clock.To_Filetime (2024, 1, 1, 0, 10_000_000, Value, Status);
+      Assert (Status = SMB.Invalid_Value, "FILETIME rejects invalid ticks");
+      SMB.Core_Clock.To_Filetime (2024, 1, 1, 0, -1, Value, Status);
+      Assert (Status = SMB.Invalid_Value, "FILETIME rejects negative ticks");
+      SMB.Core_Clock.To_Filetime
+        (Integer'First, Integer'Last, Integer'First,
+         Integer'Last, Integer'First, Value, Status);
+      Assert (Status = SMB.Invalid_Value and then Value = 0,
+              "FILETIME rejects extreme input before arithmetic");
+      Assert (SMB.Core_Clock.Seconds_Of_Day (23, 59, 59, False) = 86_399
+              and then SMB.Core_Clock.Seconds_Of_Day
+                (23, 59, 59, True) = 86_400,
+              "FILETIME seconds and leap-second normalization");
+      Assert (SMB.Core_Clock.Fraction_Ticks (0.0) = 0
+              and then SMB.Core_Clock.Fraction_Ticks (0.000_000_049) = 0
+              and then SMB.Core_Clock.Fraction_Ticks (0.000_000_050) = 0
+              and then SMB.Core_Clock.Fraction_Ticks (0.000_000_099) = 0
+              and then SMB.Core_Clock.Fraction_Ticks (0.000_000_100) = 1
+              and then SMB.Core_Clock.Fraction_Ticks (0.999_999_950) = 9_999_999
+              and then SMB.Core_Clock.Fraction_Ticks (0.999_999_999) = 9_999_999,
+              "FILETIME subsecond truncation never rounds up to next second");
+      Now := SMB.Clock.Current_Filetime;
+      Assert (Now > 116_444_736_000_000_000,
+              "public clock returns a FILETIME after the Unix epoch");
+   end Test_Core_Clock;
 
    procedure Test_Core_Transport is
       use type Ada.Streams.Stream_Element;
@@ -4139,16 +4202,23 @@ procedure Test_Suite is
 begin
    if Ada.Command_Line.Argument_Count > 0 then
       if Ada.Command_Line.Argument_Count /= 1
-        or else Ada.Command_Line.Argument (1) /= "transport-core"
+        or else (Ada.Command_Line.Argument (1) /= "transport-core"
+                 and then Ada.Command_Line.Argument (1) /= "clock-core")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      Test_Core_Transport;
-      Ada.Text_IO.Put_Line ("AdaSMB transport core tests passed");
+      if Ada.Command_Line.Argument (1) = "clock-core" then
+         Test_Core_Clock;
+         Ada.Text_IO.Put_Line ("AdaSMB clock core tests passed");
+      else
+         Test_Core_Transport;
+         Ada.Text_IO.Put_Line ("AdaSMB transport core tests passed");
+      end if;
       return;
    end if;
    Test_Crypto;
    Test_Framing;
+   Test_Core_Clock;
    Test_Core_Transport;
    Test_Core_Wire;
    Test_NTLM_Authenticate;

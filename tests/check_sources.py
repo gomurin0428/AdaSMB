@@ -42,6 +42,8 @@ PROOF_UNITS = {
     "smb-core_framing.adb",
     "smb-core_transport.ads",
     "smb-core_transport.adb",
+    "smb-core_clock.ads",
+    "smb-core_clock.adb",
     "smb-core_protocol.ads",
     "smb-core_protocol.adb",
     "smb-core_connection.ads",
@@ -58,6 +60,7 @@ for unit in PROOF_UNITS:
 PROOF_BODIES = {
     "smb-core_framing.adb",
     "smb-core_transport.adb",
+    "smb-core_clock.adb",
     "smb-crypto.adb",
     "smb-core_wire.adb",
     "smb-core_text.adb",
