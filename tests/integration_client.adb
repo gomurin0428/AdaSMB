@@ -8,6 +8,7 @@ with SMB.Engine;
 
 procedure Integration_Client is
    use type SMB.Byte;
+   use type SMB.Bytes;
    use type SMB.Client.Access_Mode;
    use type SMB.DWord;
 
@@ -273,6 +274,107 @@ begin
              (Client, Unicode_Name, SMB.Client.Read_Write,
               SMB.Client.Create_New);
          Data : SMB.Bytes (0 .. 70_000);
+
+         procedure Check_Local_Transfer_Errors is
+            type Rejected_Transfer is
+              (Oversized_Read, Oversized_Write, Overflowing_Read,
+               Overflowing_Write, Read_Write_Only, Write_Read_Only);
+            Reader : SMB.Client.Handle :=
+              SMB.Client.Open_File (Client, Unicode_Name, SMB.Client.Read_Only);
+            Writer : SMB.Client.Handle :=
+              SMB.Client.Open_File (Client, Unicode_Name, SMB.Client.Write_Only);
+
+            procedure Reject_Read
+              (Source : SMB.Client.Handle;
+               Offset : SMB.QWord;
+               Length : Positive) is
+               Unexpected : constant SMB.Bytes :=
+                 SMB.Client.Read (Client, Source, Offset, Length);
+            begin
+               raise Program_Error with
+                 "invalid READ returned" & Natural'Image (Unexpected'Length)
+                 & " bytes";
+            end Reject_Read;
+         begin
+            for Kind in Rejected_Transfer loop
+               begin
+                  declare
+                     Missing : SMB.Client.Handle :=
+                       SMB.Client.Open_File
+                         (Client, "missing-file-for-adasmb",
+                          SMB.Client.Read_Only);
+                  begin
+                     SMB.Client.Close (Client, Missing);
+                     raise Program_Error with "transfer error fixture exists";
+                  end;
+               exception
+                  when SMB.NT_Status_Error =>
+                     Assert
+                       (SMB.Client.Last_NT_Status (Client) =
+                          SMB.Status_Object_Name_Not_Found,
+                        "transfer error test did not seed a nonzero NTSTATUS");
+               end;
+               declare
+                  Original_Status : constant SMB.DWord :=
+                    SMB.Client.Last_NT_Status (Client);
+               begin
+                  begin
+                     case Kind is
+                        when Oversized_Read =>
+                           Reject_Read
+                             (File, 0, SMB.Maximum_Frame_Size + 1);
+                        when Oversized_Write =>
+                           declare
+                              Excess : constant SMB.Bytes
+                                (0 .. SMB.Maximum_Frame_Size) :=
+                                  (others => 16#A5#);
+                           begin
+                              SMB.Client.Write (Client, File, 0, Excess);
+                           end;
+                        when Overflowing_Read =>
+                           Reject_Read (File, SMB.QWord'Last, 1);
+                        when Overflowing_Write =>
+                           SMB.Client.Write
+                             (Client, File, SMB.QWord'Last, Data (0 .. 0));
+                        when Read_Write_Only =>
+                           Reject_Read (Writer, 0, 1);
+                        when Write_Read_Only =>
+                           SMB.Client.Write (Client, Reader, 0, Data (0 .. 0));
+                     end case;
+                     raise Program_Error with
+                       "invalid transfer accepted: "
+                       & Rejected_Transfer'Image (Kind);
+                  exception
+                     when SMB.Protocol_Error =>
+                        Assert
+                          (Kind in Oversized_Read .. Overflowing_Write,
+                           "wrong transfer error kind: "
+                           & Rejected_Transfer'Image (Kind));
+                     when SMB.Invalid_State =>
+                        Assert
+                          (Kind in Read_Write_Only | Write_Read_Only,
+                           "wrong transfer error kind: "
+                           & Rejected_Transfer'Image (Kind));
+                  end;
+                  Assert
+                    (SMB.Client.Is_Connected (Client),
+                     "local transfer error disconnected client: "
+                     & Rejected_Transfer'Image (Kind));
+                  Assert
+                    (SMB.Client.Last_NT_Status (Client) = Original_Status,
+                     "local transfer error changed last NTSTATUS: "
+                     & Rejected_Transfer'Image (Kind));
+               end;
+               SMB.Client.Write (Client, Writer, 0, Data (0 .. 0));
+               Assert
+                 (SMB.Client.Read (Client, Reader, 0, 1) = Data (0 .. 0)
+                  and then SMB.Client.Read (Client, File, 0, 1) = Data (0 .. 0),
+                  "local transfer error invalidated an existing handle: "
+                  & Rejected_Transfer'Image (Kind));
+            end loop;
+            SMB.Client.Close (Client, Writer);
+            SMB.Client.Close (Client, Reader);
+         end Check_Local_Transfer_Errors;
       begin
          for I in Data'Range loop
             Data (I) := SMB.Byte (I mod 251);
@@ -288,6 +390,7 @@ begin
                        "large-file data mismatch");
             end loop;
          end;
+         Check_Local_Transfer_Errors;
          declare
             Partial_EOF : constant SMB.Bytes :=
               SMB.Client.Read
