@@ -1,5 +1,37 @@
 # GNATprove and test report
 
+## NTLM negotiation profile combinations
+
+The challenge-field differential fixtures now cover all 64 subsets of the
+profile's six required flags (Unicode, signing, NTLM, always-sign, extended
+session security, and TargetInfo), crossed with REQUEST_TARGET, 128-bit,
+Version, OEM, and the mutually exclusive target-type choices. These add
+3,072 fixtures: 48 accepted combinations and 3,024 rejected combinations.
+Version headers and payload offsets remain structurally valid so missing
+required flags are not masked by unrelated layout failures.
+
+Accepted cases compare the complete Type 3/SPNEGO output and session key
+against the Python HMAC/MD5 reference, including the negotiated flag mask
+and both transcript and mechanism-list MICs. Unicode remains selected when
+OEM is also offered; OEM alone cannot replace the required Unicode mode.
+Rejected cases must expose neither a token nor a session key through the
+core and must fail through the public API. Both array lower bounds are
+exercised by the existing probe.
+
+This is the existing signing-only NTLMv2 profile, not an implementation of
+NTLM key exchange, sealing, datagram mode, or RC4. No production code,
+protocol acceptance policy, or formal contracts are changed.
+
+The Candidate GNAT14 `ntlm_av_probe.adb` build passed. The focused challenge
+field script passed with **5,896 fixtures** and **11,792 rebased cases**,
+including both sensitivity controls. `make ntlm-test` passed the existing AV
+regression (**211 fixtures, 422 rebased cases**) and the new challenge-field
+suite. `make test`, forced strict `make check GPRBUILD="gprbuild -f"`, and
+`python3 -m py_compile tests/ntlm_challenge_fields.py` also passed.
+Formal proof, Samba integration, TCP transport, native Windows, and CI were
+not rerun for this test-only milestone; no coverage beyond these checks is
+claimed.
+
 ## Exact IO progress outcomes
 
 `Core_Protocol.Advance_Transfer` specifies exact status precedence: a missing
