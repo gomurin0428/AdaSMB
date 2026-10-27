@@ -8,7 +8,7 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes twelve units (eleven bodies plus `SMB`'s types).
+`proof.gpr` explicitly includes thirteen units (twelve bodies plus `SMB`'s types).
 These are the implementations called by `SMB.Client` and `SMB.Transport`, not a
 parallel model.
 
@@ -22,6 +22,7 @@ parallel model.
 | `SMB.Core_Wire` | Bounded integer readers/writers, SMB header construction/correlation validation and signing |
 | `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
 | `SMB.Core_Transport` | Native stream frame construction, exact receive-prefix copying with prefix/tail preservation, bounded partial-read/write progress and unsent-slice selection |
+| `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions |
@@ -109,10 +110,22 @@ trusted assumption checked by review and tests. The facade still owns operation
 sequencing and buffer copying; calling it just an OS syscall shim would
 understate this boundary.
 
+`SMB.Clock.Current_Filetime` now calls `SMB.Core_Clock` for all calendar,
+seconds-of-day and subsecond arithmetic. The core accepts Gregorian dates in
+1601..9999, seconds in 0..86400 and ticks in 0..9999999, rejects invalid parts
+before arithmetic, and binds successful output to the explicit signed-64-bit
+FILETIME formula. The fractional contract proves the floor interval, including
+the last nanoseconds before a new second; it never rounds up to 10000000 ticks.
+The build explicitly requires `Duration'Small = 1ns`. A leap-second flag from
+Ada.Calendar is normalized by adding one second, as before (86400 maps to the
+next day). No validation of historical leap-second dates, OS clock correctness,
+or monotonicity is claimed. Clock retrieval, UTC splitting and exception dispatch
+remain trusted.
+
 | Package | Subprograms | Trusted responsibility |
 | --- | --- | --- |
 | `SMB.Transport` | `Wait_For`, `Read_Exact`, `Write_Exact`, `Connect`, `Send_Frame`, `Receive_Frame`, `Close`, `Is_Open` | GNAT sockets/selectors, nonblocking I/O, deadlines, allocation/initialization, slice dispatch, retry and exception cleanup. Native frame copying and progress use `Core_Transport`; frame type/length use `Core_Framing`. DNS resolution is outside the deadline. |
-| `SMB.Clock` | `Is_Leap_Year`, `Current_Filetime` | OS calendar and FILETIME conversion |
+| `SMB.Clock` | `Current_Filetime` | OS calendar retrieval/UTC splitting, core dispatch and exception translation; date/seconds/subseconds arithmetic uses `Core_Clock` |
 | `SMB.NTLM` | `Negotiate_Token`, `Authenticate` | Allocation, `Core_Auth` dispatch and exceptions |
 | `SMB.Text` | `Check`, `To_UTF16LE`, `From_UTF16LE`, `NTLM_Username` | Public allocation/exception adapters to `Core_Text` |
 | `SMB.Wire` | `Check`, `U16`, `U32`, `U64`, `Put_U16`, `Put_U32`, `Put_U64`, `Initialize_Header`, `Validate_Header`, `Sign`, `Verify_Signature` | Public exception adapters to `Core_Wire` |

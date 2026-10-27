@@ -28,7 +28,7 @@ tests. This does not prove cryptographic security or the complete SMB standard.
   expectations, signing keys, handle validity, and verified response acceptance.
   The Ada facade must delegate these decisions, not repeat an unproved model.
 * Non-SPARK adapters are limited to GNAT socket/selector operations, OS entropy,
-  clock conversion, external resource lifetime/finalization, and user-facing
+  clock retrieval/UTC splitting, external resource lifetime/finalization, and user-facing
   exception/string/container conversion. Document every remaining non-SPARK
   subprogram; do not call broad legacy client logic a thin trusted boundary.
 
