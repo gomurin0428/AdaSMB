@@ -11,7 +11,9 @@ procedure Security_Buffer_Client is
    Negotiate : constant Boolean :=
      Mode in "negotiate-buffer-offset" | "negotiate-buffer-length";
    Final : constant Boolean :=
-     Mode in "final-buffer-offset" | "final-buffer-length";
+     Mode in "final-buffer-offset" | "final-buffer-length"
+       | "final-spnego-mic" | "final-spnego-state"
+       | "final-spnego-duplicate-state" | "final-spnego-missing-mic";
    Client : SMB.Client.Connection;
    Rejected : Boolean := False;
 

@@ -1,5 +1,52 @@
 # GNATprove and test report
 
+## Final SPNEGO mutation regression scope
+
+`test_suite final-spnego` checks each byte of the known-answer final SPNEGO
+token with all byte values and rebased arrays. MIC mismatches must produce
+Signature_Error; structural changes must not be accepted. Truncation, missing
+or duplicate fields, reordered fields, trailing bytes, noncanonical DER lengths,
+short expected MICs, and the supported optional mechanism/empty-response fields
+are covered. These are selected deterministic parser tests, not full ASN.1 or
+SPNEGO conformance proof.
+
+Four Samba modes alter the final mechanism-list MIC, completion state, duplicate
+state or omit the MIC. The proxy first verifies the SMB signature and checks the
+original SPNEGO token against a separately constructed server-direction MIC,
+then changes the token and recomputes a valid SMB HMAC. Buffer/transport lengths
+are adjusted so the test reaches SPNEGO validation rather than a length guard.
+The public API must reject authentication, disconnect without another request,
+clear diagnostics and recover through same-object reconnect and a fixture read.
+The ordinary unmodified integration remains the successful-authentication control.
+No production/proof inputs change in this stage, so the prior clean full proof
+is historical evidence, not a newly executed proof for these test-only changes.
+
+### Observed validation
+
+The focused build, `final-spnego` selector, and Python syntax compilation
+passed. The selector reported 14,936 mutation cases. The first build attempt
+found that the test helper used Ada's reserved word `Accept` as a parameter;
+renaming it to `Should_Accept` fixed the test-only compilation error.
+
+`make test` and strict `make check GPRBUILD="gprbuild -f"` passed. The complete
+local Samba integration passed all existing scenarios and all four new modes:
+`final-spnego-mic`, `final-spnego-state`,
+`final-spnego-duplicate-state`, and `final-spnego-missing-mic`. The proxy
+validated the original final SPNEGO token's server-direction MIC, changed the
+token, adjusted buffer/frame lengths, and re-signed the SMB response. For each
+mode, the client rejected the response, disconnected with cleared diagnostics,
+made no further request, then reconnected with the same object and read the
+fixture successfully.
+
+No GNATprove run was performed because production and proof inputs are
+unchanged; the earlier clean proof remains historical, not a result of this
+test-only stage. Evidence logs: `/home/ubuntu/final-spnego-01-focused-build.log`,
+`/home/ubuntu/final-spnego-02-selector.log`,
+`/home/ubuntu/final-spnego-03-pycompile.log`,
+`/home/ubuntu/final-spnego-04-make-test.log`,
+`/home/ubuntu/final-spnego-05-make-check.log`, and
+`/home/ubuntu/final-spnego-06-samba-integration.log`.
+
 ## NTLM challenge MaxLen compatibility
 
 MS-NLMP's [CHALLENGE_MESSAGE](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/801a4681-8809-4be9-ab0d-61dcfe762786)
