@@ -1,5 +1,59 @@
 # GNATprove and test report
 
+## Entropy failure rejection and same-object recovery
+
+Six integration cases inject failures after partially filling the requested
+random output: during client GUID acquisition before TCP connection, or
+during nonce acquisition after a valid NTLM challenge. Each point is crossed
+with `Authentication_Error`, `Invalid_State` and an unexpected `Program_Error`.
+The public exception must be preserved or translated as documented by the
+facade, the connection and diagnostics must be cleared, and authentication
+without reconnection must fail locally.
+
+A proxy observes no TCP connection for GUID failures, or exactly NEGOTIATE
+and NTLM Type 1 followed by client EOF for nonce failures. The client pauses
+at a standard-input checkpoint until the harness has verified this, so a
+later reconnect or finalization cannot hide a missing failure-time close.
+Only then may the same object reconnect using the default OS entropy source,
+authenticate, read a signed fixture, close the file and log off. The callback
+counter must remain unchanged throughout recovery. These are runtime tests,
+not proof of OS entropy quality or new SPARK proof claims.
+
+### Observed validation
+
+The focused Ada client build and Python syntax compilation passed. The root
+focused Samba integration passed all six exception/call-point cases, including
+same-object recovery with the default OS entropy source. The isolated
+failure-time-close mutant built successfully: its three GUID cases passed, then
+the first nonce case failed as intended when the proxy timed out waiting for
+client EOF, before releasing the client to acknowledge the failure or reconnect.
+
+`make test` and forced strict `make check GPRBUILD="gprbuild -f"` passed. The
+full root Samba integration did not complete: after the entropy cases and
+earlier integration scenarios, the first directory mutation case,
+`malformed-signed-directory-second-page`, failed during cleanup/recovery with
+`SMB.PROTOCOL_ERROR : SMB READ response: UNSUPPORTED_FEATURE`. This directory
+case passed in focused Samba runs both alone and immediately after the six
+entropy cases. The cause in the full scenario order remains undetermined; no
+production behavior or test expectation was changed. `git diff --check` passed.
+
+GNATprove was not rerun because this stage changes tests, build wiring and
+documentation only. The **4,422-check** result recorded for the preceding
+wire-primitive stage is historical, not a proof result for this stage. No CI
+was run.
+
+Evidence logs: `/home/ubuntu/entropy-failure-01-client-build.log`,
+`/home/ubuntu/entropy-failure-02-python-syntax.log`,
+`/home/ubuntu/entropy-failure-03-focused-root-integration.log`,
+`/home/ubuntu/entropy-failure-05-mutant-build.log`,
+`/home/ubuntu/entropy-failure-06-mutant-focused-root.log`,
+`/home/ubuntu/entropy-failure-07-make-test.log`,
+`/home/ubuntu/entropy-failure-08-client-rebuild.log`,
+`/home/ubuntu/entropy-failure-09-strict-build.log`,
+`/home/ubuntu/entropy-failure-10-full-root-integration.log`,
+`/home/ubuntu/entropy-failure-11-focused-directory-repro.log`, and
+`/home/ubuntu/entropy-failure-12-entropy-then-directory-focus.log`.
+
 ## Exact wire primitive outcomes and failure preservation
 
 The 16/32/64-bit readers and writers now specify `Ok` exactly when their

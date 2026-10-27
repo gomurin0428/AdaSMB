@@ -1239,3 +1239,69 @@ class AdversarialProxy:
                     raise RuntimeError(
                         "TREE_DISCONNECT client connection did not close after mutation"
                     )
+
+
+class EntropyFailureProxy(AdversarialProxy):
+    def __init__(self, mode: str, listen_port: int, backend_port: int) -> None:
+        if mode not in {"before-connect", "after-challenge"}:
+            raise ValueError("unknown entropy failure point")
+        self.finished = threading.Event()
+        super().__init__(mode, listen_port, backend_port)
+
+    def join(self) -> None:
+        self.finished.set()
+        super().join()
+
+    @staticmethod
+    def _frame(connection: socket.socket) -> tuple[bytes, bytes]:
+        header = recv_exact(connection, 4)
+        length = int.from_bytes(header[1:4], "big")
+        if header[0] or not 64 <= length <= 1_048_576:
+            raise RuntimeError("invalid frame in entropy failure test")
+        return header, recv_exact(connection, length)
+
+    def _serve(self) -> None:
+        try:
+            if self.mode == "before-connect":
+                self.listener.settimeout(0.1)
+                while True:
+                    try:
+                        client, _ = self.listener.accept()
+                    except socket.timeout:
+                        if self.finished.is_set():
+                            return
+                        continue
+                    with client:
+                        raise RuntimeError("client opened TCP before entropy succeeded")
+            client, _ = self.listener.accept()
+            with client, socket.create_connection(
+                ("127.0.0.1", self.backend_port), timeout=5
+            ) as backend:
+                client.settimeout(5)
+                backend.settimeout(5)
+                for command, status in ((0, 0), (1, 0xC0000016)):
+                    header, payload = self._frame(client)
+                    if (
+                        payload[:4] != b"\xfeSMB"
+                        or struct.unpack_from("<H", payload, 12)[0] != command
+                    ):
+                        raise RuntimeError("unexpected request before entropy failure")
+                    if command == 1:
+                        token = payload.find(b"NTLMSSP\x00", 64)
+                        if token < 0 or payload[token + 8:token + 12] != b"\x01\x00\x00\x00":
+                            raise RuntimeError("expected NTLM Type 1 before entropy failure")
+                    backend.sendall(header + payload)
+                    header, payload = self._frame(backend)
+                    if (
+                        payload[:4] != b"\xfeSMB"
+                        or struct.unpack_from("<H", payload, 12)[0] != command
+                        or struct.unpack_from("<I", payload, 8)[0] != status
+                    ):
+                        raise RuntimeError("unexpected backend response before entropy failure")
+                    if command == 1:
+                        _validate_session_challenge(payload)
+                    client.sendall(header + payload)
+                if client.recv(1):
+                    raise RuntimeError("client continued authentication after entropy failed")
+        except BaseException as error:
+            self.failure = error

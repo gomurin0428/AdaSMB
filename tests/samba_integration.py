@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import pathlib
 import pwd
+import select
 import signal
 import shutil
 import socket
@@ -20,7 +21,8 @@ import tempfile
 import time
 
 from adversarial_proxy import (
-    AdversarialProxy, DIRECTORY_MODES, RESPONSE_MUTATIONS, SECURITY_BUFFER_MUTATIONS,
+    AdversarialProxy, DIRECTORY_MODES, EntropyFailureProxy, RESPONSE_MUTATIONS,
+    SECURITY_BUFFER_MUTATIONS,
 )
 
 
@@ -32,6 +34,48 @@ PASSWORD = "AdaSMB-test-only-password"
 
 def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, check=True, text=True, **kwargs)
+
+
+def run_entropy_cases(env: dict[str, str]) -> None:
+    for on_call, mode in ((1, "before-connect"), (2, "after-challenge")):
+        for kind in ("AUTHENTICATION_FAILURE", "STATE_FAILURE", "UNEXPECTED_FAILURE"):
+            proxy = EntropyFailureProxy(mode, 0, PORT)
+            proxy.start()
+            fault_env = env.copy()
+            fault_env.update(
+                SMB_TEST_PORT=str(proxy.listener.getsockname()[1]),
+                SMB_TEST_BACKEND_PORT=str(PORT),
+                SMB_TEST_ENTROPY_CALL=str(on_call),
+                SMB_TEST_ENTROPY_KIND=kind,
+            )
+            joined = False
+            process = None
+            try:
+                process = subprocess.Popen(
+                    [str(ROOT / "build/bin/entropy_failure_client")],
+                    env=fault_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                )
+                assert process.stdout is not None and process.stdin is not None
+                ready, _, _ = select.select([process.stdout], [], [], 15)
+                if not ready or process.stdout.readline() != "entropy failure checkpoint\n":
+                    raise RuntimeError("entropy client did not reach failure checkpoint")
+                try:
+                    proxy.join()
+                finally:
+                    joined = True
+                process.stdin.write("failure-observed\n")
+                process.stdin.flush()
+                output, _ = process.communicate(timeout=20)
+                print(output, end="", flush=True)
+                if process.returncode:
+                    raise RuntimeError("entropy recovery client failed")
+            finally:
+                if process is not None:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=5)
+                if not joined:
+                    proxy.join()
 
 
 def main() -> int:
@@ -131,6 +175,10 @@ def main() -> int:
                     SMB_TEST_PASSWORD=PASSWORD,
                     SMB_TEST_PATH=str(share),
                 )
+                run_entropy_cases(env)
+                if os.environ.get("ADASMB_ENTROPY_ONLY") == "1":
+                    print("local Samba entropy failure/recovery tests passed")
+                    return 0
                 try:
                     run([str(ROOT / "build/bin/integration_client")], env=env)
                 except subprocess.CalledProcessError:
