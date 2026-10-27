@@ -21,6 +21,7 @@ with SMB.Wire;
 
 procedure Test_Suite is
    use type SMB.Core_Status;
+   use type SMB.Core_Wire.Command_Code;
    use type SMB.Engine.Access_Kind;
    use type SMB.Engine.Phase;
    use type SMB.Core_Client.Transfer_Stage;
@@ -1385,6 +1386,59 @@ procedure Test_Suite is
       SMB.Core_NTLM.Validate_Final_Token (Duplicate_State, Status);
       Assert (Status /= SMB.Ok, "duplicate SPNEGO state accepted");
    end Test_Final_Spnego;
+
+   procedure Test_Teardown_Reserved is
+      type Command_Array is array (Positive range <>) of
+        SMB.Core_Wire.Command_Code;
+      Commands : constant Command_Array := (2, 4, 6);
+      Packet : SMB.Bytes (11 .. 134) := (others => 0);
+      Info : SMB.Core_Protocol.Response_Info;
+      Status : SMB.Core_Status;
+   begin
+      for Command of Commands loop
+         declare
+            Length : constant Positive := (if Command = 6 then 124 else 68);
+            Structure : constant SMB.Word := (if Command = 6 then 60 else 4);
+            Offset : constant Natural := (if Command = 6 then 68 else 66);
+            Width : constant Positive := (if Command = 6 then 4 else 2);
+         begin
+            Packet := (others => 0);
+            SMB.Wire.Put_U16 (Packet, 64, Structure);
+            for Byte_Offset in 0 .. Width - 1 loop
+               Packet
+                 (Packet'First + Offset .. Packet'First + Offset + Width - 1) :=
+                   (others => 16#FF#);
+               for Reserved in SMB.Byte loop
+                  Packet (Packet'First + Offset + Byte_Offset) := Reserved;
+                  SMB.Core_Protocol.Parse_Response
+                    (Packet (Packet'First .. Packet'First + Length - 1),
+                     Command, SMB.Success, Info, Status);
+                  Assert
+                    (Status = SMB.Ok,
+                     "SMB2.1 teardown reserved fields were not ignored");
+               end loop;
+            end loop;
+            SMB.Core_Protocol.Parse_Response
+              (Packet (Packet'First .. Packet'First + Length - 2),
+               Command, SMB.Success, Info, Status);
+            Assert (Status /= SMB.Ok, "teardown accepted truncated response");
+            SMB.Wire.Put_U16 (Packet, 64, Structure + 1);
+            SMB.Core_Protocol.Parse_Response
+              (Packet (Packet'First .. Packet'First + Length - 1),
+               Command, SMB.Success, Info, Status);
+            Assert (Status /= SMB.Ok, "teardown accepted wrong structure size");
+            if Command = 6 then
+               SMB.Wire.Put_U16 (Packet, 64, Structure);
+               SMB.Wire.Put_U16 (Packet, 66, 2);
+               SMB.Core_Protocol.Parse_Response
+                 (Packet, Command, SMB.Success, Info, Status);
+               Assert
+                 (Status /= SMB.Ok,
+                  "CLOSE reserved fields bypassed unsupported-flags check");
+            end if;
+         end;
+      end loop;
+   end Test_Teardown_Reserved;
 
    procedure Test_Error_Reserved is
       Packet : SMB.Bytes (11 .. 85) := (others => 0);
@@ -4542,7 +4596,7 @@ procedure Test_Suite is
            (Response, SMB.Core_Wire.Command_Code (6), Message_Id,
             Tree_Id, Session_Id, True);
          Response (64) := 60;
-         Response (68) := 1;
+         Response (66) := 2;
          SMB.Wire.Sign (Response, Key);
          SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
          Assert
@@ -4685,11 +4739,15 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "auth-preflight"
                  and then Ada.Command_Line.Argument (1) /= "directory-bounds"
                  and then Ada.Command_Line.Argument (1) /= "read-reserved"
-                 and then Ada.Command_Line.Argument (1) /= "error-reserved")
+                 and then Ada.Command_Line.Argument (1) /= "error-reserved"
+                 and then Ada.Command_Line.Argument (1) /= "teardown-reserved")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "error-reserved" then
+      if Ada.Command_Line.Argument (1) = "teardown-reserved" then
+         Test_Teardown_Reserved;
+         Ada.Text_IO.Put_Line ("AdaSMB teardown reserved-field tests passed");
+      elsif Ada.Command_Line.Argument (1) = "error-reserved" then
          Test_Error_Reserved;
          Ada.Text_IO.Put_Line ("AdaSMB ERROR reserved-field tests passed");
       elsif Ada.Command_Line.Argument (1) = "read-reserved" then
@@ -4733,6 +4791,7 @@ begin
    Test_Core_Protocol;
    Test_Read_Reserved;
    Test_Error_Reserved;
+   Test_Teardown_Reserved;
    Test_Directory_Bounds;
    Test_Engine_Malformed_Close;
    Test_Engine_Receipts;

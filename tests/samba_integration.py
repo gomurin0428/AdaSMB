@@ -240,6 +240,26 @@ def main() -> int:
                     run([str(ROOT / "build/bin/cleanup_client")], env=error_reserved_env)
                 finally:
                     proxy.join()
+                proxy_port = PORT + 16
+                proxy = AdversarialProxy(
+                    "teardown-reserved-fields",
+                    proxy_port,
+                    PORT,
+                    user=USER,
+                    password=PASSWORD,
+                )
+                proxy.start()
+                teardown_env = env.copy()
+                teardown_env.update(
+                    SMB_TEST_HOST="127.0.0.1",
+                    SMB_TEST_PORT=str(proxy_port),
+                    SMB_TEST_BACKEND_PORT=str(PORT),
+                    SMB_TEST_MODE="teardown-reserved-fields",
+                )
+                try:
+                    run([str(ROOT / "build/bin/cleanup_client")], env=teardown_env)
+                finally:
+                    proxy.join()
                 proxy_port = PORT + 10
                 proxy = AdversarialProxy(
                     "lost-write-response-after-progress", proxy_port, PORT

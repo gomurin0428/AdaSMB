@@ -940,10 +940,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          end if;
          Read_U16 (Packet, 64, Structure, Header_Status);
          Word_Value := SMB.Core_Wire.Encoded_U16 (Packet, 66);
-         DWord_Value := SMB.Core_Wire.Encoded_U32 (Packet, 68);
-         if Structure /= 60 or else (Word_Value and 16#FFFE#) /= 0
-           or else DWord_Value /= 0
-         then
+         if Structure /= 60 or else (Word_Value and 16#FFFE#) /= 0 then
             Status := SMB.Invalid_Protocol;
          end if;
       elsif Command = 14 then
@@ -990,8 +987,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Read_U16 (Packet, 64, Structure, Header_Status);
-         Read_U16 (Packet, 66, Word_Value, Header_Status);
-         if Structure /= 4 or else Word_Value /= 0 then
+         if Structure /= 4 then
             Status := SMB.Invalid_Protocol;
          end if;
       else

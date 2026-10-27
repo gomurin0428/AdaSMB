@@ -85,6 +85,32 @@ begin
       SMB.Client.Disconnect (Client);
       Ada.Text_IO.Put_Line
         ("signed ERROR reserved byte, NTSTATUS and handle reuse passed");
+   elsif Mode = "teardown-reserved-fields" then
+      declare
+         Closed_File : SMB.Client.Handle :=
+           SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+      begin
+         SMB.Client.Close (Client, Closed_File);
+      end;
+      declare
+         Reopened_File : SMB.Client.Handle :=
+           SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+      begin
+         if not SMB.Client.Is_Connected (Client)
+           or else
+             SMB.Client.Read (Client, Reopened_File, 0, 1) /=
+               SMB.Bytes'(0 => 65)
+         then
+            raise Program_Error with "CLOSE reserved fields broke connection reuse";
+         end if;
+         SMB.Client.Close (Client, Reopened_File);
+      end;
+      SMB.Client.Disconnect (Client);
+      if SMB.Client.Is_Connected (Client) then
+         raise Program_Error with "teardown reserved fields prevented disconnect";
+      end if;
+      Ada.Text_IO.Put_Line
+        ("signed CLOSE/TREE_DISCONNECT/LOGOFF reserved fields passed");
    elsif Mode = "interrupted-read-after-progress" then
       declare
          Old_File : constant SMB.Client.Handle :=
