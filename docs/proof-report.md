@@ -34,9 +34,12 @@ Python syntax compilation, `make test`, and strict
 `make check GPRBUILD="gprbuild -f"` passed.
 
 The first probe run raised `STORAGE_ERROR` at fixture 434. The test-only Ada
-probe was adjusted to heap-allocate its large input line and rebased arrays;
-the reference expectations were unchanged, and the full crypto suite then
-passed. `git diff --check` passed.
+probe was adjusted to heap-allocate its large input line and rebased arrays,
+then release each temporary after its case, including exception paths. The
+reference expectations were unchanged, and the full crypto suite then passed.
+The shared input line buffer remains process-scoped. The follow-up resource
+fix was also exercised by the focused crypto test, strict probe build, and
+`git diff --check`.
 
 No production or proof code was changed. GNATprove, Samba integration, and CI
 were not run for this stage.
@@ -46,7 +49,10 @@ Evidence logs: `/home/ubuntu/crypto-conformance-01-crypto-test.log`,
 `/home/ubuntu/crypto-conformance-03-probe-fix.log`,
 `/home/ubuntu/crypto-conformance-04-make-test.log`,
 `/home/ubuntu/crypto-conformance-05-make-check.log`, and
-`/home/ubuntu/crypto-conformance-06-diff-check.log`.
+`/home/ubuntu/crypto-conformance-06-diff-check.log`. The resource-fix
+rerun logs are `/home/ubuntu/crypto-conformance-07-resource-fix.log`,
+`/home/ubuntu/crypto-conformance-08-probe-strict-build.log`, and
+`/home/ubuntu/crypto-conformance-09-diff-check.log`.
 
 ## NTLM Type 2 layout and public recovery
 
