@@ -21,6 +21,7 @@ with SMB.Text;
 with SMB.Wire;
 with Response_Mutation_Tests;
 with Header_Mutation_Tests;
+with Security_Buffer_Tests;
 
 procedure Test_Suite is
    use type SMB.Core_Status;
@@ -4898,11 +4899,14 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "teardown-reserved"
                  and then Ada.Command_Line.Argument (1) /= "connection-reserved"
                  and then Ada.Command_Line.Argument (1) /= "response-mutations"
-                 and then Ada.Command_Line.Argument (1) /= "header-mutations")
+                 and then Ada.Command_Line.Argument (1) /= "header-mutations"
+                 and then Ada.Command_Line.Argument (1) /= "security-buffers")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "header-mutations" then
+      if Ada.Command_Line.Argument (1) = "security-buffers" then
+         Security_Buffer_Tests;
+      elsif Ada.Command_Line.Argument (1) = "header-mutations" then
          Header_Mutation_Tests;
       elsif Ada.Command_Line.Argument (1) = "response-mutations" then
          Response_Mutation_Tests;
@@ -4966,6 +4970,7 @@ begin
    Test_Core_Protocol;
    Response_Mutation_Tests;
    Header_Mutation_Tests;
+   Security_Buffer_Tests;
    Test_Read_Reserved;
    Test_Error_Reserved;
    Test_Teardown_Reserved;

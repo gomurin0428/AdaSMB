@@ -32,6 +32,49 @@ RESPONSE_MUTATIONS = {
     "header-compound": 8,
 }
 
+# Command, NTSTATUS, buffer-offset field, fixed-body end, signed response.
+SECURITY_BUFFER_MUTATIONS = {
+    "negotiate-buffer-offset": (0, 0, 120, 128, False),
+    "negotiate-buffer-length": (0, 0, 120, 128, False),
+    "challenge-buffer-offset": (1, 0xC0000016, 68, 72, False),
+    "challenge-buffer-length": (1, 0xC0000016, 68, 72, False),
+    "final-buffer-offset": (1, 0, 68, 72, True),
+    "final-buffer-length": (1, 0, 68, 72, True),
+}
+
+
+def _validate_negotiate_response(payload: bytes | bytearray) -> None:
+    if (
+        len(payload) < 128
+        or struct.unpack_from("<H", payload, 64)[0] != 65
+        or not struct.unpack_from("<H", payload, 66)[0] & 1
+        or struct.unpack_from("<H", payload, 68)[0] != 0x0210
+        or not any(payload[72:88])
+        or any(size == 0 for size in struct.unpack_from("<III", payload, 92))
+        or bool(struct.unpack_from("<I", payload, 16)[0] & 8)
+        or any(payload[48:64])
+    ):
+        raise RuntimeError("unexpected original NEGOTIATE profile")
+    offset, length = struct.unpack_from("<HH", payload, 120)
+    if not length or offset < 128 or offset + length > len(payload):
+        raise RuntimeError("expected a valid original NEGOTIATE security buffer")
+
+
+def _validate_session_challenge(payload: bytes | bytearray) -> int:
+    if (
+        len(payload) < 72
+        or struct.unpack_from("<H", payload, 64)[0] != 9
+        or struct.unpack_from("<H", payload, 66)[0] != 0
+        or bool(struct.unpack_from("<I", payload, 16)[0] & 8)
+        or any(payload[48:64])
+    ):
+        raise RuntimeError("unexpected original SESSION_SETUP challenge")
+    session_id = struct.unpack_from("<Q", payload, 40)[0]
+    offset, length = struct.unpack_from("<HH", payload, 68)
+    if session_id == 0 or not length or offset < 72 or offset + length > len(payload):
+        raise RuntimeError("invalid original SESSION_SETUP challenge fields")
+    return session_id
+
 
 def recv_exact(connection: socket.socket, length: int) -> bytes:
     result = bytearray()
@@ -206,6 +249,7 @@ class AdversarialProxy:
             logoff_requests = 0
             first_query_had_data = False
             mutation_requests = 0
+            challenge_session_id: int | None = None
 
             def client_to_server() -> None:
                 nonlocal session_key, write_requests, query_requests
@@ -220,6 +264,11 @@ class AdversarialProxy:
                             if mutated:
                                 raise RuntimeError("client sent a request after rejected response")
                             if struct.unpack_from("<H", payload, 12)[0] == RESPONSE_MUTATIONS[self.mode]:
+                                mutation_requests += 1
+                        if self.mode in SECURITY_BUFFER_MUTATIONS:
+                            if mutated:
+                                raise RuntimeError("client continued after invalid security buffer")
+                            if struct.unpack_from("<H", payload, 12)[0] == SECURITY_BUFFER_MUTATIONS[self.mode][0]:
                                 mutation_requests += 1
                         if len(payload) >= 64 and payload[12:14] == b"\x04\x00":
                             tree_disconnect_requests += 1
@@ -257,7 +306,7 @@ class AdversarialProxy:
                                 )
                                 done.set()
                                 return
-                        if self.mode in RESPONSE_MUTATIONS or self.mode in {
+                        if self.mode in RESPONSE_MUTATIONS or self.mode in SECURITY_BUFFER_MUTATIONS or self.mode in {
                             "malformed-signed-create",
                             "malformed-signed-directory-second-page",
                             "dangling-signed-directory-second-page",
@@ -287,6 +336,69 @@ class AdversarialProxy:
                     payload = bytearray(
                         recv_exact(backend, int.from_bytes(header[1:4], "big"))
                     )
+                    if self.mode in SECURITY_BUFFER_MUTATIONS:
+                        response_command = struct.unpack_from("<H", payload, 12)[0]
+                        response_status = struct.unpack_from("<I", payload, 8)[0]
+                        if response_command == 0:
+                            if response_status != 0:
+                                raise RuntimeError("original NEGOTIATE did not succeed")
+                            _validate_negotiate_response(payload)
+                        elif response_command == 1:
+                            if response_status == 0xC0000016:
+                                challenge_session_id = _validate_session_challenge(payload)
+                            elif response_status != 0:
+                                raise RuntimeError("unexpected original SESSION_SETUP status")
+                        command, nt_status, field, fixed_end, signed = SECURITY_BUFFER_MUTATIONS[self.mode]
+                        if (
+                            response_command != command
+                            or response_status != nt_status
+                        ):
+                            client.sendall(header + payload)
+                            continue
+                        if (
+                            len(payload) < fixed_end
+                            or struct.unpack_from("<H", payload, 64)[0] != fixed_end - 63
+                            or bool(struct.unpack_from("<I", payload, 16)[0] & 8) != signed
+                        ):
+                            raise RuntimeError("unexpected original security-buffer response")
+                        offset, length = struct.unpack_from("<HH", payload, field)
+                        if not length or offset < fixed_end or offset + length > len(payload):
+                            raise RuntimeError("expected nonempty valid original security buffer")
+                        if command == 1:
+                            session_id = struct.unpack_from("<Q", payload, 40)[0]
+                            if (
+                                session_id == 0
+                                or (nt_status == 0 and session_id != challenge_session_id)
+                            ):
+                                raise RuntimeError("unexpected original SESSION_SETUP SessionId")
+                        if signed:
+                            if session_key is None:
+                                raise RuntimeError("missing authentication signing key")
+                            signature = bytes(payload[48:64])
+                            payload[48:64] = b"\x00" * 16
+                            if not hmac.compare_digest(
+                                signature, hmac.new(session_key, payload, hashlib.sha256).digest()[:16]
+                            ):
+                                raise RuntimeError("invalid original authentication signature")
+                        elif any(payload[48:64]):
+                            raise RuntimeError("unexpected unsigned authentication signature bytes")
+                        if self.mode.endswith("-offset"):
+                            struct.pack_into("<HH", payload, field, fixed_end - 1, 1)
+                        else:
+                            struct.pack_into("<HH", payload, field, fixed_end, 0xFFFF)
+                        if signed:
+                            payload[48:64] = hmac.new(session_key, payload, hashlib.sha256).digest()[:16]
+                        mutated = True
+                        client.sendall(b"\x00" + len(payload).to_bytes(3, "big") + payload)
+                        upstream.join(timeout=11)
+                        if (
+                            upstream.is_alive()
+                            or not relay_error
+                            or not isinstance(relay_error[0], EOFError)
+                            or mutation_requests != (2 if signed else 1)
+                        ):
+                            raise RuntimeError("client did not stop at malformed security buffer")
+                        break
                     if (
                         self.mode in RESPONSE_MUTATIONS
                         and struct.unpack_from("<H", payload, 12)[0] == RESPONSE_MUTATIONS[self.mode]

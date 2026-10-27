@@ -610,7 +610,14 @@ package body SMB.Core_Protocol with SPARK_Mode is
    procedure Read_U16
      (Packet : SMB.Bytes; Offset : Natural; Value : out SMB.Word;
       Status : in out SMB.Core_Status)
-   with Pre => Packet'Length <= SMB.Maximum_Frame_Size
+   with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+        Post =>
+          (if Status = SMB.Ok then
+             Offset <= Packet'Length
+             and then Packet'Length - Offset >= 2
+             and then
+             Value = SMB.Core_Wire.Encoded_U16 (Packet, Offset)
+           else Value = 0)
    is
    begin
       Value := 0;

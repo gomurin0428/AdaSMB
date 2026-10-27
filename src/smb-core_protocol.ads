@@ -376,14 +376,6 @@ package SMB.Core_Protocol is
             and then Info.Tree_Id /= 0
             and then Info.Tree_Id = SMB.Core_Wire.Encoded_U32 (Packet, 36))
        and then
-         (if Command = 1
-            and then Nt_Status = SMB.Status_More_Processing_Required
-          then Packet'Length >= 72
-            and then Info.Data_Offset =
-              Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68))
-            and then Info.Data_Length =
-              Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70)))
-       and then
          (if Command = 8 and then Nt_Status = SMB.Success then
             Packet'Length >= 80
             and then Natural (Packet (Packet'First + 66)) =
@@ -405,7 +397,34 @@ package SMB.Core_Protocol is
               (Info.Data_Length = 0 or else Info.Data_Offset >= 72)
             and then Info.Data_Length <= Maximum_IO_Chunk
             and then Info.Data_Length = Natural
-              (SMB.Core_Wire.Encoded_U32 (Packet, 68))));
+              (SMB.Core_Wire.Encoded_U32 (Packet, 68)))),
+     Contract_Cases =>
+       (Command = 0 and then Nt_Status = SMB.Success =>
+          (if Status = SMB.Ok then
+             Packet'Length >= 128
+             and then Info.Data_Length =
+               Natural (SMB.Core_Wire.Encoded_U16 (Packet, 122))
+             and then
+               (if Info.Data_Length = 0 then Info.Data_Offset = 0
+                else Info.Data_Offset >= 128
+                  and then Info.Data_Offset =
+                    Natural (SMB.Core_Wire.Encoded_U16 (Packet, 120)))
+           else True),
+        (Command = 1 and then
+           (Nt_Status = SMB.Success or else
+              Nt_Status = SMB.Status_More_Processing_Required)) =>
+          (if Status = SMB.Ok then
+             Packet'Length >= 72
+             and then Info.Session_Id /= 0
+             and then Info.Session_Id =
+               SMB.Core_Wire.Encoded_U64 (Packet, 40)
+             and then (Info.Data_Length = 0 or else Info.Data_Offset >= 72)
+             and then Info.Data_Offset =
+               Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68))
+             and then Info.Data_Length =
+               Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70))
+           else True),
+        others => True);
 
    procedure Parse_Directory_Entry
      (Buffer : SMB.Bytes;
