@@ -1,5 +1,60 @@
 # GNATprove and test report
 
+## Exact IO progress outcomes
+
+`Core_Protocol.Advance_Transfer` specifies exact status precedence: a missing
+required progress or a count above the request/remainder returns
+`Invalid_Value`; otherwise a 64-bit offset overflow returns `Invalid_Offset`;
+all other inputs return `Ok`. Successful updates explicitly exclude modular
+offset wrap, while failures preserve both offset and remaining length.
+`Select_Transfer_Amount` and `Check_Transfer_Range` also specify exact success
+and rejection conditions, including a zero-sized completed transfer.
+No production implementation or protocol acceptance policy is changed.
+
+The `transfer-progress` unit selector exercises 2,891 boundary combinations
+across zero, chunk/frame limits, and offsets adjacent to `QWord'Last`.
+Its overflow oracle uses modular addition and comparison, rather than the
+subtraction guard used in the implementation/contracts. Both values of
+`Require_Progress`, invalid-count/overflow precedence, and unchanged state on
+every rejection are covered.
+
+The Candidate GNAT14 build, `transfer-progress` selector, and focused
+progressive proof of `smb-core_protocol.adb` passed. The selector reported
+all 2,891 cases. `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and full root Samba integration also
+passed.
+
+The first incremental full `make prove` run used the existing clean proof
+baseline without `--clean`, with `--proof=progressive`, but its
+`smb-core_client` worker failed before refreshing that unit's `.spark` report.
+The stored worker stderr identified the concrete cache failure:
+`Corrupted ali file detected (smb-core_client.ali): GG data after GG end
+marker. Call gnatprove with "--clean".` The affected phase-1 ALI contained
+two `GG EK_END_MARKER` records with GNATprove data after the first marker,
+while `smb-core_client.spark` still had its pre-run timestamp. The terminal
+output therefore ended with `gnatprove: error during flow analysis and proof`
+and `make: *** [Makefile:55: prove] Error 1`; its repeated **4,470-check**
+summary was not treated as current proof evidence.
+
+The failing worker stderr, corrupted ALI, and stale `.spark` were preserved
+as diagnostics, then only the generated
+`build/proof-obj/gnatprove/**/smb-core_client*` cache was removed. No
+production source, contract, or proof policy was changed. An isolated
+progressive proof of `smb-core_client.adb` passed after regeneration, with a
+single valid ALI end marker and a refreshed `.spark`. The subsequent
+incremental full `make prove` run completed all three phases and exited 0.
+Its summary reported **4,470 checks** (709 flow, 3,761 prover),
+**0 unproved**, **0 justified**, **69 warnings**, and **0 `pragma Assume`**.
+The focused command was
+`gnatprove -P proof.gpr -u smb-core_protocol.adb --mode=all --level=2
+--proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3
+--timeout=120 -j4`; the repaired-unit command was
+`gnatprove -P proof.gpr -u smb-core_client.adb --mode=all --level=2
+--proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3
+--timeout=120 -j4`; and the final full invocation was
+`PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make prove`.
+CI and native Windows validation were not run.
+
 ## Exact partial-transport outcomes
 
 `Core_Transport.Receive_Chunk` and `Advance_Write` now specify exact statuses:

@@ -2271,6 +2271,85 @@ procedure Test_Suite is
          "zero transfer limit accepted");
    end Test_Core_Protocol;
 
+   procedure Test_Transfer_Progress is
+      Lengths : constant array (Positive range <>) of Natural :=
+        (0, 1, 2, SMB.Core_Protocol.Maximum_IO_Chunk - 1,
+         SMB.Core_Protocol.Maximum_IO_Chunk,
+         SMB.Core_Protocol.Maximum_IO_Chunk + 1, SMB.Maximum_Frame_Size);
+      Amounts : constant array (Positive range <>) of Natural :=
+        (0, 1, 2, SMB.Core_Protocol.Maximum_IO_Chunk - 1,
+         SMB.Core_Protocol.Maximum_IO_Chunk);
+      Offsets : constant array (Positive range <>) of SMB.QWord :=
+        (0, 1,
+         SMB.QWord'Last - SMB.QWord (SMB.Maximum_Frame_Size),
+         SMB.QWord'Last - SMB.QWord (SMB.Maximum_Frame_Size) + 1,
+         SMB.QWord'Last - SMB.QWord (SMB.Core_Protocol.Maximum_IO_Chunk),
+         SMB.QWord'Last - SMB.QWord (SMB.Core_Protocol.Maximum_IO_Chunk) + 1,
+         SMB.QWord'Last - 1, SMB.QWord'Last);
+      Status, Expected : SMB.Core_Status;
+      Position : SMB.QWord;
+      Remaining, Amount : Natural;
+      Cases : Natural := 0;
+   begin
+      for Total of Lengths loop
+         for Limit of Amounts loop
+            SMB.Core_Protocol.Select_Transfer_Amount
+              (Total, Limit, Amount, Status);
+            Assert
+              (Status = (if Total > 0 and then Limit = 0
+                         then SMB.Invalid_Value else SMB.Ok)
+               and then Amount = Natural'Min (Total, Limit),
+               "exact transfer amount outcome");
+            Cases := Cases + 1;
+         end loop;
+         for Base of Offsets loop
+            SMB.Core_Protocol.Check_Transfer_Range (Base, Total, Status);
+            Assert
+              (Status = (if Base + SMB.QWord (Total) < Base
+                         then SMB.Invalid_Offset else SMB.Ok),
+               "exact transfer range outcome");
+            Cases := Cases + 1;
+            for Requested of Amounts loop
+               for Count of Amounts loop
+                  for Require_Progress in Boolean loop
+                     Position := Base;
+                     Remaining := Total;
+                     if Count > Natural'Min (Requested, Total)
+                       or else (Require_Progress and then Requested > 0
+                                and then Count = 0)
+                     then
+                        Expected := SMB.Invalid_Value;
+                     elsif Base + SMB.QWord (Count) < Base then
+                        Expected := SMB.Invalid_Offset;
+                     else
+                        Expected := SMB.Ok;
+                     end if;
+                     SMB.Core_Protocol.Advance_Transfer
+                       (Position, Remaining, Requested, Count, Status,
+                        Require_Progress);
+                     Assert (Status = Expected, "exact transfer progress outcome");
+                     if Status = SMB.Ok then
+                        Assert
+                          (Position = Base + SMB.QWord (Count)
+                           and then Position >= Base
+                           and then Remaining = Total - Count,
+                           "valid transfer advances without wrapping");
+                     else
+                        Assert
+                          (Position = Base and then Remaining = Total,
+                           "failed transfer preserves offset and remainder");
+                     end if;
+                     Cases := Cases + 1;
+                  end loop;
+               end loop;
+            end loop;
+         end loop;
+      end loop;
+      Assert (Cases = 2_891, "transfer boundary matrix coverage");
+      Ada.Text_IO.Put_Line
+        ("AdaSMB transfer progress tests passed:" & Cases'Image & " cases");
+   end Test_Transfer_Progress;
+
    procedure Test_Engine_Receipts is
       use type SMB.Core_Client.Directory_Stage;
       use type SMB.Core_Client.Metadata_Stage;
@@ -5187,6 +5266,7 @@ begin
    if Ada.Command_Line.Argument_Count > 0 then
       if Ada.Command_Line.Argument_Count /= 1
         or else (Ada.Command_Line.Argument (1) /= "transport-core"
+                 and then Ada.Command_Line.Argument (1) /= "transfer-progress"
                  and then Ada.Command_Line.Argument (1) /= "clock-core"
                  and then Ada.Command_Line.Argument (1) /= "path-contracts"
                  and then Ada.Command_Line.Argument (1) /= "utf-capacity"
@@ -5208,7 +5288,9 @@ begin
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "async-responses" then
+      if Ada.Command_Line.Argument (1) = "transfer-progress" then
+         Test_Transfer_Progress;
+      elsif Ada.Command_Line.Argument (1) = "async-responses" then
          Async_Engine_Tests.Run;
          Ada.Text_IO.Put_Line ("AdaSMB async response tests passed");
       elsif Ada.Command_Line.Argument (1) = "challenge-mutations" then
@@ -5285,6 +5367,7 @@ begin
    Spnego_Mutation_Tests;
    Challenge_Mutation_Tests;
    Test_Core_Protocol;
+   Test_Transfer_Progress;
    Response_Mutation_Tests;
    Header_Mutation_Tests;
    Security_Buffer_Tests;
