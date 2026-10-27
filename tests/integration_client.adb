@@ -71,6 +71,31 @@ begin
    declare
       Client : SMB.Client.Connection;
 
+      procedure Check_Invalid_Shares is
+         procedure Reject (Name : String) is
+            Original_Status : constant SMB.DWord :=
+              SMB.Client.Last_NT_Status (Client);
+         begin
+            begin
+               SMB.Client.Connect_Share (Client, Name);
+               raise Program_Error with "invalid share name accepted";
+            exception
+               when SMB.Protocol_Error => null;
+            end;
+            Assert
+              (SMB.Client.Is_Connected (Client),
+               "invalid share preflight disconnected client");
+            Assert
+              (SMB.Client.Last_NT_Status (Client) = Original_Status,
+               "invalid share preflight changed last NTSTATUS");
+         end Reject;
+      begin
+         Reject ("");
+         Reject ("share/child");
+         Reject (String'(1 => Character'Val (16#FF#)));
+         Reject (String'(1 .. 256 => 'a'));
+      end Check_Invalid_Shares;
+
       procedure Check_Handle_Capacity (Depth : Positive) is
          File : SMB.Client.Handle :=
            SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
@@ -121,6 +146,7 @@ begin
               (SMB.Client.Is_Connected (Client),
                "initial invalid-state authentication disconnected client");
       end;
+      Check_Invalid_Shares;
       SMB.Client.Connect_Share (Client, Share);
       declare
          Fixture : SMB.Client.Handle :=
@@ -182,6 +208,10 @@ begin
             end loop;
          end Check_Rejected_Path;
       begin
+         Check_Invalid_Shares;
+         Assert
+           (SMB.Client.Read (Client, Fixture, 0, 1)'Length = 1,
+            "invalid share preflight invalidated an active share handle");
          Check_Rejected_Path ("../fixture.txt");
          Check_Rejected_Path ("/fixture.txt");
          Check_Rejected_Path ("fixture.txt:stream");
