@@ -4,6 +4,7 @@ with Ada.Text_IO;
 with Authentication_Test_Support;
 with SMB;
 with SMB.Client;
+with SMB.Core_Auth;
 with SMB.Engine;
 
 procedure Integration_Client is
@@ -72,6 +73,39 @@ begin
    declare
       Client : SMB.Client.Connection;
 
+      procedure Check_Invalid_Credentials is
+         procedure Reject (Name, Secret, Domain : String) is
+            Original_Status : constant SMB.DWord :=
+              SMB.Client.Last_NT_Status (Client);
+         begin
+            begin
+               SMB.Client.Authenticate (Client, Name, Secret, Domain);
+               raise Program_Error with "invalid credentials accepted";
+            exception
+               when SMB.Authentication_Error => null;
+            end;
+            Assert
+              (SMB.Client.Is_Connected (Client),
+               "invalid credential preflight disconnected client");
+            Assert
+              (SMB.Client.Last_NT_Status (Client) = Original_Status,
+               "invalid credential preflight changed last NTSTATUS");
+         end Reject;
+         Invalid_UTF8 : constant String := (1 => Character'Val (16#FF#));
+         Too_Long : constant String
+           (1 .. SMB.Core_Auth.Maximum_Credential_Bytes + 1) :=
+             (others => 'a');
+      begin
+         Reject ("", Password, "");
+         Reject (Invalid_UTF8, Password, "");
+         Reject (String'(1 => Character'Val (0)), Password, "");
+         Reject (User, Invalid_UTF8, "");
+         Reject (User, Password, Invalid_UTF8);
+         Reject (Too_Long, Password, "");
+         Reject (User, Too_Long, "");
+         Reject (User, Password, Too_Long);
+      end Check_Invalid_Credentials;
+
       procedure Check_Invalid_Shares is
          procedure Reject (Name : String) is
             Original_Status : constant SMB.DWord :=
@@ -136,6 +170,7 @@ begin
       end Check_Handle_Capacity;
    begin
       SMB.Client.Connect (Client, Host, Port);
+      Check_Invalid_Credentials;
       SMB.Client.Authenticate (Client, User, Password);
       begin
          SMB.Client.Authenticate (Client, User, Password);
@@ -146,6 +181,16 @@ begin
             Assert
               (SMB.Client.Is_Connected (Client),
                "initial invalid-state authentication disconnected client");
+      end;
+      begin
+         SMB.Client.Authenticate (Client, "", Password);
+         raise Program_Error with
+           "invalid credentials bypassed authentication state validation";
+      exception
+         when SMB.Invalid_State =>
+            Assert
+              (SMB.Client.Is_Connected (Client),
+               "invalid credentials on authenticated connection disconnected");
       end;
       Check_Invalid_Shares;
       SMB.Client.Connect_Share (Client, Share);

@@ -41,6 +41,39 @@ procedure Test_Suite is
       end if;
    end Assert;
 
+   procedure Test_Authentication_Preflight is
+      procedure Check
+        (User, Password, Domain : String; Expected : SMB.Core_Status) is
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Auth.Validate_Credentials (User, Password, Domain, Status);
+         Assert (Status = Expected, "credential preflight status mismatch");
+      end Check;
+      Euro : constant String :=
+        Character'Val (16#E2#) & Character'Val (16#82#)
+        & Character'Val (16#AC#);
+      Invalid_UTF8 : constant String := (1 => Character'Val (16#FF#));
+      Nul : constant String := (1 => Character'Val (0));
+      Maximum : constant String
+        (31 .. 30 + SMB.Core_Auth.Maximum_Credential_Bytes) := (others => 'a');
+      Excess : constant String
+        (31 .. 31 + SMB.Core_Auth.Maximum_Credential_Bytes) := (others => 'a');
+   begin
+      Check ("user", "", "", SMB.Ok);
+      Check ("user", Euro, Euro, SMB.Ok);
+      Check (Maximum, Maximum, Maximum, SMB.Ok);
+      Check (Excess, "", "", SMB.Resource_Limit);
+      Check ("user", Excess, "", SMB.Resource_Limit);
+      Check ("user", "", Excess, SMB.Resource_Limit);
+      Check ("", "", "", SMB.Unsupported_Feature);
+      Check (Euro, "", "", SMB.Unsupported_Feature);
+      Check (Nul, "", "", SMB.Unsupported_Feature);
+      Check ("user", Invalid_UTF8, "", SMB.Unsupported_Feature);
+      Check ("user", "", Invalid_UTF8, SMB.Unsupported_Feature);
+      Check ("user", Nul, "", SMB.Unsupported_Feature);
+      Check ("user", "", Nul, SMB.Unsupported_Feature);
+   end Test_Authentication_Preflight;
+
    procedure Test_UTF_Capacity is
       procedure Check_Vector
         (UTF8 : String; UTF16 : SMB.Bytes;
@@ -4446,11 +4479,15 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "clock-core"
                  and then Ada.Command_Line.Argument (1) /= "path-contracts"
                  and then Ada.Command_Line.Argument (1) /= "utf-capacity"
-                 and then Ada.Command_Line.Argument (1) /= "engine-receipts")
+                 and then Ada.Command_Line.Argument (1) /= "engine-receipts"
+                 and then Ada.Command_Line.Argument (1) /= "auth-preflight")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "engine-receipts" then
+      if Ada.Command_Line.Argument (1) = "auth-preflight" then
+         Test_Authentication_Preflight;
+         Ada.Text_IO.Put_Line ("AdaSMB authentication preflight tests passed");
+      elsif Ada.Command_Line.Argument (1) = "engine-receipts" then
          Test_Engine_Receipts;
          Ada.Text_IO.Put_Line ("AdaSMB engine receipt tests passed");
       elsif Ada.Command_Line.Argument (1) = "utf-capacity" then
@@ -4469,6 +4506,7 @@ begin
       return;
    end if;
    Test_Crypto;
+   Test_Authentication_Preflight;
    Test_Framing;
    Test_Core_Clock;
    Test_Path_Contracts;

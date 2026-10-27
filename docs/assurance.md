@@ -18,7 +18,7 @@ parallel model.
 | `SMB.Crypto` | MD4, MD5, SHA-256, HMACs and digest comparison; run-time safety, not cryptographic hardness |
 | `SMB.Core_Text` | Strict UTF-8/UTF-16 conversion, NTLM ASCII username uppercase; exact lexical path/share acceptance, byte-preserving slash normalization, and zeroed invalid-path output |
 | `SMB.Core_NTLM` | Strict DER/SPNEGO challenge extraction, directional mechanism-list MIC and final-token validation |
-| `SMB.Core_Auth` | Type 2/security-buffer/AV validation, NTLMv2 proof, Type 3 and its MIC, session key and SPNEGO output |
+| `SMB.Core_Auth` | Bounded credential preflight, Type 2/security-buffer/AV validation, NTLMv2 proof, Type 3 and its MIC, session key and SPNEGO output |
 | `SMB.Core_Wire` | Bounded integer readers/writers, SMB header construction/correlation validation and signing |
 | `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
 | `SMB.Core_Transport` | Native stream frame construction, exact receive-prefix copying with prefix/tail preservation, bounded partial-read/write progress and unsent-slice selection |
@@ -127,6 +127,16 @@ authenticated/share-connected session and last NTSTATUS; regression tests
 also check that an existing handle remains usable. The post-send abort and
 disconnect policy is unchanged. This remains native adapter testing, not a
 formal proof of the facade's exception semantics.
+
+`Authenticate` similarly invokes `Core_Auth.Validate_Credentials` before
+SESSION_SETUP and outside its communication handler when the session is ready
+for authentication. That stateless core helper proves run-time safety and
+accepted credential size bounds; the existing text converters determine
+supported encodings. A local credential rejection leaves the negotiated
+connection available for corrected input. Other starting states retain
+`Invalid_State` precedence. Server-dependent failures and post-send cleanup
+are unchanged. Wrapper ordering, complete Unicode semantics and secure erasure
+of credential scratch storage remain outside the proof.
 
 UTF conversion checks capacity for each decoded scalar rather than requiring a
 worst-case-size buffer before decoding. The contracts bound `Used` by both the
