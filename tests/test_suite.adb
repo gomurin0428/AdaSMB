@@ -41,6 +41,131 @@ procedure Test_Suite is
       end if;
    end Assert;
 
+   procedure Test_UTF_Capacity is
+      procedure Check_Vector
+        (UTF8 : String; UTF16 : SMB.Bytes;
+         UTF8_Prefix : Natural := 0; UTF16_Prefix : Natural := 0) is
+         Input_8 : constant String (11 .. 10 + UTF8'Length) := UTF8;
+         Input_16 : constant SMB.Bytes (17 .. 16 + UTF16'Length) := UTF16;
+         Output_8 : String (31 .. 30 + UTF8'Length);
+         Output_16 : SMB.Bytes (23 .. 22 + UTF16'Length);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF8_To_UTF16 (Input_8, Output_16, Used, Status);
+         Assert (Status = SMB.Ok and then Used = UTF16'Length
+                 and then Output_16 = UTF16, "UTF-16 exact-fit conversion");
+         SMB.Core_Text.UTF16_To_UTF8 (Input_16, Output_8, Used, Status);
+         Assert (Status = SMB.Ok and then Used = UTF8'Length
+                 and then Output_8 = UTF8, "UTF-8 exact-fit conversion");
+         if UTF8'Length > 0 then
+            declare
+               Short_8 : String (31 .. 29 + UTF8'Length);
+               Short_16 : SMB.Bytes (23 .. 21 + UTF16'Length);
+            begin
+               SMB.Core_Text.UTF8_To_UTF16 (Input_8, Short_16, Used, Status);
+               Assert (Status = SMB.Invalid_Length and then Used = UTF16_Prefix
+                       and then Used mod 2 = 0,
+                       "UTF-16 short buffer stops before a partial scalar");
+               for Offset in 0 .. Short_16'Length - 1 loop
+                  Assert
+                    (Short_16 (Short_16'First + Offset) =
+                       (if Offset < Used then UTF16 (UTF16'First + Offset)
+                        else 0), "UTF-16 short buffer prefix and untouched tail");
+               end loop;
+               SMB.Core_Text.UTF16_To_UTF8 (Input_16, Short_8, Used, Status);
+               Assert (Status = SMB.Invalid_Length and then Used = UTF8_Prefix,
+                       "UTF-8 short buffer stops before a partial scalar");
+               if Short_8'Length > 0 then
+                  for Offset in 0 .. Short_8'Length - 1 loop
+                     Assert
+                       (Short_8 (Short_8'First + Offset) =
+                          (if Offset < Used then UTF8 (UTF8'First + Offset)
+                           else Character'Val (0)),
+                        "UTF-8 short buffer prefix and untouched tail");
+                  end loop;
+               end if;
+            end;
+         end if;
+      end Check_Vector;
+
+      E_Acute : constant String :=
+        Character'Val (16#C3#) & Character'Val (16#A9#);
+      Euro : constant String := Character'Val (16#E2#)
+        & Character'Val (16#82#) & Character'Val (16#AC#);
+      Smile : constant String := Character'Val (16#F0#)
+        & Character'Val (16#9F#) & Character'Val (16#98#)
+        & Character'Val (16#80#);
+   begin
+      Check_Vector ("", SMB.Bytes'(1 .. 0 => 0));
+      Check_Vector ("A", SMB.Bytes'(16#41#, 0));
+      Check_Vector (E_Acute, SMB.Bytes'(16#E9#, 0));
+      Check_Vector (Euro, SMB.Bytes'(16#AC#, 16#20#));
+      Check_Vector (Smile, SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#));
+      Check_Vector ("A" & Euro, SMB.Bytes'(16#41#, 0, 16#AC#, 16#20#), 1, 2);
+      Check_Vector
+        ("A" & Smile, SMB.Bytes'(16#41#, 0, 16#3D#, 16#D8#, 0, 16#DE#), 1, 2);
+      declare
+         Input : String (1 .. 49_152);
+         Output : SMB.Bytes (0 .. SMB.Core_Protocol.Maximum_Name_Bytes - 1);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         for I in 0 .. 16_383 loop
+            Input (3 * I + 1 .. 3 * I + 3) :=
+              Character'Val (16#E3#) & Character'Val (16#81#)
+              & Character'Val (16#82#);
+         end loop;
+         SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
+         Assert (Status = SMB.Ok and then Used = 32_768,
+                 "multibyte name fits the actual UTF-16 protocol capacity");
+         for I in 0 .. 16_383 loop
+            Assert (Output (2 * I) = 16#42# and then Output (2 * I + 1) = 16#30#,
+                    "long multibyte name byte correspondence");
+         end loop;
+      end;
+      declare
+         Oversized : constant String (1 .. SMB.Maximum_Frame_Size + 1) :=
+           (others => 'a');
+      begin
+         begin
+            declare
+               Unexpected : constant SMB.Bytes := SMB.Text.To_UTF16LE (Oversized);
+               pragma Unreferenced (Unexpected);
+            begin
+               raise Program_Error with "oversized public UTF-8 input accepted";
+            end;
+         exception
+            when SMB.Protocol_Error => null;
+         end;
+         begin
+            declare
+               Unexpected : constant String := SMB.Text.NTLM_Username (Oversized);
+               pragma Unreferenced (Unexpected);
+            begin
+               raise Program_Error with "oversized public username accepted";
+            end;
+         exception
+            when SMB.Authentication_Error => null;
+         end;
+      end;
+      declare
+         Oversized : constant SMB.Bytes (1 .. SMB.Maximum_Frame_Size + 1) :=
+           (others => 0);
+      begin
+         begin
+            declare
+               Unexpected : constant String := SMB.Text.From_UTF16LE (Oversized);
+               pragma Unreferenced (Unexpected);
+            begin
+               raise Program_Error with "oversized public UTF-16 input accepted";
+            end;
+         exception
+            when SMB.Protocol_Error => null;
+         end;
+      end;
+   end Test_UTF_Capacity;
+
    procedure Test_Path_Contracts is
       procedure Check_Path
         (Value : String; Valid : Boolean; Allow_Empty : Boolean := False) is
@@ -4314,11 +4439,15 @@ begin
       if Ada.Command_Line.Argument_Count /= 1
         or else (Ada.Command_Line.Argument (1) /= "transport-core"
                  and then Ada.Command_Line.Argument (1) /= "clock-core"
-                 and then Ada.Command_Line.Argument (1) /= "path-contracts")
+                 and then Ada.Command_Line.Argument (1) /= "path-contracts"
+                 and then Ada.Command_Line.Argument (1) /= "utf-capacity")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "path-contracts" then
+      if Ada.Command_Line.Argument (1) = "utf-capacity" then
+         Test_UTF_Capacity;
+         Ada.Text_IO.Put_Line ("AdaSMB UTF capacity tests passed");
+      elsif Ada.Command_Line.Argument (1) = "path-contracts" then
          Test_Path_Contracts;
          Ada.Text_IO.Put_Line ("AdaSMB path contract tests passed");
       elsif Ada.Command_Line.Argument (1) = "clock-core" then
@@ -4334,6 +4463,7 @@ begin
    Test_Framing;
    Test_Core_Clock;
    Test_Path_Contracts;
+   Test_UTF_Capacity;
    Test_Core_Transport;
    Test_Core_Wire;
    Test_NTLM_Authenticate;

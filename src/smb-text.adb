@@ -11,8 +11,16 @@ package body SMB.Text is
       end if;
    end Check;
 
+   function Output_Capacity (Length : Natural) return Natural is
+   begin
+      if Length > SMB.Maximum_Frame_Size then
+         raise SMB.Protocol_Error with "SMB text exceeds conversion limit";
+      end if;
+      return 2 * Length;
+   end Output_Capacity;
+
    function To_UTF16LE (Value : String) return SMB.Bytes is
-      Output : SMB.Bytes (1 .. Value'Length * 2);
+      Output : SMB.Bytes (1 .. Output_Capacity (Value'Length));
       Used : Natural;
       Status : SMB.Core_Status;
    begin
@@ -22,7 +30,7 @@ package body SMB.Text is
    end To_UTF16LE;
 
    function From_UTF16LE (Value : SMB.Bytes) return String is
-      Output : String (1 .. Value'Length * 2);
+      Output : String (1 .. Output_Capacity (Value'Length));
       Used : Natural;
       Status : SMB.Core_Status;
    begin
@@ -32,14 +40,21 @@ package body SMB.Text is
    end From_UTF16LE;
 
    function NTLM_Username (Value : String) return String is
-      Output : String (Value'Range);
-      Status : SMB.Core_Status;
    begin
-      SMB.Core_Text.Uppercase_NTLM_User (Value, Output, Status);
-      if Status /= SMB.Ok then
+      if Value'Length > SMB.Maximum_Frame_Size then
          raise SMB.Authentication_Error with
-           "NTLM usernames must be ASCII";
+           "NTLM username exceeds conversion limit";
       end if;
-      return Output;
+      declare
+         Output : String (Value'Range);
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.Uppercase_NTLM_User (Value, Output, Status);
+         if Status /= SMB.Ok then
+            raise SMB.Authentication_Error with
+              "NTLM usernames must be ASCII";
+         end if;
+         return Output;
+      end;
    end NTLM_Username;
 end SMB.Text;
