@@ -10,10 +10,17 @@ import struct
 import threading
 import time
 
+DIRECTORY_NAME_MUTATIONS = {
+    "signed-directory-unpaired-high": bytes.fromhex("00d8"),
+    "signed-directory-unpaired-low": bytes.fromhex("00dc"),
+    "signed-directory-high-nonlow": bytes.fromhex("00d84100"),
+    "signed-directory-embedded-nul": bytes.fromhex("410000004200"),
+}
+
 DIRECTORY_MODES = (
     "malformed-signed-directory-second-page",
     "dangling-signed-directory-second-page",
-)
+) + tuple(DIRECTORY_NAME_MUTATIONS)
 
 RESPONSE_MUTATIONS = {
     "signed-read-offset": 8,
@@ -429,10 +436,8 @@ class AdversarialProxy:
                                 )
                                 done.set()
                                 return
-                        if self.mode in RESPONSE_MUTATIONS or self.mode in SECURITY_BUFFER_MUTATIONS or self.mode in {
+                        if self.mode in DIRECTORY_MODES or self.mode in RESPONSE_MUTATIONS or self.mode in SECURITY_BUFFER_MUTATIONS or self.mode in {
                             "malformed-signed-create",
-                            "malformed-signed-directory-second-page",
-                            "dangling-signed-directory-second-page",
                             "read-reserved-fields",
                             "error-reserved-field",
                             "teardown-reserved-fields",
@@ -1039,6 +1044,18 @@ class AdversarialProxy:
                                 struct.pack_into("<I", payload, 68, data_length + padding)
                                 struct.pack_into("<I", payload, entry, remaining + padding)
                                 header = b"\x00" + len(payload).to_bytes(3, "big")
+                            elif self.mode in DIRECTORY_NAME_MUTATIONS:
+                                name = DIRECTORY_NAME_MUTATIONS[self.mode]
+                                next_entry = struct.unpack_from("<I", payload, data_offset)[0]
+                                entry_length = next_entry or data_length
+                                old_length = struct.unpack_from("<I", payload, data_offset + 60)[0]
+                                if (entry_length < 104 or entry_length > data_length
+                                    or (next_entry and (next_entry % 8 or next_entry >= data_length))
+                                    or old_length < len(name) or old_length > entry_length - 104
+                                    or old_length % 2):
+                                    raise RuntimeError("invalid backend name mutation bounds")
+                                struct.pack_into("<I", payload, data_offset + 60, len(name))
+                                payload[data_offset + 104:data_offset + 104 + len(name)] = name
                             else:
                                 struct.pack_into("<I", payload, data_offset, 1)
                             payload[48:64] = b"\x00" * 16
