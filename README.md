@@ -102,6 +102,7 @@ make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテスト
 make unicode-test           # Python 標準 codec との Unicode 全スカラー差分試験
 make ntlm-test              # NTLM challenge と認証出力の差分試験
 make crypto-test            # OpenSSL / Python と hash・HMAC の差分試験
+make signing-test           # SMB 署名の組立て・改ざん拒否を Python と照合
 make check                  # warnings-as-errors と依存関係検査
 make example                # build/bin/smb_example
 make prove                  # GNATprove + cvc5/z3 が必要。未証明があれば失敗
