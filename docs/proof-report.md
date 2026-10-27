@@ -260,6 +260,35 @@ Raw GNATprove output is `gnatprove.out`; its summary is
 
 CI and Windows-native testing were not performed.
 
+## Additional Unicode conformance regression
+
+The test-only Unicode milestone leaves the library and proof sources unchanged
+from the clean proof above. Its new Ada probe compares core output/status and
+public text-adapter output/errors with fixtures authored by Python's strict
+`utf-8` and `utf-16-le` codecs. SMB's NUL rejection and odd UTF-16 byte-length
+error take explicit precedence in the oracle; no normalization is performed.
+
+The run passed **1,287,503 fixtures**:
+
+* 1,112,063 scalar pairs: every Unicode scalar except NUL, in both directions,
+  with exact-size core buffers and the real public allocation adapters.
+* 256 individual UTF-8 bytes, all 65,536 UTF-8 byte pairs, and all 65,536
+  individual UTF-16 code units (including invalid surrogate halves).
+* 4 fixed and 4,096 deterministic mixed valid sequences.
+* 20,000 byte strings per direction, seed `0xADA5B021`.
+* 8 explicit malformed UTF-8 and 4 malformed UTF-16 cases, including
+  overlong/surrogate/out-of-range encodings, NUL, and truncation.
+
+Negative controls confirmed that wrong expected bytes in either direction and
+a wrong expected error status fail the probe. The harness also checks the exact
+processed fixture count. This is differential testing, not a universal proof
+for all Unicode strings or all malformed inputs.
+
+The probe build, full unit suite, forced warnings-as-errors builds, runtime
+dependency audit and Python syntax check passed. GNATprove and Samba were not
+rerun for these test-only changes; their latest results above still apply to
+the unchanged library. No CI was run.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:
@@ -267,6 +296,7 @@ With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:
 ```sh
 PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make build
 PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make test
+PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make unicode-test
 PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check GPRBUILD="gprbuild -f"
 PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH gnatprove -P proof.gpr --clean
 PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make prove

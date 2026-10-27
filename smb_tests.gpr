@@ -6,7 +6,7 @@ project SMB_Tests is
    for Exec_Dir use "build/bin";
    for Main use
      ("test_suite.adb", "integration_client.adb", "adversarial_client.adb",
-      "transport_client.adb", "cleanup_client.adb");
+      "transport_client.adb", "cleanup_client.adb", "unicode_probe.adb");
    for Languages use ("Ada");
 
    package Compiler is

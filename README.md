@@ -88,12 +88,19 @@ WRITE は開始時に入力を private snapshot へ一度だけコピーし、�
 ```sh
 make build                  # 静的ライブラリ build/lib/libsmb.a
 make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテスト
+make unicode-test           # Python 標準 codec との Unicode 全スカラー差分試験
 make check                  # warnings-as-errors と依存関係検査
 make example                # build/bin/smb_example
 make prove                  # GNATprove + cvc5/z3 が必要。未証明があれば失敗
 make transport-test         # TCP 断片化、送受信 timeout、途中切断・復旧試験
 make integration            # 明示的にローカル Samba を起動する opt-in テスト
 ```
+
+`make unicode-test` は Python 3 の標準 codec を独立した比較対象として、
+NUL を除く全 1,112,063 Unicode スカラー、短いバイト列の全組合せ、
+複合文字列・固定 seed の入力を検査します。NUL は SMB の方針で拒否します。
+この差分試験は Unicode の意味的な形式証明ではありません。Python は
+試験専用であり、ライブラリの実行時依存には追加されません。
 
 example はホスト、share、パスを引数に取れますが、パスワードを引数に
 取りません。`SMB_USER`、`SMB_DOMAIN`、`SMB_PASSWORD` 環境変数を使います。
