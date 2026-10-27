@@ -16,29 +16,37 @@ No implementation algorithm or accepted protocol policy is changed.
 
 ### Validation
 
-The Candidate GNAT14 build, `transport-core` selector, and focused proof of
-`smb-core_transport.adb` passed. To avoid a GNAT 14.1 compiler crash during
+The Candidate GNAT14 build, `transport-core` selector, focused proof of
+`smb-core_transport.adb`, `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, `make transport-test`, and full root
+Samba integration were accepted on commit `6f2bceb`; they were not rerun for
+this Makefile/docs-only follow-up. To avoid a GNAT 14.1 compiler crash during
 data-representation generation, the exact `Advance_Write` status mapping is
-stated as equivalent status predicates instead of a conditional expression;
-the focused proof completed all three analysis phases.
+stated as equivalent status predicates instead of a conditional expression.
 
-`make test`, forced strict `make check GPRBUILD="gprbuild -f"`,
-`make transport-test`, and the full root Samba integration passed.
+The initial clean full proof using per-check mode reported one unproved
+grouped postcondition for `SMB.Core_Connection.Prepare_Tree_Connect`, located
+at `smb-core_connection.ads:142`. GNATprove displayed the first conjunct
+(`Used <= Output'Length`), but the verification condition covered the grouped
+postcondition through line 173; the diagnostic did not establish that the
+first conjunct alone was the failing subcondition. The grouped postcondition
+was proved by the subsequent progressive full proof. No contract or assertion
+was weakened, and the final `Core_Connection` body is unchanged from
+`6f2bceb`.
 
-The clean full GNATprove run completed analysis but returned failure because
-one check remained unproved: `SMB.Core_Connection.Prepare_Tree_Connect` at
-`smb-core_connection.ads:142` (`Used <= Output'Length`). That source is
-unchanged and does not directly reference `Core_Transport`; the saved
-preceding proof output marked this postcondition proved, while a targeted
-proof of the unchanged connection unit also failed at this check. This is
-recorded as a localized proof barrier, not waived or weakened. The run
-reported **4,470 checks**
-(709 flow, 3,760 prover), **1 unproved**, **0 justified**, **69 warnings**,
-and **0 `pragma Assume`**. CI and native Windows validation were not run.
+`make prove` now uses `--proof=progressive`, retaining per-check proofs and
+splitting only failed groups. The incremental full-project run used the
+existing clean proof baseline, without running `--clean`, and passed all
+**4,470 checks** (709 flow, 3,761 prover), with **0 unproved**, **0
+justified**, **69 warnings**, and **0 `pragma Assume`**. Its effective
+command was `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make
+prove`, which invokes GNATprove with `-P proof.gpr`, `--mode=all`,
+`--level=2`, `--proof=progressive`, `--report=all`,
+`--checks-as-errors=on`, `--prover=cvc5,z3`, `--timeout=120`, and `-j4`.
+CI and native Windows validation were not run.
 
 Evidence logs are under `/home/ubuntu/transport-progress-outcomes-*`,
-including focused build/unit/proof, final unit/strict/transport/integration
-runs, and the clean full-proof output and summary.
+including the incremental progressive full-proof output and summary.
 
 ## Transport loss after an asynchronous interim response
 
