@@ -1,5 +1,58 @@
 # GNATprove and test report
 
+## NTLM challenge MaxLen compatibility
+
+MS-NLMP's [CHALLENGE_MESSAGE](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/801a4681-8809-4be9-ab0d-61dcfe762786)
+requires recipients to ignore `TargetNameMaxLen` and `TargetInfoMaxLen`.
+`SMB.Core_Auth.Authenticate` previously used both to reject otherwise valid
+payloads when they were smaller than the actual length or larger than the
+available bytes. It now uses the actual length and offset only. Actual range,
+fixed-header overlap, string encoding, AV-pair and required-flag checks remain.
+The original Type 2 bytes, including both ignored MaxLen fields, remain in the
+MIC transcript; ignoring them for parsing does not remove integrity coverage.
+
+The `ntlm-maxlen` selector exercises the public `SMB.NTLM.Authenticate` API
+against the existing known-answer fixture. It varies all four MaxLen bytes,
+includes an empty TargetName with maximal MaxLen, repeats with rebased arrays,
+and checks the complete output token against the existing expected token with
+the transcript MIC recomputed from the modified challenge and known session key.
+It also requires oversized actual lengths and offsets to remain rejected.
+This deterministic token regression is separate from real Samba authentication;
+the server's live Type 2 transcript is not modified by this test.
+
+### Observed validation
+
+The focused build and `ntlm-maxlen` selector passed; the selector accepted
+2,050 cases. A detached baseline at `7083acfa7f744d36df73efb2865913cc808f8318`
+used the original `src/smb-core_auth.adb` with the current test suite. Its
+known-answer token and session-key assertions passed before the mutation loop;
+the original implementation then rejected the first modified MaxLen with
+`SMB.PROTOCOL_ERROR` (expected selector exit status 1). A diagnostic marker was
+added only to the disposable baseline test copy to distinguish that regression
+from setup failure.
+
+`make test`, strict `make check GPRBUILD="gprbuild -f"`, and the complete local
+Samba integration passed. The integration exercised the existing authentication
+and other regression scenarios; it did not mutate the live server's Type 2
+message, so MaxLen acceptance is established by the deterministic token test.
+
+The single clean full proof passed with 4,401 checks: 698 flow and 3,703 prover
+checks, 0 unproved, 0 justified, and 68 GNATprove warnings. The categories were
+2 data dependencies, 1 flow dependency, 539 initialization, 2 non-aliasing,
+2,394 run-time checks, 292 assertions, 1,011 functional contracts, and 160
+termination checks (154 flow, 6 prover). `git diff --check` passed.
+
+Evidence logs: `/home/ubuntu/ntlm-maxlen-01-focused-build.log`,
+`/home/ubuntu/ntlm-maxlen-02-selector.log`,
+`/home/ubuntu/ntlm-maxlen-03-old-build-marked.log`,
+`/home/ubuntu/ntlm-maxlen-04-old-selector-marked.log`,
+`/home/ubuntu/ntlm-maxlen-05-make-test.log`,
+`/home/ubuntu/ntlm-maxlen-06-make-check.log`,
+`/home/ubuntu/ntlm-maxlen-07-samba-integration.log`,
+`/home/ubuntu/ntlm-maxlen-08-proof-clean.log`,
+`/home/ubuntu/ntlm-maxlen-09-make-prove.log`, and
+`/home/ubuntu/ntlm-maxlen-10-proof-summary.out`.
+
 ## Authentication security-buffer contracts and regression scope
 
 `Parse_Response` now specifies the exact NEGOTIATE security-buffer length and
