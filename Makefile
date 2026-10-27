@@ -1,7 +1,7 @@
 GPRBUILD ?= gprbuild
 PYTHON ?= python3
 
-.PHONY: all build test integration transport-test check clean example prove
+.PHONY: all build test integration transport-test unicode-test check clean example prove
 
 all: build
 
@@ -18,6 +18,10 @@ test:
 integration: test
 	$(PYTHON) tests/transport_integration.py
 	$(PYTHON) tests/samba_integration.py
+
+unicode-test:
+	$(GPRBUILD) -p -P smb_tests.gpr unicode_probe.adb
+	$(PYTHON) tests/unicode_conformance.py
 
 transport-test:
 	$(GPRBUILD) -p -P smb_tests.gpr transport_client.adb
