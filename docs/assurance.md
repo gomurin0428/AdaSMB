@@ -20,7 +20,7 @@ parallel model.
 | `SMB.Core_NTLM` | Strict DER/SPNEGO challenge extraction, directional mechanism-list MIC and final-token validation |
 | `SMB.Core_Auth` | Bounded credential preflight, Type 2/security-buffer/AV validation, NTLMv2 proof, Type 3 and its MIC, session key and SPNEGO output |
 | `SMB.Core_Wire` | Bounded integer readers/writers, SMB header construction/correlation validation and signing |
-| `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
+| `SMB.Core_Framing` | Exact 24-bit big-endian TCP frame length encoding/decoding, 64-byte through 1-MiB bounds, type/length status precedence, and zero outputs on failure |
 | `SMB.Core_Transport` | Native stream frame construction, exact receive-prefix copying with prefix/tail preservation, bounded partial-read/write progress and unsent-slice selection |
 | `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |

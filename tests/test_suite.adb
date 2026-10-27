@@ -488,30 +488,54 @@ procedure Test_Suite is
    end Test_Core_Transport;
 
    procedure Test_Framing is
-      Sizes : constant array (Positive range 1 .. 2) of Natural :=
-        (64, SMB.Maximum_Frame_Size);
+      Sizes : constant array (Positive range 1 .. 15) of Natural :=
+        (0, 1, 63, 64, 65, 255, 256, 257, 65_535, 65_536, 65_537,
+         SMB.Maximum_Frame_Size - 1, SMB.Maximum_Frame_Size,
+         SMB.Maximum_Frame_Size + 1, 16#FF_FFFF#);
       Header : SMB.Core_Framing.Frame_Header;
       Length : Natural;
       Status : SMB.Core_Status;
    begin
       for Size of Sizes loop
-         SMB.Core_Framing.Encode (Size, Header, Status);
-         Assert (Status = SMB.Ok, "valid frame encoding");
-         SMB.Core_Framing.Decode (Header, Length, Status);
-         Assert (Status = SMB.Ok and then Length = Size, "frame round trip");
+         declare
+            Expected : constant SMB.Core_Framing.Frame_Header :=
+              (0, SMB.Byte (Size / 65_536),
+               SMB.Byte ((Size / 256) mod 256), SMB.Byte (Size mod 256));
+         begin
+            Header := (others => 16#A5#);
+            SMB.Core_Framing.Encode (Size, Header, Status);
+            if Size in 64 .. SMB.Maximum_Frame_Size then
+               Assert (Status = SMB.Ok and then Header = Expected,
+                       "exact big-endian frame encoding");
+            else
+               Assert (Status = SMB.Invalid_Length
+                       and then Header = SMB.Core_Framing.Frame_Header'(others => 0),
+                       "invalid frame encoding clears header");
+            end if;
+            for Kind in SMB.Byte loop
+               Header := Expected;
+               Header (0) := Kind;
+               Length := Natural'Last;
+               Status := SMB.Ok;
+               SMB.Core_Framing.Decode (Header, Length, Status);
+               if Kind /= 0 then
+                  Assert (Status = SMB.Unsupported_Feature and then Length = 0,
+                          "unsupported frame kind takes priority and clears length");
+               elsif Size in 64 .. SMB.Maximum_Frame_Size then
+                  Assert (Status = SMB.Ok and then Length = Size,
+                          "exact big-endian frame decoding");
+               else
+                  Assert (Status = SMB.Invalid_Length and then Length = 0,
+                          "invalid frame length is rejected and cleared");
+               end if;
+            end loop;
+         end;
       end loop;
-      SMB.Core_Framing.Encode (63, Header, Status);
-      Assert (Status = SMB.Invalid_Length, "short frame encoded");
-      SMB.Core_Framing.Encode (SMB.Maximum_Frame_Size + 1, Header, Status);
-      Assert (Status = SMB.Invalid_Length, "oversized frame encoded");
-      Header := (0, 16#FF#, 16#FF#, 16#FF#);
-      SMB.Core_Framing.Decode (Header, Length, Status);
-      Assert (Status = SMB.Invalid_Length and then Length = 0,
-              "oversized frame decoded");
-      Header := (1, 0, 0, 64);
-      SMB.Core_Framing.Decode (Header, Length, Status);
-      Assert (Status = SMB.Unsupported_Feature and then Length = 0,
-              "unsupported NetBIOS frame decoded");
+      SMB.Core_Framing.Encode (Natural'Last, Header, Status);
+      Assert (Status = SMB.Invalid_Length
+              and then Header = SMB.Core_Framing.Frame_Header'(others => 0),
+              "extreme frame encoding clears header");
+      Ada.Text_IO.Put_Line ("framing status/length matrix: 3840 cases passed");
    end Test_Framing;
 
    procedure Test_Core_Wire is

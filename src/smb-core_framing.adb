@@ -29,8 +29,7 @@ package body SMB.Core_Framing is
          Status := SMB.Unsupported_Feature;
          return;
       end if;
-      Parsed := Natural (Header (1)) * 65_536
-        + Natural (Header (2)) * 256 + Natural (Header (3));
+      Parsed := Payload_Length (Header);
       if Parsed not in 64 .. SMB.Maximum_Frame_Size then
          Status := SMB.Invalid_Length;
          return;

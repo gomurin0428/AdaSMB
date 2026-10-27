@@ -1,5 +1,61 @@
 # GNATprove and test report
 
+## Exact TCP frame length and rejection contracts
+
+`SMB.Core_Framing.Decode` previously guaranteed only a bounded length on
+success and zero on failure. It now specifies both the exact three-byte
+big-endian length and the complete status partition: a nonzero type is
+`Unsupported_Feature`, otherwise a length outside 64..1,048,576 is
+`Invalid_Length`, otherwise `Ok`. All failures return zero length. The
+`Payload_Length` expression factors out the existing arithmetic without
+changing the accepted wire format or the type-before-length priority.
+`Encode` also promises an all-zero header on invalid lengths, matching its
+existing implementation.
+
+The unit regression crosses all 256 frame types with 15 lengths around the
+minimum, byte carries, maximum and 24-bit limit: 3,840 decoding cases. It also
+checks exact encoded bytes or zeroed failures for those lengths and
+`Natural'Last`. This complements the real TCP maximum/coalesced/trickle tests;
+neither layer claims OS socket or scheduling correctness by formal proof.
+
+### Observed validation
+
+The focused GNATprove run passed for `smb-core_framing.adb`: `Payload_Length`
+termination and the `Encode` and `Decode` postconditions were proved.
+`make test` passed, including the **3,840-case** frame-type/length matrix and
+16 encoding boundary/clearing checks, as well as the existing protocol
+mutation groups. `make transport-test` passed all 12 scenarios.
+
+The Samba integration passed on `127.0.0.1:1445`. The harness requires root
+to create its test-only account; the direct unprivileged invocation exited
+before setup, and the passwordless root invocation completed successfully.
+Existing Samba daemons on ports 139/445 were left untouched.
+
+The clean full proof passed across **13 units**: **4,413 checks** comprising
+**700 flow** and **3,713 prover** checks, **0 unproved**, **0 justified**, and
+**68 warnings** (6 in `SMB.Core_Auth`, 56 in `SMB.Core_Client`, 6 in
+`SMB.Core_Protocol`). It reported **0 `pragma Assume` statements**. The
+check categories were 2 data dependencies, 1 flow dependency, 539
+initialization, 2 non-aliasing, 2,401 run-time checks, 292 assertions, 1,014
+functional contracts, and 162 termination checks (156 flow, 6 prover).
+Forced strict `make check GPRBUILD="gprbuild -f"` and `git diff --check`
+passed.
+
+The only executable-source change factors the existing 24-bit length
+arithmetic through `Payload_Length`; the accepted framing and status
+precedence are unchanged. This is not a proof of OS socket behavior or
+scheduling correctness. No CI was run.
+
+Evidence logs: `/home/ubuntu/framing-contracts-01-targeted-proof.log`,
+`/home/ubuntu/framing-contracts-02-make-test.log`,
+`/home/ubuntu/framing-contracts-03-transport-test.log`,
+`/home/ubuntu/framing-contracts-04-samba-integration.log` (direct
+unprivileged attempt),
+`/home/ubuntu/framing-contracts-05-samba-integration-root.log`,
+`/home/ubuntu/framing-contracts-06-make-check.log`, and
+`/home/ubuntu/framing-contracts-07-clean-full-proof.log`. The clean proof
+summary is also in `build/proof-obj/gnatprove/gnatprove.out`.
+
 ## TCP frame boundaries and progress-independent receive deadline
 
 The local transport regression adds a fragmented maximum-sized 1-MiB frame
