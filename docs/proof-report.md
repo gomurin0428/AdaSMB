@@ -1,5 +1,59 @@
 # GNATprove and test report
 
+## Hash and HMAC differential regression
+
+`make crypto-test` checks the production `SMB.Crypto` functions against
+OpenSSL 3's legacy MD4 provider and Python `hashlib`/`hmac` for MD5,
+SHA-256, HMAC-MD5 and HMAC-SHA256. The MD4 reference does not reuse the
+Python MD4 implementation used by the Samba proxy. Seven RFC 1320 vectors
+and HMAC examples from RFC 2202/4231 check the reference outputs before
+they become expected values. OpenSSL/provider failure is an explicit test
+error, not a fallback to the Ada implementation or another local oracle.
+
+Fixtures include every input length 0..129, larger block boundaries, zero,
+all-one and varying-byte patterns, and the public maximum input lengths:
+1,048,640 bytes for hashes and 1,048,576 bytes for HMAC keys/messages. HMAC
+key lengths cover both sides of the 64-byte normalization boundary. The
+Ada probe uses ordinary array equality (not `Constant_Time_Equal`) to compare
+digests, repeats hash calls at lower bounds 0/7, and tests all four independent
+key/message lower-bound combinations for HMAC. Corrupting each of the five
+algorithm expectations must make the probe fail.
+
+This is additional functional test evidence only. Production and proof code
+are unchanged; formal proof is not rerun. It does not prove collision
+resistance, authentication security, constant-time machine code or secure
+erasure. OpenSSL and Python are test-only dependencies; the library remains
+Pure Ada with no external cryptographic library dependency.
+
+### Observed validation
+
+`make crypto-test` passed **445 hash fixtures / 890 rebased cases** and
+**1,832 HMAC fixtures / 7,328 rebased cases**, including the five deliberate
+expectation-corruption sensitivity checks. The RFC known-answer checks passed.
+Python syntax compilation, `make test`, and strict
+`make check GPRBUILD="gprbuild -f"` passed.
+
+The first probe run raised `STORAGE_ERROR` at fixture 434. The test-only Ada
+probe was adjusted to heap-allocate its large input line and rebased arrays,
+then release each temporary after its case, including exception paths. The
+reference expectations were unchanged, and the full crypto suite then passed.
+The shared input line buffer remains process-scoped. The follow-up resource
+fix was also exercised by the focused crypto test, strict probe build, and
+`git diff --check`.
+
+No production or proof code was changed. GNATprove, Samba integration, and CI
+were not run for this stage.
+
+Evidence logs: `/home/ubuntu/crypto-conformance-01-crypto-test.log`,
+`/home/ubuntu/crypto-conformance-02-pycompile.log`,
+`/home/ubuntu/crypto-conformance-03-probe-fix.log`,
+`/home/ubuntu/crypto-conformance-04-make-test.log`,
+`/home/ubuntu/crypto-conformance-05-make-check.log`, and
+`/home/ubuntu/crypto-conformance-06-diff-check.log`. The resource-fix
+rerun logs are `/home/ubuntu/crypto-conformance-07-resource-fix.log`,
+`/home/ubuntu/crypto-conformance-08-probe-strict-build.log`, and
+`/home/ubuntu/crypto-conformance-09-diff-check.log`.
+
 ## NTLM Type 2 layout and public recovery
 
 `ntlm_challenge_fields.py` adds 750 layout fixtures, each checked at two array
