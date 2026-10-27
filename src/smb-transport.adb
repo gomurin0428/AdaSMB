@@ -1,5 +1,4 @@
 with Ada.Exceptions;
-with Ada.Real_Time;
 with Ada.Streams;
 with SMB.Core_Framing;
 with SMB.Core_Transport;
@@ -247,11 +246,19 @@ package body SMB.Transport is
          raise SMB.Transport_Error with Ada.Exceptions.Exception_Message (E);
    end Send_Frame;
 
+   function Receive_Deadline (Channel : Connection) return Ada.Real_Time.Time is
+     (Ada.Real_Time.Clock + Ada.Real_Time.To_Time_Span (Channel.Timeout));
+
    function Receive_Frame (Channel : in out Connection) return SMB.Bytes is
+   begin
+      return Receive_Frame (Channel, Receive_Deadline (Channel));
+   end Receive_Frame;
+
+   function Receive_Frame
+     (Channel : in out Connection; Deadline : Ada.Real_Time.Time)
+      return SMB.Bytes is
       Header : SMB.Core_Framing.Frame_Header;
       Status : SMB.Core_Status;
-      Deadline : constant Ada.Real_Time.Time :=
-        Ada.Real_Time.Clock + Ada.Real_Time.To_Time_Span (Channel.Timeout);
       Length : Natural;
    begin
       if not Channel.Open then

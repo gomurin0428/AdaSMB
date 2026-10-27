@@ -22,6 +22,7 @@ import time
 from adversarial_proxy import (
     AdversarialProxy, DIRECTORY_MODES, RESPONSE_MUTATIONS, SECURITY_BUFFER_MUTATIONS,
 )
+from async_proxy import AsyncProxy, NEGATIVE_MODES
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -139,6 +140,24 @@ def main() -> int:
                         print(log.read_text(encoding="utf-8", errors="replace"),
                               file=sys.stderr)
                     raise
+                async_modes = ["async-success", *sorted(NEGATIVE_MODES)]
+                for index, mode in enumerate(async_modes, start=40):
+                    proxy_port = PORT + index
+                    proxy = AsyncProxy(mode, proxy_port, PORT, USER, PASSWORD)
+                    proxy.start()
+                    async_env = env.copy()
+                    async_env.update(
+                        SMB_TEST_HOST="127.0.0.1",
+                        SMB_TEST_PORT=str(proxy_port),
+                        SMB_TEST_BACKEND_PORT=str(PORT),
+                        SMB_TEST_MODE=mode,
+                    )
+                    try:
+                        run([str(ROOT / "build/bin/async_client")], env=async_env)
+                    finally:
+                        proxy.join()
+                if os.environ.get("ADASMB_ASYNC_ONLY") == "1":
+                    return 0
                 for index, mode in enumerate(
                     (
                         "truncated",

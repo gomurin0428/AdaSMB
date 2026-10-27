@@ -28,6 +28,7 @@ package SMB is
    Maximum_Frame_Size : constant := 1_048_576;
 
    Success : constant DWord := 0;
+   Status_Pending : constant DWord := 16#0000_0103#;
    Status_Unsuccessful : constant DWord := 16#C0000001#;
    Status_No_Such_File : constant DWord := 16#C000000F#;
    Status_Access_Denied : constant DWord := 16#C0000022#;

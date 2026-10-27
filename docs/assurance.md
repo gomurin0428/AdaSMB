@@ -26,7 +26,7 @@ parallel model.
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions |
-| `SMB.Engine` | Phases, pending requests, signed response acceptance, single-use response receipts and handle identity/lifetime |
+| `SMB.Engine` | Phases, pending requests, signed final-response acceptance, SMB 2.1 async-interim correlation, single-use response receipts and handle identity/lifetime |
 
 Supported response bodies are parsed in the core after header/correlation and
 required signature validation. A successful final Session Setup also needs the
@@ -81,6 +81,28 @@ and LOGOFF use the Engine transitions performed by response acceptance; valid
 NTSTATUS errors consume one receipt while preserving the connection context.
 Malformed or uncertain responses invalidate local state. No remote rollback or
 exactly-once behavior is claimed.
+
+For authenticated LOGOFF, TREE_DISCONNECT, CREATE, CLOSE, READ, WRITE,
+QUERY_DIRECTORY, and SET_INFO commands, the Engine records a nonzero AsyncId
+only after validating the correlated `STATUS_PENDING` header and bounded ERROR
+body. The interim is intentionally not signature-verified as required by SMB2;
+it does not create a receipt, expose its status, or advance transfer progress.
+The matching async final is validated and signature-verified over the original
+received bytes before parsing. A missing interim, changed AsyncId, mismatched
+request/session correlation, or invalid final signature fails closed and
+invalidates local handles. This behavior does not authenticate an unsigned
+interim.
+
+The facade remains synchronous and keeps one outstanding request. One absolute
+receive deadline covers all interim frames and the final response; an interim
+does not renew it. Credit handling remains the existing single-request profile:
+first interim credit must be positive, a repeat may grant zero, an async final
+must grant zero, and synchronous responses must grant positive credit. This is
+not a full credit-window implementation. Async NEGOTIATE, SESSION_SETUP, and
+TREE_CONNECT, SMB3, compounds, cancellation, concurrent requests, and transport
+timing guarantees are outside this proof boundary.
+Normative references and observed validation results are listed in the
+[proof report](proof-report.md#smb-21-asynchronous-interim-responses).
 
 The transport's real `Read_Exact`, `Write_Exact`, and `Send_Frame` paths use
 `SMB.Core_Transport`. The core builds the native `Ada.Streams` array directly,
@@ -214,8 +236,9 @@ does not make the above bodies formally verified.
 * An entire read/write API operation is capped at 1 MiB, each wire I/O chunk at
   64 KiB, encoded names at 65,534 bytes, open handles at 256, directory pages at
   4,096 and directory entries at 100,000. Exhaustion is reported, not wrapped.
-* Timeouts apply per complete sent/received frame, not to an entire multi-request
-  API call. Timeout/backpressure behavior is tested, not proved.
+* For each request, one absolute receive deadline covers interim frames and the
+  final response; multi-request API operations keep their existing per-frame
+  budget. Timeout/backpressure behavior is tested, not proved.
 * Cryptographic hardness, generated machine code's timing/side-channel resistance,
   secure key erasure, FIPS certification, complete SMB conformance, all servers
   and all Windows versions/configurations are not established.

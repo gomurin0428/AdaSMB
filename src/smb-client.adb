@@ -1,5 +1,6 @@
 with Ada.Containers.Vectors;
 with Ada.Exceptions;
+with Ada.Real_Time;
 with SMB.Clock;
 with SMB.Entropy;
 with SMB.Core_Auth;
@@ -41,6 +42,29 @@ package body SMB.Client is
       return Source
         (Source'First + Offset .. Source'First + Offset + Length - 1);
    end Slice;
+
+   function Receive_Response (Client : in out Connection) return SMB.Bytes is
+      Deadline : constant Ada.Real_Time.Time :=
+        SMB.Transport.Receive_Deadline (Client.Channel);
+      Is_Interim : Boolean;
+      Status : SMB.Core_Status;
+   begin
+      loop
+         declare
+            Packet : constant SMB.Bytes :=
+              SMB.Transport.Receive_Frame (Client.Channel, Deadline);
+         begin
+            SMB.Engine.Inspect_Interim_Response
+              (Client.Engine_Core, Packet, Is_Interim, Status);
+            if Status /= SMB.Ok then
+               raise SMB.Protocol_Error with
+                 "SMB interim response: " & SMB.Core_Status'Image (Status);
+            elsif not Is_Interim then
+               return Packet;
+            end if;
+         end;
+      end loop;
+   end Receive_Response;
 
    procedure Get_Entropy (Client : Connection; Output : out SMB.Bytes) is
    begin
@@ -239,7 +263,7 @@ package body SMB.Client is
       end if;
       declare
          Response : constant SMB.Bytes :=
-           SMB.Transport.Receive_Frame (Client.Channel);
+           Receive_Response (Client);
       begin
          SMB.Core_Client.Complete
            (Operation, Client.Engine_Core, Response, Client.Last_Status,
@@ -290,7 +314,7 @@ package body SMB.Client is
       end if;
       declare
          Response : constant SMB.Bytes :=
-           SMB.Transport.Receive_Frame (Client.Channel);
+           Receive_Response (Client);
       begin
          declare
             Ignored_Token : SMB.Engine.Handle_Token;
@@ -352,7 +376,7 @@ package body SMB.Client is
       end if;
       declare
          Received : constant SMB.Bytes :=
-           SMB.Transport.Receive_Frame (Client.Channel);
+           Receive_Response (Client);
       begin
          SMB.Core_Client.Complete_Metadata
            (Operation, Client.Engine_Core, Received,
@@ -398,7 +422,7 @@ package body SMB.Client is
       end if;
       declare
          Response : constant SMB.Bytes :=
-           SMB.Transport.Receive_Frame (Client.Channel);
+           Receive_Response (Client);
       begin
          SMB.Core_Connection.Complete
            (Operation, Client.Engine_Core, Response, Nt_Status, Core_Status);
@@ -562,7 +586,7 @@ package body SMB.Client is
         (Engine_Status, "authentication negotiate send was not acknowledged");
       declare
          Response : constant SMB.Bytes :=
-           SMB.Transport.Receive_Frame (Client.Channel);
+           Receive_Response (Client);
       begin
          SMB.Core_Client.Complete_Challenge
            (Authentication, Client.Engine_Core, Response, Nt_Status,
@@ -597,7 +621,7 @@ package body SMB.Client is
         (Engine_Status, "authentication token send was not acknowledged");
       declare
          Response : constant SMB.Bytes :=
-           SMB.Transport.Receive_Frame (Client.Channel);
+           Receive_Response (Client);
       begin
          Unverified_Status := SMB.Core_Client.Unverified_Authentication_Status
            (Authentication, Client.Engine_Core, Response);
@@ -775,7 +799,7 @@ package body SMB.Client is
          Require_Transfer_Status (Core_Status, "SMB READ send acknowledgement");
          declare
             Response : constant SMB.Bytes :=
-              SMB.Transport.Receive_Frame (Client.Channel);
+              Receive_Response (Client);
          begin
             SMB.Core_Client.Complete_Read
               (Transfer, Client.Engine_Core, Response, Nt_Status, Core_Status);
@@ -847,7 +871,7 @@ package body SMB.Client is
            (Core_Status, "SMB WRITE send acknowledgement");
          declare
             Response : constant SMB.Bytes :=
-              SMB.Transport.Receive_Frame (Client.Channel);
+              Receive_Response (Client);
          begin
             SMB.Core_Client.Complete_Write
               (Transfer, Client.Engine_Core, Response, Nt_Status, Core_Status);
@@ -924,7 +948,7 @@ package body SMB.Client is
                     (Core_Status, "directory query send was not acknowledged");
                   declare
                      Response : constant SMB.Bytes :=
-                       SMB.Transport.Receive_Frame (Client.Channel);
+                       Receive_Response (Client);
                   begin
                      SMB.Core_Client.Complete_Directory_Page
                        (Enumeration, Client.Engine_Core, Response,

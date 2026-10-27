@@ -24,6 +24,7 @@ with Header_Mutation_Tests;
 with Security_Buffer_Tests;
 with Spnego_Mutation_Tests;
 with Challenge_Mutation_Tests;
+with Async_Engine_Tests;
 
 procedure Test_Suite is
    use type SMB.Core_Status;
@@ -5141,11 +5142,15 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "security-buffers"
                  and then Ada.Command_Line.Argument (1) /= "ntlm-maxlen"
                  and then Ada.Command_Line.Argument (1) /= "final-spnego"
-                 and then Ada.Command_Line.Argument (1) /= "challenge-mutations")
+                 and then Ada.Command_Line.Argument (1) /= "challenge-mutations"
+                 and then Ada.Command_Line.Argument (1) /= "async-responses")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "challenge-mutations" then
+      if Ada.Command_Line.Argument (1) = "async-responses" then
+         Async_Engine_Tests.Run;
+         Ada.Text_IO.Put_Line ("AdaSMB async response tests passed");
+      elsif Ada.Command_Line.Argument (1) = "challenge-mutations" then
          Challenge_Mutation_Tests;
       elsif Ada.Command_Line.Argument (1) = "final-spnego" then
          Test_Final_Spnego;
@@ -5229,6 +5234,7 @@ begin
    Test_Directory_Bounds;
    Test_Engine_Malformed_Close;
    Test_Engine_Receipts;
+   Async_Engine_Tests.Run;
    Test_Text_And_Wire;
    Ada.Text_IO.Put_Line ("AdaSMB unit tests passed");
 end Test_Suite;
