@@ -1,6 +1,73 @@
 # GNATprove and test report
 
-## Latest complete proof: Windows default entropy and authentication diagnostics
+## Response-body mutation regression scope
+
+`test_suite response-mutations` checks all eleven supported successful response
+layouts for fixed-body truncations and every value of each StructureSize byte,
+plus ERROR ByteCount bounds across these commands. READ and QUERY_DIRECTORY
+offset/length cross-products check accepted ranges exactly, not merely absence
+of exceptions, and test the 64 KiB library cap with enough packet capacity.
+WRITE Count bytes, ignored WRITE reserved bytes and the supported CLOSE flag
+mask are also varied. Tests repeat at array lower bounds zero and seven.
+
+The expected values distinguish wire layout rules from library policy:
+- [READ response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/3e3d2f2c-0e2f-41ea-ad07-fbca6ffdfd90)
+- [WRITE response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/7b80a339-f4d3-4575-8ce2-70a06f24f133)
+- [QUERY_DIRECTORY response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/4f75351b-048c-4a0c-9ea3-addd55a71956)
+
+The 64 KiB cap, zero WRITE progress rejection and unsupported CLOSE flags are
+client policy. A zero-length successful READ remains tolerated and terminates
+without retry (an existing compatibility behavior); the server specification
+instead requires STATUS_END_OF_FILE. Zero-length range offsets must still be
+within the frame. These tests do not redefine that behavior as wire conformance.
+
+Eight local Samba proxy modes cover malformed signed READ offset/length/body,
+READ data exceeding the actual request, and WRITE zero/excessive Count or
+malformed/truncated body. The proxy validates the real server HMAC, changes the
+body and recomputes the HMAC, then requires the client to close without sending
+another request. The public API must raise Protocol_Error, invalidate its old
+handle, reconnect on the same object and read again. WRITE may have already
+taken effect remotely: both client and harness check its exact contents rather
+than pretending rejection rolled it back. No production code or proof contract
+is changed by this test expansion. This is deterministic, selected-field
+mutation coverage, not exhaustive packet-space fuzzing or a new formal proof.
+
+## Linux validation: response-body mutation tests
+
+The focused build and `response-mutations` selector passed all 35,070 cases.
+`make test` passed, including the same selector, and strict
+`make check GPRBUILD="gprbuild -f"` passed with warnings treated as errors.
+Python syntax compilation passed. The final Samba integration run passed all
+existing cases and all eight response-mutation modes. The proxy verified the
+backend HMAC before each mutation, re-signed the changed response, and observed
+the client close without another SMB request. The client rejected the malformed
+response, reconnected, verified fresh data, and confirmed the exact remote
+WRITE effects.
+
+Two isolated sensitivity checks also failed as expected. Removing only the
+positive-length READ offset guard produced
+`buffer offset/length cross-product command 8 case 6778 length 96 status OK`;
+removing only the WRITE zero-count guard produced
+`WRITE Count byte mutation command 9 case 13440 length 80 status OK`.
+These mutations were made only in isolated copies, not in the working branch.
+
+The first Samba attempt exposed a missing proxy pass-through for non-target
+responses during file setup. The proxy now forwards those responses; the final
+full integration run passed. Evidence is preserved under `/home/ubuntu`:
+`response-mutation-03-selector.log`,
+`response-mutation-06-read-mutant-unit.log`,
+`response-mutation-08-write-mutant-unit.log`,
+`response-mutation-09-make-test.log`,
+`response-mutation-10-make-check.log`,
+`response-mutation-12-pycompile-after-proxy-fix.log`, and
+`response-mutation-13-samba-integration-final.log`.
+
+No `src/` or proof-project inputs differ from `origin/main` for this change, and
+no new GNATprove run was performed. The 4,382-check result below is the
+historical proof for the preceding Windows entropy and authentication
+diagnostics change, not a proof run for these tests.
+
+## Historical complete proof: Windows default entropy and authentication diagnostics
 
 The focused `SMB.Core_Client` proof and the clean complete `make prove` run
 passed for the Windows default entropy and unverified authentication diagnostic

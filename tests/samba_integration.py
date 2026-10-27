@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 
-from adversarial_proxy import AdversarialProxy, DIRECTORY_MODES
+from adversarial_proxy import AdversarialProxy, DIRECTORY_MODES, RESPONSE_MUTATIONS
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -384,6 +384,26 @@ def main() -> int:
                             env=diagnostic_env)
                     finally:
                         proxy.join()
+                for index, mode in enumerate(RESPONSE_MUTATIONS, start=21):
+                    (share / "mutation-write.bin").write_bytes(b"A" * 64)
+                    (share / "mutation-write.bin").chmod(0o666)
+                    proxy_port = PORT + index
+                    proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD)
+                    proxy.start()
+                    mutation_env = env.copy()
+                    mutation_env.update(
+                        SMB_TEST_PORT=str(proxy_port),
+                        SMB_TEST_BACKEND_PORT=str(PORT),
+                        SMB_TEST_MODE=mode,
+                    )
+                    try:
+                        run([str(ROOT / "build/bin/response_mutation_client")], env=mutation_env)
+                    finally:
+                        proxy.join()
+                    expected = (b"B" + b"A" * 63) if RESPONSE_MUTATIONS[mode] == 9 else b"A" * 64
+                    if (share / "mutation-write.bin").read_bytes() != expected:
+                        raise RuntimeError("unexpected remote WRITE effect after response mutation")
+                    (share / "mutation-write.bin").unlink()
             finally:
                 try:
                     os.killpg(daemon.pid, signal.SIGTERM)
