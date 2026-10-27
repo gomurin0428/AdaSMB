@@ -39,7 +39,23 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => Guid'Length = 16
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 38
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 36
+            and then SMB.Core_Wire.Encoded_U16 (Output, 2) = 1
+            and then SMB.Core_Wire.Encoded_U16 (Output, 4) = 3
+            and then SMB.Core_Wire.Encoded_U16 (Output, 6) = 0
+            and then SMB.Core_Wire.Encoded_U32 (Output, 8) = 0
+            and then SMB.Core_Wire.Encoded_U64 (Output, 28) = 0
+            and then SMB.Core_Wire.Encoded_U16
+              (Output, 36) = SMB.SMB2_Dialect_0210
+            and then
+              (for all Index in 0 .. 15 =>
+                 Output (Output'First + 12 + Index) =
+                   Guid (Guid'First + Index)));
 
    procedure Build_Session_Setup
      (Token : SMB.Bytes;
@@ -74,7 +90,20 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => Name'Length <= Maximum_Name_Bytes
      and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 8 + Name'Length
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 9
+            and then SMB.Core_Wire.Encoded_U16 (Output, 2) = 0
+            and then SMB.Core_Wire.Encoded_U16 (Output, 4) = 72
+            and then SMB.Core_Wire.Encoded_U16 (Output, 6) =
+              SMB.Word (Name'Length)
+            and then
+              (for all Index in 0 .. Name'Length - 1 =>
+                 Output (Output'First + 8 + Index) =
+                   Name (Name'First + Index)));
 
    procedure Build_Create
      (Name : SMB.Bytes;
@@ -315,7 +344,13 @@ package SMB.Core_Protocol is
       Used : out Natural;
       Status : out SMB.Core_Status)
    with Pre => Output'Length <= SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length;
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 4
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 4
+            and then SMB.Core_Wire.Encoded_U16 (Output, 2) = 0);
 
    procedure Parse_Response
      (Packet : SMB.Bytes;
@@ -327,6 +362,19 @@ package SMB.Core_Protocol is
      Post => (if Status = SMB.Ok then
        Info.Data_Offset <= Packet'Length
        and then Info.Data_Length <= Packet'Length - Info.Data_Offset
+       and then
+         (if Command = 0 and then Nt_Status = SMB.Success then
+            Packet'Length >= 128
+            and then Info.Max_Read in 1 .. Maximum_IO_Chunk
+            and then Info.Max_Write in 1 .. Maximum_IO_Chunk
+            and then Info.Max_Read = Natural (SMB.DWord'Min
+              (Maximum_IO_Chunk, SMB.Core_Wire.Encoded_U32 (Packet, 96)))
+            and then Info.Max_Write = Natural (SMB.DWord'Min
+              (Maximum_IO_Chunk, SMB.Core_Wire.Encoded_U32 (Packet, 100)))
+          elsif Command = 3 and then Nt_Status = SMB.Success then
+            Packet'Length >= 80
+            and then Info.Tree_Id /= 0
+            and then Info.Tree_Id = SMB.Core_Wire.Encoded_U32 (Packet, 36))
        and then
          (if Command = 1
             and then Nt_Status = SMB.Status_More_Processing_Required

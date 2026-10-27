@@ -2,6 +2,7 @@ with Ada.Text_IO;
 with SMB;
 with SMB.Core_Auth;
 with SMB.Core_Client;
+with SMB.Core_Connection;
 with SMB.Core_Framing;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
@@ -18,6 +19,8 @@ procedure Test_Suite is
    use type SMB.Engine.Phase;
    use type SMB.Core_Client.Transfer_Stage;
    use type SMB.Core_Client.Authentication_Stage;
+   use type SMB.Core_Connection.Connection_State_Snapshot;
+   use type SMB.Core_Connection.Connection_Stage;
    use type SMB.Bytes;
 
    use type SMB.Byte;
@@ -1171,7 +1174,8 @@ procedure Test_Suite is
 
       procedure Reconnect_Share
         (Target : in out SMB.Engine.Engine_State;
-         Initialize_State : Boolean := True) is
+         Initialize_State : Boolean := True;
+         Connect_Share_State : Boolean := True) is
       begin
          if Initialize_State then
             SMB.Engine.Initialize (Target, Status);
@@ -1240,24 +1244,26 @@ procedure Test_Suite is
             SMB.Engine.Mark_Authenticated (Target, Status);
             Assert (Status = SMB.Ok, "reconnect authenticated phase");
          end;
-         declare
-            Response : SMB.Bytes (0 .. 79) := (others => 0);
-         begin
-            SMB.Engine.Begin_Request
-              (Target, SMB.Core_Wire.Command_Code (3), True, True,
-               Message_Id, Expected, Status);
-            Assert (Status = SMB.Ok, "reconnect tree connect request");
-            Prepare_Response
-              (Response, SMB.Core_Wire.Command_Code (3), Message_Id,
-               Tree_Id, Session_Id, True);
-            Response (64) := 16;
-            Response (66) := 1;
-            SMB.Wire.Sign (Response, Key);
-            SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
-            Assert (Status = SMB.Ok, "reconnect tree connect response");
-            SMB.Engine.Mark_Share_Connected (Target, Tree_Id, Status);
-            Assert (Status = SMB.Ok, "reconnect share-connected phase");
-         end;
+         if Connect_Share_State then
+            declare
+               Response : SMB.Bytes (0 .. 79) := (others => 0);
+            begin
+               SMB.Engine.Begin_Request
+                 (Target, SMB.Core_Wire.Command_Code (3), True, True,
+                  Message_Id, Expected, Status);
+               Assert (Status = SMB.Ok, "reconnect tree connect request");
+               Prepare_Response
+                 (Response, SMB.Core_Wire.Command_Code (3), Message_Id,
+                  Tree_Id, Session_Id, True);
+               Response (64) := 16;
+               Response (66) := 1;
+               SMB.Wire.Sign (Response, Key);
+               SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+               Assert (Status = SMB.Ok, "reconnect tree connect response");
+               SMB.Engine.Mark_Share_Connected (Target, Tree_Id, Status);
+               Assert (Status = SMB.Ok, "reconnect share-connected phase");
+            end;
+         end if;
       end Reconnect_Share;
 
       procedure Reconnect_Share is
@@ -1296,6 +1302,686 @@ procedure Test_Suite is
            (Status = SMB.Ok and then Nt_Status = SMB.Success,
             "complete directory test CREATE");
       end Create_Directory_Handle;
+
+      procedure Test_Connection_Coordinator is
+         Operation, Tree_Operation, Disconnect_Operation,
+           Tree_Error_Operation, Logoff_Error_Operation,
+           Logoff_Operation, Successful_Disconnect_Operation,
+           Authenticated_Logoff_Operation, Abort_Operation,
+           Malformed_Operation, Bad_Signature_Operation,
+           Bad_Correlation_Operation :
+           SMB.Core_Connection.Connection_Operation;
+         Rejected_Operation, Bounded_Operation :
+           SMB.Core_Connection.Connection_Operation;
+         Create_Operation : SMB.Core_Client.Operation;
+         Token : SMB.Engine.Handle_Token;
+         Guid : constant SMB.Bytes (4 .. 19) :=
+           (16#00#, 16#01#, 16#02#, 16#03#, 16#04#, 16#05#, 16#06#, 16#07#,
+            16#08#, 16#09#, 16#0A#, 16#0B#, 16#0C#, 16#0D#, 16#0E#, 16#0F#);
+         Name : constant SMB.Bytes (9 .. 12) := (16#41#, 0, 16#42#, 0);
+         Request : SMB.Bytes (0 .. 101) := (others => 0);
+         Nonzero_Request : SMB.Bytes (5 .. 80) := (others => 0);
+         Short_Request : SMB.Bytes (0 .. 74) := (others => 0);
+         Response : SMB.Bytes (0 .. 127) := (others => 0);
+         Used : Natural;
+         Response_Status : SMB.Core_Status;
+         Saved_Key : SMB.Bytes (0 .. 15);
+         Checked_Id : SMB.Bytes (0 .. 15);
+         Checked_Access : SMB.Engine.Access_Kind;
+         Is_Directory : Boolean;
+         Saved_State : SMB.Engine.Engine_State;
+         Completed_State : SMB.Engine.Engine_State;
+         Saved_Connection :
+           SMB.Core_Connection.Connection_State_Snapshot;
+         Completed_Connection :
+           SMB.Core_Connection.Connection_State_Snapshot;
+      begin
+         SMB.Engine.Initialize (State, Status);
+         Assert (Status = SMB.Ok, "connection coordinator initialize");
+         SMB.Engine.Mark_Connected (State, Status);
+         Assert (Status = SMB.Ok, "connection coordinator transport");
+         SMB.Core_Connection.Prepare_Negotiate
+           (Operation, State, Guid, Request, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = 102
+            and then SMB.Wire.U16 (Request, 12) = 0
+            and then SMB.Wire.U16 (Request, 64) = 36
+            and then SMB.Wire.U16 (Request, 66) = 1
+            and then SMB.Wire.U16 (Request, 68) = 3
+            and then SMB.Wire.U16 (Request, 70) = 0
+            and then SMB.Wire.U32 (Request, 72) = 0
+            and then Request (76 .. 91) = Guid
+            and then SMB.Wire.U64 (Request, 92) = 0
+            and then SMB.Wire.U16 (Request, 100) = SMB.SMB2_Dialect_0210,
+            "connection NEGOTIATE packet fields and GUID");
+         SMB.Core_Connection.Send_Succeeded (Operation, State, Status);
+         Assert (Status = SMB.Ok, "acknowledge connection NEGOTIATE");
+         Response := (others => 0);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (0),
+            SMB.Wire.U64 (Request, 24), 0, 0, False);
+         Response (64) := 65;
+         Response (66) := 1;
+         SMB.Wire.Put_U16 (Response, 68, SMB.SMB2_Dialect_0210);
+         SMB.Wire.Put_U32 (Response, 96, 100_000);
+         SMB.Wire.Put_U32 (Response, 100, 32_768);
+         SMB.Core_Connection.Complete
+           (Operation, State, Response, Nt_Status, Response_Status);
+         Assert
+           (Response_Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Engine.Current_Phase (State) = SMB.Engine.Negotiated
+            and then SMB.Engine.Current_Max_Read (State) = 65_536
+            and then SMB.Engine.Current_Max_Write (State) = 32_768,
+            "NEGOTIATE response limits are clamped and committed");
+
+         SMB.Engine.Invalidate (State, Status);
+         Assert (Status = SMB.Ok, "cleanup negotiated test state");
+         Reconnect_Share (State, Connect_Share_State => False);
+         Saved_State := State;
+         Saved_Connection :=
+           SMB.Core_Connection.Snapshot_Of (Rejected_Operation);
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Rejected_Operation, State, SMB.Bytes'(1 .. 0 => 0), Request,
+            Used, Status);
+         Assert
+           (Status /= SMB.Ok and then Used = 0
+            and then SMB.Engine."=" (State, Saved_State)
+            and then SMB.Core_Connection.Snapshot_Of
+              (Rejected_Operation) = Saved_Connection,
+            "empty TREE_CONNECT name preserves state");
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Rejected_Operation, State, SMB.Bytes'(0 => 1), Request, Used,
+            Status);
+         Assert
+           (Status /= SMB.Ok and then Used = 0
+            and then SMB.Engine."=" (State, Saved_State)
+            and then SMB.Core_Connection.Snapshot_Of
+              (Rejected_Operation) = Saved_Connection,
+            "odd TREE_CONNECT name preserves state");
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Rejected_Operation, State, Name, Short_Request, Used, Status);
+         Assert
+           (Status /= SMB.Ok and then Used = 0
+            and then SMB.Engine."=" (State, Saved_State)
+            and then SMB.Core_Connection.Snapshot_Of
+              (Rejected_Operation) = Saved_Connection,
+            "short TREE_CONNECT output preserves state");
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Bounded_Operation, State, Name, Nonzero_Request, Used, Status);
+         Assert
+           (Status = SMB.Ok
+            and then Used = Nonzero_Request'Length
+            and then SMB.Wire.U16 (Nonzero_Request, 64) = 9
+            and then Nonzero_Request
+              (Nonzero_Request'First + 72 .. Nonzero_Request'First + 75) =
+                Name,
+            "nonzero-bound TREE_CONNECT output preserves packet");
+         SMB.Core_Connection.Abort_Connection
+           (Bounded_Operation, State, Status);
+         Assert (Status = SMB.Ok, "abort nonzero-bound preparation fixture");
+         Reconnect_Share (State, Connect_Share_State => False);
+         Saved_State := State;
+         Saved_Connection :=
+           SMB.Core_Connection.Snapshot_Of (Rejected_Operation);
+         SMB.Core_Connection.Prepare_Tree_Disconnect
+           (Rejected_Operation, State, Request, Used, Status);
+         Assert
+           (Status /= SMB.Ok and then Used = 0
+            and then SMB.Engine."=" (State, Saved_State)
+            and then SMB.Core_Connection.Snapshot_Of
+              (Rejected_Operation) = Saved_Connection,
+            "wrong-phase TREE_DISCONNECT preparation preserves state");
+         SMB.Engine.Begin_Request
+           (State, SMB.Core_Wire.Command_Code (3), True, True,
+            Message_Id, Expected, Status);
+         Assert (Status = SMB.Ok, "reserve unrelated connection request");
+         Saved_State := State;
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Rejected_Operation, State, Name, Request, Used, Status);
+         Assert
+           (Status /= SMB.Ok and then Used = 0
+            and then SMB.Engine."=" (State, Saved_State)
+            and then SMB.Core_Connection.Snapshot_Of
+              (Rejected_Operation) = Saved_Connection,
+            "pending request rejects TREE_CONNECT preparation without damage");
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 79), SMB.Core_Wire.Command_Code (3),
+            Message_Id, Tree_Id, Session_Id, True);
+         Response (64) := 16;
+         Response (66) := 1;
+         SMB.Wire.Sign (Response (0 .. 79), Key);
+         SMB.Engine.Accept_Response (State, Response (0 .. 79), Nt_Status,
+                                     Status);
+         Assert
+           (Status = SMB.Ok and then SMB.Engine.Has_Validated_Response (State),
+            "raw TREE_CONNECT success creates an unconsumed receipt");
+         Saved_State := State;
+         Saved_Connection :=
+           SMB.Core_Connection.Snapshot_Of (Rejected_Operation);
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Rejected_Operation, State, Name, Request, Used, Status);
+         Assert
+           (Status /= SMB.Ok and then Used = 0
+            and then SMB.Engine."=" (State, Saved_State)
+            and then SMB.Core_Connection.Snapshot_Of
+              (Rejected_Operation) = Saved_Connection,
+            "validated receipt rejects TREE_CONNECT preparation");
+         SMB.Engine.Discard_Response_Receipt (State, Status);
+         SMB.Engine.Invalidate (State, Status);
+         Assert (Status = SMB.Ok, "clear pending preparation fixture");
+         Reconnect_Share (State, Connect_Share_State => False);
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Tree_Error_Operation, State, Name, Request, Used, Status);
+         SMB.Core_Connection.Send_Succeeded
+           (Tree_Error_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 71), SMB.Core_Wire.Command_Code (3),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         SMB.Wire.Put_U32 (Response, 8, SMB.Status_Access_Denied);
+         Response (64) := 9;
+         SMB.Wire.Sign (Response (0 .. 71), Key);
+         Saved_Key := SMB.Engine.Current_Signing_Key (State);
+         SMB.Core_Connection.Complete
+           (Tree_Error_Operation, State, Response (0 .. 71), Nt_Status,
+            Response_Status);
+         Assert
+           (Response_Status = SMB.Ok
+            and then Nt_Status = SMB.Status_Access_Denied
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Authenticated
+            and then SMB.Engine.Current_Session_Id (State) = Session_Id
+            and then SMB.Engine.Current_Tree_Id (State) = 0
+            and then SMB.Engine.Current_Signing_Key (State) = Saved_Key
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State),
+            "TREE_CONNECT denial consumes receipt and preserves authentication");
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Tree_Operation, State, Name, Request, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = 76
+            and then SMB.Wire.U16 (Request, 12) = 3
+            and then SMB.Wire.U32 (Request, 16) = 8
+            and then SMB.Wire.U16 (Request, 64) = 9
+            and then SMB.Wire.U16 (Request, 66) = 0
+            and then SMB.Wire.U16 (Request, 68) = 72
+            and then SMB.Wire.U16 (Request, 70) = 4
+            and then Request (72 .. 75) = Name
+            and then SMB.Wire.Verify_Signature
+              (Request (Request'First .. Request'First + Used - 1),
+               SMB.Engine.Current_Signing_Key (State)),
+            "signed TREE_CONNECT preserves nonzero-bound path bytes");
+         Response := (others => 0);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (3),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 16;
+         Response (66) := 1;
+         SMB.Wire.Sign (Response (0 .. 79), Key);
+         Saved_State := State;
+         Saved_Connection :=
+           SMB.Core_Connection.Snapshot_Of (Tree_Operation);
+         SMB.Core_Connection.Complete
+           (Tree_Operation, State, Response (0 .. 79), Nt_Status,
+            Response_Status);
+         Assert
+           (Response_Status = SMB.Invalid_State_Status and then Nt_Status = 0
+            and then SMB.Engine."=" (State, Saved_State)
+            and then SMB.Core_Connection.Snapshot_Of
+              (Tree_Operation) = Saved_Connection,
+            "TREE_CONNECT completion before send acknowledgement is rejected");
+         SMB.Core_Connection.Send_Succeeded
+           (Tree_Operation, State, Status);
+         Assert (Status = SMB.Ok, "acknowledge TREE_CONNECT");
+         SMB.Core_Connection.Complete
+           (Tree_Operation, State, Response (0 .. 79), Nt_Status,
+            Response_Status);
+         Assert
+           (Response_Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Share_Connected
+            and then SMB.Engine.Current_Tree_Id (State) = Tree_Id,
+            "TREE_CONNECT commits wire tree identifier");
+         Completed_State := State;
+         Completed_Connection :=
+           SMB.Core_Connection.Snapshot_Of (Tree_Operation);
+         SMB.Core_Connection.Complete
+           (Tree_Operation, State, Response (0 .. 71), Nt_Status,
+            Response_Status);
+         Assert
+           (Response_Status = SMB.Invalid_State_Status and then Nt_Status = 0
+            and then SMB.Engine."=" (State, Completed_State)
+            and then SMB.Core_Connection.Snapshot_Of
+              (Tree_Operation) = Completed_Connection,
+            "duplicate TREE_CONNECT completion preserves state");
+
+         Create_Directory_Handle
+           (State, Create_Operation, Token, Is_Directory => False);
+         Saved_Key := SMB.Engine.Current_Signing_Key (State);
+         SMB.Core_Connection.Prepare_Logoff
+           (Logoff_Error_Operation, State, Request, Used, Status);
+         SMB.Core_Connection.Send_Succeeded
+           (Logoff_Error_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 71), SMB.Core_Wire.Command_Code (2),
+            SMB.Wire.U64 (Request, 24), 0, Session_Id, True);
+         SMB.Wire.Put_U32 (Response, 8, SMB.Status_Access_Denied);
+         Response (64) := 9;
+         SMB.Wire.Sign (Response (0 .. 71), Key);
+         SMB.Core_Connection.Complete
+           (Logoff_Error_Operation, State, Response (0 .. 71), Nt_Status,
+            Response_Status);
+         SMB.Engine.Validate_Handle
+           (State, Token, False, False, Checked_Id, Checked_Access,
+            Is_Directory, Status);
+         Assert
+           (Response_Status = SMB.Ok
+            and then Nt_Status = SMB.Status_Access_Denied
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Share_Connected
+            and then SMB.Engine.Current_Session_Id (State) = Session_Id
+            and then SMB.Engine.Current_Tree_Id (State) = Tree_Id
+            and then SMB.Engine.Current_Signing_Key (State) = Saved_Key
+            and then Status = SMB.Ok
+            and then Checked_Id = File_Id
+            and then Checked_Access = SMB.Engine.Read_Only
+            and then not Is_Directory
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State),
+            "LOGOFF denial consumes receipt and preserves handle/context");
+         SMB.Core_Connection.Prepare_Tree_Disconnect
+           (Disconnect_Operation, State, Request, Used, Status);
+         Assert (Status = SMB.Ok and then Used = 68,
+                 "prepare TREE_DISCONNECT");
+         SMB.Core_Connection.Send_Succeeded
+           (Disconnect_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 67), SMB.Core_Wire.Command_Code (4),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 9;
+         SMB.Wire.Put_U32 (Response, 8, SMB.Status_Access_Denied);
+         SMB.Wire.Sign (Response (0 .. 71), Key);
+         SMB.Core_Connection.Complete
+           (Disconnect_Operation, State, Response (0 .. 71), Nt_Status,
+            Response_Status);
+         SMB.Engine.Validate_Handle
+           (State, Token, False, False, Checked_Id, Checked_Access,
+            Is_Directory, Status);
+         Assert
+           (Response_Status = SMB.Ok and then
+              Nt_Status = SMB.Status_Access_Denied
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Share_Connected
+            and then SMB.Engine.Current_Session_Id (State) = Session_Id
+            and then SMB.Engine.Current_Signing_Key (State) = Saved_Key
+            and then SMB.Engine.Current_Tree_Id (State) = Tree_Id
+            and then Status = SMB.Ok
+            and then Checked_Id = File_Id
+            and then Checked_Access = SMB.Engine.Read_Only
+            and then not Is_Directory,
+            "TREE_DISCONNECT denial consumes receipt and preserves handle");
+
+         SMB.Core_Connection.Prepare_Logoff
+           (Logoff_Operation, State, Request, Used, Status);
+         Assert (Status = SMB.Ok and then Used = 68,
+                 "LOGOFF accepted directly from share-connected");
+         SMB.Core_Connection.Send_Succeeded
+           (Logoff_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 67), SMB.Core_Wire.Command_Code (2),
+            SMB.Wire.U64 (Request, 24), 0, Session_Id, True);
+         Response (64) := 4;
+         SMB.Wire.Sign (Response (0 .. 67), Key);
+         SMB.Core_Connection.Complete
+           (Logoff_Operation, State, Response (0 .. 67), Nt_Status,
+            Response_Status);
+         SMB.Engine.Validate_Handle
+           (State, Token, False, False, Checked_Id, Checked_Access,
+            Is_Directory, Status);
+         Assert
+           (Response_Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then SMB.Engine.Current_Session_Id (State) = 0
+            and then SMB.Engine.Current_Tree_Id (State) = 0
+            and then SMB.Engine.Signing_Key_Is_Zero (State)
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State),
+           "LOGOFF completion invalidates connection state");
+         Assert
+           (Status /= SMB.Ok,
+            "LOGOFF invalidates open handles");
+
+         Reconnect_Share (State);
+         Create_Directory_Handle
+           (State, Create_Operation, Token, Is_Directory => False);
+         Saved_Key := SMB.Engine.Current_Signing_Key (State);
+         SMB.Core_Connection.Prepare_Tree_Disconnect
+           (Successful_Disconnect_Operation, State, Request, Used, Status);
+         SMB.Core_Connection.Send_Succeeded
+           (Successful_Disconnect_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 67), SMB.Core_Wire.Command_Code (4),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 4;
+         SMB.Wire.Sign (Response (0 .. 67), Key);
+         SMB.Core_Connection.Complete
+           (Successful_Disconnect_Operation, State, Response (0 .. 67),
+            Nt_Status, Response_Status);
+         SMB.Engine.Validate_Handle
+           (State, Token, False, False, Checked_Id, Checked_Access,
+            Is_Directory, Status);
+         Assert
+           (Response_Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Authenticated
+            and then SMB.Engine.Current_Session_Id (State) = Session_Id
+            and then SMB.Engine.Current_Signing_Key (State) = Saved_Key
+            and then Status /= SMB.Ok,
+            "successful TREE_DISCONNECT retains session/key and clears handles");
+         SMB.Core_Connection.Prepare_Logoff
+           (Authenticated_Logoff_Operation, State, Request, Used, Status);
+         SMB.Core_Connection.Send_Succeeded
+           (Authenticated_Logoff_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 67), SMB.Core_Wire.Command_Code (2),
+            SMB.Wire.U64 (Request, 24), 0, Session_Id, True);
+         Response (64) := 4;
+         SMB.Wire.Sign (Response (0 .. 67), Key);
+         SMB.Core_Connection.Complete
+           (Authenticated_Logoff_Operation, State, Response (0 .. 67),
+            Nt_Status, Response_Status);
+         Assert
+           (Response_Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then SMB.Engine.Current_Session_Id (State) = 0
+            and then SMB.Engine.Current_Tree_Id (State) = 0
+            and then SMB.Engine.Signing_Key_Is_Zero (State)
+            and then not SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State),
+           "normal LOGOFF follows TREE_DISCONNECT");
+
+         declare
+            Owner_Operation, Foreign_Operation, Fresh_Operation :
+              SMB.Core_Connection.Connection_Operation;
+            Owner_Packet, Foreign_Packet, Fresh_Packet :
+              SMB.Bytes (0 .. 101) := (others => 0);
+            Owner_Used, Foreign_Used, Fresh_Used : Natural;
+            Owner_Id, Owner_Epoch : SMB.QWord;
+            Owner_State_Before, Foreign_State_Before :
+              SMB.Engine.Engine_State;
+            Fresh_State_Before : SMB.Engine.Engine_State;
+            Foreign_Connection_Before, Fresh_Connection_Before :
+              SMB.Core_Connection.Connection_State_Snapshot;
+            Owner_Connection_Before :
+              SMB.Core_Connection.Connection_State_Snapshot;
+            Owner_Response : SMB.Bytes (0 .. 79) := (others => 0);
+         begin
+            Reconnect_Share (State, Connect_Share_State => False);
+            Reconnect_Share
+              (Foreign_State, Connect_Share_State => False);
+            Owner_Id := SMB.Engine.Current_Owner_Id (State);
+            Owner_Epoch := SMB.Engine.Current_Epoch (State);
+            SMB.Core_Connection.Prepare_Tree_Connect
+              (Owner_Operation, State, Name, Owner_Packet, Owner_Used, Status);
+            SMB.Core_Connection.Prepare_Tree_Connect
+              (Foreign_Operation, Foreign_State, Name, Foreign_Packet,
+               Foreign_Used, Status);
+            Assert
+              (Owner_Used = Foreign_Used
+               and then SMB.Wire.U64 (Owner_Packet, 24) =
+                 SMB.Wire.U64 (Foreign_Packet, 24)
+               and then SMB.Engine.Current_Owner_Id (State) /=
+                 SMB.Engine.Current_Owner_Id (Foreign_State),
+              "foreign connection operations have colliding wire identifiers");
+            Owner_State_Before := State;
+            Foreign_State_Before := Foreign_State;
+            Owner_Connection_Before :=
+              SMB.Core_Connection.Snapshot_Of (Owner_Operation);
+            Foreign_Connection_Before :=
+              SMB.Core_Connection.Snapshot_Of (Foreign_Operation);
+            SMB.Core_Connection.Send_Succeeded
+              (Owner_Operation, Foreign_State, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status
+               and then SMB.Engine."=" (State, Owner_State_Before)
+               and then SMB.Engine."=" (Foreign_State, Foreign_State_Before)
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Owner_Operation) = Owner_Connection_Before
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Foreign_Operation) = Foreign_Connection_Before,
+              "foreign send rejection preserves both pending requests");
+            SMB.Core_Connection.Send_Succeeded
+              (Owner_Operation, State, Status);
+            Prepare_Response
+              (Owner_Response, SMB.Core_Wire.Command_Code (3),
+               SMB.Wire.U64 (Owner_Packet, 24), Tree_Id, Session_Id, True);
+            Owner_Response (64) := 16;
+            Owner_Response (66) := 1;
+            SMB.Wire.Sign (Owner_Response, Key);
+            Owner_State_Before := State;
+            Foreign_State_Before := Foreign_State;
+            Owner_Connection_Before :=
+              SMB.Core_Connection.Snapshot_Of (Owner_Operation);
+            SMB.Core_Connection.Complete
+              (Owner_Operation, Foreign_State, Owner_Response, Nt_Status,
+               Response_Status);
+            Assert
+              (Response_Status = SMB.Invalid_State_Status
+               and then SMB.Engine."=" (State, Owner_State_Before)
+               and then SMB.Engine."=" (Foreign_State, Foreign_State_Before)
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Owner_Operation) = Owner_Connection_Before
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Foreign_Operation) = Foreign_Connection_Before,
+              "foreign completion preserves colliding pending requests");
+            SMB.Core_Connection.Abort_Connection
+              (Owner_Operation, Foreign_State, Status);
+            Assert
+               (Status = SMB.Invalid_State_Status
+               and then SMB.Engine."=" (Foreign_State, Foreign_State_Before)
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Owner_Operation) = Owner_Connection_Before
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Foreign_Operation) = Foreign_Connection_Before,
+              "foreign abort preserves colliding pending request");
+
+            SMB.Engine.Invalidate (State, Status);
+            Assert (Status = SMB.Ok, "invalidate sent operation epoch");
+            Reconnect_Share
+              (State, Initialize_State => False,
+               Connect_Share_State => False);
+            SMB.Core_Connection.Prepare_Tree_Connect
+              (Fresh_Operation, State, Name, Fresh_Packet, Fresh_Used, Status);
+            Assert
+              (SMB.Engine.Current_Owner_Id (State) = Owner_Id
+               and then SMB.Engine.Current_Epoch (State) /= Owner_Epoch
+               and then SMB.Wire.U64 (Fresh_Packet, 24) =
+                 SMB.Wire.U64 (Owner_Packet, 24),
+              "stale operation collides with current message ID in new epoch");
+            Fresh_State_Before := State;
+            Fresh_Connection_Before :=
+              SMB.Core_Connection.Snapshot_Of (Fresh_Operation);
+            Owner_Connection_Before :=
+              SMB.Core_Connection.Snapshot_Of (Owner_Operation);
+            SMB.Core_Connection.Complete
+              (Owner_Operation, State, Owner_Response, Nt_Status,
+               Response_Status);
+            Assert
+              (Response_Status = SMB.Invalid_State_Status
+               and then SMB.Engine."=" (State, Fresh_State_Before)
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Owner_Operation) = Owner_Connection_Before
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Fresh_Operation) = Fresh_Connection_Before,
+              "stale completion preserves new live connection request");
+            SMB.Core_Connection.Abort_Connection
+              (Owner_Operation, State, Status);
+            Assert
+               (Status = SMB.Invalid_State_Status
+               and then SMB.Engine."=" (State, Fresh_State_Before)
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Owner_Operation) = Owner_Connection_Before
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Fresh_Operation) = Fresh_Connection_Before,
+              "stale abort preserves new live connection request");
+            SMB.Core_Connection.Abort_Connection
+              (Fresh_Operation, State, Status);
+            SMB.Core_Connection.Abort_Connection
+              (Foreign_Operation, Foreign_State, Status);
+         end;
+
+         declare
+            Wrong_Pending_Operation :
+              SMB.Core_Connection.Connection_Operation;
+            Wrong_Pending_Packet : SMB.Bytes (0 .. 75) := (others => 0);
+            Wrong_Pending_Response : SMB.Bytes (0 .. 79) := (others => 0);
+            Wrong_Pending_Id : SMB.QWord;
+            Wrong_Pending_Expected : SMB.Engine.Request_Expectation;
+            Wrong_Pending_State : SMB.Engine.Engine_State;
+            Wrong_Pending_Connection :
+              SMB.Core_Connection.Connection_State_Snapshot;
+         begin
+            Reconnect_Share (State, Connect_Share_State => False);
+            SMB.Core_Connection.Prepare_Tree_Connect
+              (Wrong_Pending_Operation, State, Name, Wrong_Pending_Packet,
+               Used, Status);
+            Assert (Status = SMB.Ok, "prepare wrong-pending fixture");
+            SMB.Core_Connection.Send_Succeeded
+              (Wrong_Pending_Operation, State, Status);
+            Prepare_Response
+              (Wrong_Pending_Response, SMB.Core_Wire.Command_Code (3),
+               SMB.Wire.U64 (Wrong_Pending_Packet, 24), Tree_Id, Session_Id,
+               True);
+            Wrong_Pending_Response (64) := 16;
+            Wrong_Pending_Response (66) := 1;
+            SMB.Wire.Sign (Wrong_Pending_Response, Key);
+            SMB.Engine.Accept_Response
+              (State, Wrong_Pending_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then SMB.Engine.Has_Validated_Response (State),
+               "accept raw response before replacing pending expectation");
+            SMB.Engine.Discard_Response_Receipt (State, Status);
+            Assert (Status = SMB.Ok, "discard wrong-pending fixture receipt");
+            SMB.Engine.Begin_Request
+              (State, SMB.Core_Wire.Command_Code (3), True, True,
+               Wrong_Pending_Id, Wrong_Pending_Expected, Status);
+            Assert (Status = SMB.Ok, "begin unrelated pending request");
+            Wrong_Pending_State := State;
+            Wrong_Pending_Connection :=
+              SMB.Core_Connection.Snapshot_Of (Wrong_Pending_Operation);
+            SMB.Core_Connection.Complete
+              (Wrong_Pending_Operation, State, Wrong_Pending_Response,
+               Nt_Status, Response_Status);
+            Assert
+              (Response_Status = SMB.Invalid_State_Status
+               and then Nt_Status = 0
+               and then SMB.Engine."=" (State, Wrong_Pending_State)
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Wrong_Pending_Operation) = Wrong_Pending_Connection,
+              "wrong pending expectation rejects completion without damage");
+            SMB.Core_Connection.Abort_Connection
+              (Wrong_Pending_Operation, State, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status
+               and then SMB.Engine."=" (State, Wrong_Pending_State)
+               and then SMB.Core_Connection.Snapshot_Of
+                 (Wrong_Pending_Operation) = Wrong_Pending_Connection,
+              "wrong pending expectation rejects abort without damage");
+            SMB.Engine.Invalidate (State, Status);
+            Assert (Status = SMB.Ok, "clear wrong-pending fixture state");
+         end;
+
+         Reconnect_Share (State);
+         SMB.Core_Connection.Prepare_Tree_Disconnect
+           (Abort_Operation, State, Request, Used, Status);
+         SMB.Core_Connection.Abort_Connection
+           (Abort_Operation, State, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then SMB.Core_Connection.Stage_Of (Abort_Operation) =
+              SMB.Core_Connection.Failed,
+            "matching TREE_DISCONNECT abort invalidates locally");
+
+         Reconnect_Share (State);
+         SMB.Core_Connection.Prepare_Tree_Disconnect
+           (Malformed_Operation, State, Request, Used, Status);
+         SMB.Core_Connection.Send_Succeeded
+           (Malformed_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 67), SMB.Core_Wire.Command_Code (4),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         SMB.Wire.Put_U16 (Response, 64, 5);
+         SMB.Wire.Sign (Response (0 .. 67), Key);
+         SMB.Core_Connection.Complete
+           (Malformed_Operation, State, Response (0 .. 67), Nt_Status,
+            Response_Status);
+         Assert
+           (Response_Status = SMB.Invalid_Protocol and then Nt_Status = 0
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then SMB.Core_Connection.Stage_Of (Malformed_Operation) =
+              SMB.Core_Connection.Failed,
+            "malformed signed TREE_DISCONNECT fails without retry");
+
+         Reconnect_Share (State);
+         SMB.Core_Connection.Prepare_Tree_Disconnect
+           (Bad_Signature_Operation, State, Request, Used, Status);
+         SMB.Core_Connection.Send_Succeeded
+           (Bad_Signature_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 67), SMB.Core_Wire.Command_Code (4),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 4;
+         SMB.Wire.Sign (Response (0 .. 67), Key);
+         Response (48) := Response (48) xor 1;
+         SMB.Core_Connection.Complete
+           (Bad_Signature_Operation, State, Response (0 .. 67), Nt_Status,
+            Response_Status);
+         Assert
+           (Response_Status = SMB.Signature_Error and then Nt_Status = 0
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then SMB.Core_Connection.Stage_Of
+              (Bad_Signature_Operation) = SMB.Core_Connection.Failed,
+            "bad TREE_DISCONNECT signature invalidates locally");
+
+         Reconnect_Share (State);
+         SMB.Core_Connection.Prepare_Tree_Disconnect
+           (Bad_Correlation_Operation, State, Request, Used, Status);
+         SMB.Core_Connection.Send_Succeeded
+           (Bad_Correlation_Operation, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 67), SMB.Core_Wire.Command_Code (4),
+            SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
+         Response (64) := 4;
+         SMB.Wire.Sign (Response (0 .. 67), Key);
+         SMB.Wire.Put_U64 (Response, 24, SMB.Wire.U64 (Request, 24) + 1);
+         SMB.Wire.Sign (Response (0 .. 67), Key);
+         SMB.Core_Connection.Complete
+           (Bad_Correlation_Operation, State, Response (0 .. 67), Nt_Status,
+            Response_Status);
+         Assert
+           (Response_Status /= SMB.Ok and then Nt_Status = 0
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Disconnected
+            and then SMB.Core_Connection.Stage_Of
+              (Bad_Correlation_Operation) = SMB.Core_Connection.Failed,
+            "bad TREE_DISCONNECT correlation invalidates locally");
+         SMB.Engine.Invalidate (State, Status);
+      end Test_Connection_Coordinator;
 
       procedure Test_Directory_Coordinator is
          Directory_A, Directory_B :
@@ -2500,6 +3186,7 @@ procedure Test_Suite is
             "tampered transfer response advanced progress or kept the session");
       end;
       Test_Directory_Coordinator;
+      Test_Connection_Coordinator;
       Reconnect_Share;
       declare
          Metadata : SMB.Core_Client.Metadata_Operation;

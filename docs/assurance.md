@@ -8,7 +8,7 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes ten units (nine bodies plus `SMB`'s types).
+`proof.gpr` explicitly includes eleven units (ten bodies plus `SMB`'s types).
 These are the implementations called by `SMB.Client`, not a parallel model.
 
 | Unit | Runtime responsibility |
@@ -22,6 +22,7 @@ These are the implementations called by `SMB.Client`, not a parallel model.
 | `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
+| `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions |
 | `SMB.Engine` | Phases, pending requests, signed response acceptance, single-use response receipts and handle identity/lifetime |
 
 Supported response bodies are parsed in the core after header/correlation and
@@ -60,8 +61,18 @@ translation stay in the facade. Engine access flags do not prove DELETE
 authorization, and no server-side effect, rollback, or exactly-once guarantee
 is claimed. The public `Open_File`, `Close`, `Make_Directory`, `Remove_File`,
 and `Remove_Directory` wrappers use typed CREATE/CLOSE/SET_INFO flows while
-retaining trusted path and object-lifetime orchestration. `Connect`,
-`Connect_Share`, and `Disconnect` remain on the legacy `Exchange` adapter.
+retaining trusted path and object-lifetime orchestration.
+
+The connection lifecycle uses the separate `SMB.Core_Connection` operation
+coordinator for bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF
+construction, signing, response validation, receipt handling, and Engine
+transitions. `Execute_Connection` is the trusted socket pump. OS socket setup,
+entropy, share-path validation/encoding, allocation, exception handling, and
+public facade correctness remain outside the proof. Successful TREE_DISCONNECT
+and LOGOFF use the Engine transitions performed by response acceptance; valid
+NTSTATUS errors consume one receipt while preserving the connection context.
+Malformed or uncertain responses invalidate local state. No remote rollback or
+exactly-once behavior is claimed.
 
 Proof covers language-defined run-time checks, initialization, flow analysis and
 the contracts actually written in the source. It does not prove that every
@@ -83,18 +94,18 @@ understate this boundary.
 | `SMB.NTLM` | `Negotiate_Token`, `Authenticate` | Allocation, `Core_Auth` dispatch and exceptions |
 | `SMB.Text` | `Check`, `To_UTF16LE`, `From_UTF16LE`, `NTLM_Username` | Public allocation/exception adapters to `Core_Text` |
 | `SMB.Wire` | `Check`, `U16`, `U32`, `U64`, `Put_U16`, `Put_U32`, `Put_U64`, `Initialize_Header`, `Validate_Header`, `Sign`, `Verify_Signature` | Public exception adapters to `Core_Wire` |
-| `SMB.Client` | `Copy_Bytes`, `Slice`, `Encode_Name`, `Decode_Name`, `Read.Checked_Length`, `Write.Checked_Length` | Allocation, checked copying/slicing and text-container conversion |
-| `SMB.Client` | `Session_Identifier`, `Tree_Identifier`, `Last_NT_Status`, `Is_Connected` | Accessors to engine state or facade diagnostics |
+| `SMB.Client` | `Slice`, `Encode_Name`, `Decode_Name`, `Read.Checked_Length`, `Write.Checked_Length` | Allocation, checked copying/slicing and text-container conversion |
+| `SMB.Client` | `Last_NT_Status`, `Is_Connected` | Accessors to engine state or facade diagnostics |
 | `SMB.Client` | `Generate_Entropy`, `Get_Entropy` | OS CSPRNG or caller-provided entropy callback; no deterministic fallback |
 | `SMB.Client` | `Clear_State`, `Clear_State_Preserving_Status`, `Require_Status`, `Require_Transfer_Status`, `Require_Authentication_Status`, `Cleanup_Close`, `Finalize` | Cleanup and exception/NTSTATUS translation; finalization cannot report exceptions |
-| `SMB.Client` | `Exchange`, `Check_Handle`, `Validated_Path`, `Require_Relative_Share` | Core dispatch, frame assembly/copying, socket invocation and error translation |
+| `SMB.Client` | `Check_Handle`, `Validated_Path`, `Require_Relative_Share` | Core dispatch for handle/path validation and error translation |
 | `SMB.Client` | `Disposition_Value` | Public enum mapping |
 | `SMB.Client` | `Create_Internal`, `Close_Internal` | Socket send/receive orchestration around the typed coordinator, exact returned packet slicing, status/exception translation and abort cleanup |
 | `SMB.Client` | `Read`, `Write` | I/O pump around the typed coordinator, exact returned packet forwarding, allocation, exception/NTSTATUS translation, and cleanup of invalidated transports |
 | `SMB.Client` | `Authenticate` | I/O pump for `SMB.Core_Client` authentication steps; caller/OS entropy, clock input, exception/NTSTATUS translation and transport cleanup |
 | `SMB.Client` | `List_Directory` | Trusted folder lifetime and cleanup, UTF-16 decoding, dot-entry filtering, vector allocation/insertion, exception translation and socket pumping around the typed directory coordinator. |
 | `SMB.Client` | `Open_File`, `Close`, `Make_Directory`, `Remove_File`, `Remove_Directory` | Public wrappers over typed CREATE/CLOSE/SET_INFO flows; path validation/conversion, local object and temporary-handle lifetime, cleanup, and exception/NTSTATUS translation remain trusted. |
-| `SMB.Client` | `Connect`, `Connect_Share`, `Disconnect` | Legacy operation sequencing and recovery through the trusted `Exchange` adapter. |
+| `SMB.Client` | `Connect`, `Connect_Share`, `Disconnect`, `Execute_Connection` | Trusted OS socket/entropy setup, share path encoding, exact returned packet slicing and socket pumping, exception/NTSTATUS translation, best-effort TREE_DISCONNECT/LOGOFF ordering, and transport cleanup. |
 | `SMB.Client` | `Execute_Metadata`, `Set_Disposition`, `Rename` | Trusted SET_INFO socket orchestration, path validation and UTF-16 encoding, allocation, temporary-handle lifetime, cleanup, and exception/NTSTATUS translation. DELETE authorization and server-side disposition/rename effects are outside the proof. |
 
 Tests and the example are outside the proof project. Their successful execution

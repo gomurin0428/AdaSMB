@@ -3,8 +3,8 @@
 ## Final clean proof
 
 `gnatprove -P proof.gpr --clean` and the subsequent complete `make prove`
-run passed. GNATprove analyzed all ten configured units:
-`SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Framing`,
+run passed. GNATprove analyzed all eleven configured units:
+`SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Wire`,
 `SMB.Crypto` and `SMB.Engine`.
 
@@ -12,13 +12,13 @@ run passed. GNATprove analyzed all ten configured units:
 | --- | ---: | ---: | ---: |
 | Data dependencies | 1 | 1 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
-| Initialization | 479 | 479 | 0 |
+| Initialization | 527 | 527 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,008 | 0 | 2,008 |
-| Assertions | 240 | 0 | 240 |
-| Functional contracts | 802 | 0 | 802 |
-| Termination | 129 | 123 | 6 |
-| **Total** | **3,662** | **606** | **3,056** |
+| Run-time checks | 2,228 | 0 | 2,228 |
+| Assertions | 281 | 0 | 281 |
+| Functional contracts | 967 | 0 | 967 |
+| Termination | 145 | 139 | 6 |
+| **Total** | **4,152** | **670** | **3,482** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -26,10 +26,13 @@ subprograms were analyzed; none were reported skipped. GNATprove reported
 `SMB.Core_Protocol`), primarily unused assignments and status outputs, and
 zero `pragma Assume` statements. The forced `-gnatwe` build passed.
 
-Earlier clean runs hit the 10-second prover timeout on CREATE packet and
-metadata preparation postconditions. The final run uses the same level-2
-cvc5/z3 configuration and checks-as-errors with a 30-second timeout, now the
-`make prove` default. No contracts were weakened or checks justified to pass.
+The first full lifecycle run at the previous 30-second timeout left one CLOSE
+message-ID preservation assertion unproved. A focused run proved it with Z3
+in 49.74 seconds. The final clean run uses the same level-2 cvc5/z3
+configuration and checks-as-errors with a 120-second timeout, now the
+`make prove` default. The lifecycle proofs use checked ghost lemmas and
+`Assert_And_Cut` boundaries; those assertions themselves are proved, not
+assumed. No contracts were weakened or checks justified to pass.
 
 The proof includes the typed SESSION_SETUP authentication lifecycle: negotiate
 preparation and send acknowledgement, owner/epoch binding across continuations,
@@ -75,6 +78,18 @@ builders are bounded; command-17 requests are signed and bound to the stored
 handle identity, rename bytes and request expectation; successful and valid
 NTSTATUS responses consume one receipt and preserve the handle.
 
+The separate `SMB.Core_Connection` coordinator binds NEGOTIATE, TREE_CONNECT,
+TREE_DISCONNECT and LOGOFF to the Engine owner, epoch, starting phase/session/
+tree context and exact pending request. Preparation proves header/body fields,
+GUID and path-byte preservation, signing requirements, and no state damage on
+invalid input, insufficient output capacity or pre-reservation counter
+exhaustion. Completion requires send acknowledgement and consumes a validated
+receipt once. Negotiated read/write limits and the assigned Tree ID are bound
+to the response bytes. Successful TREE_DISCONNECT clears handles and the Tree
+ID while retaining the session/key; successful LOGOFF invalidates local state
+and zeros the signing-key representation. Valid NTSTATUS errors preserve the
+connection context; malformed or uncertain responses require reconnect.
+
 The proof does not establish the trusted socket/allocation/exception adapter,
 complete public-facade correctness, cryptographic hardness, server rollback, or
 exactly-once behavior after an uncertain write.
@@ -112,6 +127,13 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   same-owner new-epoch rejection with colliding wire IDs. They also cover
   invalid short/empty/odd inputs, malformed signed structure size, and
   signature tampering.
+  Connection fixtures cover exact NEGOTIATE GUID/body fields and clamped
+  response limits; signed TREE_CONNECT paths with nonzero array bounds and
+  wire-assigned Tree IDs; invalid inputs, short buffers, wrong phases, pending
+  requests and unconsumed receipts; acknowledgement ordering, duplicate and
+  foreign/stale continuations; valid error receipts and handle preservation;
+  successful TREE_DISCONNECT/LOGOFF cleanup; matching aborts; and malformed,
+  bad-signature and bad-correlation responses.
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check
   GPRBUILD="gprbuild -f"`: passed. The library, test suite, and example were
   forcibly rebuilt with warnings treated as errors; the runtime dependency
@@ -119,7 +141,7 @@ Raw GNATprove output is `gnatprove.out`; its summary is
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH gnatprove -P
   proof.gpr --clean`: passed. The subsequent
   `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make prove`
-  passed across all ten units with the clean full-project result above.
+  passed across all eleven units with the clean full-project result above.
 * `sudo -n env PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
   python3 tests/samba_integration.py`: passed against local Samba on
   `127.0.0.1:1445`. The public integration client passed normal authentication,
@@ -146,16 +168,23 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   mutated a valid signed success response from structure size 2 to 3, observed
   client EOF without a second SET_INFO request, and verified after reconnect
   that the server-side rename effect and exact fixture content existed despite
-  the local Protocol_Error. No rollback or exactly-once guarantee is implied.
+  the local Protocol_Error. The malformed-signed-TREE_DISCONNECT mode mutates
+  a valid signed response from structure size 4 to 5, observes client EOF,
+  exactly one TREE_DISCONNECT and zero LOGOFF requests, then verifies
+  reconnect, stale-handle rejection and a successful fresh fixture read.
+  A second public `Connect_Share` call on an active share is rejected without
+  disconnecting or invalidating its existing handle. No rollback or
+  exactly-once guarantee is implied.
+* `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
+  python3 tests/transport_integration.py`: passed, including send backpressure
+  timeout behavior.
 * `python3 -m py_compile tests/adversarial_proxy.py
   tests/samba_integration.py`: passed.
 * `git diff --check`: passed. A source scan found no `pragma Assume`,
   `False_Positive`, `Suppress`, or `Annotate` declarations in `src/` or
   `tests/`.
 
-The separate transport-backpressure test was not rerun; earlier passing
-evidence is not part of these current results. CI and Windows-native testing
-were not performed.
+CI and Windows-native testing were not performed.
 
 ## Reproduction
 
@@ -167,6 +196,7 @@ PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make test
 PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check GPRBUILD="gprbuild -f"
 PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH gnatprove -P proof.gpr --clean
 PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make prove
+PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH python3 tests/transport_integration.py
 # Requires local Linux, Samba tools and root privileges:
 sudo -n env PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH python3 tests/samba_integration.py
 ```
@@ -175,7 +205,7 @@ sudo -n env PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH python3 te
 
 ```sh
 gnatprove -P proof.gpr --mode=all --level=2 --report=all \
-  --checks-as-errors=on --prover=cvc5,z3 --timeout=30 -j4
+  --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
 ```
 
 Generated proof/build files are ignored by Git. [assurance.md](assurance.md)

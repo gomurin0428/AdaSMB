@@ -30,7 +30,7 @@ begin
    SMB.Client.Connect_Share (Client, Share);
    if Mode = "interrupted-read-after-progress" then
       declare
-         File : constant SMB.Client.Handle :=
+         Old_File : constant SMB.Client.Handle :=
            SMB.Client.Open_File (Client, "interrupted-read.bin",
                                  SMB.Client.Read_Only);
          Rejected : Boolean := False;
@@ -38,7 +38,7 @@ begin
          begin
             declare
                Ignored : constant SMB.Bytes :=
-                 SMB.Client.Read (Client, File, 0, 70_001);
+                 SMB.Client.Read (Client, Old_File, 0, 70_001);
                pragma Unreferenced (Ignored);
             begin
                raise Program_Error with
@@ -52,7 +52,6 @@ begin
             raise Program_Error with
               "interrupted READ did not invalidate the client";
          end if;
-      end;
       SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
       SMB.Client.Authenticate (Client, User, Password);
       SMB.Client.Connect_Share (Client, Share);
@@ -65,9 +64,23 @@ begin
          end if;
          SMB.Client.Close (Client, File);
       end;
+      begin
+         declare
+            Ignored : constant SMB.Bytes :=
+              SMB.Client.Read (Client, Old_File, 0, 1);
+            pragma Unreferenced (Ignored);
+         begin
+            raise Program_Error with
+              "pre-disconnect handle remained usable after reconnect";
+         end;
+      exception
+         when SMB.Invalid_State =>
+            null;
+      end;
       SMB.Client.Disconnect (Client);
       Ada.Text_IO.Put_Line
         ("interrupted READ cleanup and same-connection reconnect passed");
+      end;
    elsif Mode = "lost-write-response-after-progress" then
       declare
          Path : constant String := "lost-write-response-after-progress.bin";
@@ -239,6 +252,56 @@ begin
       SMB.Client.Disconnect (Client);
       Ada.Text_IO.Put_Line
         ("malformed signed SET_INFO response and remote rename effect passed");
+   elsif Mode = "malformed-signed-tree-disconnect" then
+      declare
+         Old_File : constant SMB.Client.Handle :=
+           SMB.Client.Open_File
+             (Client, "fixture.txt", SMB.Client.Read_Only);
+         Rejected : Boolean := False;
+      begin
+         begin
+            SMB.Client.Disconnect (Client);
+            raise Program_Error with
+              "malformed signed TREE_DISCONNECT response was accepted";
+         exception
+            when SMB.Protocol_Error =>
+               Rejected := True;
+         end;
+         if not Rejected or else SMB.Client.Is_Connected (Client) then
+            raise Program_Error with
+              "malformed TREE_DISCONNECT did not disconnect the client";
+         end if;
+         SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+         SMB.Client.Authenticate (Client, User, Password);
+         SMB.Client.Connect_Share (Client, Share);
+         begin
+            declare
+               Ignored : constant SMB.Bytes :=
+                 SMB.Client.Read (Client, Old_File, 0, 1);
+               pragma Unreferenced (Ignored);
+            begin
+               raise Program_Error with
+                 "pre-disconnect handle remained usable after reconnect";
+            end;
+         exception
+            when SMB.Invalid_State =>
+               null;
+         end;
+      end;
+      declare
+         File : SMB.Client.Handle :=
+           SMB.Client.Open_File
+             (Client, "fixture.txt", SMB.Client.Read_Only);
+      begin
+         if SMB.Client.Read (Client, File, 0, 1)'Length /= 1 then
+            raise Program_Error with
+              "reconnected client did not read the TREE_DISCONNECT fixture";
+         end if;
+         SMB.Client.Close (Client, File);
+      end;
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line
+        ("malformed signed TREE_DISCONNECT cleanup and reconnect passed");
    else
       Reached_Create := True;
       begin
