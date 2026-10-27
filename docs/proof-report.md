@@ -16,13 +16,13 @@ core cases cover these four invalid names and four valid BMP/supplementary
 controls at ordinary and near-`Natural'Last` array bounds, checking exact
 status and cursor preservation.
 
-Candidate GNAT14 Python syntax compilation and the combined
+Python syntax compilation and the Candidate GNAT14
 `test_suite.adb`/`cleanup_client.adb` build passed. The
 `directory-bounds` selector passed **6,616 cases**. Focused
 `ADASMB_DIRECTORY_ONLY=1` Samba integration passed all six directory mutations:
 the two existing offset cases and the four new name cases.
 
-The single requested sensitivity mutant built successfully. With only the
+The sensitivity mutant built successfully. With only the
 `Validate_UTF16` call in `Parse_Directory_Entry` replaced by
 `Text_Status := SMB.Ok;`, `directory-bounds` failed at the exact
 `directory name encoding outcome` assertion. The focused unpaired-high
