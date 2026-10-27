@@ -3,10 +3,10 @@
 ## Final clean proof
 
 `gnatprove -P proof.gpr --clean` and the subsequent complete `make prove`
-run passed for transport-core implementation
-[`e9209c2`](https://github.com/gomurin0428/AdaSMB/commit/e9209c23a8dd32ed2f38466b3bfa49308aca1498).
-GNATprove analyzed all twelve configured units:
-`SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Connection`, `SMB.Core_Framing`,
+run passed for FILETIME-core implementation
+[`e2a2554`](https://github.com/gomurin0428/AdaSMB/commit/e2a2554a0f18ac8b5b413ad48c97b796a1c8982b).
+GNATprove analyzed all thirteen configured units:
+`SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
 `SMB.Crypto` and `SMB.Engine`.
 
@@ -14,13 +14,13 @@ GNATprove analyzed all twelve configured units:
 | --- | ---: | ---: | ---: |
 | Data dependencies | 1 | 1 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
-| Initialization | 536 | 536 | 0 |
+| Initialization | 538 | 538 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,329 | 0 | 2,329 |
+| Run-time checks | 2,365 | 0 | 2,365 |
 | Assertions | 291 | 0 | 291 |
-| Functional contracts | 972 | 0 | 972 |
-| Termination | 146 | 140 | 6 |
-| **Total** | **4,278** | **680** | **3,598** |
+| Functional contracts | 981 | 0 | 981 |
+| Termination | 154 | 148 | 6 |
+| **Total** | **4,333** | **690** | **3,643** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -92,7 +92,7 @@ ID while retaining the session/key; successful LOGOFF invalidates local state
 and zeros the signing-key representation. Valid NTSTATUS errors preserve the
 connection context; malformed or uncertain responses require reconnect.
 
-The new `SMB.Core_Transport` proof covers the actual native stream arrays used
+The `SMB.Core_Transport` proof covers the actual native stream arrays used
 by `SMB.Transport`: exact TCP-prefix and payload construction, exact accepted
 receive-byte copies with earlier-prefix/unused-tail preservation, positive
 bounded partial-I/O progress, unsent-range selection, and unchanged progress
@@ -104,6 +104,14 @@ prefix rescans but does not change GNATprove's analysis; no runtime bounds
 checks or pre/postcondition checking are suppressed. The full socket loops,
 OS return semantics, retry/deadline behavior, allocation/initialization, and
 exception cleanup remain trusted and are tested rather than formally proved.
+
+The new `SMB.Core_Clock` proof covers the actual FILETIME path called during
+authentication. It proves calendar-range validation, signed-64-bit timestamp
+arithmetic and exact truncation of native nanoseconds to a 100-ns floor
+interval. Inputs outside the supported date/seconds/tick bounds return
+`Invalid_Value` and zero before conversion. The fixed-point representation is
+enforced at compile time (`Duration'Small = 1ns`). OS time retrieval, UTC
+splitting, the truth of leap-second flags and exception handling are not proved.
 
 The proof does not establish the trusted socket/allocation/exception adapter,
 complete public-facade correctness, cryptographic hardness, server rollback, or
@@ -154,8 +162,14 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   short packets, exact partial-read concatenation with prefix/tail preservation,
   EOF/overcount/out-of-range results with no progress, oversized positions,
   partial-write continuation, and duplicate completion rejection.
+  FILETIME fixtures include the 1601/1970 epochs, the leap-century calendar,
+  invalid century/day/month/range inputs, maximum accepted date, leap-second
+  normalization, subsecond rounding boundaries and a public-clock smoke test.
   `gprbuild -p -P smb_tests.gpr test_suite.adb` followed by
-  `./build/bin/test_suite transport-core` also passed as the focused test.
+  `./build/bin/test_suite clock-core` passed as the focused test. A focused
+  `gnatprove -P proof.gpr -u smb-core_clock.adb --mode=all --level=2
+  --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4`
+  also passed before the clean full proof.
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make check
   GPRBUILD="gprbuild -f"`: passed. The library, test suite, and example were
   forcibly rebuilt with warnings treated as errors; the runtime dependency
@@ -163,7 +177,7 @@ Raw GNATprove output is `gnatprove.out`; its summary is
 * `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH gnatprove -P
   proof.gpr --clean`: passed. The subsequent
   `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH make prove`
-  passed across all twelve units with the clean full-project result above.
+  passed across all thirteen units with the clean full-project result above.
 * `sudo -n env PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
   python3 tests/samba_integration.py`: passed against local Samba on
   `127.0.0.1:1445`. The public integration client passed normal authentication,
@@ -197,7 +211,8 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   A second public `Connect_Share` call on an active share is rejected without
   disconnecting or invalidating its existing handle. No rollback or
   exactly-once guarantee is implied.
-* `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
+* Prior transport milestone (not rerun for the clock-only change):
+  `PATH=/home/ubuntu/.local/share/ada/candidate-14/bin:$PATH
   python3 tests/transport_integration.py`: passed. A zero-reader peer exercises
   send backpressure/deadline invalidation; fragmented peer writes exercise
   header/body reception and a byte-exact frame echo. EOF during the header or
@@ -206,7 +221,8 @@ Raw GNATprove output is `gnatprove.out`; its summary is
   fragmented frame/echo after reconnecting the same Connection object. TCP
   may coalesce peer writes; deterministic unit fixtures separately exercise
   partial counts. OS scheduling and real EINTR injection are not proved/tested.
-* `python3 -m py_compile tests/transport_integration.py tests/adversarial_proxy.py
+* Prior transport milestone (Python files unchanged):
+  `python3 -m py_compile tests/transport_integration.py tests/adversarial_proxy.py
   tests/samba_integration.py`: passed.
 * `git diff --check`: passed. A source scan found no `pragma Assume`,
   `False_Positive`, `Suppress`, or `Annotate` declarations in `src/` or

@@ -60,6 +60,9 @@ WRITE は開始時に入力を private snapshot へ一度だけコピーし、�
 残りスライスと進捗を証明対象にしています。OS が返すバイト数の意味、
 ソケットループ、待機期限、割当て・初期化・例外処理は未証明です。
 
+認証に渡す FILETIME の暦計算と 100ns 単位への切捨ては
+`SMB.Core_Clock` で証明します。OS 時刻の取得・UTC 分解は信頼境界です。
+
 ただし公開 `SMB.Client` の呼び出し順序・バッファ割当て・例外処理、
 ソケット、OS 乱数・時計、ランタイム、メモリ確保は信頼境界に残ります。
 **公開 API 全体の無条件な安全性、暗号学的安全性、完全な SMB 準拠を証明した
@@ -75,7 +78,8 @@ WRITE は開始時に入力を private snapshot へ一度だけコピーし、�
 `Remove_Directory`、`Rename`、`Disconnect` です。パスは share 相対で、
 絶対パス・`..` の脱出・組み込み NUL は拒否されます。
 
-必要なものは GNAT、GPRbuild、GNU Make です。
+必要なものは GNAT、GPRbuild、GNU Make です。時刻変換は GNAT の
+1ns 刻みの `Duration` を要求し、異なる精度のランタイムはコンパイル時に拒否します。
 
 ```sh
 make build                  # 静的ライブラリ build/lib/libsmb.a
