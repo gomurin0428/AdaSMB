@@ -1,4 +1,7 @@
 with Ada.Environment_Variables;
+with Ada.Exceptions;
+with Ada.Strings.Fixed;
+with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with SMB;
 with SMB.Client;
@@ -257,6 +260,84 @@ begin
          Ada.Text_IO.Put_Line
            ("lost WRITE response after progress and same-connection reconnect passed");
       end;
+   elsif Mode in "directory-page-boundary" | "directory-page-overflow"
+     | "directory-entry-boundary" | "directory-entry-overflow"
+   then
+      declare
+         Overflow : constant Boolean := Mode in
+           "directory-page-overflow" | "directory-entry-overflow";
+         Old_File : SMB.Client.Handle := SMB.Client.Open_File
+           (Client, "fixture.txt", SMB.Client.Read_Only);
+         Rejected : Boolean := False;
+      begin
+         begin
+            declare
+               Entries : constant SMB.Client.Directory_Entry_Array :=
+                 SMB.Client.List_Directory (Client);
+            begin
+               if Overflow then
+                  raise Program_Error with "directory limit was not enforced";
+               end if;
+               if Entries'Length /= 1
+                 or else Ada.Strings.Unbounded.To_String
+                   (Entries (Entries'First).Name) /= "fixture.txt"
+               then
+                  raise Program_Error with "boundary listing lost its witness entry";
+               end if;
+            end;
+         exception
+            when Error : SMB.Protocol_Error =>
+               if not Overflow or else Ada.Strings.Fixed.Index
+                 (Ada.Exceptions.Exception_Message (Error), "RESOURCE_LIMIT") = 0
+               then
+                  raise;
+               end if;
+               Rejected := True;
+         end;
+         if Overflow then
+            if not Rejected or else SMB.Client.Is_Connected (Client) then
+               raise Program_Error with "directory exhaustion did not disconnect";
+            end if;
+            SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+            SMB.Client.Authenticate (Client, User, Password);
+            SMB.Client.Connect_Share (Client, Share);
+            declare
+               Entries : constant SMB.Client.Directory_Entry_Array :=
+                 SMB.Client.List_Directory (Client);
+               Fresh : SMB.Client.Handle := SMB.Client.Open_File
+                 (Client, "fixture.txt", SMB.Client.Read_Only);
+            begin
+               if Entries'Length < 2
+                 or else SMB.Client.Read (Client, Fresh, 0, 1) /= SMB.Bytes'(0 => 65)
+               then
+                  raise Program_Error with "directory limit reconnect did not recover";
+               end if;
+               SMB.Client.Close (Client, Fresh);
+            end;
+            begin
+               declare
+                  Ignored : constant SMB.Bytes := SMB.Client.Read (Client, Old_File, 0, 1);
+                  pragma Unreferenced (Ignored);
+               begin
+                  raise Program_Error with "directory limit left stale handle usable";
+               end;
+            exception
+               when SMB.Invalid_State => null;
+            end;
+         else
+            if not SMB.Client.Is_Connected (Client)
+              or else SMB.Client.Read (Client, Old_File, 0, 1) /= SMB.Bytes'(0 => 65)
+            then
+               raise Program_Error with "boundary listing broke existing handle";
+            end if;
+            SMB.Client.Close (Client, Old_File);
+         end if;
+         if not SMB.Client.Is_Connected (Client) then
+            raise Program_Error with "directory test lost the recovered connection";
+         end if;
+      end;
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line ("signed directory limit and recovery passed: " & Mode);
    elsif Mode in "malformed-signed-directory-second-page"
      | "dangling-signed-directory-second-page"
    then

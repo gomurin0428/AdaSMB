@@ -1,5 +1,46 @@
 # GNATprove and test report
 
+## Signed directory limit and recovery scenarios
+
+Four public-API scenarios use synthetic, correctly signed directory responses
+over a real Samba connection. Every request still reaches Samba and every
+original directory response's signature is verified before replacement,
+preserving backend credit/message-ID progression. One visible witness entry
+and otherwise filtered `.` records exercise the limits without accumulating
+100,000 user-visible names.
+
+The page boundary returns 4,095 data pages and `STATUS_NO_MORE_FILES` on query
+4,096. Its overflow counterpart returns data on all 4,096 queries and requires
+EOF without a further request. The entry boundary returns exactly 100,000
+records followed by normal termination; overflow returns exactly 100,001
+records and requires EOF on query 196. Accepted listings retain their witness
+and the existing file handle. Exhaustion must specifically report
+`RESOURCE_LIMIT`, disconnect, reconnect the same object, enumerate/read again,
+and reject the stale handle without damaging the recovered connection.
+
+Candidate GNAT14 Python syntax compilation and `cleanup_client.adb` build
+passed. The focused `ADASMB_DIRECTORY_LIMITS_ONLY=1` integration passed all
+four scenarios.
+
+All four sensitivity controls behaved as expected. Each one-constant mutant
+build succeeded; its selected mode failed on the intended boundary mismatch:
+4,095 pages caused premature `RESOURCE_LIMIT`, 4,097 pages allowed an extra
+query, 99,999 entries caused premature `RESOURCE_LIMIT`, and 100,001 entries
+allowed an extra query. Each temporary mutation was restored byte-for-byte
+from the saved original protocol spec. Its SHA-256 matched the original, and
+a forced `cleanup_client` rebuild with the restored 4,096-page and 100,000-
+entry limits passed.
+
+Final `make test`, forced strict `make check GPRBUILD="gprbuild -f"`, and full
+root Samba integration passed; the latter also passed all four directory
+limit/recovery scenarios. The replies exercising the limits are synthetic,
+correctly signed fixtures substituted only after verifying each original
+backend response. All requests are forwarded to Samba, so backend
+credit/MessageId progression is preserved. This validates client behavior
+against the tested limits; it does not claim native Samba resource exhaustion.
+No production source was changed. Formal proof, native Windows, and CI were
+not rerun for this test-only change.
+
 ## Exact directory counter outcomes
 
 `Count_Directory_Page` and `Count_Directory_Entry` now specify exact status

@@ -25,6 +25,7 @@ from adversarial_proxy import (
     SECURITY_BUFFER_MUTATIONS,
 )
 from async_proxy import AsyncProxy, NEGATIVE_MODES
+from directory_limit_proxy import DirectoryLimitProxy, MODES as DIRECTORY_LIMIT_MODES
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -35,6 +36,26 @@ PASSWORD = "AdaSMB-test-only-password"
 
 def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, check=True, text=True, **kwargs)
+
+
+def run_directory_limit_cases(env: dict[str, str]) -> None:
+    selected = os.environ.get("ADASMB_DIRECTORY_LIMIT_MODE")
+    if selected is not None and selected not in DIRECTORY_LIMIT_MODES:
+        raise ValueError("unknown directory limit selector")
+    for mode in DIRECTORY_LIMIT_MODES:
+        if selected is not None and mode != selected:
+            continue
+        proxy = DirectoryLimitProxy(mode, 0, PORT, USER, PASSWORD)
+        proxy.start()
+        limit_env = env.copy()
+        limit_env.update(
+            SMB_TEST_PORT=str(proxy.listener.getsockname()[1]),
+            SMB_TEST_BACKEND_PORT=str(PORT), SMB_TEST_MODE=mode,
+        )
+        try:
+            run([str(ROOT / "build/bin/cleanup_client")], env=limit_env, timeout=180)
+        finally:
+            proxy.join()
 
 
 def run_entropy_cases(env: dict[str, str]) -> None:
@@ -176,6 +197,10 @@ def main() -> int:
                     SMB_TEST_PASSWORD=PASSWORD,
                     SMB_TEST_PATH=str(share),
                 )
+                if os.environ.get("ADASMB_DIRECTORY_LIMITS_ONLY") == "1":
+                    run_directory_limit_cases(env)
+                    print("local Samba directory limit/recovery tests passed")
+                    return 0
                 if os.environ.get("ADASMB_ENTROPY_ONLY") == "1":
                     run_entropy_cases(env)
                     print("local Samba entropy failure/recovery tests passed")
@@ -388,6 +413,7 @@ def main() -> int:
                         run([str(ROOT / "build/bin/cleanup_client")], env=directory_env)
                     finally:
                         proxy.join()
+                run_directory_limit_cases(env)
                 set_info_content = b"set-info-renamed-content"
                 (share / "set-info-source.txt").write_bytes(set_info_content)
                 proxy_port = PORT + 12
