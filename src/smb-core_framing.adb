@@ -1,8 +1,6 @@
 package body SMB.Core_Framing is
    pragma SPARK_Mode (On);
 
-   use type SMB.Byte;
-
    procedure Encode
      (Length : Natural;
       Header : out Frame_Header;

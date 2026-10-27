@@ -2,6 +2,7 @@ with Ada.Exceptions;
 with Ada.Real_Time;
 with Ada.Streams;
 with SMB.Core_Framing;
+with SMB.Core_Transport;
 
 package body SMB.Transport is
    use type Ada.Exceptions.Exception_Id;
@@ -63,14 +64,17 @@ package body SMB.Transport is
      (Channel : Connection; Buffer : out SMB.Bytes;
       Deadline : Ada.Real_Time.Time) is
       Position : Natural := 0;
+      Status : SMB.Core_Status;
    begin
+      Buffer := (others => 0);
       while Position < Buffer'Length loop
          Wait_For (Channel, False, Deadline);
          declare
             Last : Ada.Streams.Stream_Element_Offset;
             Remaining : constant Natural := Buffer'Length - Position;
             Chunk : Ada.Streams.Stream_Element_Array
-              (1 .. Ada.Streams.Stream_Element_Offset (Remaining));
+              (1 .. Ada.Streams.Stream_Element_Offset (Remaining)) :=
+                (others => 0);
             Retry : Boolean := False;
          begin
             begin
@@ -89,47 +93,40 @@ package body SMB.Transport is
             end;
             if Retry then
                null;
-            elsif Last < Chunk'First then
-               raise SMB.Transport_Error with "peer closed SMB connection";
             else
-               declare
-                  Count : constant Natural := Natural (Last - Chunk'First + 1);
-               begin
-                  for I in 0 .. Count - 1 loop
-                     Buffer (Buffer'First + Position + I) :=
-                       SMB.Byte
-                         (Chunk
-                            (Chunk'First + Ada.Streams.Stream_Element_Offset (I)));
-                  end loop;
-                  Position := Position + Count;
-               end;
+               SMB.Core_Transport.Receive_Chunk
+                 (Chunk, Last, Buffer, Position, Status);
+               if Status /= SMB.Ok then
+                  raise SMB.Transport_Error with
+                    (if Last < Chunk'First then "peer closed SMB connection"
+                     else "invalid SMB receive result");
+               end if;
             end if;
          end;
       end loop;
    end Read_Exact;
 
    procedure Write_Exact
-     (Channel : Connection; Buffer : SMB.Bytes;
+     (Channel : Connection; Buffer : Ada.Streams.Stream_Element_Array;
       Deadline : Ada.Real_Time.Time) is
-      Chunk : Ada.Streams.Stream_Element_Array
-        (1 .. Ada.Streams.Stream_Element_Offset (Buffer'Length));
       Position : Natural := 0;
+      Status : SMB.Core_Status;
    begin
-      for I in Buffer'Range loop
-         Chunk (Ada.Streams.Stream_Element_Offset (I - Buffer'First + 1)) :=
-           Ada.Streams.Stream_Element (Buffer (I));
-      end loop;
       while Position < Buffer'Length loop
          Wait_For (Channel, True, Deadline);
          declare
-            First : constant Ada.Streams.Stream_Element_Offset :=
-              Chunk'First + Ada.Streams.Stream_Element_Offset (Position);
+            First : Ada.Streams.Stream_Element_Offset;
             Last : Ada.Streams.Stream_Element_Offset;
             Retry : Boolean := False;
          begin
+            SMB.Core_Transport.Prepare_Write
+              (Buffer, Position, First, Status);
+            if Status /= SMB.Ok then
+               raise SMB.Transport_Error with "invalid SMB send position";
+            end if;
             begin
                GNAT.Sockets.Send_Socket
-                 (Channel.Socket, Chunk (First .. Chunk'Last), Last);
+                 (Channel.Socket, Buffer (First .. Buffer'Last), Last);
             exception
                when E : GNAT.Sockets.Socket_Error =>
                   if GNAT.Sockets.Resolve_Exception (E) =
@@ -144,10 +141,14 @@ package body SMB.Transport is
             end;
             if Retry then
                null;
-            elsif Last < First then
-               raise SMB.Transport_Error with "peer closed SMB connection";
             else
-               Position := Natural (Last - Chunk'First + 1);
+               SMB.Core_Transport.Advance_Write
+                 (Buffer, Last, Position, Status);
+               if Status /= SMB.Ok then
+                  raise SMB.Transport_Error with
+                    (if Last < First then "peer closed SMB connection"
+                     else "invalid SMB send result");
+               end if;
             end if;
          end;
       end loop;
@@ -214,7 +215,6 @@ package body SMB.Transport is
    end Connect;
 
    procedure Send_Frame (Channel : in out Connection; Packet : SMB.Bytes) is
-      Header : SMB.Core_Framing.Frame_Header;
       Status : SMB.Core_Status;
       Deadline : constant Ada.Real_Time.Time :=
         Ada.Real_Time.Clock + Ada.Real_Time.To_Time_Span (Channel.Timeout);
@@ -222,15 +222,17 @@ package body SMB.Transport is
       if not Channel.Open then
          raise SMB.Invalid_State with "SMB transport is not connected";
       end if;
-      SMB.Core_Framing.Encode (Packet'Length, Header, Status);
-      if Status /= SMB.Ok then
+      if Packet'Length not in 64 .. SMB.Maximum_Frame_Size then
          raise SMB.Protocol_Error with "SMB packet length is outside the frame limit";
       end if;
       declare
-         Frame : SMB.Bytes (0 .. Packet'Length + 3);
+         Frame : Ada.Streams.Stream_Element_Array
+           (1 .. Ada.Streams.Stream_Element_Offset (Packet'Length + 4));
       begin
-         Frame (0 .. 3) := Header;
-         Frame (4 .. Frame'Last) := Packet;
+         SMB.Core_Transport.Build_Frame (Packet, Frame, Status);
+         if Status /= SMB.Ok then
+            raise SMB.Protocol_Error with "SMB frame construction failed";
+         end if;
          Write_Exact (Channel, Frame, Deadline);
       end;
    exception
