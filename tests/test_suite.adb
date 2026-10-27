@@ -538,6 +538,146 @@ procedure Test_Suite is
       Ada.Text_IO.Put_Line ("framing status/length matrix: 3840 cases passed");
    end Test_Framing;
 
+   procedure Test_Wire_Primitive_Boundaries is
+      type Example is record
+         Value : SMB.QWord;
+         Wire : SMB.Bytes (0 .. 7);
+      end record;
+      Examples : constant array (Positive range 1 .. 4) of Example :=
+        ((0, (others => 0)),
+         (1, (1, 0, 0, 0, 0, 0, 0, 0)),
+         (16#0123_4567_89AB_CDEF#,
+          (16#EF#, 16#CD#, 16#AB#, 16#89#, 16#67#, 16#45#, 16#23#, 16#01#)),
+         (SMB.QWord'Last, (others => 16#FF#)));
+      Widths : constant array (Positive range 1 .. 3) of Positive := (2, 4, 8);
+      Header_Sizes : constant array (Positive range 1 .. 6) of Natural :=
+        (0, 1, 63, 64, 65, 80);
+      Header_Bytes : constant SMB.Bytes (0 .. 63) :=
+        (0 => 16#FE#, 1 => 16#53#, 2 => 16#4D#, 3 => 16#42#,
+         4 => 64, 6 => 1, 12 => 8, 14 => 16#34#, 15 => 16#12#,
+         24 => 16#EF#, 25 => 16#CD#, 26 => 16#AB#, 27 => 16#89#,
+         28 => 16#67#, 29 => 16#45#, 30 => 16#23#, 31 => 16#01#,
+         36 => 16#40#, 37 => 16#30#, 38 => 16#20#, 39 => 16#10#,
+         40 => 16#10#, 41 => 16#32#, 42 => 16#54#, 43 => 16#76#,
+         44 => 16#98#, 45 => 16#BA#, 46 => 16#DC#, 47 => 16#FE#,
+         others => 0);
+      Integer_Count : Natural := 0;
+      Header_Count : Natural := 0;
+
+      function Lower_Bound (Size, Rebase : Natural) return Natural is
+        (if Rebase = 0 then (if Size = 0 then 1 else 0)
+         elsif Rebase = 1 then 17
+         elsif Size = 0 then Natural'Last
+         else Natural'Last - (Size - 1));
+
+      procedure Check_Integer
+        (First, Last, Offset : Natural; Width : Positive; Item : Example)
+      is
+         Data : SMB.Bytes (First .. Last) := (others => 16#A5#);
+         Expected : SMB.Bytes (Data'Range) := Data;
+         Fits : constant Boolean :=
+           Offset <= Data'Length and then Data'Length - Offset >= Width;
+         Expected_Status : constant SMB.Core_Status :=
+           (if Fits then SMB.Ok else SMB.Invalid_Offset);
+         Expected_Value : constant SMB.QWord :=
+           (if Width = 2 then Item.Value and 16#FFFF#
+            elsif Width = 4 then Item.Value and 16#FFFF_FFFF#
+            else Item.Value);
+         Value_16 : SMB.Word := SMB.Word'Last;
+         Value_32 : SMB.DWord := SMB.DWord'Last;
+         Value_64 : SMB.QWord := SMB.QWord'Last;
+         Actual : SMB.QWord;
+         Status : SMB.Core_Status;
+      begin
+         if Fits then
+            for I in 0 .. Width - 1 loop
+               Expected (Data'First + Offset + I) := Item.Wire (I);
+            end loop;
+         end if;
+         case Width is
+            when 2 =>
+               SMB.Core_Wire.Write_U16
+                 (Data, Offset, SMB.Word (Expected_Value), Status);
+            when 4 =>
+               SMB.Core_Wire.Write_U32
+                 (Data, Offset, SMB.DWord (Expected_Value), Status);
+            when others =>
+               SMB.Core_Wire.Write_U64 (Data, Offset, Expected_Value, Status);
+         end case;
+         Assert (Status = Expected_Status and then Data = Expected,
+                 "wire write exact status, bytes and untouched remainder");
+         case Width is
+            when 2 =>
+               SMB.Core_Wire.Read_U16 (Data, Offset, Value_16, Status);
+               Actual := SMB.QWord (Value_16);
+            when 4 =>
+               SMB.Core_Wire.Read_U32 (Data, Offset, Value_32, Status);
+               Actual := SMB.QWord (Value_32);
+            when others =>
+               SMB.Core_Wire.Read_U64 (Data, Offset, Value_64, Status);
+               Actual := Value_64;
+         end case;
+         Assert (Status = Expected_Status
+                 and then Actual = (if Fits then Expected_Value else 0),
+                 "wire read exact status, value and cleared rejection");
+         Integer_Count := Integer_Count + 1;
+      end Check_Integer;
+
+      procedure Check_Header (First, Last : Natural) is
+         Data : SMB.Bytes (First .. Last) := (others => 16#A5#);
+         Expected : SMB.Bytes (Data'Range) := Data;
+         Fits : constant Boolean := Data'Length >= Header_Bytes'Length;
+         Status : SMB.Core_Status;
+      begin
+         if Fits then
+            for I in Header_Bytes'Range loop
+               Expected (Data'First + I) := Header_Bytes (I);
+            end loop;
+         end if;
+         SMB.Core_Wire.Initialize_Header
+           (Data, 8, 16#0123_4567_89AB_CDEF#, 16#1020_3040#,
+            16#FEDC_BA98_7654_3210#, 16#1234#, Status);
+         Assert
+           (Status = (if Fits then SMB.Ok else SMB.Invalid_Length)
+            and then Data = Expected,
+            "header initialization exact status, bytes and failure preservation");
+         Header_Count := Header_Count + 1;
+      end Check_Header;
+   begin
+      for Rebase in 0 .. 2 loop
+         for Size in 0 .. 12 loop
+            declare
+               First : constant Natural := Lower_Bound (Size, Rebase);
+               Last : constant Natural :=
+                 (if Size = 0 then First - 1 else First + (Size - 1));
+            begin
+               for Step in 0 .. 14 loop
+                  for Width of Widths loop
+                     for Item of Examples loop
+                        Check_Integer
+                          (First, Last,
+                           (if Step = 14 then Natural'Last else Step),
+                           Width, Item);
+                     end loop;
+                  end loop;
+               end loop;
+            end;
+         end loop;
+         for Size of Header_Sizes loop
+            declare
+               First : constant Natural := Lower_Bound (Size, Rebase);
+               Last : constant Natural :=
+                 (if Size = 0 then First - 1 else First + (Size - 1));
+            begin
+               Check_Header (First, Last);
+            end;
+         end loop;
+      end loop;
+      Ada.Text_IO.Put_Line
+        ("wire primitive boundaries:" & Natural'Image (Integer_Count)
+         & " integer cases," & Natural'Image (Header_Count) & " header cases");
+   end Test_Wire_Primitive_Boundaries;
+
    procedure Test_Core_Wire is
       Data : SMB.Bytes (10 .. 25) := (others => 16#A5#);
       Empty : SMB.Bytes (1 .. 0) := (others => 0);
@@ -5072,6 +5212,7 @@ begin
    Test_UTF_Capacity;
    Test_Core_Transport;
    Test_Core_Wire;
+   Test_Wire_Primitive_Boundaries;
    Test_NTLM_Authenticate;
    Test_Core_Client_Authentication;
    Test_Final_Spnego;

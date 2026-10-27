@@ -1,5 +1,49 @@
 # GNATprove and test report
 
+## Exact wire primitive outcomes and failure preservation
+
+The 16/32/64-bit readers and writers now specify `Ok` exactly when their
+offset and complete width fit the supplied array, and `Invalid_Offset`
+otherwise. Existing exact little-endian value/byte, surrounding-data
+preservation and zeroed read-failure guarantees remain. Header initialization
+now specifies `Invalid_Length` and an unchanged array below 64 bytes, as well
+as success for sufficient capacity. No implementation body was changed.
+
+The regression checks 7,020 integer cases, each with a write and a read,
+across widths, four literal byte/value fixtures, lengths 0..12, offsets
+0..13 and `Natural'Last`, and three lower-bound layouts including arrays
+ending at `Natural'Last`. Another 18 cases check exact header bytes, body
+preservation and short-buffer rejection at the same lower-bound layouts.
+The expected bytes are literal fixtures, not the production readers or
+writers; invalid reads must clear a prefilled output and invalid writes or
+header initialization must preserve the prefilled array.
+
+### Observed validation
+
+Focused GNATprove for `smb-core_wire.adb` passed, proving the exact status
+partitions and existing value, byte, and preservation postconditions.
+`make test` passed, including all **7,020 integer cases** and **18 header
+cases**. `make transport-test` passed all 12 scenarios. Forced strict
+`make check GPRBUILD="gprbuild -f"` passed with `-gnatwe`.
+
+The clean full proof passed across **13 units**: **4,422 checks** (700 flow,
+3,722 prover), **0 unproved**, **0 justified**, and **68 warnings** (6 in
+`SMB.Core_Auth`, 56 in `SMB.Core_Client`, 6 in `SMB.Core_Protocol`). It
+reported **0 `pragma Assume` statements**. The check categories were 2 data
+dependencies, 1 flow dependency, 539 initialization, 2 non-aliasing, 2,410
+run-time checks, 292 assertions, 1,014 functional contracts, and 162
+termination checks (156 flow, 6 prover).
+
+No implementation body or acceptance behavior changed. Samba integration
+was not rerun for this stage, and no CI was run.
+
+Evidence logs: `/home/ubuntu/wire-primitive-contracts-01-focused-proof.log`,
+`/home/ubuntu/wire-primitive-contracts-02-make-test.log`,
+`/home/ubuntu/wire-primitive-contracts-03-transport-test.log`,
+`/home/ubuntu/wire-primitive-contracts-04-strict-build.log`, and
+`/home/ubuntu/wire-primitive-contracts-05-clean-full-proof.log`. The proof
+summary is also in `build/proof-obj/gnatprove/gnatprove.out`.
+
 ## Exact TCP frame length and rejection contracts
 
 `SMB.Core_Framing.Decode` previously guaranteed only a bounded length on
