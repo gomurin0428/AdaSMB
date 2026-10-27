@@ -15,6 +15,17 @@ DIRECTORY_MODES = (
     "dangling-signed-directory-second-page",
 )
 
+RESPONSE_MUTATIONS = {
+    "signed-read-offset": 8,
+    "signed-read-length": 8,
+    "signed-read-over-request": 8,
+    "signed-read-truncated": 8,
+    "signed-write-zero": 9,
+    "signed-write-over-request": 9,
+    "signed-write-structure": 9,
+    "signed-write-truncated": 9,
+}
+
 
 def recv_exact(connection: socket.socket, length: int) -> bytes:
     result = bytearray()
@@ -188,15 +199,22 @@ class AdversarialProxy:
             tree_disconnect_requests = 0
             logoff_requests = 0
             first_query_had_data = False
+            mutation_requests = 0
 
             def client_to_server() -> None:
                 nonlocal session_key, write_requests, query_requests
                 nonlocal set_info_requests
                 nonlocal tree_disconnect_requests, logoff_requests
+                nonlocal mutation_requests
                 try:
                     while not done.is_set():
                         header = recv_exact(client, 4)
                         payload = recv_exact(client, int.from_bytes(header[1:4], "big"))
+                        if self.mode in RESPONSE_MUTATIONS:
+                            if mutated:
+                                raise RuntimeError("client sent a request after rejected response")
+                            if struct.unpack_from("<H", payload, 12)[0] == RESPONSE_MUTATIONS[self.mode]:
+                                mutation_requests += 1
                         if len(payload) >= 64 and payload[12:14] == b"\x04\x00":
                             tree_disconnect_requests += 1
                         if len(payload) >= 64 and payload[12:14] == b"\x02\x00":
@@ -233,7 +251,7 @@ class AdversarialProxy:
                                 )
                                 done.set()
                                 return
-                        if self.mode in {
+                        if self.mode in RESPONSE_MUTATIONS or self.mode in {
                             "malformed-signed-create",
                             "malformed-signed-directory-second-page",
                             "dangling-signed-directory-second-page",
@@ -251,7 +269,7 @@ class AdversarialProxy:
                                 or session_key
                             )
                         backend.sendall(header + payload)
-                except (EOFError, OSError) as error:
+                except (EOFError, OSError, RuntimeError) as error:
                     relay_error.append(error)
                     done.set()
 
@@ -263,6 +281,64 @@ class AdversarialProxy:
                     payload = bytearray(
                         recv_exact(backend, int.from_bytes(header[1:4], "big"))
                     )
+                    if (
+                        self.mode in RESPONSE_MUTATIONS
+                        and struct.unpack_from("<H", payload, 12)[0] == RESPONSE_MUTATIONS[self.mode]
+                    ):
+                        if (
+                            len(payload) < 80
+                            or struct.unpack_from("<I", payload, 8)[0] != 0
+                            or struct.unpack_from("<H", payload, 64)[0] != 17
+                            or struct.unpack_from("<I", payload, 68)[0] != 1
+                            or struct.unpack_from("<I", payload, 16)[0] & 8 == 0
+                            or session_key is None
+                        ):
+                            raise RuntimeError("expected signed one-byte IO success")
+                        original_signature = bytes(payload[48:64])
+                        payload[48:64] = b"\x00" * 16
+                        if not hmac.compare_digest(
+                            original_signature,
+                            hmac.new(session_key, payload, hashlib.sha256).digest()[:16],
+                        ):
+                            raise RuntimeError("derived key did not validate IO signature")
+                        if self.mode == "signed-read-offset":
+                            payload[66] = 64
+                        elif self.mode == "signed-read-length":
+                            struct.pack_into("<I", payload, 68, 0xFFFFFFFF)
+                        elif self.mode == "signed-read-over-request":
+                            offset = payload[66]
+                            if offset < 80 or offset + 1 > len(payload):
+                                raise RuntimeError("invalid original READ data range")
+                            payload = payload[:offset + 1] + b"X"
+                            struct.pack_into("<I", payload, 68, 2)
+                        elif self.mode.endswith("-truncated"):
+                            payload = payload[:79]
+                        elif self.mode == "signed-write-zero":
+                            struct.pack_into("<I", payload, 68, 0)
+                        elif self.mode == "signed-write-over-request":
+                            struct.pack_into("<I", payload, 68, 2)
+                        elif self.mode == "signed-write-structure":
+                            struct.pack_into("<H", payload, 64, 16)
+                        else:
+                            raise RuntimeError("unhandled IO mutation")
+                        payload[48:64] = hmac.new(
+                            session_key, payload, hashlib.sha256
+                        ).digest()[:16]
+                        mutated = True
+                        client.sendall(b"\x00" + len(payload).to_bytes(3, "big") + payload)
+                        # The client, not this proxy, must close the connection.
+                        upstream.join(timeout=11)
+                        if (
+                            upstream.is_alive()
+                            or not relay_error
+                            or not isinstance(relay_error[0], EOFError)
+                            or mutation_requests != 1
+                        ):
+                            raise RuntimeError("IO mutation did not cause immediate client disconnect")
+                        break
+                    if self.mode in RESPONSE_MUTATIONS:
+                        client.sendall(header + payload)
+                        continue
                     if (
                         self.mode in {
                             "unsigned-auth-error",

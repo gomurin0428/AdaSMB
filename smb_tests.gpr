@@ -7,7 +7,7 @@ project SMB_Tests is
    for Main use
      ("test_suite.adb", "integration_client.adb", "adversarial_client.adb",
       "transport_client.adb", "cleanup_client.adb", "unicode_probe.adb",
-      "auth_diagnostic_client.adb");
+      "auth_diagnostic_client.adb", "response_mutation_client.adb");
    for Languages use ("Ada");
 
    package Compiler is
