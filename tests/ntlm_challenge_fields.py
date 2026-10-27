@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MS-NLMP 2.2.1.2: optional names, fixed headers and payload placement.
+"""MS-NLMP challenge flags, optional names, fixed headers and payload placement.
 
 The raw challenge is still part of the MIC transcript. Other negotiation
 requirements and active TargetName/TargetInfo bounds remain enforced.
@@ -128,6 +128,24 @@ def fixtures() -> list[tuple[str, str]]:
         info_offset = struct.unpack_from("<I", raw, 44)[0]
         struct.pack_into("<I", raw, 16, info_offset + len(av(1, COMPUTER)) + 4)
         add("bounded name alias inside domain AV", raw, True, flags)
+
+    required_bits = (0, 4, 9, 15, 19, 23)
+    complete = (1 << len(required_bits)) - 1
+    for request_target, key128, version, oem, target_type in product(
+        (False, True), (False, True), (False, True), (False, True),
+        (0, 0x10000, 0x20000),
+    ):
+        base = layout(b"\0" * 8 if version else None)
+        optional = ((4 if request_target else 0) | (0x20000000 if key128 else 0)
+                    | (0x02000000 if version else 0) | (2 if oem else 0)
+                    | target_type)
+        for enabled in range(complete + 1):
+            required = sum(1 << bit for index, bit in enumerate(required_bits)
+                           if enabled & (1 << index))
+            flags = required | optional
+            raw = base.copy()
+            struct.pack_into("<I", raw, 20, flags)
+            add("required-profile negotiation matrix", raw, enabled == complete, flags)
     return cases
 
 
