@@ -4,8 +4,9 @@
 
 The focused `SMB.Core_Client` proof and the clean complete `make prove` run
 passed for the Windows default entropy and unverified authentication diagnostic
-changes. The Linux run selected the Unix entropy adapter; the Windows
-`BCryptGenRandom` adapter still requires the separate Windows retest.
+changes. The Linux run selected the Unix entropy adapter. A separate Windows
+native retest of `aba1508f1e47560f89022223fb4d897b369910e5` passed using the
+default `BCryptGenRandom` adapter, without an entropy callback.
 GNATprove analyzed all thirteen configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
@@ -37,6 +38,26 @@ diagnostics with rejection, disconnect, reconnect and successful reauthenticatio
 Python syntax compilation passed. The final clean proof summary is preserved at
 `/home/ubuntu/windows-entropy-18-proof-summary.out`; raw output is at
 `/home/ubuntu/windows-entropy-17-make-prove.log`.
+
+The Windows retest passed the native build, focused and complete unit tests,
+forced `-gnatwe` rebuild and dependency audit. Against the Windows SMB server,
+the existing integration/cleanup tests passed with default entropy, including
+large/small files, Unicode, 1,203 directory entries, rename/delete, reuse after
+errors and reconnect. Header-only observation confirmed SMB 2.1 and SIGNED on
+all 48 post-authentication requests and 48 responses in the observed flow;
+flipping one signature bit was rejected and disconnected.
+
+An actual wrong-password response carried `0xC000006D`, matching
+`Last_Unverified_Authentication_Status`; `Last_NT_Status` stayed zero and
+`Authentication_Error` explicitly labeled the peer value "unverified". The
+connection closed, reconnect cleared the hint and correct authentication reused
+the same connection object. All three added unsigned-auth proxy cases passed.
+Temporary Windows resources were deleted and settings restored. This is tested
+interoperability, not proof of OS/ABI behavior or all Windows configurations.
+The non-secret reproduction and logs are packaged as
+`AdaSMB-Windows-default-entropy-aba1508-evidence.zip` in the
+[Windows verification session](https://app.devin.ai/sessions/dce88c0d59e74afd962e092fab69f03e).
+CI was not run.
 
 ## Historical complete proof: connection reserved fields
 
