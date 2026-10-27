@@ -388,8 +388,7 @@ package SMB.Core_Protocol is
             Packet'Length >= 80
             and then Natural (Packet (Packet'First + 66)) =
               Info.Data_Offset
-            and then Packet (Packet'First + 67) = 0
-                and then Info.Data_Length <= Maximum_IO_Chunk
+            and then Info.Data_Length <= Maximum_IO_Chunk
             and then Info.Data_Length = Natural
               (SMB.Core_Wire.Encoded_U32 (Packet, 68))
           elsif Command = 9

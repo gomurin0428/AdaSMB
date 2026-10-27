@@ -2358,7 +2358,6 @@ is
       pragma Assert
         (Info.Data_Offset =
            Natural (Packet (Packet'First + 66)));
-      pragma Assert (Packet (Packet'First + 67) = 0);
       pragma Assert
         (Info.Data_Length =
            Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68)));

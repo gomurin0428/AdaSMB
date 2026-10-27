@@ -895,12 +895,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Read_U16 (Packet, 64, Structure, Header_Status);
-         if Structure /= 17 or else Packet (Packet'First + 67) /= 0 then
-            Status := SMB.Invalid_Protocol;
-            return;
-         end if;
-         Read_U32 (Packet, 76, DWord_Value, Header_Status);
-         if DWord_Value /= 0 then
+         if Structure /= 17 then
             Status := SMB.Invalid_Protocol;
             return;
          end if;

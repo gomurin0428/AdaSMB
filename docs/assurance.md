@@ -44,7 +44,9 @@ frames, translates exceptions, and closes the transport when the engine is
 invalidated. The bounded transfer state owns progress, the immutable WRITE
 snapshot, and accumulated READ bytes; each chunk is at most 64 KiB and a transfer
 is at most 1 MiB. READ short/zero responses finish normally, while positive
-partial WRITE counts advance only by the validated response count. An uncertain
+partial WRITE counts advance only by the validated response count. READ reserved
+fields are ignored as required for SMB 2.1; their bytes remain covered by response
+MAC verification. No reserved-byte-zero property is claimed. An uncertain
 send/receive or malformed response aborts the Engine state without retry; the
 facade closes its transport. The adapter still owns socket I/O, forwarding the
 exact returned packet slice, allocation, exception translation and public

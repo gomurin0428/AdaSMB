@@ -2,11 +2,10 @@
 
 ## Latest complete proof
 
-The complete `make prove` run passed for the directory-chain implementation
-[`34d983e`](https://github.com/gomurin0428/AdaSMB/commit/34d983effbb2a3b40b99b4cb180641e8180b87a8).
-A focused protocol proof preceded the complete run. The first full attempt
-reported a corrupt generated ALI file; after `gnatprove --clean`, the complete
-run passed with the same proof settings.
+The complete `make prove` run passed for the READ reserved-field correction
+[`0569107`](https://github.com/gomurin0428/AdaSMB/commit/05691079f981bd013e345122122013f658395ef5).
+A focused protocol/Engine/client proof preceded the complete run, which started
+after `gnatprove --clean`.
 GNATprove analyzed all thirteen configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
@@ -18,11 +17,11 @@ GNATprove analyzed all thirteen configured units:
 | Flow dependencies | 1 | 1 | 0 |
 | Initialization | 539 | 539 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,402 | 0 | 2,402 |
-| Assertions | 293 | 0 | 293 |
-| Functional contracts | 995 | 0 | 995 |
+| Run-time checks | 2,394 | 0 | 2,394 |
+| Assertions | 292 | 0 | 292 |
+| Functional contracts | 994 | 0 | 994 |
 | Termination | 159 | 153 | 6 |
-| **Total** | **4,393** | **697** | **3,696** |
+| **Total** | **4,383** | **697** | **3,686** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
@@ -454,6 +453,36 @@ then reconnects, lists and reads successfully. The earlier malformed-link mode
 continues to pass. Full unit tests, Samba tests, the strict build/dependency audit
 and the clean full proof passed. Unicode conversion was unchanged and its oracle
 was not rerun. No CI was run.
+
+## READ reserved-field conformance
+
+[MS-SMB2 READ Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/3e3d2f2c-0e2f-41ea-ad07-fbca6ffdfd90)
+requires SMB 2.1 clients to ignore the Reserved byte and Reserved2 DWORD even
+though servers must send zero. The old parser rejected nonzero values and
+propagated an incorrect reserved-byte-zero postcondition through the Engine to
+the transfer coordinator. Those checks and assertions are corrected, not
+suppressed to pass proof. This explains the reduced check count. The READ
+structure, 8-bit DataOffset, length bounds, request correlation, transfer
+progress and exact data-copy contracts remain intact. SMB 3.1.1 interpretation
+of the DWORD as flags does not apply to this SMB 2.1-only library.
+
+The `read-reserved` selector accepts 256 byte values crossed with four DWORD
+values (zero, one, high bit, all ones) and still rejects bad structure, length
+and offset. On the preceding implementation at `548df56`, the same test fails
+with `SMB2.1 READ reserved fields were not ignored`.
+
+The new `read-reserved-fields` Samba mode verifies each original signature,
+sets both reserved fields to all ones, re-signs and forwards three READ
+responses. The public client checks all 70,001 bytes across two chunks, reuses
+the same handle for another read, and completes CLOSE/disconnect/LOGOFF.
+The interrupted-read mode now changes only the reserved byte of the second
+response without re-signing: it still causes rejection, disconnect, successful
+reconnect and stale-handle rejection. Ignoring a field's semantics never
+excludes its bytes from MAC verification.
+
+The full unit/Samba suites, strict forced build and dependency audit, and clean
+full proof passed. This does not expand the proof to the full facade or establish
+cryptographic hardness. No CI or Unicode oracle rerun was performed.
 
 ## Reproduction
 

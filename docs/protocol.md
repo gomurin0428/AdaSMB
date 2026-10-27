@@ -33,6 +33,19 @@ response も全て署名されている必要があります。比較は
 
 * [MS-SMB2 3.1.4.1 Signing](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/a3e9ea1e-53c8-4cff-94bd-d98fb20417c0)
 
+## READ 応答の予約領域
+
+SMB 2.1 の READ 応答にある `Reserved`（1 byte）と `Reserved2`
+（4 byte）は、仕様の受信側の規則に従い、ゼロ以外でも無視します。
+送信側にはゼロを設定する義務がありますが、受信側が値を理由に拒否する
+規則ではありません。後者を flags として解釈する SMB 3.1.1 は対象外です。
+structure size、DataOffset（1 byte）、DataLength、要求との対応は引き続き
+検査し、予約領域を含むメッセージ全体の署名検証も維持します。
+
+公式仕様:
+
+* [MS-SMB2 2.2.20 READ Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/3e3d2f2c-0e2f-41ea-ad07-fbca6ffdfd90)
+
 ## NTLMv2/SPNEGO
 
 クライアントが出す SPNEGO は NTLM OID だけを含みます。応答は DER の

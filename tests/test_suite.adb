@@ -1386,6 +1386,47 @@ procedure Test_Suite is
       Assert (Status /= SMB.Ok, "duplicate SPNEGO state accepted");
    end Test_Final_Spnego;
 
+   procedure Test_Read_Reserved is
+      Packet : SMB.Bytes (11 .. 92) := (others => 0);
+      Info : SMB.Core_Protocol.Response_Info;
+      Status : SMB.Core_Status;
+      type Reserved_Array is array (Positive range <>) of SMB.DWord;
+      Values : constant Reserved_Array :=
+        (0, 1, 16#8000_0000#, SMB.DWord'Last);
+   begin
+      SMB.Wire.Put_U16 (Packet, 64, 17);
+      Packet (Packet'First + 66) := 80;
+      SMB.Wire.Put_U32 (Packet, 68, 2);
+      Packet (Packet'First + 80 .. Packet'Last) := (16#AA#, 16#BB#);
+      for Reserved in SMB.Byte loop
+         for Reserved2 of Values loop
+            Packet (Packet'First + 67) := Reserved;
+            SMB.Wire.Put_U32 (Packet, 76, Reserved2);
+            SMB.Core_Protocol.Parse_Response
+              (Packet, SMB.Core_Wire.Command_Code (8),
+               SMB.Success, Info, Status);
+            Assert
+              (Status = SMB.Ok and then Info.Data_Offset = 80
+               and then Info.Data_Length = 2,
+               "SMB2.1 READ reserved fields were not ignored");
+         end loop;
+      end loop;
+      SMB.Wire.Put_U32 (Packet, 68, 3);
+      SMB.Core_Protocol.Parse_Response
+        (Packet, SMB.Core_Wire.Command_Code (8), SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "ignored READ fields bypassed length check");
+      SMB.Wire.Put_U32 (Packet, 68, 2);
+      Packet (Packet'First + 66) := 79;
+      SMB.Core_Protocol.Parse_Response
+        (Packet, SMB.Core_Wire.Command_Code (8), SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "ignored READ fields bypassed offset check");
+      Packet (Packet'First + 66) := 80;
+      SMB.Wire.Put_U16 (Packet, 64, 18);
+      SMB.Core_Protocol.Parse_Response
+        (Packet, SMB.Core_Wire.Command_Code (8), SMB.Success, Info, Status);
+      Assert (Status /= SMB.Ok, "ignored READ fields bypassed structure check");
+   end Test_Read_Reserved;
+
    procedure Test_Directory_Bounds is
       Count : Natural := 0;
       Prefix : constant := 8;
@@ -1565,7 +1606,7 @@ procedure Test_Suite is
       Packet (76) := 1;
       SMB.Core_Protocol.Parse_Response
         (Packet, SMB.Core_Wire.Command_Code (8), SMB.Success, Info, Status);
-      Assert (Status /= SMB.Ok, "nonzero READ reserved DWORD accepted");
+      Assert (Status = SMB.Ok, "nonzero READ reserved DWORD rejected");
       Packet (76 .. 79) := (others => 0);
       Packet (68 .. 71) := (16#FF#, 16#FF#, 16#FF#, 16#FF#);
       SMB.Core_Protocol.Parse_Response
@@ -4588,11 +4629,15 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "utf-capacity"
                  and then Ada.Command_Line.Argument (1) /= "engine-receipts"
                  and then Ada.Command_Line.Argument (1) /= "auth-preflight"
-                 and then Ada.Command_Line.Argument (1) /= "directory-bounds")
+                 and then Ada.Command_Line.Argument (1) /= "directory-bounds"
+                 and then Ada.Command_Line.Argument (1) /= "read-reserved")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "directory-bounds" then
+      if Ada.Command_Line.Argument (1) = "read-reserved" then
+         Test_Read_Reserved;
+         Ada.Text_IO.Put_Line ("AdaSMB READ reserved-field tests passed");
+      elsif Ada.Command_Line.Argument (1) = "directory-bounds" then
          Test_Directory_Bounds;
          Ada.Text_IO.Put_Line ("AdaSMB directory bounds tests passed");
       elsif Ada.Command_Line.Argument (1) = "auth-preflight" then
@@ -4628,6 +4673,7 @@ begin
    Test_Core_Client_Authentication;
    Test_Final_Spnego;
    Test_Core_Protocol;
+   Test_Read_Reserved;
    Test_Directory_Bounds;
    Test_Engine_Malformed_Close;
    Test_Engine_Receipts;
