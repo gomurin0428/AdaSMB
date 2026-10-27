@@ -182,7 +182,9 @@ package body SMB.Core_Wire with SPARK_Mode is
      (Data : SMB.Bytes;
       Expected : Expected_Header;
       Nt_Status : out SMB.DWord;
-      Status : out SMB.Core_Status) is
+      Status : out SMB.Core_Status;
+      Async_Id : SMB.QWord := 0;
+      Interim : Boolean := False) is
       Structure_Size : SMB.Word;
       Command : SMB.Word;
       Credit : SMB.Word;
@@ -218,7 +220,10 @@ package body SMB.Core_Wire with SPARK_Mode is
          return;
       end if;
       Read_U16 (Data, 14, Credit, Field_Status);
-      if Field_Status /= SMB.Ok or else Credit = 0 then
+      if Field_Status /= SMB.Ok
+        or else (Async_Id = 0 and then Credit = 0)
+        or else (Async_Id /= 0 and then not Interim and then Credit /= 0)
+      then
          Status := SMB.Invalid_Protocol;
          return;
       end if;
@@ -247,13 +252,28 @@ package body SMB.Core_Wire with SPARK_Mode is
          Status := Field_Status;
          return;
       end if;
-      if (Flags and 1) = 0 or else (Flags and 2) /= 0 then
+      if (Flags and 1) = 0
+        or else ((Flags and 2) /= 0) /= (Interim or Async_Id /= 0)
+      then
          Status := SMB.Unsupported_Feature;
          return;
       end if;
+      if Interim /= (Header_Nt_Status (Data) = SMB.Status_Pending) then
+         Status := SMB.Invalid_Protocol;
+         return;
+      end if;
+      if Interim or Async_Id /= 0 then
+         if Encoded_U64 (Data, 32) = 0
+           or else (Async_Id /= 0 and then Encoded_U64 (Data, 32) /= Async_Id)
+         then
+            Status := SMB.Correlation_Error;
+            return;
+         end if;
+      end if;
       if Command /= SMB.Word (Expected.Command)
         or else Message_Id /= Expected.Message_Id
-        or else (Expected.Match_Tree and then Tree_Id /= Expected.Tree_Id)
+        or else (Expected.Match_Tree and then not Interim and then Async_Id = 0
+                 and then Tree_Id /= Expected.Tree_Id)
         or else (Expected.Match_Session and then Session_Id /= Expected.Session_Id)
       then
          Status := SMB.Correlation_Error;
@@ -263,7 +283,9 @@ package body SMB.Core_Wire with SPARK_Mode is
          Signature_Zero :=
            Signature_Zero and then Data (Data'First + Index) = 0;
       end loop;
-      if Expected.Signed then
+      if Interim then
+         null;
+      elsif Expected.Signed then
          if (Flags and 8) = 0 then
             Status := SMB.Signature_Error;
             return;

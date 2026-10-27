@@ -24,8 +24,26 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   I/O より前に拒否します。
 * フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
   受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB3、
-  encryption、compression、compound、async、Kerberos、guest/null
-  fallback、large-MTU negotiation は実装していません。
+  encryption、compression、compound、Kerberos、guest/null fallback、
+  large-MTU negotiation は実装していません。
+
+公開 API は同期型で、一度に 1 要求だけを送信します。認証後の
+LOGOFF、TREE_DISCONNECT、CREATE、CLOSE、READ、WRITE、QUERY_DIRECTORY、
+SET_INFO では SMB 2.1 の `STATUS_PENDING` interim と対応する async final
+response を扱います。interim は仕様に従って署名検証を行わず、要求との
+相関、非ゼロ AsyncId、ERROR 本文の必須フィールドだけを確認します。interim は成功、
+認証済みデータ、NTSTATUS として扱いません。最終応答は受信した元の
+バイト列に対して通常どおり署名検証します。
+公式仕様への参照と検証結果は
+[proof report](docs/proof-report.md#smb-21-asynchronous-interim-responses) に記載しています。
+
+クレジット管理は既存の単一要求プロファイルのままです。最初の interim
+には正の CreditResponse が必要で、AsyncId を保持した後の interim は
+ゼロを許し、async final はゼロ、同期応答は正のクレジットを要求します。
+interim ごとに待機時間を延長せず、要求ごとに一度だけ設定した絶対受信
+deadline を適用します。NEGOTIATE、SESSION_SETUP、TREE_CONNECT の async
+応答、SMB3、compound、cancel、並行要求、完全な credit-window 管理は
+対応範囲外です。
 
 「Pure Ada」は、実装が Ada であり C の暗号ライブラリや
 `libsmbclient` をリンクしない、という意味です。`pragma Pure` という

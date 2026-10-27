@@ -1,3 +1,4 @@
+with Ada.Real_Time;
 with GNAT.Sockets;
 
 package SMB.Transport is
@@ -10,6 +11,10 @@ package SMB.Transport is
       Timeout_Seconds : Duration := 10.0);
    procedure Send_Frame (Channel : in out Connection; Packet : SMB.Bytes);
    function Receive_Frame (Channel : in out Connection) return SMB.Bytes;
+   function Receive_Deadline (Channel : Connection) return Ada.Real_Time.Time;
+   function Receive_Frame
+     (Channel : in out Connection; Deadline : Ada.Real_Time.Time)
+      return SMB.Bytes;
    procedure Close (Channel : in out Connection);
    function Is_Open (Channel : Connection) return Boolean;
 

@@ -234,7 +234,9 @@ package SMB.Core_Wire is
      (Data : SMB.Bytes;
       Expected : Expected_Header;
       Nt_Status : out SMB.DWord;
-      Status : out SMB.Core_Status)
+      Status : out SMB.Core_Status;
+      Async_Id : SMB.QWord := 0;
+      Interim : Boolean := False)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
        (if Status = SMB.Ok then
@@ -243,19 +245,30 @@ package SMB.Core_Wire is
           and then Data (Data'First .. Data'First + 3) =
             SMB.Bytes'(16#FE#, 16#53#, 16#4D#, 16#42#)
           and then Encoded_U16 (Data, 4) = Header_Size
-          and then Encoded_U16 (Data, 14) /= 0
+          and then
+            (if Async_Id = 0 then Encoded_U16 (Data, 14) /= 0
+             elsif not Interim then Encoded_U16 (Data, 14) = 0)
           and then (Encoded_U32 (Data, 16) and 1) /= 0
-          and then (Encoded_U32 (Data, 16) and 2) = 0
+          and then ((Encoded_U32 (Data, 16) and 2) /= 0) =
+            (Interim or Async_Id /= 0)
+          and then (Nt_Status = SMB.Status_Pending) = Interim
+          and then
+            (if Interim or Async_Id /= 0 then
+               Encoded_U64 (Data, 32) /= 0
+               and then (if Async_Id /= 0 then
+                           Encoded_U64 (Data, 32) = Async_Id))
           and then Encoded_U32 (Data, 20) = 0
           and then Encoded_U16 (Data, 12) = SMB.Word (Expected.Command)
           and then Encoded_U64 (Data, 24) = Expected.Message_Id
           and then
-            (if Expected.Match_Tree then
+            (if Expected.Match_Tree and not Interim and Async_Id = 0 then
                Encoded_U32 (Data, 36) = Expected.Tree_Id)
           and then
             (if Expected.Match_Session then
                Encoded_U64 (Data, 40) = Expected.Session_Id)
-          and then ((Encoded_U32 (Data, 16) and 8) /= 0) = Expected.Signed
+          and then
+            (if not Interim then
+               ((Encoded_U32 (Data, 16) and 8) /= 0) = Expected.Signed)
         else Nt_Status = 0);
 
    procedure Sign

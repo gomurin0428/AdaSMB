@@ -55,6 +55,7 @@ is
    function Current_Tree_Id (State : Engine_State) return SMB.DWord;
    function Current_Max_Read (State : Engine_State) return Natural;
    function Current_Max_Write (State : Engine_State) return Natural;
+   function Current_Async_Id (State : Engine_State) return SMB.QWord;
    function Has_Open_Handles (State : Engine_State) return Boolean;
    function Has_Pending_Request (State : Engine_State) return Boolean;
    function Has_Signing_Key (State : Engine_State) return Boolean;
@@ -77,6 +78,9 @@ is
         and then Has_Signing_Key (Left) = Has_Signing_Key (Right)
         and then Current_Signing_Key (Left) = Current_Signing_Key (Right)
         and then Handle_Table_Equivalent (Left, Right));
+   function Interim_Context_Equivalent
+     (Left, Right : Engine_State) return Boolean
+   with Ghost;
    procedure Lemma_Connection_Context_Transitive
      (First, Middle, Last : Engine_State)
    with Ghost,
@@ -176,6 +180,7 @@ is
           and Current_Owner_Id (State) /= 0
           and not Has_Open_Handles (State)
           and not Has_Pending_Request (State)
+          and Current_Async_Id (State) = 0
           and Signing_Key_Is_Zero (State));
 
    procedure Mark_Connected
@@ -307,6 +312,7 @@ is
        (if Status = SMB.Ok then
           Has_Pending_Request (State)
           and not Has_Validated_Response (State)
+          and Current_Async_Id (State) = 0
           and Expected.Command = Command
           and Message_Id = Expected.Message_Id
           and Expected.Request_Signed = Request_Signed
@@ -323,6 +329,37 @@ is
           and Pending_Request_Matches (State, Expected)
         else Message_Id = 0);
 
+   procedure Inspect_Interim_Response
+     (State : in out Engine_State;
+      Packet : SMB.Bytes;
+      Is_Interim : out Boolean;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       (if Status = SMB.Ok then
+          (if Is_Interim then
+             Interim_Context_Equivalent (State'Old, State)
+             and then Has_Pending_Request (State'Old)
+             and then Has_Pending_Request (State)
+             and then not Has_Validated_Response (State)
+             and then Current_Async_Id (State) /= 0
+             and then Packet'Length >= 72
+             and then Current_Async_Id (State) =
+               SMB.Core_Wire.Encoded_U64 (Packet, 32)
+           else State = State'Old)
+        else
+          not Is_Interim
+          and then Current_Phase (State) = Disconnected
+          and then not Has_Signing_Key (State)
+          and then Current_Session_Id (State) = 0
+          and then Current_Tree_Id (State) = 0
+          and then Current_Async_Id (State) = 0
+          and then not Has_Pending_Request (State)
+          and then not Has_Validated_Response (State)
+          and then not Has_Open_Handles (State)
+          and then Signing_Key_Is_Zero (State));
+
    procedure Accept_Response
      (State : in out Engine_State;
       Packet : SMB.Bytes;
@@ -336,6 +373,7 @@ is
           and not Has_Signing_Key (State)
           and Current_Session_Id (State) = 0
           and Current_Tree_Id (State) = 0
+          and Current_Async_Id (State) = 0
           and Nt_Status = 0
           and not Has_Pending_Request (State)
           and not Has_Validated_Response (State)
@@ -349,6 +387,7 @@ is
              and then Current_Epoch (State) = Current_Epoch (State'Old))
           and then
           not Has_Pending_Request (State)
+          and then Current_Async_Id (State) = 0
           and then
             (if Pending_Command (State'Old) = 4
                and then Nt_Status = SMB.Success
@@ -538,6 +577,7 @@ is
        and not Has_Signing_Key (State)
        and Current_Session_Id (State) = 0
        and Current_Tree_Id (State) = 0
+       and Current_Async_Id (State) = 0
        and Status =
          (if Current_Epoch (State)'Old = SMB.QWord'Last
           then SMB.Counter_Exhausted
@@ -575,6 +615,7 @@ private
       Signing_Key : SMB.Bytes (0 .. 15) := (others => 0);
       Has_Key : Boolean := False;
       Pending : Boolean := False;
+      Pending_Async_Id : SMB.QWord := 0;
       Pending_Expected : Request_Expectation;
       Receipt_Valid : Boolean := False;
       Receipt_Command : SMB.Core_Wire.Command_Code := 0;

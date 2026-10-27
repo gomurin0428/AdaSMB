@@ -365,16 +365,24 @@ class AdversarialProxy:
             first_query_had_data = False
             mutation_requests = 0
             challenge_session_id: int | None = None
+            selected_read_header: bytes | None = None
 
             def client_to_server() -> None:
                 nonlocal session_key, write_requests, query_requests
                 nonlocal set_info_requests
                 nonlocal tree_disconnect_requests, logoff_requests
                 nonlocal mutation_requests
+                nonlocal selected_read_header
                 try:
                     while not done.is_set():
                         header = recv_exact(client, 4)
                         payload = recv_exact(client, int.from_bytes(header[1:4], "big"))
+                        if (
+                            self.mode.startswith("header-")
+                            and len(payload) >= 64
+                            and struct.unpack_from("<H", payload, 12)[0] == 8
+                        ):
+                            selected_read_header = bytes(payload[32:40])
                         if self.mode in RESPONSE_MUTATIONS:
                             if mutated:
                                 raise RuntimeError("client sent a request after rejected response")
@@ -451,9 +459,16 @@ class AdversarialProxy:
                     payload = bytearray(
                         recv_exact(backend, int.from_bytes(header[1:4], "big"))
                     )
+                    response_command = struct.unpack_from("<H", payload, 12)[0]
+                    response_status = struct.unpack_from("<I", payload, 8)[0]
+                    if response_status == 0x103:
+                        if not (
+                            self.mode.startswith("header-")
+                            and response_command == RESPONSE_MUTATIONS[self.mode]
+                        ):
+                            client.sendall(header + payload)
+                        continue
                     if self.mode in SECURITY_BUFFER_MUTATIONS:
-                        response_command = struct.unpack_from("<H", payload, 12)[0]
-                        response_status = struct.unpack_from("<I", payload, 8)[0]
                         if response_command == 0:
                             if response_status != 0:
                                 raise RuntimeError("original NEGOTIATE did not succeed")
@@ -542,6 +557,28 @@ class AdversarialProxy:
                         self.mode in RESPONSE_MUTATIONS
                         and struct.unpack_from("<H", payload, 12)[0] == RESPONSE_MUTATIONS[self.mode]
                     ):
+                        if self.mode.startswith("header-"):
+                            if selected_read_header is None or session_key is None:
+                                raise RuntimeError("missing request context for header mutation")
+                            original_signature = bytes(payload[48:64])
+                            original = bytearray(payload)
+                            original[48:64] = b"\x00" * 16
+                            if (
+                                struct.unpack_from("<I", payload, 16)[0] & 8 == 0
+                                or not hmac.compare_digest(
+                                    original_signature,
+                                    hmac.new(session_key, original, hashlib.sha256).digest()[:16],
+                                )
+                            ):
+                                raise RuntimeError("original final IO signature verification failed")
+                            payload[32:40] = selected_read_header
+                            flags = struct.unpack_from("<I", payload, 16)[0] & ~2
+                            struct.pack_into("<I", payload, 16, flags)
+                            struct.pack_into("<H", payload, 14, 1)
+                            payload[48:64] = hmac.new(
+                                session_key, payload[:48] + b"\x00" * 16 + payload[64:],
+                                hashlib.sha256,
+                            ).digest()[:16]
                         if (
                             len(payload) < 80
                             or struct.unpack_from("<I", payload, 8)[0] != 0

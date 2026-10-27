@@ -8,7 +8,8 @@ project SMB_Tests is
      ("test_suite.adb", "integration_client.adb", "adversarial_client.adb",
       "transport_client.adb", "cleanup_client.adb", "unicode_probe.adb",
       "auth_diagnostic_client.adb", "response_mutation_client.adb",
-      "security_buffer_client.adb", "ntlm_av_probe.adb", "crypto_probe.adb",
+      "security_buffer_client.adb", "async_client.adb", "ntlm_av_probe.adb",
+      "crypto_probe.adb",
       "clock_probe.adb");
    for Languages use ("Ada");
 
