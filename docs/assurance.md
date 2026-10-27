@@ -8,8 +8,9 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes eleven units (ten bodies plus `SMB`'s types).
-These are the implementations called by `SMB.Client`, not a parallel model.
+`proof.gpr` explicitly includes twelve units (eleven bodies plus `SMB`'s types).
+These are the implementations called by `SMB.Client` and `SMB.Transport`, not a
+parallel model.
 
 | Unit | Runtime responsibility |
 | --- | --- |
@@ -20,6 +21,7 @@ These are the implementations called by `SMB.Client`, not a parallel model.
 | `SMB.Core_Auth` | Type 2/security-buffer/AV validation, NTLMv2 proof, Type 3 and its MIC, session key and SPNEGO output |
 | `SMB.Core_Wire` | Bounded integer readers/writers, SMB header construction/correlation validation and signing |
 | `SMB.Core_Framing` | Direct TCP session header encoding/decoding and 64-byte through 1-MiB frame bounds |
+| `SMB.Core_Transport` | Native stream frame construction, exact receive-prefix copying with prefix/tail preservation, bounded partial-read/write progress and unsent-slice selection |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions |
@@ -74,6 +76,26 @@ NTSTATUS errors consume one receipt while preserving the connection context.
 Malformed or uncertain responses invalidate local state. No remote rollback or
 exactly-once behavior is claimed.
 
+The transport's real `Read_Exact`, `Write_Exact`, and `Send_Frame` paths use
+`SMB.Core_Transport`. The core builds the native `Ada.Streams` array directly,
+binding every payload byte and all four TCP prefix bytes to the input packet.
+Receive copying accepts only a positive count within both the supplied native
+chunk and the destination's remaining capacity. It preserves previous bytes
+and the unused tail; rejected counts change neither the buffer nor progress.
+Write progress accepts only a last index within the current unsent slice and
+computes the cumulative offset without resending a confirmed prefix. Core
+resource bounds allow the 1-MiB packet plus its four-byte prefix and nonzero
+array lower bounds. This is not a proof of the socket result itself: the
+adapter must supply the actual returned index and valid initialized bytes.
+Socket pumps, retry decisions, deadlines and exception cleanup remain trusted.
+
+Only `Core_Transport`'s loop invariants use runtime assertion policy `Ignore`
+to avoid rescanning a growing prefix on every copied byte. This does **not**
+remove them from GNATprove: their initialization and preservation are proved,
+as specified by [AdaCore's assertion-policy documentation](https://docs.adacore.com/spark2014-docs/html/ug/en/source/assertion_pragmas.html).
+Compiler run-time checks and pre/postcondition checking remain enabled in the
+project builds; no proof assumption or check-suppression pragma is introduced.
+
 Proof covers language-defined run-time checks, initialization, flow analysis and
 the contracts actually written in the source. It does not prove that every
 encoded bit matches SMB, or that a hash has the mathematical/security properties
@@ -89,7 +111,7 @@ understate this boundary.
 
 | Package | Subprograms | Trusted responsibility |
 | --- | --- | --- |
-| `SMB.Transport` | `Wait_For`, `Read_Exact`, `Write_Exact`, `Connect`, `Send_Frame`, `Receive_Frame`, `Close`, `Is_Open` | GNAT sockets/selectors, nonblocking I/O, deadlines, allocation and copying. Frame type/length use `Core_Framing`. DNS resolution is outside the deadline. |
+| `SMB.Transport` | `Wait_For`, `Read_Exact`, `Write_Exact`, `Connect`, `Send_Frame`, `Receive_Frame`, `Close`, `Is_Open` | GNAT sockets/selectors, nonblocking I/O, deadlines, allocation/initialization, slice dispatch, retry and exception cleanup. Native frame copying and progress use `Core_Transport`; frame type/length use `Core_Framing`. DNS resolution is outside the deadline. |
 | `SMB.Clock` | `Is_Leap_Year`, `Current_Filetime` | OS calendar and FILETIME conversion |
 | `SMB.NTLM` | `Negotiate_Token`, `Authenticate` | Allocation, `Core_Auth` dispatch and exceptions |
 | `SMB.Text` | `Check`, `To_UTF16LE`, `From_UTF16LE`, `NTLM_Username` | Public allocation/exception adapters to `Core_Text` |
