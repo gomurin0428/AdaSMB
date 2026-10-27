@@ -2,10 +2,9 @@
 
 ## Latest complete proof
 
-The complete `make prove` run passed for the bulk-buffer implementation
-[`cf57972`](https://github.com/gomurin0428/AdaSMB/commit/cf57972b515c07967687b42a4edfd11abdbadfb3).
-This worktree started without generated proof artifacts; the focused client
-proof preceded the complete run.
+The complete `make prove` run passed for the credential-preflight implementation
+[`cd65f18`](https://github.com/gomurin0428/AdaSMB/commit/cd65f185ed3943573874c2bf703a7359d52bcc4a).
+A focused authentication proof preceded the complete run.
 GNATprove analyzed all thirteen configured units:
 `SMB`, `SMB.Core_Auth`, `SMB.Core_Client`, `SMB.Core_Clock`, `SMB.Core_Connection`, `SMB.Core_Framing`,
 `SMB.Core_NTLM`, `SMB.Core_Protocol`, `SMB.Core_Text`, `SMB.Core_Transport`, `SMB.Core_Wire`,
@@ -13,20 +12,21 @@ GNATprove analyzed all thirteen configured units:
 
 | Category | Total | Flow | Proved by provers |
 | --- | ---: | ---: | ---: |
-| Data dependencies | 1 | 1 | 0 |
+| Data dependencies | 2 | 2 | 0 |
 | Flow dependencies | 1 | 1 | 0 |
-| Initialization | 538 | 538 | 0 |
+| Initialization | 539 | 539 | 0 |
 | Non-aliasing | 2 | 2 | 0 |
-| Run-time checks | 2,389 | 0 | 2,389 |
+| Run-time checks | 2,393 | 0 | 2,393 |
 | Assertions | 293 | 0 | 293 |
-| Functional contracts | 987 | 0 | 987 |
+| Functional contracts | 992 | 0 | 992 |
 | Termination | 159 | 153 | 6 |
-| **Total** | **4,370** | **695** | **3,675** |
+| **Total** | **4,381** | **697** | **3,684** |
 
 There were zero unproved and zero justified checks. All configured units and
 subprograms were analyzed; none were reported skipped. GNATprove reported
-61 flow-analysis warnings (55 in `SMB.Core_Client`, 6 in
-`SMB.Core_Protocol`), primarily unused assignments and status outputs, and
+67 flow-analysis warnings (55 in `SMB.Core_Client`, 6 in
+`SMB.Core_Protocol`, 6 in `SMB.Core_Auth`), primarily unused assignments and
+status/converter outputs, and
 zero `pragma Assume` statements. The forced `-gnatwe` build passed.
 
 The first full lifecycle run at the previous 30-second timeout left one CLOSE
@@ -390,6 +390,36 @@ All executable builds, full unit tests, strict rebuild/dependency audit and
 the complete Samba suite passed. No library source changed, so the current
 4,370-check SPARK result is retained; proof and Unicode-oracle runs were not
 repeated. No CI was run.
+
+## Credential preflight
+
+`SMB.Core_Auth.Validate_Credentials` checks the existing 4,096-byte per-field
+limits, nonempty ASCII username and UTF validity using the same uppercase and
+conversion routines as Type 3 construction. It retains support for empty
+passwords/domains and Unicode passwords/domains. It has no precondition or
+global effects; run-time safety and the successful-result resource-bound
+postcondition are proved. This does not add a complete Unicode semantic proof
+or secure-erasure guarantee. Six proof warnings are the intentionally unused
+scratch buffer/count outputs from validation-only conversions.
+
+The public `Authenticate` checks these server-independent inputs before its
+first SESSION_SETUP, outside the communication-failure handler. Local rejection
+preserves the negotiated connection and last NTSTATUS so corrected credentials
+can be tried. Invalid starting states retain `Invalid_State` precedence.
+The original network authentication body and its cleanup are unchanged:
+invalid challenges, bad passwords rejected by the server, signature/MIC failure
+and transport errors still follow their existing post-send failure policy.
+This public wrapper's exception ordering remains tested native adapter behavior,
+not a formal proof of all facade behavior.
+
+The preceding library at `624ca5c`, with only the new integration test copied
+in, failed at `invalid credential preflight disconnected client`. The new
+implementation passes eight rejection/reuse cases followed by successful
+authentication, plus wrong-state precedence. Thirteen focused unit cases cover
+accepted inputs, nonzero-bound maximum-length arrays and rejected credentials.
+The full unit suite, complete Samba suite, strict build/dependency audit and
+complete proof passed. Existing Unicode converters were unchanged, so the
+Unicode oracle was not rerun. No CI was run.
 
 ## Reproduction
 
