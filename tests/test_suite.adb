@@ -2052,8 +2052,43 @@ procedure Test_Suite is
             Assert (Cursor = Prefix, "rejected directory record advanced cursor");
          end if;
       end Check;
+      procedure Check_Name (Name : SMB.Bytes; Valid, High_Bound : Boolean) is
+         Length : constant Positive := Prefix + 104 + Name'Length;
+         First : constant Natural :=
+           (if High_Bound then Natural'Last - (Length - 1) else 11);
+         Buffer : SMB.Bytes (First .. First + (Length - 1)) := (others => 0);
+         Cursor : Natural := Prefix;
+         Info : SMB.Core_Protocol.Directory_Info;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Wire.Put_U32 (Buffer, Prefix + 60, SMB.DWord (Name'Length));
+         Buffer (First + Prefix + 104 .. Buffer'Last) := Name;
+         SMB.Core_Protocol.Parse_Directory_Entry (Buffer, Cursor, Info, Status);
+         Count := Count + 1;
+         Assert
+           (Status = (if Valid then SMB.Ok else SMB.Invalid_Encoding),
+            "directory name encoding outcome");
+         Assert
+           (Cursor = (if Valid then Length else Prefix),
+            "directory name failure changed cursor");
+         if Valid then
+            Assert
+              (Info.Name_Offset = Prefix + 104
+               and then Info.Name_Length = Name'Length
+               and then Info.Next_Cursor = Length,
+               "valid directory name bounds changed");
+         end if;
+      end Check_Name;
    begin
       for High_Bound in Boolean loop
+         Check_Name (Hex ("4100"), True, High_Bound);
+         Check_Name (Hex ("00d800dc"), True, High_Bound);
+         Check_Name (Hex ("ffdbffdf"), True, High_Bound);
+         Check_Name (Hex ("41003dd800de4200"), True, High_Bound);
+         Check_Name (Hex ("00d8"), False, High_Bound);
+         Check_Name (Hex ("00dc"), False, High_Bound);
+         Check_Name (Hex ("00d84100"), False, High_Bound);
+         Check_Name (Hex ("410000004200"), False, High_Bound);
          for Available in 0 .. 112 loop
             Check (Available, 2, 0, High_Bound);
          end loop;

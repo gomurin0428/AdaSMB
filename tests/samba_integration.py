@@ -38,6 +38,26 @@ def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str
     return subprocess.run(command, check=True, text=True, **kwargs)
 
 
+def run_directory_mutation_cases(env: dict[str, str]) -> None:
+    selected = os.environ.get("ADASMB_DIRECTORY_MODE")
+    if selected is not None and selected not in DIRECTORY_MODES:
+        raise ValueError("unknown directory mutation selector")
+    for mode in DIRECTORY_MODES:
+        if selected is not None and mode != selected:
+            continue
+        proxy = AdversarialProxy(mode, 0, PORT, user=USER, password=PASSWORD)
+        proxy.start()
+        directory_env = env.copy()
+        directory_env.update(
+            SMB_TEST_PORT=str(proxy.listener.getsockname()[1]),
+            SMB_TEST_BACKEND_PORT=str(PORT), SMB_TEST_MODE=mode,
+        )
+        try:
+            run([str(ROOT / "build/bin/cleanup_client")], env=directory_env, timeout=60)
+        finally:
+            proxy.join()
+
+
 def run_directory_limit_cases(env: dict[str, str]) -> None:
     selected = os.environ.get("ADASMB_DIRECTORY_LIMIT_MODE")
     if selected is not None and selected not in DIRECTORY_LIMIT_MODES:
@@ -197,6 +217,10 @@ def main() -> int:
                     SMB_TEST_PASSWORD=PASSWORD,
                     SMB_TEST_PATH=str(share),
                 )
+                if os.environ.get("ADASMB_DIRECTORY_ONLY") == "1":
+                    run_directory_mutation_cases(env)
+                    print("local Samba directory mutation/recovery tests passed")
+                    return 0
                 if os.environ.get("ADASMB_DIRECTORY_LIMITS_ONLY") == "1":
                     run_directory_limit_cases(env)
                     print("local Samba directory limit/recovery tests passed")
@@ -392,27 +416,7 @@ def main() -> int:
                     run([str(ROOT / "build/bin/cleanup_client")], env=lost_write_env)
                 finally:
                     proxy.join()
-                proxy_port = PORT + 11
-                for directory_mode in DIRECTORY_MODES:
-                    proxy = AdversarialProxy(
-                        directory_mode,
-                        proxy_port,
-                        PORT,
-                        user=USER,
-                        password=PASSWORD,
-                    )
-                    proxy.start()
-                    directory_env = env.copy()
-                    directory_env.update(
-                        SMB_TEST_HOST="127.0.0.1",
-                        SMB_TEST_PORT=str(proxy_port),
-                        SMB_TEST_BACKEND_PORT=str(PORT),
-                        SMB_TEST_MODE=directory_mode,
-                    )
-                    try:
-                        run([str(ROOT / "build/bin/cleanup_client")], env=directory_env)
-                    finally:
-                        proxy.join()
+                run_directory_mutation_cases(env)
                 run_directory_limit_cases(env)
                 set_info_content = b"set-info-renamed-content"
                 (share / "set-info-source.txt").write_bytes(set_info_content)

@@ -340,6 +340,8 @@ begin
       Ada.Text_IO.Put_Line ("signed directory limit and recovery passed: " & Mode);
    elsif Mode in "malformed-signed-directory-second-page"
      | "dangling-signed-directory-second-page"
+     | "signed-directory-unpaired-high" | "signed-directory-unpaired-low"
+     | "signed-directory-high-nonlow" | "signed-directory-embedded-nul"
    then
       declare
          Rejected : Boolean := False;
@@ -354,7 +356,18 @@ begin
                  "malformed second directory page was accepted";
             end;
          exception
-            when SMB.Protocol_Error =>
+            when Error : SMB.Protocol_Error =>
+               if Mode in "signed-directory-unpaired-high"
+                 | "signed-directory-unpaired-low"
+                 | "signed-directory-high-nonlow"
+                 | "signed-directory-embedded-nul"
+               then
+                  if Ada.Exceptions.Exception_Message (Error) /=
+                    "cannot extract SMB directory entry: INVALID_ENCODING"
+                  then
+                     raise;
+                  end if;
+               end if;
                Rejected := True;
          end;
          if not Rejected or else SMB.Client.Is_Connected (Client) then

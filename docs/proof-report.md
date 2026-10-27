@@ -1,5 +1,47 @@
 # GNATprove and test report
 
+## Directory name encoding rejection and recovery
+
+Four correctly signed second-page mutations exercise an unpaired high
+surrogate, an unpaired low surrogate, a high surrogate followed by a non-low
+code unit, and an embedded NUL. NUL is well-formed UTF-16 but disallowed by
+the existing name-validation profile. Layout, links, and total packet length
+remain intact, and the original second-page signature is verified before
+mutation. A nonempty first page must already have been accepted.
+
+The public client must report the directory core's `INVALID_ENCODING`, not
+merely a later conversion or signature error, then disconnect before another
+query and recover listing/reading on the same connection object. Sixteen
+core cases cover these four invalid names and four valid BMP/supplementary
+controls at ordinary and near-`Natural'Last` array bounds, checking exact
+status and cursor preservation.
+
+Candidate GNAT14 Python syntax compilation and the combined
+`test_suite.adb`/`cleanup_client.adb` build passed. The
+`directory-bounds` selector passed **6,616 cases**. Focused
+`ADASMB_DIRECTORY_ONLY=1` Samba integration passed all six directory mutations:
+the two existing offset cases and the four new name cases.
+
+The single requested sensitivity mutant built successfully. With only the
+`Validate_UTF16` call in `Parse_Directory_Entry` replaced by
+`Text_Status := SMB.Ok;`, `directory-bounds` failed at the exact
+`directory name encoding outcome` assertion. The focused unpaired-high
+Samba case also failed as intended: the later converter reported
+`invalid SMB directory name encoding`, rather than the core diagnostic
+required by the public-client test. Thus the test distinguishes core-boundary
+rejection from later conversion failure. The original
+`src/smb-core_protocol.adb` was restored byte-for-byte (SHA-256
+`25917cfe388c3c2f3fb6522b08d56b0cae533275dc879a9c469bb23494e35dd3`), and a
+forced build of both executables with the restored source passed.
+
+After restoration, `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and full root Samba integration passed;
+full integration included all six directory mutations and the existing
+regression scenarios. The malformed second-page cases use synthetic signed
+responses after verifying the original backend signature; they test client
+validation and recovery, not native Samba generation of invalid names.
+Formal proof, native Windows, and CI were not rerun for this test-only change.
+
 ## Signed directory limit and recovery scenarios
 
 Four public-API scenarios use synthetic, correctly signed directory responses
