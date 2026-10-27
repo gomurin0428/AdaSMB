@@ -85,6 +85,19 @@ begin
       SMB.Client.Disconnect (Client);
       Ada.Text_IO.Put_Line
         ("signed ERROR reserved byte, NTSTATUS and handle reuse passed");
+   elsif Mode = "connection-reserved-fields" then
+      declare
+         File : SMB.Client.Handle :=
+           SMB.Client.Open_File (Client, "fixture.txt", SMB.Client.Read_Only);
+      begin
+         if SMB.Client.Read (Client, File, 0, 1) /= SMB.Bytes'(0 => 65) then
+            raise Program_Error with "connection reserved fields broke file access";
+         end if;
+         SMB.Client.Close (Client, File);
+      end;
+      SMB.Client.Disconnect (Client);
+      Ada.Text_IO.Put_Line
+        ("NEGOTIATE and signed TREE_CONNECT reserved fields passed");
    elsif Mode = "teardown-reserved-fields" then
       declare
          Closed_File : SMB.Client.Handle :=

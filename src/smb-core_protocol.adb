@@ -751,8 +751,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Read_U16 (Packet, 68, Word_Value, Header_Status);
-         Read_U16 (Packet, 70, Structure, Header_Status);
-         if Word_Value /= SMB.SMB2_Dialect_0210 or else Structure /= 0 then
+         if Word_Value /= SMB.SMB2_Dialect_0210 then
             Status := SMB.Unsupported_Feature;
             return;
          end if;
@@ -762,11 +761,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
          if Info.Session_Id /= 0 or else Info.Tree_Id /= 0
            or else (DWord_Value and 16#78#) /= 0
          then
-            Status := SMB.Invalid_Protocol;
-            return;
-         end if;
-         Read_U32 (Packet, 124, DWord_Value, Header_Status);
-         if DWord_Value /= 0 then
             Status := SMB.Invalid_Protocol;
             return;
          end if;
@@ -843,7 +837,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Read_U16 (Packet, 64, Structure, Header_Status);
          Info.Tree_Id := SMB.Core_Wire.Encoded_U32 (Packet, 36);
          if Structure /= 16 or else Packet (Packet'First + 66) /= 1
-           or else Packet (Packet'First + 67) /= 0
            or else Info.Tree_Id = 0
          then
             Status := SMB.Invalid_Protocol;
