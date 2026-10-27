@@ -22,14 +22,15 @@ procedure Transport_Client is
      (if Ada.Command_Line.Argument_Count >= 2
       then Ada.Command_Line.Argument (2) else "stalled-write");
 
-   procedure Receive_And_Echo (Expected_Length : Natural) is
+   procedure Receive_And_Echo
+     (Expected_Length : Natural; Seed : Natural := 0) is
       Data : constant SMB.Bytes := SMB.Transport.Receive_Frame (Channel);
    begin
       if Data'Length /= Expected_Length then
          raise Program_Error with "fragmented frame length mismatch";
       end if;
       for I in Data'Range loop
-         if Data (I) /= SMB.Byte ((I - Data'First) mod 256) then
+         if Data (I) /= SMB.Byte ((I - Data'First + Seed) mod 256) then
             raise Program_Error with "fragmented frame byte mismatch";
          end if;
       end loop;
@@ -40,10 +41,20 @@ procedure Transport_Client is
       Started : Ada.Real_Time.Time;
       Rejected : Boolean := False;
    begin
-      if Mode = "fragmented" then
-         Receive_And_Echo (512);
+      if Mode = "fragmented" or else Mode = "maximum-frame" then
+         Receive_And_Echo
+           (if Mode = "fragmented" then 512 else SMB.Maximum_Frame_Size);
          SMB.Transport.Close (Channel);
-         Ada.Text_IO.Put_Line ("fragmented receive and byte-exact echo passed");
+         Ada.Text_IO.Put_Line ("byte-exact receive and echo passed: " & Mode);
+         return;
+      elsif Mode = "coalesced" then
+         Receive_And_Echo (64, 0);
+         Receive_And_Echo (65, 17);
+         Receive_And_Echo (512, 63);
+         Receive_And_Echo (65_536, 129);
+         Receive_And_Echo (64, 255);
+         SMB.Transport.Close (Channel);
+         Ada.Text_IO.Put_Line ("byte-exact receive and echo passed: " & Mode);
          return;
       end if;
       Started := Ada.Real_Time.Clock;
@@ -56,19 +67,23 @@ procedure Transport_Client is
          end;
       exception
          when E : SMB.Protocol_Error | SMB.Transport_Error =>
-            if Mode = "malformed-header" or else Mode = "oversized-header" then
+            if Mode = "malformed-header" or else Mode = "oversized-header"
+              or else Mode = "empty-header" or else Mode = "undersized-header"
+            then
                if Ada.Exceptions.Exception_Identity (E) /= SMB.Protocol_Error'Identity then
                   raise;
                end if;
             elsif Ada.Exceptions.Exception_Identity (E) /= SMB.Transport_Error'Identity then
                raise;
             end if;
-            if Mode = "stalled-read" then
+            if Mode = "stalled-read" or else Mode = "trickle-read" then
                declare
                   Elapsed : constant Duration := Ada.Real_Time.To_Duration
                     (Ada.Real_Time.Clock - Started);
+                  Upper : constant Duration :=
+                    (if Mode = "trickle-read" then 0.75 else 2.0);
                begin
-                  if Elapsed < Deadline_Seconds * 0.9 or else Elapsed > 2.0
+                  if Elapsed < Deadline_Seconds * 0.9 or else Elapsed > Upper
                     or else Ada.Strings.Fixed.Index
                       (Ada.Exceptions.Exception_Message (E), "timed out") = 0
                   then
