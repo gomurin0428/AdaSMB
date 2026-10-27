@@ -533,8 +533,14 @@ is
             Valid_Handle (State, Token, Need_Read, Need_Write)
           and then
             (if Status = SMB.Ok then
-               Handle_Matches (State, Token, File_Id, Access_Mode, Is_Directory))
-        else Status = SMB.Invalid_Length);
+               Handle_Matches (State, Token, File_Id, Access_Mode, Is_Directory)
+             else Status = SMB.Invalid_Handle_Status)
+        else Status = SMB.Invalid_Length)
+       and then
+         (if Status /= SMB.Ok then
+            (for all Index in File_Id'Range => File_Id (Index) = 0)
+            and then Access_Mode = Read_Only
+            and then not Is_Directory);
 
    procedure Discard_Response_Receipt
      (State : in out Engine_State;

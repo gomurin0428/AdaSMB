@@ -2573,7 +2573,8 @@ procedure Test_Suite is
         (Target : in out SMB.Engine.Engine_State;
          Create_Operation : in out SMB.Core_Client.Operation;
          Result_Token : out SMB.Engine.Handle_Token;
-         Is_Directory : Boolean := True)
+         Is_Directory : Boolean := True;
+         Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only)
       is
          Request : SMB.Bytes (0 .. 121) := (others => 0);
          Response : SMB.Bytes (0 .. 151) := (others => 0);
@@ -2581,7 +2582,7 @@ procedure Test_Suite is
       begin
          SMB.Core_Client.Prepare_Create
            (Create_Operation, Target, SMB.Bytes'(0, 0),
-            SMB.Engine.Read_Only, False, 1, Is_Directory,
+            Access_Mode, False, 1, Is_Directory,
             Request, Used, Status);
          Assert (Status = SMB.Ok and then Used = Request'Length,
                  "prepare directory test handle");
@@ -2600,6 +2601,141 @@ procedure Test_Suite is
            (Status = SMB.Ok and then Nt_Status = SMB.Success,
             "complete directory test CREATE");
       end Create_Directory_Handle;
+
+      procedure Test_Handle_Outcomes is
+         Target : SMB.Engine.Engine_State;
+         Tokens : array (SMB.Engine.Access_Kind, Boolean) of
+           SMB.Engine.Handle_Token;
+         Lengths : constant array (Positive range <>) of Natural := (0, 15, 17);
+         Cases : Natural := 0;
+
+         procedure Check
+           (Input_Token : SMB.Engine.Handle_Token;
+            Need_Read, Need_Write : Boolean;
+            Length : Natural;
+            High_Bound : Boolean;
+            Expected_Status : SMB.Core_Status;
+            Expected_Access : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+            Expected_Directory : Boolean := False)
+         is
+            First : constant Natural :=
+              (if High_Bound then Natural'Last - (Natural'Max (Length, 1) - 1)
+               else 11);
+            Last : constant Natural :=
+              (if Length = 0 then First - 1 else First + (Length - 1));
+            Output_Id : SMB.Bytes (First .. Last) := (others => 16#A5#);
+            Output_Access : SMB.Engine.Access_Kind := SMB.Engine.Read_Write;
+            Output_Directory : Boolean := True;
+            Result : SMB.Core_Status;
+         begin
+            SMB.Engine.Validate_Handle
+              (Target, Input_Token, Need_Read, Need_Write,
+               Output_Id, Output_Access, Output_Directory, Result);
+            Cases := Cases + 1;
+            Assert (Result = Expected_Status, "exact handle validation status");
+            if Result = SMB.Ok then
+               Assert
+                 (Output_Id = File_Id and then Output_Access = Expected_Access
+                  and then Output_Directory = Expected_Directory,
+                  "handle validation changed successful outputs");
+            else
+               Assert
+                 ((for all Byte of Output_Id => Byte = 0)
+                  and then Output_Access = SMB.Engine.Read_Only
+                  and then not Output_Directory,
+                  "handle validation failure retained outputs");
+            end if;
+         end Check;
+      begin
+         Reconnect_Share (Target);
+         for Access_Mode in SMB.Engine.Access_Kind loop
+            for Is_Directory in Boolean loop
+               declare
+                  Create_Operation : SMB.Core_Client.Operation;
+               begin
+                  Create_Directory_Handle
+                    (Target, Create_Operation, Tokens (Access_Mode, Is_Directory),
+                     Is_Directory, Access_Mode);
+               end;
+               for Need_Read in Boolean loop
+                  for Need_Write in Boolean loop
+                     for High_Bound in Boolean loop
+                        Check
+                          (Tokens (Access_Mode, Is_Directory),
+                           Need_Read, Need_Write, 16, High_Bound,
+                           (if (Need_Read and Access_Mode = SMB.Engine.Write_Only)
+                              or (Need_Write and Access_Mode = SMB.Engine.Read_Only)
+                            then SMB.Invalid_Handle_Status else SMB.Ok),
+                           Access_Mode, Is_Directory);
+                     end loop;
+                  end loop;
+               end loop;
+            end loop;
+         end loop;
+         for High_Bound in Boolean loop
+            for Length of Lengths loop
+               Check (Tokens (SMB.Engine.Read_Write, False), True, True,
+                      Length, High_Bound, SMB.Invalid_Length);
+               Check ((others => 0), False, False,
+                      Length, High_Bound, SMB.Invalid_Length);
+            end loop;
+            for Fault in 0 .. 3 loop
+               declare
+                  Bad : SMB.Engine.Handle_Token :=
+                    Tokens (SMB.Engine.Read_Write, False);
+               begin
+                  case Fault is
+                     when 0 => Bad.Owner := Bad.Owner + 1;
+                     when 1 => Bad.Epoch := Bad.Epoch + 1;
+                     when 2 => Bad.Ticket := 0;
+                     when 3 => Bad.Ticket := SMB.QWord'Last;
+                  end case;
+                  Check (Bad, True, True, 16, High_Bound,
+                         SMB.Invalid_Handle_Status);
+               end;
+            end loop;
+         end loop;
+         declare
+            Operation : SMB.Core_Client.Operation;
+            Request : SMB.Bytes (0 .. 87) := (others => 0);
+            Response : SMB.Bytes (0 .. 123) := (others => 0);
+            Used : Natural;
+            Ignored_Token : SMB.Engine.Handle_Token;
+         begin
+            SMB.Core_Client.Prepare_Close
+              (Operation, Target, Tokens (SMB.Engine.Read_Write, False),
+               Request, Used, Status);
+            Assert (Status = SMB.Ok, "prepare handle outcome CLOSE");
+            SMB.Core_Client.Send_Succeeded (Operation, Target, Status);
+            Assert (Status = SMB.Ok, "send handle outcome CLOSE");
+            Prepare_Response
+              (Response, 6, SMB.Wire.U64 (Request, 24),
+               Tree_Id, Session_Id, True);
+            Response (64) := 60;
+            SMB.Wire.Sign (Response, Key);
+            SMB.Core_Client.Complete
+              (Operation, Target, Response, Nt_Status, Ignored_Token, Status);
+            Assert (Status = SMB.Ok and then Nt_Status = SMB.Success,
+                    "complete handle outcome CLOSE");
+         end;
+         for High_Bound in Boolean loop
+            Check (Tokens (SMB.Engine.Read_Write, False), False, False,
+                   16, High_Bound, SMB.Invalid_Handle_Status);
+         end loop;
+         SMB.Engine.Invalidate (Target, Status);
+         Assert (Status = SMB.Ok, "invalidate handle outcome state");
+         for High_Bound in Boolean loop
+            Check (Tokens (SMB.Engine.Read_Write, True), False, False,
+                   16, High_Bound, SMB.Invalid_Handle_Status);
+         end loop;
+         Reconnect_Share (Target, Initialize_State => False);
+         for High_Bound in Boolean loop
+            Check (Tokens (SMB.Engine.Read_Write, True), False, False,
+                   16, High_Bound, SMB.Invalid_Handle_Status);
+         end loop;
+         Assert (Cases = 74, "handle validation case coverage");
+         Ada.Text_IO.Put_Line ("handle validation cases:" & Natural'Image (Cases));
+      end Test_Handle_Outcomes;
 
       procedure Test_Connection_Coordinator is
          Operation, Tree_Operation, Disconnect_Operation,
@@ -3703,6 +3839,7 @@ procedure Test_Suite is
       for Index in Key'Range loop
          Key (Index) := SMB.Byte (Index);
       end loop;
+      Test_Handle_Outcomes;
       declare
          Response : SMB.Bytes (0 .. 127) := (others => 0);
       begin

@@ -1,5 +1,43 @@
 # GNATprove and test report
 
+## Exact handle validation outcomes
+
+For a 16-byte output buffer, `Validate_Handle` retains the success equivalence:
+`Status = SMB.Ok` exactly when `Valid_Handle` holds, with the existing
+`Handle_Matches` guarantee on success. Other buffer lengths return
+`SMB.Invalid_Length`; a failed handle check returns
+`SMB.Invalid_Handle_Status`. A separate failure implication requires a zeroed
+`File_Id`, `Read_Only`, and `Is_Directory = False`. The body is unchanged.
+
+Seventy-four cases cover all access kinds, directory flags and read/write
+requirements; malformed tokens; closed, disconnected and stale-after-reconnect
+handles; and wrong-length buffers, at ordinary and near-`Natural'Last` bounds.
+Failure outputs start with nonzero bytes and nondefault metadata.
+
+The Candidate GNAT14 build with `-gnatwe` and `engine-receipts` selector
+passed; the selector reported **74 cases**. Previously accepted `make test`,
+forced strict `make check GPRBUILD="gprbuild -f"`, and full Samba integration
+were not rerun for this contract-only refinement.
+
+Proof history: an incremental `make prove` first exited 2 with a GNAT
+`Constraint_Error` (`bad input for 'Value: "0GG"`) while compiling
+`smb-core_client.adb`; its `.spark` was stale. Diagnostics and the affected
+unit artifacts were preserved, and only recursive generated
+`smb-core_client*` cache files were cleared. The isolated Core_Client replay
+then exited 1 with an unproved `Transfer_Packet_Matches` assertion at
+`smb-core_client.adb:2281`. A subsequent `--proof=per_path --timeout=300`
+attempt on that line also exited 1. After retaining the success-equivalence
+contract shape and expressing failure outputs separately, the focused
+`SMB.Engine` proof proved the `Validate_Handle` postcondition, but exited 1
+because `Prepare_Next` still had that one unproved assertion. The focused
+progressive Core_Client retry with `--limit-line=smb-core_client.adb:2281`
+and `--timeout=300` then exited 0 and proved the assertion.
+
+The final incremental `make prove` exited 0 with **4,471 checks** (709 flow,
+3,762 prover), **0 unproved**, **0 justified**, **69 warnings**, and
+**0 `pragma Assume`**. The run used the repository's progressive proof
+defaults without a clean rebuild. Native Windows and CI were not rerun.
+
 ## Directory name encoding rejection and recovery
 
 Four correctly signed second-page mutations exercise an unpaired high
