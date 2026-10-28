@@ -236,18 +236,25 @@ package body SMB.Core_Text is
       function Encoded_Size (Value : Natural) return Positive is
         (if Value <= 16#7F# then 1 elsif Value <= 16#7FF# then 2
          elsif Value <= 16#FFFF# then 3 else 4);
-      procedure Emit_Byte (Value : Natural)
-        with Pre => Value <= 255 and then Used < Output'Length,
-          Post => Used = Used'Old + 1;
       procedure Emit_Byte (Value : Natural) is
+         Previous_Used : constant Natural := Used;
       begin
+         pragma Assert (Value <= 255 and then Used < Output'Length);
          Output (Output'First + Used) := Character'Val (Value);
          Used := Used + 1;
+         pragma Assert (Used = Previous_Used + 1);
+         pragma Assert (Byte_At (Output, Previous_Used) = Value);
       end Emit_Byte;
       procedure Emit_Scalar (Value : Natural)
-        with Pre => Value <= 16#10FFFF# and then Used <= Output'Length
+        with Pre => Value in 1 .. 16#10FFFF#
+          and then Value not in 16#D800# .. 16#DFFF#
+          and then Output'Length <= 2 * SMB.Maximum_Frame_Size
+          and then Used <= Output'Length
           and then Encoded_Size (Value) <= Output'Length - Used,
-          Post => Used = Used'Old + Encoded_Size (Value);
+          Post => Used = Used'Old + Encoded_Size (Value)
+            and then UTF8_Scalar_At
+              (Output (Output'First + Used'Old .. Output'First + (Used - 1)),
+               0) = Value;
       procedure Emit_Scalar (Value : Natural) is
       begin
          if Value <= 16#7F# then

@@ -1,5 +1,73 @@
 # GNATprove and test report
 
+## UTF-8 scalar emission contract
+
+The private `UTF16_To_UTF8.Emit_Scalar` precondition requires a nonzero scalar
+in `1 .. 16#10FFFF#`, excludes `16#D800# .. 16#DFFF#`, bounds the output by
+`2 * SMB.Maximum_Frame_Size`, and requires enough remaining capacity for
+`Encoded_Size (Value)`. The existing caller proves these scalar-validity and
+capacity requirements after rejecting NUL and malformed surrogate input.
+Its postcondition retains the exact `Used` advance by `Encoded_Size (Value)`
+and requires `UTF8_Scalar_At` to decode the slice written by this call:
+`Output (Output'First + Used'Old .. Output'First + (Used - 1))` at position
+zero must equal `Value`. This slice contains the newly emitted one-to-four
+bytes only. The contract specifies the scalar emitted by this call; it does
+not assert a quantified frame condition for preceding output or an exact
+whole-codec UTF-8/UTF-16 roundtrip theorem.
+
+`UTF8_Scalar_At` retains its original precondition of at most
+`SMB.Maximum_Frame_Size` (1 MiB); its domain was not widened for emission.
+The emission postcondition applies it to a slice of length `Encoded_Size`,
+which is between one and four. No public conversion precondition or runtime
+limit changed.
+
+`Emit_Byte` has no modular `Pre` or `Post`. The exact former checks are
+retained as body assertions: `Value <= 255` and `Used < Output'Length` before
+the write, and `Used = Previous_Used + 1` after it. A constant-time body
+assertion also proves `Byte_At (Output, Previous_Used) = Value`. These
+assertions remain enabled; no quantified per-byte frame condition or ignored
+assertion was added. The scalar encoder's branches and byte assignments are
+unchanged.
+
+The existing `utf-capacity` selector and Unicode corpus, oracle, and negative
+controls were reused without new test cases, fixtures, or generator changes.
+The corpus run reported **1,287,503 fixtures** across the existing scalar
+pairs, fixed sequences, UTF-8 bytes and byte pairs, UTF-16 units, mixed and
+random sequences, and malformed-input categories. The strict test-suite
+build, `utf-capacity`, and `make unicode-test` all exited 0 before the final
+slice-scoped contract refinement and restoration of the helper's original
+precondition. The final source was subsequently compiled by `make test` and
+the forced strict `make check` gate.
+
+The final focused whole-unit proof used fresh `utf8-emission-slice-focused`
+output:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf8-emission-slice-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 551 checks (40 flow, 511 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(24 subprograms and packages).
+
+The final full proof used fresh `utf8-emission-full` output:
+
+```sh
+gnatprove -P proof.gpr --subdirs=utf8-emission-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 4,756 checks (720 flow, 4,036 prover), zero unproved,
+zero justified, 69 warnings, zero `pragma Assume` statements, and 13 units.
+This explicit fresh-output run is not a literal `make prove` result. The
+focused and full summaries are
+`build/proof-obj/utf8-emission-slice-focused/gnatprove/gnatprove.out` and
+`build/proof-obj/utf8-emission-full/gnatprove/gnatprove.out`.
+
+With Candidate GNAT14, final `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and
+`sudo -n python3 tests/samba_integration.py` all exited 0.
+`git diff --check` was run after this section was added.
+
 ## UTF-8 scalar decoding contract
 
 `Byte_At` now specifies both the byte-range bound and the exact mapping
