@@ -2511,7 +2511,8 @@ procedure Test_Suite is
         (Target : in out SMB.Engine.Engine_State;
          Initialize_State : Boolean := True;
          Connect_Share_State : Boolean := True;
-         Check_Requests : Boolean := False) is
+         Check_Requests : Boolean := False;
+         Stop_At_Challenge : Boolean := False) is
       begin
          if Initialize_State then
             SMB.Engine.Initialize (Target, Status);
@@ -2561,6 +2562,9 @@ procedure Test_Suite is
             Response (64) := 9;
             SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
             Assert (Status = SMB.Ok, "reconnect challenge response");
+            if Stop_At_Challenge then
+               return;
+            end if;
             SMB.Engine.Install_Session_Key (Target, Session_Id, Key, Status);
             Assert (Status = SMB.Ok, "reconnect session key");
          end;
@@ -2652,6 +2656,132 @@ procedure Test_Suite is
            (Status = SMB.Ok and then Nt_Status = SMB.Success,
             "complete directory test CREATE");
       end Create_Directory_Handle;
+
+      procedure Test_Authentication_Atomicity is
+         use type SMB.Engine.Engine_State;
+         Base, Target : SMB.Engine.Engine_State;
+         Key_Failures, Authentication_Failures : Natural := 0;
+         Invalid_Lengths : constant array (Positive range <>) of Natural :=
+           (0, 15, 17);
+         Replacement_Key : constant SMB.Bytes (0 .. 15) := (others => 16#A5#);
+
+         procedure Reject_Key (Id : SMB.QWord; Input : SMB.Bytes) is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            SMB.Engine.Install_Session_Key (Target, Id, Input, Status);
+            Assert
+              (Status = SMB.Invalid_Value and then Target = Before,
+               "rejected key installation changed state or consumed receipt");
+            Key_Failures := Key_Failures + 1;
+         end Reject_Key;
+
+         procedure Reject_Authentication is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            SMB.Engine.Mark_Authenticated (Target, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status and then Target = Before,
+               "rejected authentication transition changed state or consumed receipt");
+            Authentication_Failures := Authentication_Failures + 1;
+         end Reject_Authentication;
+
+         procedure Begin_Final_Request is
+         begin
+            SMB.Engine.Begin_Request
+              (Target, 1, False, True, Message_Id, Expected, Status);
+            Assert (Status = SMB.Ok, "reserve atomic authentication final request");
+         end Begin_Final_Request;
+      begin
+         Reject_Key (Session_Id, Key);
+         Reject_Authentication;
+         Reconnect_Share (Base, Stop_At_Challenge => True);
+         Target := Base;
+         Reject_Authentication;
+         Reject_Key (0, Key);
+         Reject_Key (Session_Id xor 1, Key);
+         for High_Bounds in Boolean loop
+            for Length of Invalid_Lengths loop
+               declare
+                  First : constant Natural :=
+                    (if High_Bounds then Natural'Last - Length else 1);
+                  Input : constant SMB.Bytes (First .. First + Length - 1) :=
+                    (others => 16#A5#);
+               begin
+                  Reject_Key (Session_Id, Input);
+               end;
+            end loop;
+         end loop;
+         SMB.Engine.Begin_Request
+           (Target, 1, False, False, Message_Id, Expected, Status);
+         Assert (Status = SMB.Ok, "reserve pending challenge atomicity fixture");
+         Reject_Key (Session_Id, Key);
+         Reject_Authentication;
+         for High_Bounds in Boolean loop
+            declare
+               First : constant Natural :=
+                 (if High_Bounds then Natural'Last - 15 else 1);
+               Input : constant SMB.Bytes (First .. First + 15) := Key;
+            begin
+               Target := Base;
+               SMB.Engine.Install_Session_Key (Target, Session_Id, Input, Status);
+               Assert
+                 (Status = SMB.Ok
+                  and then SMB.Engine.Current_Phase (Target) = SMB.Engine.Negotiated
+                  and then SMB.Engine.Current_Session_Id (Target) = Session_Id
+                  and then SMB.Engine.Has_Signing_Key (Target)
+                  and then SMB.Engine.Current_Signing_Key (Target) = Input
+                  and then not SMB.Engine.Has_Validated_Response (Target),
+                  "key installation retry lost challenge receipt or key bytes");
+               Reject_Key (Session_Id, Replacement_Key);
+               Reject_Authentication;
+               Begin_Final_Request;
+               Reject_Key (Session_Id, Replacement_Key);
+               Reject_Authentication;
+               declare
+                  Response : SMB.Bytes (0 .. 71) := (others => 0);
+               begin
+                  Prepare_Response (Response, 1, Message_Id, 0, Session_Id, True);
+                  SMB.Wire.Put_U32 (Response, 8, 16#C000_006D#);
+                  Response (64) := 9;
+                  SMB.Wire.Sign (Response, Key);
+                  SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+                  Assert
+                    (Status = SMB.Ok and then Nt_Status = 16#C000_006D#
+                     and then SMB.Engine.Has_Validated_Response (Target),
+                     "accept signed authentication failure receipt fixture");
+               end;
+               Reject_Key (Session_Id, Replacement_Key);
+               Reject_Authentication;
+               Begin_Final_Request;
+               declare
+                  Response : SMB.Bytes (0 .. 100) := (others => 0);
+               begin
+                  Prepare_Response (Response, 1, Message_Id, 0, Session_Id, True);
+                  Response (64) := 9;
+                  SMB.Wire.Put_U16 (Response, 68, 72);
+                  SMB.Wire.Put_U16 (Response, 70, Final_Token'Length);
+                  Response (72 .. 100) := Final_Token;
+                  SMB.Wire.Sign (Response, Key);
+                  SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+                  Assert (Status = SMB.Ok, "accept atomic authentication success receipt");
+               end;
+               Reject_Key (Session_Id, Replacement_Key);
+               SMB.Engine.Mark_Authenticated (Target, Status);
+               Assert
+                 (Status = SMB.Ok
+                  and then SMB.Engine.Current_Phase (Target) = SMB.Engine.Authenticated
+                  and then SMB.Engine.Current_Session_Id (Target) = Session_Id
+                  and then SMB.Engine.Current_Signing_Key (Target) = Input
+                  and then not SMB.Engine.Has_Validated_Response (Target),
+                  "authentication retry lost success receipt or changed key");
+               Reject_Authentication;
+            end;
+         end loop;
+         Assert (Key_Failures = 18 and then Authentication_Failures = 11,
+                 "authentication failure atomicity coverage");
+         Ada.Text_IO.Put_Line
+           ("authentication failure atomicity: 29 rejected calls and 2 successful retries passed");
+      end Test_Authentication_Atomicity;
 
       procedure Test_Request_Metadata is
          use type SMB.Engine.Engine_State;
@@ -4223,6 +4353,7 @@ procedure Test_Suite is
          Key (Index) := SMB.Byte (Index);
       end loop;
       Test_Request_Metadata;
+      Test_Authentication_Atomicity;
       Test_Handle_Outcomes;
       Test_Handle_Capacity;
       Test_Handle_Failure_Atomicity;
