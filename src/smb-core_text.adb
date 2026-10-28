@@ -74,6 +74,18 @@ package body SMB.Core_Text is
        and then Position <= Input'Length
        and then Position mod 2 = 0;
 
+   procedure Lemma_Invalid_UTF16_Unit (Input : SMB.Bytes; Index : Natural)
+     with Ghost,
+       Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Index < Input'Length / 2
+         and then not Valid_UTF16_Unit (Input, Index),
+       Post => not Valid_UTF16_Text (Input);
+
+   procedure Lemma_Invalid_UTF16_Unit (Input : SMB.Bytes; Index : Natural) is
+   begin
+      null;
+   end Lemma_Invalid_UTF16_Unit;
+
    procedure Decode_UTF8
      (Value : String;
       Position : in out Natural;
@@ -343,16 +355,22 @@ package body SMB.Core_Text is
            + Natural (Input (Input'First + Offset + 1)) * 256;
          Offset := Offset + 2;
          if First = 0 then
+            pragma Assert (not Valid_UTF16_Unit (Input, Scalar_Start / 2));
+            Lemma_Invalid_UTF16_Unit (Input, Scalar_Start / 2);
             Status := SMB.Invalid_Encoding;
             return;
          elsif First in 16#D800# .. 16#DBFF# then
             if Input'Length - Offset < 2 then
+               pragma Assert (not Valid_UTF16_Unit (Input, Scalar_Start / 2));
+               Lemma_Invalid_UTF16_Unit (Input, Scalar_Start / 2);
                Status := SMB.Invalid_Encoding;
                return;
             end if;
             Second := Natural (Input (Input'First + Offset))
               + Natural (Input (Input'First + Offset + 1)) * 256;
             if Second not in 16#DC00# .. 16#DFFF# then
+               pragma Assert (not Valid_UTF16_Unit (Input, Scalar_Start / 2));
+               Lemma_Invalid_UTF16_Unit (Input, Scalar_Start / 2);
                Status := SMB.Invalid_Encoding;
                return;
             end if;
@@ -360,6 +378,8 @@ package body SMB.Core_Text is
               + (First - 16#D800#) * 1_024 + Second - 16#DC00#;
             Offset := Offset + 2;
          elsif First in 16#DC00# .. 16#DFFF# then
+            pragma Assert (not Valid_UTF16_Unit (Input, Scalar_Start / 2));
+            Lemma_Invalid_UTF16_Unit (Input, Scalar_Start / 2);
             Status := SMB.Invalid_Encoding;
             return;
          else
@@ -374,6 +394,7 @@ package body SMB.Core_Text is
               (if Scalar > 16#FFFF# then
                  Valid_UTF16_Unit (Input, Scalar_Start / 2 + 1)));
          if Encoded_Size (Scalar) > Output'Length - Used then
+            pragma Assert (Output'Length < 2 * Input'Length);
             Status := SMB.Invalid_Length;
             return;
          end if;
@@ -391,6 +412,7 @@ package body SMB.Core_Text is
                 not in 16#D800# .. 16#DBFF#);
          pragma Loop_Variant (Increases => Offset);
       end loop;
+      pragma Assert (Valid_UTF16_Text (Input));
       Status := SMB.Ok;
    end UTF16_To_UTF8;
 

@@ -1,5 +1,82 @@
 # GNATprove and test report
 
+## UTF-16 to UTF-8 conversion outcome contract
+
+The `UTF16_To_UTF8` postcondition now states an exact outcome under a
+conservative sufficient-capacity condition: odd-length input always returns
+`SMB.Invalid_Length`; for even-length input with
+`Output'Length >= 2 * Input'Length`, status is `SMB.Ok` exactly when
+`Valid_UTF16_Text (Input)` holds, and otherwise is `SMB.Invalid_Encoding`.
+This bound is sufficient, not minimal. For smaller outputs, the existing
+capacity-before-later-encoding-error behavior remains: conversion can return
+`SMB.Invalid_Length` before reaching a later malformed unit. The existing
+successful-input validity and output-bound guarantees remain in force.
+
+The private Ghost procedure `Lemma_Invalid_UTF16_Unit` connects a checked
+invalid-unit witness to whole-input invalidity. Its precondition bounds input
+length by `2 * SMB.Maximum_Frame_Size`, requires `Index < Input'Length / 2`,
+and requires `not Valid_UTF16_Unit (Input, Index)`; its postcondition is
+`not Valid_UTF16_Text (Input)`. Its body is `null`, but GNATprove discharges
+the body and postcondition from the quantified predicate definitions; this
+is a proved lemma, not an assumption or axiom. All five lemma checks,
+including the postcondition, and all four call preconditions proved.
+
+At each of the four `Invalid_Encoding` exits, a constant-time assertion
+establishes the bad-unit witness before the lemma call. Further checked
+assertions establish that capacity failure implies
+`Output'Length < 2 * Input'Length` and that the input is valid at normal
+completion. Whole-input validity is
+checked only at an outcome boundary, not once per scalar, so this adds no
+per-scalar whole-input rescanning. The runtime conversion branches,
+assignments, status behavior, public parameters, and limits are unchanged;
+the public outcome contract is strengthened. This is not a whole-codec
+equivalence or roundtrip theorem.
+
+The Unicode corpus, generator, Python oracle, and negative controls are
+unchanged. The existing `utf-capacity` selector retains short-output
+precedence coverage. For valid corpus inputs, `unicode_probe.adb` additionally
+converts with output capacity exactly `2 * Input'Length` and compares with
+the existing oracle result; invalid corpus inputs already use ample output
+capacity. The unchanged corpus contains **1,287,503 fixtures**.
+
+The focused whole-unit proof used fresh `utf16-outcomes-lemma-focused` output:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf16-outcomes-lemma-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with **690 checks** (44 flow, 646 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(26 subprograms and packages). `Lemma_Invalid_UTF16_Unit` proved all five
+checks; its postcondition and all four call preconditions proved.
+
+The final-source build, tests, strict check, and Samba integration each exited
+0:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite utf-capacity
+make unicode-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+```
+
+The Unicode run reported 1,287,503 fixtures. The full proof used fresh
+`utf16-outcomes-full` output:
+
+```sh
+gnatprove -P proof.gpr --subdirs=utf16-outcomes-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with **4,895 checks** (724 flow, 4,171 prover), zero unproved,
+zero justified, 69 warnings, zero `pragma Assume` statements, and 13 units.
+This explicit fresh-output run is not a literal `make prove` result. The
+focused and full summaries are
+`build/proof-obj/utf16-outcomes-lemma-focused/gnatprove/gnatprove.out` and
+`build/proof-obj/utf16-outcomes-full/gnatprove/gnatprove.out`.
+`git diff --check` exited 0 after this report section was added.
+
 ## UTF-8 to UTF-16 scalar emission contract
 
 In `UTF8_To_UTF16`, the Ghost locals `Decoded_Scalar` and
