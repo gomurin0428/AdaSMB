@@ -162,6 +162,7 @@ package body SMB.Core_Text is
       Output : out String;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
       Offset : Natural := 0;
       Scalar : Natural;
       First : Natural;
@@ -214,6 +215,12 @@ package body SMB.Core_Text is
          pragma Loop_Invariant (Used <= Output'Length);
          pragma Loop_Invariant (Used <= 2 * Offset);
          pragma Loop_Invariant ((Used = 0) = (Offset = 0));
+         pragma Loop_Invariant
+           (if Offset > 0 then
+              (for all Index in 0 .. Offset / 2 - 1 =>
+                 Valid_UTF16_Unit (Input, Index))
+              and then UTF16_Unit (Input, Offset / 2 - 1)
+                not in 16#D800# .. 16#DBFF#);
          pragma Loop_Variant (Increases => Offset);
          First := Natural (Input (Input'First + Offset))
            + Natural (Input (Input'First + Offset + 1)) * 256;

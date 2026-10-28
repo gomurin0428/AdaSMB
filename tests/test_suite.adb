@@ -218,6 +218,50 @@ procedure Test_Suite is
       Check_Vector
         ("A" & Smile, SMB.Bytes'(16#41#, 0, 16#3D#, 16#D8#, 0, 16#DE#), 1, 2);
       declare
+         Input : constant SMB.Bytes (Natural'Last - 3 .. Natural'Last) :=
+           (16#FF#, 16#DB#, 16#FF#, 16#DF#);
+         Output : String (Positive'Last - 3 .. Positive'Last);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF16_To_UTF8 (Input, Output, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = 4
+            and then Output = Character'Val (16#F4#) & Character'Val (16#8F#)
+              & Character'Val (16#BF#) & Character'Val (16#BF#),
+            "maximum Unicode scalar at highest array bounds");
+      end;
+      declare
+         Input : SMB.Bytes (17 .. 17 + 65_536 - 1);
+         Output : String (31 .. 31 + 32_768 - 1);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         for I in 0 .. 32_767 loop
+            Input (Input'First + 2 * I) := 16#41#;
+            Input (Input'First + 2 * I + 1) := 0;
+         end loop;
+         SMB.Core_Text.UTF16_To_UTF8 (Input, Output, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = Output'Length
+            and then (for all C of Output => C = 'A'),
+            "UTF-16 conversion above standalone validator length limit");
+         Input (Input'Last - 1) := 0;
+         Input (Input'Last) := 16#D8#;
+         SMB.Core_Text.UTF16_To_UTF8 (Input, Output, Used, Status);
+         Assert
+           (Status = SMB.Invalid_Encoding and then Used = 32_767
+            and then (for all I in Output'First .. Output'Last - 1 =>
+                        Output (I) = 'A')
+            and then Output (Output'Last) = Character'Val (0),
+            "long UTF-16 orphan surrogate preserves only converted prefix");
+         SMB.Core_Text.UTF16_To_UTF8
+           (Input, Output (Output'First .. Output'Last - 2), Used, Status);
+         Assert
+           (Status = SMB.Invalid_Length and then Used = 32_766,
+            "UTF-16 capacity failure can precede a later encoding failure");
+      end;
+      declare
          Input : String (1 .. 49_152);
          Output : SMB.Bytes (0 .. SMB.Core_Protocol.Maximum_Name_Bytes - 1);
          Used : Natural;
