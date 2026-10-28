@@ -201,6 +201,29 @@ procedure Test_Suite is
          end if;
       end Check_Vector;
 
+      procedure Check_Zero_Tail
+        (UTF8 : String; Capacity : Natural;
+         Expected_Status : SMB.Core_Status; Expected_Prefix : SMB.Bytes) is
+         Input : constant String (11 .. 10 + UTF8'Length) := UTF8;
+         Output : SMB.Bytes (23 .. 22 + Capacity) := (others => 16#A5#);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
+         Assert
+           (Status = Expected_Status and then Used = Expected_Prefix'Length
+            and then Used <= Output'Length,
+            "UTF-16 zero-tail status and length");
+         for I in Output'Range loop
+            Assert
+              (Output (I) =
+                 (if I - Output'First < Used then
+                    Expected_Prefix (Expected_Prefix'First + I - Output'First)
+                  else 0),
+               "UTF-16 exact prefix and zero tail");
+         end loop;
+      end Check_Zero_Tail;
+
       E_Acute : constant String :=
         Character'Val (16#C3#) & Character'Val (16#A9#);
       Euro : constant String := Character'Val (16#E2#)
@@ -209,6 +232,17 @@ procedure Test_Suite is
         & Character'Val (16#9F#) & Character'Val (16#98#)
         & Character'Val (16#80#);
    begin
+      Check_Zero_Tail ("", 5, SMB.Ok, SMB.Bytes'(1 .. 0 => 0));
+      Check_Zero_Tail ("A", 5, SMB.Ok, SMB.Bytes'(16#41#, 0));
+      Check_Zero_Tail
+        (Smile, 7, SMB.Ok, SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#));
+      Check_Zero_Tail
+        ("AB", 3, SMB.Invalid_Length, SMB.Bytes'(16#41#, 0));
+      Check_Zero_Tail
+        (Smile, 3, SMB.Invalid_Length, SMB.Bytes'(1 .. 0 => 0));
+      Check_Zero_Tail
+        ("A" & Character'Val (16#FF#), 5, SMB.Invalid_Encoding,
+         SMB.Bytes'(16#41#, 0));
       Check_Vector ("", SMB.Bytes'(1 .. 0 => 0));
       Check_Vector ("A", SMB.Bytes'(16#41#, 0));
       Check_Vector (E_Acute, SMB.Bytes'(16#E9#, 0));

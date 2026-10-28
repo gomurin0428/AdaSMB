@@ -1,5 +1,6 @@
 package SMB.Core_Text is
    pragma SPARK_Mode (On);
+   use type SMB.Byte;
 
    function UTF16_Unit (Input : SMB.Bytes; Index : Natural) return Natural is
      (Natural (Input (Input'First + 2 * Index))
@@ -50,7 +51,9 @@ package SMB.Core_Text is
        and then (if Status = SMB.Ok then (Used = 0) = (Input'Length = 0))
        and then (if Input'Length = 0 then Status = SMB.Ok)
        and then (if Output'Length >= 2 * Input'Length then
-          Status in SMB.Ok | SMB.Invalid_Encoding);
+          Status in SMB.Ok | SMB.Invalid_Encoding)
+       and then (for all Index in Output'Range =>
+          (if Index - Output'First >= Used then Output (Index) = 0));
 
    procedure UTF16_To_UTF8
      (Input : SMB.Bytes;
