@@ -6,7 +6,7 @@ The private Ghost expression function `UTF16_Scalar_At` models one
 little-endian UTF-16 scalar at an even byte offset, independently of the
 array's lower bound. Its precondition bounds the input by
 `SMB.Maximum_Frame_Size` and the position by the input length. It returns
-zero for missing or truncated input, NUL under the SMB no-NUL policy, or an
+zero for a missing or truncated scalar, NUL under the SMB no-NUL policy, or an
 unpaired surrogate; otherwise it returns the BMP unit or reconstructs a
 supplementary scalar from the high- and low-surrogate low ten bits.
 Noncharacters remain valid. The model follows
@@ -42,8 +42,10 @@ interface, failure-position guarantee, whole-string validation result, or
 whole-codec roundtrip theorem is claimed by this single-step extraction
 contract.
 
-The strict build and `utf-capacity` selector passed before the final
-proof-placement-only edit. The existing Unicode corpus, oracle, and negative
+The initial strict build and targeted `utf-capacity` selector passed on the
+first scalar-model revision. The later auxiliary assertions and invariant
+relocation were covered by the final full unit and forced strict builds below.
+The existing Unicode corpus, oracle, and negative
 controls were reused without new test cases or fixtures. On the final source,
 `make unicode-test` exited 0 and reported **1,287,503 fixtures** across the
 unchanged scalar-pair, fixed-sequence, UTF-8 byte, UTF-16 unit, mixed, random,
