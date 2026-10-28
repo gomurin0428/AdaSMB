@@ -43,6 +43,11 @@ is
      (Left, Right : Engine_State) return Boolean
    with Ghost;
 
+   function Other_Handles_Preserved
+     (Left, Right : Engine_State;
+      Except_Ticket : SMB.QWord := 0) return Boolean
+   with Ghost;
+
    procedure Lemma_Handle_Table_Transitive
      (First, Middle, Last : Engine_State)
    with Ghost,
@@ -515,6 +520,7 @@ is
           and Create_Receipt_Matches_File_Id (State'Old, File_Id)
           and
           Handle_Matches (State, Token, File_Id, Access_Mode, Is_Directory)
+          and Other_Handles_Preserved (State'Old, State)
           and not Has_Validated_Response (State)
         else State = State'Old
           and Token.Owner = 0 and Token.Epoch = 0 and Token.Ticket = 0);
@@ -582,6 +588,7 @@ is
           and Close_Token.Ticket = Token.Ticket
           and
           not Valid_Handle (State, Token, False, False)
+          and Other_Handles_Preserved (State'Old, State, Token.Ticket)
           and not Has_Validated_Response (State)
         else State = State'Old and Status = SMB.Invalid_Handle_Status);
 

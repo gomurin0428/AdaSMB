@@ -641,6 +641,8 @@ is
             Found := True;
             Slot := Index;
          end if;
+         pragma Loop_Invariant
+           (if Found then not State.Handles (Slot).Active);
       end loop;
       if not Found then
          Status := SMB.Resource_Limit;
@@ -768,6 +770,8 @@ is
             Found := True;
          end if;
          pragma Loop_Invariant (Found);
+         pragma Loop_Invariant
+           (Other_Handles_Preserved (State'Loop_Entry, State, Token.Ticket));
          pragma Loop_Invariant
            (for all J in State.Handles'First .. Index =>
              not State.Handles (J).Active
@@ -906,6 +910,17 @@ is
    function Handle_Table_Equivalent
      (Left, Right : Engine_State) return Boolean is
      (Left.Handles = Right.Handles);
+
+   function Other_Handles_Preserved
+     (Left, Right : Engine_State;
+      Except_Ticket : SMB.QWord := 0) return Boolean is
+     (Left.Current = Right.Current
+      and then Left.Owner_Id = Right.Owner_Id
+      and then Left.Epoch = Right.Epoch
+      and then (for all Index in Left.Handles'Range =>
+        (if Left.Handles (Index).Active
+           and then Left.Handles (Index).Ticket /= Except_Ticket
+         then Left.Handles (Index) = Right.Handles (Index))));
 
    procedure Lemma_Handle_Table_Transitive
      (First, Middle, Last : Engine_State) is
