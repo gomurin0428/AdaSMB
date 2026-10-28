@@ -20,12 +20,19 @@ branches, assignments, encoding behavior, status ordering, public
 parameters, or limits. No whole-input UTF-8 validity iff theorem or
 whole-codec roundtrip theorem is claimed.
 
+To retain the existing emitted-scalar correspondence proof, a Ghost constant
+`Emitted` names only the newly written two- or four-byte slice. Checked
+assertions connect its code units to the original output units before
+proving the unchanged `UTF16_Scalar_At (Emitted, 0) = Decoded_Scalar`
+identity. This does not widen a model domain or scan the whole output for
+each scalar.
+
 `Test_UTF_Capacity` adds coverage for empty input with spare output, input
 containing ASCII `A`, `B` followed by byte `16#FF#` with a two-byte output
 (`SMB.Invalid_Length`, `Used = 2`) versus a six-byte output
-(`SMB.Invalid_Encoding`, `Used = 4`), and one megabyte of ASCII encoded into
-an exact two-megabyte UTF-16 output. These cases also exercise shifted array
-bounds. In the unchanged Unicode probe,
+(`SMB.Invalid_Encoding`, `Used = 4`), and 1 MiB of ASCII encoded into
+an exact 2 MiB UTF-16 output. These cases also exercise shifted array
+bounds. In the Unicode probe,
 valid `Check_8` fixtures additionally convert into ample output with a
 shifted lower bound and compare against the existing Python-oracle bytes.
 The corpus generator, oracle, negative controls, and **1,287,503-fixture**
