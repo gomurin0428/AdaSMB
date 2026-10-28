@@ -25,10 +25,42 @@ package SMB.Core_Text is
        and then (if Status = SMB.Ok then Input'Length mod 2 = 0
          and then (Used = 0) = (Input'Length = 0));
 
+   function UTF16_Unit (Input : SMB.Bytes; Index : Natural) return Natural is
+     (Natural (Input (Input'First + 2 * Index))
+      + 256 * Natural (Input (Input'First + 2 * Index + 1)))
+   with Ghost,
+     Pre => Input'Length <= 65_534 and then Index < Input'Length / 2;
+
+   function Valid_UTF16_Unit
+     (Input : SMB.Bytes; Index : Natural) return Boolean is
+     (UTF16_Unit (Input, Index) /= 0
+      and then
+        (if UTF16_Unit (Input, Index) in 16#D800# .. 16#DBFF# then
+           Index + 1 < Input'Length / 2
+           and then UTF16_Unit (Input, Index + 1) in 16#DC00# .. 16#DFFF#)
+      and then
+        (if UTF16_Unit (Input, Index) in 16#DC00# .. 16#DFFF# then
+           Index > 0
+           and then UTF16_Unit (Input, Index - 1) in 16#D800# .. 16#DBFF#))
+   with Ghost,
+     Pre => Input'Length <= 65_534 and then Index < Input'Length / 2;
+
+   function Valid_UTF16_Text (Input : SMB.Bytes) return Boolean is
+     (Input'Length mod 2 = 0
+      and then
+        (if Input'Length > 0 then
+           (for all Index in 0 .. Input'Length / 2 - 1 =>
+              Valid_UTF16_Unit (Input, Index))))
+   with Ghost, Pre => Input'Length <= 65_534;
+
    procedure Validate_UTF16
      (Input : SMB.Bytes;
       Status : out SMB.Core_Status)
-   with Pre => Input'Length <= 65_534;
+   with Pre => Input'Length <= 65_534,
+     Post => Status =
+       (if Input'Length mod 2 /= 0 then SMB.Invalid_Length
+        elsif Valid_UTF16_Text (Input) then SMB.Ok
+        else SMB.Invalid_Encoding);
 
    procedure Uppercase_NTLM_User
      (Input : String;
