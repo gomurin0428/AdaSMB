@@ -86,6 +86,26 @@ package body SMB.Core_Text is
       null;
    end Lemma_Invalid_UTF16_Unit;
 
+   procedure Lemma_Valid_UTF16_Prefix (Input : SMB.Bytes; Length : Natural)
+     with Ghost,
+       Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Length <= Input'Length and then Length mod 2 = 0
+         and then
+           (if Length > 0 then
+              (for all Index in 0 .. Length / 2 - 1 =>
+                 Valid_UTF16_Unit (Input, Index))
+              and then UTF16_Unit (Input, Length / 2 - 1)
+                not in 16#D800# .. 16#DBFF#),
+       Post =>
+         (if Length > 0 then
+            Valid_UTF16_Text (Input (Input'First .. Input'First + (Length - 1))));
+
+   procedure Lemma_Valid_UTF16_Prefix (Input : SMB.Bytes; Length : Natural) is
+      pragma Unreferenced (Length);
+   begin
+      null;
+   end Lemma_Valid_UTF16_Prefix;
+
    procedure Decode_UTF8
      (Value : String;
       Position : in out Natural;
@@ -227,14 +247,15 @@ package body SMB.Core_Text is
       Decode_Status : SMB.Core_Status;
    begin
       Used := 0;
-      for Index in Output'Range loop
-         Output (Index) := 0;
-      end loop;
+      Output := (others => 0);
       while Position < Input'Length loop
          pragma Loop_Invariant (Position <= Input'Length);
          pragma Loop_Invariant (Used <= Output'Length);
          pragma Loop_Invariant (Used <= 2 * Position);
          pragma Loop_Invariant (Used mod 2 = 0);
+         pragma Loop_Invariant
+           (for all Index in Output'Range =>
+              (if Index - Output'First >= Used then Output (Index) = 0));
          pragma Loop_Invariant ((Used = 0) = (Position = 0));
          pragma Loop_Invariant
            (if Used > 0 then
@@ -245,6 +266,7 @@ package body SMB.Core_Text is
          pragma Loop_Variant (Increases => Position);
          Decode_UTF8 (Input, Position, Scalar, Decode_Status);
          if Decode_Status /= SMB.Ok then
+            Lemma_Valid_UTF16_Prefix (Output, Used);
             Status := Decode_Status;
             return;
          end if;
@@ -253,6 +275,7 @@ package body SMB.Core_Text is
          if Scalar <= 16#FFFF# then
             if Output'Length - Used < 2 then
                pragma Assert (Output'Length < 2 * Input'Length);
+               Lemma_Valid_UTF16_Prefix (Output, Used);
                Status := SMB.Invalid_Length;
                return;
             end if;
@@ -260,6 +283,7 @@ package body SMB.Core_Text is
          else
             if Output'Length - Used < 4 then
                pragma Assert (Output'Length < 2 * Input'Length);
+               Lemma_Valid_UTF16_Prefix (Output, Used);
                Status := SMB.Invalid_Length;
                return;
             end if;
@@ -298,6 +322,7 @@ package body SMB.Core_Text is
             pragma Assert (UTF16_Scalar_At (Emitted, 0) = Decoded_Scalar);
          end;
       end loop;
+      Lemma_Valid_UTF16_Prefix (Output, Used);
       Status := SMB.Ok;
    end UTF8_To_UTF16;
 

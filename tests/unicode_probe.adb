@@ -4,6 +4,7 @@ with SMB.Core_Text;
 with SMB.Text;
 
 procedure Unicode_Probe is
+   use type SMB.Byte;
    use type SMB.Bytes;
    use type SMB.Core_Status;
 
@@ -48,7 +49,7 @@ procedure Unicode_Probe is
      (Input, Expected : SMB.Bytes; Expected_Status : SMB.Core_Status) is
       Capacity : constant Natural :=
         (if Expected_Status = SMB.Ok then Expected'Length else 2 * Input'Length);
-      Output : SMB.Bytes (7 .. 6 + Capacity);
+      Output : SMB.Bytes (7 .. 6 + Capacity) := (others => 16#A5#);
       Used : Natural;
       Status : SMB.Core_Status;
       Text : constant String := As_String (Input);
@@ -60,6 +61,11 @@ procedure Unicode_Probe is
          raise Program_Error with "UTF-8 status/bounds mismatch: "
            & SMB.Core_Status'Image (Status);
       end if;
+      for I in Output'Range loop
+         if I - Output'First >= Used and then Output (I) /= 0 then
+            raise Program_Error with "UTF-8 unused output is not zero";
+         end if;
+      end loop;
       if Status = SMB.Ok then
          if Used /= Expected'Length
            or else Output (Output'First .. Output'First + Used - 1) /= Expected
@@ -68,7 +74,8 @@ procedure Unicode_Probe is
             raise Program_Error with "UTF-8 result mismatch";
          end if;
          declare
-            Ample_Output : SMB.Bytes (31 .. 30 + 2 * Input'Length);
+            Ample_Output : SMB.Bytes (31 .. 30 + 2 * Input'Length) :=
+              (others => 16#A5#);
             Ample_Used : Natural;
             Ample_Status : SMB.Core_Status;
          begin
@@ -81,6 +88,13 @@ procedure Unicode_Probe is
             then
                raise Program_Error with "UTF-8 ample-buffer result mismatch";
             end if;
+            for I in Ample_Output'Range loop
+               if I - Ample_Output'First >= Ample_Used
+                 and then Ample_Output (I) /= 0
+               then
+                  raise Program_Error with "UTF-8 ample unused output is not zero";
+               end if;
+            end loop;
          end;
       else
          begin

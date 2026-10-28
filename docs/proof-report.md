@@ -1,5 +1,76 @@
 # GNATprove and test report
 
+## UTF-8 to UTF-16 unused output guarantee
+
+`UTF8_To_UTF16` guarantees that every output byte at or beyond `Used` is
+zero, on success and on either encoding or capacity failure. Together with
+the existing valid UTF-16 prefix contract, this specifies both the used and
+unused parts of the returned buffer. Callers must still check `Status`;
+this is not permission to treat a failed conversion as successful, nor a
+secure physical-memory erasure claim.
+
+The existing zero-initialization loop is replaced by an equivalent array
+aggregate assignment. A loop invariant preserves the zero suffix while
+the existing scalar writes populate the prefix. The invariant is covered
+by the existing runtime `Loop_Invariant => Ignore` policy, so it does not
+introduce a whole-buffer scan for each scalar. The new postcondition checks
+the buffer once on return when assertions are enabled. Encoding branches,
+status precedence, limits, and emitted bytes are unchanged.
+
+`Test_UTF_Capacity` adds six shifted-bound, nonzero-prefilled buffer cases:
+empty and BMP success, supplementary-scalar success, BMP and supplementary
+capacity failure, and encoding failure after a valid prefix. Odd output
+capacities exercise a trailing single byte. The Unicode probe also checks
+the zero suffix of its ordinary and ample-capacity UTF-16 outputs. Its
+existing Python oracle and fixture generator remain unchanged.
+
+The loop invariants remain at the loop head, and the original bounded
+`Emitted` Ghost slice and scalar/unit correspondence assertions are retained.
+The private Ghost lemma `Lemma_Valid_UTF16_Prefix` connects valid UTF-16
+units in the used prefix and the absence of a trailing high surrogate to
+`Valid_UTF16_Text` for that prefix. Its null body and all call preconditions
+are proved; the lemma is called at the four conversion exits, not per
+iteration. This avoids rescanning the whole prefix for each scalar.
+
+The focused proof used fresh `utf16-unused-lemma-focused` output:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf16-unused-lemma-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with **721 checks** (44 flow, 677 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(27 subprograms and packages). `Lemma_Valid_UTF16_Prefix` discharged all
+11 of its checks.
+
+The final-source build, tests, integration, and full proof commands were:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite utf-capacity
+make unicode-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+gnatprove -P proof.gpr --subdirs=utf16-unused-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+git diff --check
+```
+
+Each listed command exited 0. The Unicode run reported **1,287,503
+fixtures**. The full proof used fresh `utf16-unused-full` output and discharged
+**4,926 checks** (724 flow, 4,202 prover), with zero unproved, zero justified,
+69 warnings, zero `pragma Assume` statements, and 13 units. This explicit
+fresh-output run is not a literal `make prove` result. The focused and full
+summaries are
+`build/proof-obj/utf16-unused-lemma-focused/gnatprove/gnatprove.out` and
+`build/proof-obj/utf16-unused-full/gnatprove/gnatprove.out`.
+
+The strict build required marking the lemma's intentionally unused `Length`
+formal with `pragma Unreferenced`; the Unicode probe required `use type
+SMB.Byte` for its zero-tail comparisons. The respective final build and
+Unicode-test reruns passed. CI and Windows were not run for this revision;
+the separate Windows result for base PR72 is not evidence for this revision.
+
 ## UTF-8 to UTF-16 capacity outcome guarantee
 
 `UTF8_To_UTF16` now guarantees that empty input returns `SMB.Ok`, and that
