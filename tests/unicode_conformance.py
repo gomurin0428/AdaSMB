@@ -77,6 +77,8 @@ def check_probe(probe):
         (b"P 41 4200\n", b"UTF-8 result mismatch"),
         (b"6 4100 42\n", b"UTF-16 result mismatch"),
         (b"8 80 L\n", b"UTF-8 status/bounds mismatch"),
+        (b"6 4100 E\n", b"UTF-16 validator status mismatch"),
+        (b"6 00d8 41\n", b"UTF-16 validator status mismatch"),
     ):
         control = subprocess.run(
             [probe], input=fixture, capture_output=True, timeout=10

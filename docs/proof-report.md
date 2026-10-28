@@ -1,5 +1,60 @@
 # GNATprove and test report
 
+## UTF-16 validator contract
+
+Ghost helpers model a little-endian UTF-16 code unit, whether an individual
+unit is valid, and whether the entire byte string is valid UTF-16. A unit must
+be nonzero; a high surrogate must be followed by a low surrogate, and a low
+surrogate must be preceded by a high surrogate. A valid text has an even byte
+length and every code unit is valid; empty text is valid. Unicode
+noncharacters are allowed. Rejecting NUL is the existing SMB policy, not a
+Unicode validity rule. `Validate_UTF16` now specifies its exact status:
+odd-length input yields `SMB.Invalid_Length`; otherwise valid text yields
+`SMB.Ok`, and invalid text yields `SMB.Invalid_Encoding`.
+
+The UTF-16 validation and conversion rejection algorithms are unchanged.
+The body adds a processed-prefix loop invariant and an invariant that the
+last processed code unit is not a high surrogate, allowing the proof to
+reason about consuming a valid surrogate pair. The local
+`Assertion_Policy (Loop_Invariant => Ignore)` follows the existing
+`Validate_Path` pattern: quantified loop invariants are not evaluated at
+runtime, avoiding quadratic invariant-checking cost, while GNATprove still
+proves them. The model and exact status contract are not weakened.
+
+`unicode_probe.Check_16` now calls `Validate_UTF16` on the rebased input
+starting at index 29 and compares its status with the existing strict
+Python-codec oracle before running the existing conversion and public-adapter
+checks. The existing corpus remains unchanged at 1,287,503 fixtures; its
+generator and categories were not changed. The validator receives 1,201,703 calls: 1,112,063 scalar
+pairs, 4 fixed sequences, 4,096 mixed sequences, 65,536 UTF-16 code units,
+20,000 random UTF-16 sequences, and 4 malformed UTF-16 sequences. Two
+negative controls require the validator-specific diagnostic for valid ASCII
+marked invalid (`6 4100 E`) and an orphan high surrogate marked valid
+(`6 00d8 41`).
+
+The sensitivity control used both `origin/main` Core_Text files with the
+authored probe and changed only the `First = 0` rejection in
+`Validate_UTF16` from `SMB.Invalid_Encoding` to `SMB.Ok`. The strict probe
+build exited 0, and `6 0000 E` exited 1 with
+`UTF-16 validator status mismatch: OK`. After restoring both authored
+Core_Text files byte-for-byte (spec SHA-256
+`09069560183755eb02046432c3f847f630c10c9dcbdd6366b3557f0fe7b98644`;
+body SHA-256
+`5979366846dc138dd108bf5aa6a49819a7f42b91008348fe46e05f6a527acef6`), the
+strict build exited 0 and the fixture passed as `PASS 1`.
+
+The focused proof in fresh `utf16-validator-focused` output exited 0 with
+321 checks (37 flow, 284 prover), 0 unproved, 0 justified, 0 warnings,
+0 `pragma Assume`, and 1 unit. The fresh-output full proof in
+`utf16-validator-full` exited 0 with 4,526 checks (717 flow, 3,809 prover),
+0 unproved, 0 justified, 69 warnings, 0 `pragma Assume`, and 13 units.
+This was a fresh-output proof, not a literal `make prove` run.
+
+With Candidate GNAT14, the strict probe build, Python syntax check,
+`make unicode-test`, `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and full Samba integration all exited 0.
+`git diff --check` was run after this report was added.
+
 ## Request-ID continuity across Engine operations
 
 The Ghost getter `Next_Request_Id` exposes the Engine's private request-ID

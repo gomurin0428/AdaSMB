@@ -88,7 +88,14 @@ procedure Unicode_Probe is
       Output : String (13 .. 12 + Capacity);
       Used : Natural;
       Status : SMB.Core_Status;
+      Validation_Status : SMB.Core_Status;
+      Validation_Input : constant SMB.Bytes (29 .. 28 + Input'Length) := Input;
    begin
+      SMB.Core_Text.Validate_UTF16 (Validation_Input, Validation_Status);
+      if Validation_Status /= Expected_Status then
+         raise Program_Error with "UTF-16 validator status mismatch: "
+           & SMB.Core_Status'Image (Validation_Status);
+      end if;
       SMB.Core_Text.UTF16_To_UTF8 (Input, Output, Used, Status);
       if Status /= Expected_Status or else Used > Capacity then
          raise Program_Error with "UTF-16 status/bounds mismatch: "
