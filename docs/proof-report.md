@@ -1,5 +1,71 @@
 # GNATprove and test report
 
+## UTF-8 to UTF-16 scalar emission contract
+
+In `UTF8_To_UTF16`, the Ghost locals `Decoded_Scalar` and
+`Scalar_Output_Start` save the successfully decoded scalar and the current
+output offset before the existing BMP or supplementary-scalar writes. After
+those unchanged writes, checked assertions prove that `Used` advanced exactly
+two bytes for a BMP scalar or four for a surrogate pair. They also establish
+that the newly written BMP unit equals the saved scalar, or that the two
+newly written units are a high/low surrogate pair whose low-ten-bit
+reconstruction equals it.
+
+A further checked assertion applies the existing private Ghost
+`UTF16_Scalar_At` model to only the new two- or four-byte output slice, at
+position zero, and proves that it equals `Decoded_Scalar`. The slice remains
+within the model's existing domain; no model precondition or public
+conversion limit is widened. This model follows the previously reviewed
+[RFC 2781 sections 2.2 and 3.1](https://www.rfc-editor.org/rfc/rfc2781.html).
+
+In `UTF8_To_UTF16.Store_Unit`, checked constant-time assertions decompose the
+retained `UTF16_Unit` identity check: they compare the two just-written
+output bytes, converted to `Natural`, with `Unit mod 256` and `Unit / 256`.
+The runtime byte assignments are unchanged. The encoder's branches,
+supplementary-scalar mutation, public interface and limits, and decoding,
+capacity, and status ordering are unchanged. This is a single-step scalar
+emission guarantee, not a proof of output-prefix preservation, failure
+position, or a whole-codec roundtrip.
+
+The strict test-suite build and `utf-capacity` selector passed on the source
+with these assertions. The focused whole-unit proof was rerun on that source
+with:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf16-emission-decomposed-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 660 checks (44 flow, 616 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(25 subprograms and packages).
+
+The unchanged Unicode corpus, test suite, forced strict check, and Samba
+integration were run on the final source. The corpus run reported
+**1,287,503 fixtures**. Each command exited 0:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite utf-capacity
+make unicode-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+```
+
+The full proof used fresh `utf16-emission-full` output:
+
+```sh
+gnatprove -P proof.gpr --subdirs=utf16-emission-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 4,865 checks (724 flow, 4,141 prover), zero unproved,
+zero justified, 69 warnings, zero `pragma Assume` statements, and 13 units.
+This explicit fresh-output run is not a literal `make prove` result. The
+focused and full summaries are
+`build/proof-obj/utf16-emission-decomposed-focused/gnatprove/gnatprove.out`
+and `build/proof-obj/utf16-emission-full/gnatprove/gnatprove.out`.
+`git diff --check` exited 0 after the report section was added.
+
 ## UTF-16 scalar extraction contract
 
 The private Ghost expression function `UTF16_Scalar_At` models one

@@ -201,9 +201,17 @@ package body SMB.Core_Text is
          Used := Used + 2;
          pragma Assert (Used = Previous_Used + 2);
          pragma Assert
+           (Natural (Output (Output'First + 2 * (Previous_Used / 2)))
+              = Unit mod 256
+            and then
+              Natural (Output (Output'First + 2 * (Previous_Used / 2) + 1))
+                = Unit / 256);
+         pragma Assert
            (UTF16_Unit (Output, Previous_Used / 2) = Unit);
       end Store_Unit;
       Scalar : Natural;
+      Decoded_Scalar : Natural with Ghost;
+      Scalar_Output_Start : Natural with Ghost;
       Decode_Status : SMB.Core_Status;
    begin
       Used := 0;
@@ -228,6 +236,8 @@ package body SMB.Core_Text is
             Status := Decode_Status;
             return;
          end if;
+         Decoded_Scalar := Scalar;
+         Scalar_Output_Start := Used;
          if Scalar <= 16#FFFF# then
             if Output'Length - Used < 2 then
                Status := SMB.Invalid_Length;
@@ -243,6 +253,26 @@ package body SMB.Core_Text is
             Store_Unit (16#D800# + Scalar / 1_024);
             Store_Unit (16#DC00# + Scalar mod 1_024);
          end if;
+         pragma Assert
+           (Used = Scalar_Output_Start
+            + (if Decoded_Scalar <= 16#FFFF# then 2 else 4));
+         pragma Assert
+           (if Decoded_Scalar <= 16#FFFF# then
+              UTF16_Unit (Output, Scalar_Output_Start / 2) = Decoded_Scalar
+            else
+              UTF16_Unit (Output, Scalar_Output_Start / 2)
+                in 16#D800# .. 16#DBFF#
+              and then UTF16_Unit (Output, Scalar_Output_Start / 2 + 1)
+                in 16#DC00# .. 16#DFFF#
+              and then 16#10000#
+                + (UTF16_Unit (Output, Scalar_Output_Start / 2) mod 1_024)
+                  * 1_024
+                + UTF16_Unit (Output, Scalar_Output_Start / 2 + 1) mod 1_024
+                = Decoded_Scalar);
+         pragma Assert
+           (UTF16_Scalar_At
+              (Output (Output'First + Scalar_Output_Start
+                       .. Output'First + (Used - 1)), 0) = Decoded_Scalar);
       end loop;
       Status := SMB.Ok;
    end UTF8_To_UTF16;
