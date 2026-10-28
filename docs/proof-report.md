@@ -21,10 +21,11 @@ the body and postcondition from the quantified predicate definitions; this
 is a proved lemma, not an assumption or axiom. All five lemma checks,
 including the postcondition, and all four call preconditions proved.
 
-At each of the four `Invalid_Encoding` exits, the existing constant-time
-bad-unit witness is retained and followed by the lemma call. The checked
-capacity-failure assertion and final successful-path
-`Valid_UTF16_Text (Input)` assertion also remain. Whole-input validity is
+At each of the four `Invalid_Encoding` exits, a constant-time assertion
+establishes the bad-unit witness before the lemma call. Further checked
+assertions establish that capacity failure implies
+`Output'Length < 2 * Input'Length` and that the input is valid at normal
+completion. Whole-input validity is
 checked only at an outcome boundary, not once per scalar, so this adds no
 per-scalar whole-input rescanning. The runtime conversion branches,
 assignments, status behavior, public parameters, and limits are unchanged;
