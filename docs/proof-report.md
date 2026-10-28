@@ -1,5 +1,101 @@
 # GNATprove and test report
 
+## UTF-8-to-UTF-16 output-prefix validity
+
+`UTF8_To_UTF16` retains its existing bounds, even-length guarantee, and
+success/empty-input equivalence. Its postcondition additionally requires
+`Valid_UTF16_Text` for `Output (Output'First .. Output'First + (Used - 1))`
+whenever `Used > 0`, regardless of `Status`. The empty prefix is covered
+vacuously. This proves validity of the produced UTF-16 prefix, including on
+failure; it does not prove exact byte correspondence with the UTF-8 input or
+exact failure-status precedence. A valid partial prefix does not imply
+successful conversion. The even-length guarantee predates this change.
+
+The converter input bound remains `SMB.Maximum_Frame_Size` (1 MiB). The
+preconditions of the three Ghost UTF-16 model helpers now cover
+`2 * SMB.Maximum_Frame_Size` (2 MiB), matching the existing encoder output
+domain. The standalone `Validate_UTF16` precondition remains 65,534 bytes.
+The model retains its existing nonzero-unit and surrogate-pair rules,
+including acceptance of Unicode noncharacters and the SMB policy that
+rejects NUL.
+
+`Store_Unit` intentionally has no `Pre`, `Post`, `Global`, or `Depends`
+aspects. Its former precondition and postcondition are retained as body
+assertions, and a constant-time body assertion identifies the little-endian
+unit just written. GNATprove uses contextual analysis at the three call
+sites; the body checks are proved there rather than reported as separate
+checks for `Store_Unit`. This exposes byte updates without a per-scalar
+quantified frame postcondition. The
+`UTF16_Unit` and `Valid_UTF16_Unit` expression functions use
+`Annotate => (GNATprove, Inline_For_Proof)`, so GNATprove reasons from their
+expression definitions. This follows the
+[AdaCore proof-inlining guidance](https://docs.adacore.com/spark2014-docs/html/ug/en/appendix/additional_annotate_pragmas.html#annotation-for-inlining-functions-for-proof)
+and does not introduce assumptions or weaken a contract. The local
+`Assertion_Policy (Loop_Invariant => Ignore)` disables runtime evaluation
+of loop invariants only, avoiding quadratic prefix scans; GNATprove still
+proves them. Body assertions and public postconditions remain enabled and
+checked. The new loop invariant covers the valid produced prefix and
+excludes a trailing high surrogate. No encoding
+assignment, conversion branch, or status decision changed.
+
+`Test_UTF_Capacity` adds coverage for the produced prefix:
+
+1. `Smile & "A"` and its UTF-16 bytes exercise exact-fit and short-buffer
+   behavior in both conversion directions, with a complete surrogate-pair
+   prefix before the following ASCII character.
+2. The maximum scalar `F4 8F BF BF` converts to `FF DB FF DF` with input and
+   output arrays ending at their respective highest bounds.
+3. `"A" & Smile & Character'Val (16#80#)` yields
+   `SMB.Invalid_Encoding`, `Used = 6`, the complete `A`-plus-pair prefix,
+   and a zero-filled output tail.
+
+The preceding long-input and UTF-16 capacity/validity cases remain. The
+independent Unicode corpus definition, generator, categories, seed, and
+status controls are unchanged. `make unicode-test` reran the existing
+generator and reported the same 1,287,503 fixtures; the existing oracle
+continues to make 1,201,703 UTF-16 validator calls. No new corpus or
+mutation control was added for this contract change.
+
+The final focused whole-unit proof used the already completed fresh
+`utf16-output-final-focused` run:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf16-output-final-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 398 checks (39 flow, 359 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(23 subprograms and packages). Its summary and logs are
+`build/proof-obj/utf16-output-final-focused/gnatprove/gnatprove.out` and
+`/home/ubuntu/utf16-output-final-focused.{stdout,stderr}.log`.
+
+The final full proof used fresh `utf16-output-full` output:
+
+```sh
+gnatprove -P proof.gpr --subdirs=utf16-output-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 4,603 checks (719 flow, 3,884 prover), zero unproved,
+zero justified, 69 warnings, zero `pragma Assume` statements, and 13 units.
+This explicit fresh-output run is not a literal `make prove` result. Its
+summary and logs are
+`build/proof-obj/utf16-output-full/gnatprove/gnatprove.out` and
+`/home/ubuntu/utf16-output-full-proof.{stdout,stderr}.log`.
+
+With Candidate GNAT14, these final-source commands all exited 0:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite utf-capacity
+make unicode-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+git diff --check
+```
+
+`git diff --check` was run after this section was added.
+
 ## UTF-16 conversion input validity
 
 `UTF16_To_UTF8` retains its existing `Used` bounds and its success guarantees
