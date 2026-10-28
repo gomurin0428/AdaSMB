@@ -344,6 +344,7 @@ package body SMB.Crypto is
    end HMAC_SHA256;
 
    function Constant_Time_Equal (Left, Right : SMB.Bytes) return Boolean is
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
       Difference : SMB.Byte := 0;
    begin
       if Left'Length /= Right'Length then
@@ -353,6 +354,10 @@ package body SMB.Crypto is
          for I in 0 .. Left'Length - 1 loop
             Difference := Difference or
               (Left (Left'First + I) xor Right (Right'First + I));
+            pragma Loop_Invariant
+              ((Difference = 0) =
+                 (for all J in 0 .. I =>
+                    Left (Left'First + J) = Right (Right'First + J)));
          end loop;
       end if;
       return Difference = 0;

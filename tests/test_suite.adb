@@ -1084,6 +1084,75 @@ procedure Test_Suite is
       Assert (SMB.Crypto.Constant_Time_Equal (Actual, Expected), Message);
    end Assert_Equal;
 
+   procedure Test_Crypto_Equality is
+      Count : Natural := 0;
+      procedure Check (Left, Right : SMB.Bytes) is
+      begin
+         Assert
+           (SMB.Crypto.Constant_Time_Equal (Left, Right) = (Left = Right),
+            "byte equality disagrees with Ada array equality");
+         Count := Count + 1;
+      end Check;
+      Digest_Lengths : constant array (Positive range 1 .. 2) of Positive :=
+        (16, 32);
+   begin
+      for L in SMB.Byte loop
+         for R in SMB.Byte loop
+            Check (SMB.Bytes'(11 => L), SMB.Bytes'(37 => R));
+         end loop;
+      end loop;
+      for L in 0 .. 3 loop
+         for R in 0 .. 3 loop
+            Check (SMB.Bytes'(11 .. 10 + L => 0),
+                   SMB.Bytes'(37 .. 36 + R => 0));
+         end loop;
+      end loop;
+      for Length of Digest_Lengths loop
+         declare
+            Left : SMB.Bytes (11 .. 10 + Length);
+            Right : SMB.Bytes (37 .. 36 + Length);
+         begin
+            for I in 0 .. Length - 1 loop
+               Left (Left'First + I) := SMB.Byte ((17 * I + 19) mod 256);
+            end loop;
+            Right := Left;
+            Check (Left, Right);
+            for I in Right'Range loop
+               for Bit in 0 .. 7 loop
+                  Right (I) := Right (I) xor SMB.Byte (2 ** Bit);
+                  Check (Left, Right);
+                  Right (I) := Right (I) xor SMB.Byte (2 ** Bit);
+               end loop;
+            end loop;
+            Right (Right'First) := Right (Right'First) xor 1;
+            Right (Right'First + 1) := Right (Right'First + 1) xor 1;
+            Check (Left, Right);
+         end;
+      end loop;
+      declare
+         Left : constant SMB.Bytes (0 .. 3) := (0, 16#7F#, 16#80#, 16#FF#);
+         Right : SMB.Bytes (Natural'Last - 3 .. Natural'Last) := Left;
+      begin
+         Check (Left, Right);
+         Right (Right'Last) := Right (Right'Last) xor 1;
+         Check (Left, Right);
+         Check (SMB.Bytes'(1 .. 0 => 0),
+                SMB.Bytes'(Natural'Last .. Natural'Last - 1 => 0));
+      end;
+      declare
+         Left : constant SMB.Bytes (0 .. SMB.Crypto.Maximum_Hash_Input - 1) :=
+           (others => 16#55#);
+         Right : SMB.Bytes (17 .. 16 + SMB.Crypto.Maximum_Hash_Input) := Left;
+      begin
+         Check (Left, Right);
+         Right (Right'Last) := Right (Right'Last) xor 1;
+         Check (Left, Right);
+         Check (Left, Right (Right'First .. Right'Last - 1));
+      end;
+      Ada.Text_IO.Put_Line
+        ("AdaSMB byte equality tests passed:" & Natural'Image (Count) & " cases");
+   end Test_Crypto_Equality;
+
    procedure Test_Crypto is
       Empty : constant SMB.Bytes := ASCII ("");
       ABC : constant SMB.Bytes := ASCII ("abc");
@@ -6997,6 +7066,7 @@ begin
    if Ada.Command_Line.Argument_Count > 0 then
       if Ada.Command_Line.Argument_Count /= 1
         or else (Ada.Command_Line.Argument (1) /= "transport-core"
+                 and then Ada.Command_Line.Argument (1) /= "crypto-equality"
                  and then Ada.Command_Line.Argument (1) /= "transfer-progress"
                  and then Ada.Command_Line.Argument (1) /= "directory-counters"
                  and then Ada.Command_Line.Argument (1) /= "clock-core"
@@ -7021,7 +7091,9 @@ begin
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
-      if Ada.Command_Line.Argument (1) = "directory-counters" then
+      if Ada.Command_Line.Argument (1) = "crypto-equality" then
+         Test_Crypto_Equality;
+      elsif Ada.Command_Line.Argument (1) = "directory-counters" then
          Test_Directory_Counters;
       elsif Ada.Command_Line.Argument (1) = "transfer-progress" then
          Test_Transfer_Progress;
@@ -7090,6 +7162,7 @@ begin
       SMB.Entropy.Generate (Buffer);
    end;
    Test_Crypto;
+   Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;
    Test_Core_Clock;
