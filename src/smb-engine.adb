@@ -9,6 +9,8 @@ is
 
    Next_Owner_Id : SMB.QWord := 0;
 
+   function Last_Allocated_Owner_Id return SMB.QWord is (Next_Owner_Id);
+
    function Bounded_Slice
      (Packet : SMB.Bytes;
       Offset, Length : Natural) return SMB.Bytes

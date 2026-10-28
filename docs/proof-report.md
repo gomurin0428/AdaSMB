@@ -1,5 +1,43 @@
 # GNATprove and test report
 
+## Owner allocation atomicity and monotonicity
+
+`Last_Allocated_Owner_Id` is a ghost view of the process-local owner registry.
+`Initialize` specifies that, within a single externally serialized process,
+each successful call consumes exactly one owner ID and assigns that ID to the
+new Engine state; the registry does not wrap. A failed call preserves both the
+entire Engine state and the registry, with the existing exact failure
+classification. Successful initialization requires a disconnected state with
+no pending request, signing key, validated receipt, or open handles.
+
+The runtime allocation algorithm is unchanged; the body adds only the ghost
+getter. This guarantee assumes callers externally serialize owner-allocation
+calls, including calls made through different `Connections`. It does not claim
+concurrent correctness or persistent owner identity across process restarts.
+The exhaustion boundary is covered by the contract and proof only; it was not
+exercised by a runtime test.
+
+`Test_Owner_Allocation` passed with 65 successful allocations and 32 rejected
+initializations. The test observes registry preservation through the next
+successful allocation and does not call the ghost getter. In the sensitivity
+control, the origin/main Engine spec and body were used with a guarded registry
+increment added to the first invalid-state rejection branch. The strict build
+passed and the selector failed as required with
+`owner allocation skipped or reused an ID`. Both Engine files were restored
+byte-for-byte; their SHA-256 hashes matched the pre-control values, and the
+strict rebuild and selector passed.
+
+The focused Engine proof in fresh `owner-allocation-focused` output exited 0:
+183 checks (69 flow, 114 prover), 0 unproved, 0 justified, and 1 warning
+(`smb-engine.adb:430`, `Nt_Status` after `Validate_Header`); 1 unit analyzed.
+The final gates passed: `make test`, forced strict `make check
+GPRBUILD="gprbuild -f"`, and the full Samba integration.
+
+The fresh-output full proof in `owner-allocation-full` exited 0 on its first
+attempt: 4,480 checks (712 flow, 3,768 prover), 0 unproved, 0 justified,
+69 warnings, 0 `pragma Assume`, and 13 units analyzed. This was a fresh-output
+proof, not a literal `make prove` run. `git diff --check` passed.
+
 ## Lifecycle transition failure atomicity
 
 `Initialize` now specifies its successful reset of observable connection fields:
