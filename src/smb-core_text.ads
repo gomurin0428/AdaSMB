@@ -1,23 +1,12 @@
 package SMB.Core_Text is
    pragma SPARK_Mode (On);
 
-   procedure UTF8_To_UTF16
-     (Input : String;
-      Output : out SMB.Bytes;
-      Used : out Natural;
-      Status : out SMB.Core_Status)
-   with Pre =>
-     Input'Length <= SMB.Maximum_Frame_Size
-     and Output'Length <= 2 * SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length and then Used <= 2 * Input'Length
-       and then Used mod 2 = 0
-       and then (if Status = SMB.Ok then (Used = 0) = (Input'Length = 0));
-
    function UTF16_Unit (Input : SMB.Bytes; Index : Natural) return Natural is
      (Natural (Input (Input'First + 2 * Index))
       + 256 * Natural (Input (Input'First + 2 * Index + 1)))
    with Ghost,
-     Pre => Input'Length <= SMB.Maximum_Frame_Size
+     Annotate => (GNATprove, Inline_For_Proof),
+     Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size
        and then Index < Input'Length / 2;
 
    function Valid_UTF16_Unit
@@ -32,7 +21,8 @@ package SMB.Core_Text is
            Index > 0
            and then UTF16_Unit (Input, Index - 1) in 16#D800# .. 16#DBFF#))
    with Ghost,
-     Pre => Input'Length <= SMB.Maximum_Frame_Size
+     Annotate => (GNATprove, Inline_For_Proof),
+     Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size
        and then Index < Input'Length / 2;
 
    function Valid_UTF16_Text (Input : SMB.Bytes) return Boolean is
@@ -41,7 +31,23 @@ package SMB.Core_Text is
         (if Input'Length > 0 then
            (for all Index in 0 .. Input'Length / 2 - 1 =>
               Valid_UTF16_Unit (Input, Index))))
-   with Ghost, Pre => Input'Length <= SMB.Maximum_Frame_Size;
+   with Ghost, Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size;
+
+   procedure UTF8_To_UTF16
+     (Input : String;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with Pre =>
+     Input'Length <= SMB.Maximum_Frame_Size
+     and Output'Length <= 2 * SMB.Maximum_Frame_Size,
+     Post => Used <= Output'Length and then Used <= 2 * Input'Length
+       and then Used mod 2 = 0
+       and then
+         (if Used > 0 then
+            Valid_UTF16_Text
+              (Output (Output'First .. Output'First + (Used - 1))))
+       and then (if Status = SMB.Ok then (Used = 0) = (Input'Length = 0));
 
    procedure UTF16_To_UTF8
      (Input : SMB.Bytes;

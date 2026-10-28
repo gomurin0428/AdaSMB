@@ -217,6 +217,35 @@ procedure Test_Suite is
       Check_Vector ("A" & Euro, SMB.Bytes'(16#41#, 0, 16#AC#, 16#20#), 1, 2);
       Check_Vector
         ("A" & Smile, SMB.Bytes'(16#41#, 0, 16#3D#, 16#D8#, 0, 16#DE#), 1, 2);
+      Check_Vector
+        (Smile & "A", SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#, 16#41#, 0), 4, 4);
+      declare
+         Input : constant String (Positive'Last - 3 .. Positive'Last) :=
+           Character'Val (16#F4#) & Character'Val (16#8F#)
+           & Character'Val (16#BF#) & Character'Val (16#BF#);
+         Output : SMB.Bytes (Natural'Last - 3 .. Natural'Last);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = 4
+            and then Output = SMB.Bytes'(16#FF#, 16#DB#, 16#FF#, 16#DF#),
+            "UTF-16 output prefix at highest array bounds");
+      end;
+      declare
+         Input : constant String := "A" & Smile & Character'Val (16#80#);
+         Output : SMB.Bytes (19 .. 26);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
+         Assert
+           (Status = SMB.Invalid_Encoding and then Used = 6
+            and then Output =
+              SMB.Bytes'(16#41#, 0, 16#3D#, 16#D8#, 0, 16#DE#, 0, 0),
+            "invalid UTF-8 suffix preserves a complete surrogate pair");
+      end;
       declare
          Input : constant SMB.Bytes (Natural'Last - 3 .. Natural'Last) :=
            (16#FF#, 16#DB#, 16#FF#, 16#DF#);

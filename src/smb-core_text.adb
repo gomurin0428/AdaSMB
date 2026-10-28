@@ -107,17 +107,22 @@ package body SMB.Core_Text is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
       Position : Natural := 0;
-      procedure Store_Unit (Unit : Natural)
-        with Pre => Output'Length <= 2 * SMB.Maximum_Frame_Size
-          and then Unit <= 16#FFFF# and then Used <= Output'Length
-          and then Output'Length - Used >= 2,
-          Post => Used = Used'Old + 2;
+      --  Body assertions retain the checks while enabling contextual proof.
       procedure Store_Unit (Unit : Natural) is
+         Previous_Used : constant Natural := Used;
       begin
+         pragma Assert
+           (Output'Length <= 2 * SMB.Maximum_Frame_Size
+            and then Unit <= 16#FFFF# and then Used <= Output'Length
+            and then Output'Length - Used >= 2);
          Output (Output'First + Used) := SMB.Byte (Unit mod 256);
          Output (Output'First + Used + 1) := SMB.Byte (Unit / 256);
          Used := Used + 2;
+         pragma Assert (Used = Previous_Used + 2);
+         pragma Assert
+           (UTF16_Unit (Output, Previous_Used / 2) = Unit);
       end Store_Unit;
       Scalar : Natural;
       Decode_Status : SMB.Core_Status;
@@ -132,6 +137,12 @@ package body SMB.Core_Text is
          pragma Loop_Invariant (Used <= 2 * Position);
          pragma Loop_Invariant (Used mod 2 = 0);
          pragma Loop_Invariant ((Used = 0) = (Position = 0));
+         pragma Loop_Invariant
+           (if Used > 0 then
+              (for all Index in 0 .. Used / 2 - 1 =>
+                 Valid_UTF16_Unit (Output, Index))
+              and then UTF16_Unit (Output, Used / 2 - 1)
+                not in 16#D800# .. 16#DBFF#);
          pragma Loop_Variant (Increases => Position);
          Decode_UTF8 (Input, Position, Scalar, Decode_Status);
          if Decode_Status /= SMB.Ok then
