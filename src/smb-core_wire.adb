@@ -185,6 +185,7 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status : out SMB.Core_Status;
       Async_Id : SMB.QWord := 0;
       Interim : Boolean := False) is
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
       Structure_Size : SMB.Word;
       Command : SMB.Word;
       Credit : SMB.Word;
@@ -282,6 +283,9 @@ package body SMB.Core_Wire with SPARK_Mode is
       for Index in 48 .. 63 loop
          Signature_Zero :=
            Signature_Zero and then Data (Data'First + Index) = 0;
+         pragma Loop_Invariant
+           (Signature_Zero =
+              (for all I in 48 .. Index => Data (Data'First + I) = 0));
       end loop;
       if Interim then
          null;
