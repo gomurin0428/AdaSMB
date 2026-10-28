@@ -211,6 +211,7 @@ is
           and Current_Owner_Id (State) = Last_Allocated_Owner_Id
           and Current_Owner_Id (State) /= 0
           and Current_Epoch (State) = 0
+          and Next_Request_Id (State) = 0
           and Last_Allocated_Handle_Ticket (State) = 0
           and Current_Session_Id (State) = 0
           and Current_Tree_Id (State) = 0
@@ -236,6 +237,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       and then
        Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
        and then
        (if Status = SMB.Ok then
@@ -262,6 +265,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       and then
        Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
        and then
        Status =
@@ -304,6 +309,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       and then
        Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
        and then
        (if Status = SMB.Ok then
@@ -332,6 +339,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       and then
        Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
        and then
        (if Status = SMB.Ok then
@@ -357,6 +366,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       and then
        Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
        and then
        Status =
@@ -459,6 +470,9 @@ is
    with
      Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Next_Request_Id (State) =
+         (if Status = SMB.Ok then Next_Request_Id (State'Old) else 0)
+       and then
        Last_Allocated_Handle_Ticket (State) =
          (if Status = SMB.Ok then Last_Allocated_Handle_Ticket (State'Old) else 0)
        and then
@@ -498,6 +512,11 @@ is
    with
      Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Next_Request_Id (State) =
+         (if Status /= SMB.Ok
+             or else (Pending_Command (State'Old) = 2 and then Nt_Status = SMB.Success)
+          then 0 else Next_Request_Id (State'Old))
+       and then
        Last_Allocated_Handle_Ticket (State) =
          (if Status /= SMB.Ok
              or else (Pending_Command (State'Old) = 2 and then Nt_Status = SMB.Success)
@@ -635,6 +654,8 @@ is
       Status : out SMB.Core_Status)
    with
       Post =>
+       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       and then
        (if Status = SMB.Counter_Exhausted then
           Last_Allocated_Handle_Ticket (State) = SMB.QWord'Last)
        and then
@@ -683,6 +704,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       and then
        Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
        and then
        Status =
@@ -716,6 +739,8 @@ is
       Close_Token : Handle_Token := (others => 0))
    with
      Post =>
+       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       and then
        Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
        and then
        (if Status = SMB.Ok then

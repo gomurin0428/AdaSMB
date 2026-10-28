@@ -1,5 +1,59 @@
 # GNATprove and test report
 
+## Request-ID continuity across Engine operations
+
+The Ghost getter `Next_Request_Id` exposes the Engine's private request-ID
+counter to contracts. The operation-level conditions complement the existing
+`Begin_Request` contract: successful reservations return the old counter and
+advance it by exactly one; rejection preserves the state and clears the
+reservation outputs. Counter exhaustion is proof-only. Successful
+`Initialize` and all `Invalidate` calls set the counter to zero.
+Lifecycle transitions, `Register_Handle`,
+`Close_Handle`, and `Discard_Response_Receipt` preserve it.
+`Inspect_Interim_Response` preserves it on success and resets it on failure.
+`Accept_Response` preserves it except on failure or successful LOGOFF, which
+resets it. The Engine implementation body is unchanged from `origin/main`.
+
+These are per-operation Engine guarantees, not a separate whole-history
+temporal theorem, nor a guarantee about transport sequencing outside the
+Engine. QWord exhaustion has no runtime test hook and was not exercised.
+
+The `engine-receipts` selector verifies handshake request IDs 0 through 3.
+The handle-capacity fixture then checks one local sequence from 4 through 265:
+256 CREATE reservations, followed by SET_INFO, CLOSE, replacement CREATE,
+TREE_DISCONNECT, TREE_CONNECT, and final CREATE. Together these are 266
+consecutive reservations, 0 through 265. Capacity refusals and explicit
+receipt discard are checked not to consume an ID. The signed disconnect and
+connect responses are synthetic internal fixtures reusing the same TreeId;
+they do not establish native-server behavior or external transport ordering.
+Existing handle-ticket assertions remain in the fixture.
+
+Two sensitivity controls used both Engine files from `origin/main` with the
+authored tests. In the first, only the successful `Register_Handle` path was
+mutated to set `Next_Message_Id` to zero immediately before the ticket
+increment. The strict build exited 0; the selector exited 1 with
+`CREATE request skipped or reused a message ID`. In the second, only the
+successful TREE_DISCONNECT path was mutated to reset `Next_Message_Id` before
+clearing handles. The strict build exited 0; the selector exited 1 with
+`tree disconnect changed the request counter`. After each control, the
+authored Engine files were restored byte-for-byte (spec SHA-256
+`2c5b2de0898099a44d3d9a3dfe4be5b0e36ec26b1f8934f018b77c9ee0d7e24a`;
+body SHA-256
+`d7e7ea04a7df91966fdae3f2dd45d0e2958a4f4a9f0cdc9dab36cd01ee9176cc`).
+The strict build and selector exited 0 after each restoration.
+
+The focused Engine proof in fresh `request-id-focused` output exited 0 with
+185 checks (71 flow, 114 prover), 0 unproved, 0 justified, one warning at
+`smb-engine.adb:436` concerning `Nt_Status`, 0 `pragma Assume`, and one unit.
+The fresh-output full proof in `request-id-full` exited 0 with 4,488 checks
+(714 flow, 3,774 prover), 0 unproved, 0 justified, 69 warnings, 0
+`pragma Assume`, and 13 units. This was a fresh-output proof, not a literal
+`make prove` run.
+
+With Candidate GNAT14, the strict build, `engine-receipts`, `make test`,
+`make check GPRBUILD="gprbuild -f"`, and full Samba integration all exited 0.
+`git diff --check` was run after this report was added.
+
 ## Handle ticket allocation and continuity
 
 The Ghost getter `Last_Allocated_Handle_Ticket` exposes the private
