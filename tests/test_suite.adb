@@ -2528,6 +2528,7 @@ procedure Test_Suite is
               (Target, SMB.Core_Wire.Command_Code (0), False, False,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect negotiate request");
+            Assert (Message_Id = 0, "fresh negotiation did not start at message ID zero");
             if Check_Requests then
                Check_Request_Metadata (Target, Expected, False, False);
             end if;
@@ -2555,6 +2556,7 @@ procedure Test_Suite is
               (Target, SMB.Core_Wire.Command_Code (1), False, False,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect challenge request");
+            Assert (Message_Id = 1, "NEGOTIATE processing changed the request counter");
             if Check_Requests then
                Check_Request_Metadata (Target, Expected, False, False);
             end if;
@@ -2579,6 +2581,7 @@ procedure Test_Suite is
               (Target, SMB.Core_Wire.Command_Code (1), False, True,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect final session request");
+            Assert (Message_Id = 2, "challenge processing changed the request counter");
             if Check_Requests then
                Check_Request_Metadata (Target, Expected, False, True);
             end if;
@@ -2605,6 +2608,7 @@ procedure Test_Suite is
                  (Target, SMB.Core_Wire.Command_Code (3), True, True,
                   Message_Id, Expected, Status);
                Assert (Status = SMB.Ok, "reconnect tree connect request");
+               Assert (Message_Id = 3, "authentication changed the request counter");
                if Check_Requests then
                   Check_Request_Metadata (Target, Expected, False, True);
                end if;
@@ -2633,7 +2637,8 @@ procedure Test_Suite is
          Result_Token : out SMB.Engine.Handle_Token;
          Is_Directory : Boolean := True;
          Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
-         Response_File_Id : SMB.Bytes := File_Id)
+         Response_File_Id : SMB.Bytes := File_Id;
+         Expected_Message_Id : SMB.QWord := SMB.QWord'Last)
       is
          Request : SMB.Bytes (0 .. 121) := (others => 0);
          Response : SMB.Bytes (0 .. 151) := (others => 0);
@@ -2645,6 +2650,11 @@ procedure Test_Suite is
             Request, Used, Status);
          Assert (Status = SMB.Ok and then Used = Request'Length,
                  "prepare directory test handle");
+         if Expected_Message_Id /= SMB.QWord'Last then
+            Assert
+              (SMB.Wire.U64 (Request, 24) = Expected_Message_Id,
+               "CREATE request skipped or reused a message ID");
+         end if;
          SMB.Core_Client.Send_Succeeded (Create_Operation, Target, Status);
          Assert (Status = SMB.Ok, "acknowledge directory test CREATE");
          Prepare_Response
@@ -3156,6 +3166,7 @@ procedure Test_Suite is
          Output_Id : SMB.Bytes (0 .. 15);
          Output_Access : SMB.Engine.Access_Kind;
          Output_Directory : Boolean;
+         Next_Id : SMB.QWord := 4;
 
          procedure Check_Handles (Closed : Natural := 0) is
          begin
@@ -3189,8 +3200,10 @@ procedure Test_Suite is
                  (Target, Operation, Tokens (Index),
                   Is_Directory => Directories (Index),
                   Access_Mode => Modes (Index),
-                  Response_File_Id => File_Ids (Index));
+                  Response_File_Id => File_Ids (Index),
+                  Expected_Message_Id => Next_Id);
             end;
+            Next_Id := Next_Id + 1;
             Assert
               (Tokens (Index).Ticket = SMB.QWord (Index),
                "handle tickets did not advance exactly once per registration");
@@ -3198,6 +3211,8 @@ procedure Test_Suite is
          SMB.Engine.Begin_Request
            (Target, 17, True, True, Message_Id, Expected, Status);
          Assert (Status = SMB.Ok, "reserve capacity receipt fixture");
+         Assert (Message_Id = Next_Id, "registration changed the request counter");
+         Next_Id := Next_Id + 1;
          declare
             Response : SMB.Bytes (0 .. 65) := (others => 0);
          begin
@@ -3243,6 +3258,10 @@ procedure Test_Suite is
                "full handle table changed state or prepared a request");
          end;
          Check_Handles;
+         SMB.Engine.Discard_Response_Receipt (Target, Status);
+         Assert
+           (Status = SMB.Ok and then not SMB.Engine.Has_Validated_Response (Target),
+            "discard capacity receipt before closing a handle");
          Old_Token := Tokens (Middle);
          declare
             Operation : SMB.Core_Client.Operation;
@@ -3254,6 +3273,10 @@ procedure Test_Suite is
             SMB.Core_Client.Prepare_Close
               (Operation, Target, Old_Token, Request, Used, Status);
             Assert (Status = SMB.Ok, "capacity CLOSE preparation");
+            Assert
+              (SMB.Wire.U64 (Request, 24) = Next_Id,
+               "reservation rejection or receipt discard changed the request counter");
+            Next_Id := Next_Id + 1;
             SMB.Core_Client.Send_Succeeded (Operation, Target, Status);
             Assert (Status = SMB.Ok, "capacity CLOSE send");
             Prepare_Response
@@ -3275,8 +3298,10 @@ procedure Test_Suite is
               (Target, Operation, Tokens (Middle),
                Is_Directory => Directories (Middle),
                Access_Mode => Modes (Middle),
-               Response_File_Id => File_Ids (Middle));
+               Response_File_Id => File_Ids (Middle),
+               Expected_Message_Id => Next_Id);
          end;
+         Next_Id := Next_Id + 1;
          Assert
            (Tokens (Middle).Ticket = SMB.QWord (SMB.Engine.Maximum_Handles) + 1,
             "slot reuse rewound or skipped the handle ticket counter");
@@ -3295,6 +3320,8 @@ procedure Test_Suite is
             SMB.Engine.Begin_Request
               (Target, 4, True, True, Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reserve ticket-preserving tree disconnect");
+            Assert (Message_Id = Next_Id, "handle reuse changed the request counter");
+            Next_Id := Next_Id + 1;
             Prepare_Response
               (Disconnect_Response, 4, Message_Id, Tree_Id, Session_Id, True);
             Disconnect_Response (64) := 4;
@@ -3309,6 +3336,8 @@ procedure Test_Suite is
             SMB.Engine.Begin_Request
               (Target, 3, True, True, Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reserve ticket-preserving tree reconnect");
+            Assert (Message_Id = Next_Id, "tree disconnect changed the request counter");
+            Next_Id := Next_Id + 1;
             Prepare_Response
               (Connect_Response, 3, Message_Id, Tree_Id, Session_Id, True);
             Connect_Response (64) := 16;
@@ -3322,7 +3351,9 @@ procedure Test_Suite is
             SMB.Engine.Mark_Share_Connected (Target, Tree_Id, Status);
             Assert (Status = SMB.Ok, "restore the same tree ID");
             Create_Directory_Handle
-              (Target, Operation, New_Token, Is_Directory => False);
+              (Target, Operation, New_Token, Is_Directory => False,
+               Expected_Message_Id => Next_Id);
+            Next_Id := Next_Id + 1;
             Assert
               (New_Token.Owner = Tokens (1).Owner
                and then New_Token.Epoch = Tokens (1).Epoch
@@ -3353,6 +3384,11 @@ procedure Test_Suite is
          end;
          Ada.Text_IO.Put_Line
            ("handle capacity: 258 sequential tickets, slot reuse and share reconnect passed");
+         Assert
+           (Next_Id = SMB.QWord (SMB.Engine.Maximum_Handles) + 10,
+            "request counter continuity coverage");
+         Ada.Text_IO.Put_Line
+           ("request IDs: 266 consecutive reservations across handle and share reuse passed");
       end Test_Handle_Capacity;
 
       procedure Test_Lifecycle_Atomicity is
