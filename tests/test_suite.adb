@@ -2512,7 +2512,8 @@ procedure Test_Suite is
          Initialize_State : Boolean := True;
          Connect_Share_State : Boolean := True;
          Check_Requests : Boolean := False;
-         Stop_At_Challenge : Boolean := False) is
+         Stop_At_Challenge : Boolean := False;
+         Stop_At_Negotiate : Boolean := False) is
       begin
          if Initialize_State then
             SMB.Engine.Initialize (Target, Status);
@@ -2541,6 +2542,9 @@ procedure Test_Suite is
             Response (102) := 1;
             SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
             Assert (Status = SMB.Ok, "reconnect negotiate response");
+            if Stop_At_Negotiate then
+               return;
+            end if;
             SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, Status);
             Assert (Status = SMB.Ok, "reconnect negotiated phase");
          end;
@@ -3223,6 +3227,195 @@ procedure Test_Suite is
          Ada.Text_IO.Put_Line
            ("owner allocation: 65 successes and 32 rejected calls passed");
       end Test_Owner_Allocation;
+
+      procedure Test_Receipt_Transitions is
+         use type SMB.Engine.Engine_State;
+         use type SMB.Core_Protocol.Response_Info;
+         Target, Base : SMB.Engine.Engine_State;
+         Create_Operation : SMB.Core_Client.Operation;
+         Token : SMB.Engine.Handle_Token;
+         Negotiation_Failures, Tree_Failures : Natural := 0;
+         Discard_Failures, Discard_Successes : Natural := 0;
+         Invalid_Limits : constant array (Positive range <>) of Natural :=
+           (0, 1, 65_535, 65_537, SMB.Maximum_Frame_Size,
+            SMB.Maximum_Frame_Size + 1, Natural'Last);
+
+         procedure Reject_Negotiation
+           (Read_Limit : Natural := 65_536;
+            Write_Limit : Natural := 65_536) is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            SMB.Engine.Mark_Negotiated
+              (Target, Read_Limit, Write_Limit, Status);
+            Assert
+              (Status = SMB.Invalid_Value and then Target = Before,
+               "rejected negotiation changed state or status");
+            Negotiation_Failures := Negotiation_Failures + 1;
+         end Reject_Negotiation;
+
+         procedure Reject_Tree (Id : SMB.DWord := Tree_Id) is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            SMB.Engine.Mark_Share_Connected (Target, Id, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status and then Target = Before,
+               "rejected tree transition changed state or status");
+            Tree_Failures := Tree_Failures + 1;
+         end Reject_Tree;
+
+         procedure Check_Discard is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            SMB.Engine.Discard_Response_Receipt (Target, Status);
+            if SMB.Engine.Has_Pending_Request (Before) then
+               Assert
+                 (Status = SMB.Invalid_State_Status and then Target = Before,
+                  "rejected receipt discard changed state or status");
+               Discard_Failures := Discard_Failures + 1;
+            else
+               Assert
+                 (Status = SMB.Ok
+                  and then not SMB.Engine.Has_Validated_Response (Target)
+                  and then not SMB.Engine.Has_Pending_Request (Target)
+                  and then SMB.Engine.Current_Response_Info (Target) =
+                    SMB.Core_Protocol.Response_Info'(others => <>)
+                  and then SMB.Engine.Current_Phase (Target) =
+                    SMB.Engine.Current_Phase (Before)
+                  and then SMB.Engine.Current_Owner_Id (Target) =
+                    SMB.Engine.Current_Owner_Id (Before)
+                  and then SMB.Engine.Current_Epoch (Target) =
+                    SMB.Engine.Current_Epoch (Before)
+                  and then SMB.Engine.Current_Session_Id (Target) =
+                    SMB.Engine.Current_Session_Id (Before)
+                  and then SMB.Engine.Current_Tree_Id (Target) =
+                    SMB.Engine.Current_Tree_Id (Before)
+                  and then SMB.Engine.Current_Max_Read (Target) =
+                    SMB.Engine.Current_Max_Read (Before)
+                  and then SMB.Engine.Current_Max_Write (Target) =
+                    SMB.Engine.Current_Max_Write (Before)
+                  and then SMB.Engine.Has_Signing_Key (Target) =
+                    SMB.Engine.Has_Signing_Key (Before)
+                  and then SMB.Engine.Current_Signing_Key (Target) =
+                    SMB.Engine.Current_Signing_Key (Before),
+                  "receipt discard lost connection context or retained info");
+               Discard_Successes := Discard_Successes + 1;
+            end if;
+         end Check_Discard;
+      begin
+         Reject_Negotiation;
+         Reject_Tree;
+         Check_Discard;
+         SMB.Engine.Initialize (Target, Status);
+         Assert (Status = SMB.Ok, "receipt transition initialization");
+         SMB.Engine.Mark_Connected (Target, Status);
+         Assert (Status = SMB.Ok, "receipt transition transport");
+         Reject_Negotiation;
+         SMB.Engine.Begin_Request
+           (Target, 0, False, False, Message_Id, Expected, Status);
+         Assert (Status = SMB.Ok, "receipt transition pending negotiate");
+         Reject_Negotiation;
+         Check_Discard;
+         SMB.Engine.Invalidate (Target, Status);
+         Assert (Status = SMB.Ok, "receipt transition invalidate negotiate");
+         Reconnect_Share (Target, Stop_At_Negotiate => True);
+         Reject_Tree;
+         for Limit of Invalid_Limits loop
+            Reject_Negotiation (Read_Limit => Limit);
+            Reject_Negotiation (Write_Limit => Limit);
+         end loop;
+         SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Engine.Current_Phase (Target) = SMB.Engine.Negotiated
+            and then SMB.Engine.Current_Max_Read (Target) = 65_536
+            and then SMB.Engine.Current_Max_Write (Target) = 65_536
+            and then not SMB.Engine.Has_Validated_Response (Target),
+            "negotiation retry lost valid receipt");
+         Reject_Negotiation;
+         Check_Discard;
+         declare
+            Cleared : constant SMB.Engine.Engine_State := Target;
+         begin
+            Check_Discard;
+            Assert (Target = Cleared, "receipt discard is not idempotent");
+         end;
+         SMB.Engine.Invalidate (Target, Status);
+         Assert (Status = SMB.Ok, "receipt transition invalidate negotiated");
+         Reconnect_Share (Target, Connect_Share_State => False);
+         Reject_Tree;
+         Base := Target;
+         for Is_Error in Boolean loop
+            Target := Base;
+            SMB.Engine.Begin_Request
+              (Target, 3, True, True, Message_Id, Expected, Status);
+            Assert (Status = SMB.Ok, "receipt transition pending tree connect");
+            Reject_Tree;
+            Check_Discard;
+            declare
+               Response : SMB.Bytes (0 .. (if Is_Error then 71 else 79)) :=
+                 (others => 0);
+               Expected_Status : constant SMB.DWord :=
+                 (if Is_Error then 16#C000_0022# else SMB.Success);
+            begin
+               Prepare_Response
+                 (Response, 3, Message_Id, Tree_Id, Session_Id, True);
+               SMB.Wire.Put_U32 (Response, 8, Expected_Status);
+               if Is_Error then
+                  Response (64) := 9;
+               else
+                  Response (64) := 16;
+                  Response (66) := 1;
+               end if;
+               SMB.Wire.Sign (Response, Key);
+               SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+               Assert
+                 (Status = SMB.Ok and then Nt_Status = Expected_Status
+                  and then SMB.Engine.Has_Validated_Response (Target),
+                  "receipt transition tree response fixture");
+            end;
+            if Is_Error then
+               Reject_Tree;
+               Check_Discard;
+            else
+               Reject_Tree (0);
+               Reject_Tree (Tree_Id xor 1);
+               Reject_Negotiation;
+               SMB.Engine.Mark_Share_Connected (Target, Tree_Id, Status);
+               Assert
+                 (Status = SMB.Ok
+                  and then SMB.Engine.Current_Phase (Target) =
+                    SMB.Engine.Share_Connected
+                  and then SMB.Engine.Current_Tree_Id (Target) = Tree_Id
+                  and then SMB.Engine.Current_Max_Read (Target) = 65_536
+                  and then SMB.Engine.Current_Max_Write (Target) = 65_536
+                  and then not SMB.Engine.Has_Validated_Response (Target),
+                  "tree connection retry lost valid receipt or transfer limits");
+               Reject_Tree;
+               Create_Directory_Handle (Target, Create_Operation, Token);
+               Check_Discard;
+               declare
+                  Actual_Id : SMB.Bytes (0 .. 15);
+                  Actual_Access : SMB.Engine.Access_Kind;
+                  Actual_Directory : Boolean;
+               begin
+                  SMB.Engine.Validate_Handle
+                    (Target, Token, True, False, Actual_Id,
+                     Actual_Access, Actual_Directory, Status);
+                  Assert
+                    (Status = SMB.Ok and then Actual_Id = File_Id
+                     and then Actual_Access = SMB.Engine.Read_Only
+                     and then Actual_Directory,
+                     "receipt discard changed a live handle");
+               end;
+            end if;
+         end loop;
+         Assert
+           (Negotiation_Failures = 19 and then Tree_Failures = 9
+            and then Discard_Failures = 3 and then Discard_Successes = 5,
+            "receipt transition coverage");
+         Ada.Text_IO.Put_Line
+           ("receipt transitions: 31 rejections, 5 discards and 2 retries passed");
+      end Test_Receipt_Transitions;
 
       procedure Test_Handle_Failure_Atomicity is
          use type SMB.Engine.Engine_State;
@@ -4464,6 +4657,7 @@ procedure Test_Suite is
       Test_Authentication_Atomicity;
       Test_Lifecycle_Atomicity;
       Test_Owner_Allocation;
+      Test_Receipt_Transitions;
       Test_Handle_Outcomes;
       Test_Handle_Capacity;
       Test_Handle_Failure_Atomicity;

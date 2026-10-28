@@ -1,5 +1,55 @@
 # GNATprove and test report
 
+## Receipt transition contracts
+
+`Mark_Negotiated` now specifies its exact status: it returns `SMB.Ok` only for
+a transport-connected state with no pending request, an unconsumed unsigned
+successful NEGOTIATE receipt, limits in `1 .. SMB.Maximum_Frame_Size`, and
+limits equal to those in the receipt; otherwise it returns
+`SMB.Invalid_Value`. Rejection preserves the complete Engine state. Successful
+transition consumes the receipt and records the negotiated limits.
+
+`Mark_Share_Connected` returns `SMB.Ok` only for an authenticated state with no
+pending request, a nonzero tree ID, and an unconsumed signed successful
+TREE_CONNECT receipt matching that ID; otherwise it returns
+`SMB.Invalid_State_Status`. Rejection preserves the complete Engine state.
+Success consumes the receipt, connects the tree, and preserves the prior
+transfer limits, identity, signing key, and handle table.
+
+`Discard_Response_Receipt` returns `SMB.Invalid_State_Status` exactly when the
+old state has a pending request, preserving the complete state on rejection.
+Otherwise it returns `SMB.Ok`, clears the validated receipt and zero-defaults
+the entire public `Response_Info`, while preserving connection context and
+handles. No runtime implementation-body changes were made.
+
+`Test_Receipt_Transitions` passed with 19 rejected negotiations, 9 rejected
+tree transitions, 3 rejected discards, 5 successful discards, and 2 successful
+transition retries. Rejections check exact status and complete state equality.
+The retries use the same valid receipt after rejected attempts. The discard
+cases cover default state, consumed negotiation, idempotence, a live handle,
+and a signed TREE_CONNECT error response; the live directory handle's file ID,
+read-only access mode, and directory flag are checked with executable
+`Validate_Handle`. The signed error is a synthetic fixture accepted by the
+parser/signature checks, not evidence about a real server response.
+
+In the sensitivity control, the origin/main Engine specification was used and
+the `Mark_Negotiated` rejection status was changed from `SMB.Invalid_Value` to
+`SMB.Invalid_State_Status`. The strict build passed and the selector failed as
+required with `rejected negotiation changed state or status`. Both Engine
+files were restored byte-for-byte; their SHA-256 hashes matched the
+pre-control values, and the strict rebuild and selector passed.
+
+The focused Engine proof in fresh `receipt-transitions-focused` output exited
+0: 183 checks (69 flow, 114 prover), 0 unproved, 0 justified, and 1 warning
+(`smb-engine.adb:430`, `Nt_Status` after `Validate_Header`); 1 unit analyzed.
+The final gates passed: `make test`, forced strict `make check
+GPRBUILD="gprbuild -f"`, and the full Samba integration.
+
+The fresh-output full proof in `receipt-transitions-full` exited 0 on its first
+attempt: 4,480 checks (712 flow, 3,768 prover), 0 unproved, 0 justified,
+69 warnings, 0 `pragma Assume`, and 13 units analyzed. This was a fresh-output
+proof, not a literal `make prove` run. `git diff --check` passed.
+
 ## Owner allocation atomicity and monotonicity
 
 `Last_Allocated_Owner_Id` is a ghost view of the process-local owner registry.
