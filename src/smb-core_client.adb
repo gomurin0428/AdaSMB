@@ -2278,6 +2278,10 @@ is
       pragma Assert (Transfer_Invariant (Value));
       pragma Assert (Value.Requested = Amount);
       pragma Assert
+        (for all Byte_Index in 0 .. 7 =>
+           Output (Output'First + Header_Length + 8 + Byte_Index) =
+             SMB.Core_Wire.U64_Byte (Value.Position, Byte_Index));
+      pragma Assert
         (Transfer_Packet_Matches (Value, State, Output, Used));
       pragma Assert
         (Transfer_Completed_Of (Value) =

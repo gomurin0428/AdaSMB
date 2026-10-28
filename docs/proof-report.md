@@ -1,5 +1,90 @@
 # GNATprove and test report
 
+## Reservation failure atomicity and message-ID progression
+
+`Begin_Request` previously cleared the validated-response receipt before
+checking whether a reservation could be made. A rejected command could
+therefore discard an unconsumed NEGOTIATE, SESSION_SETUP challenge, or signed
+CREATE receipt. The clear now occurs only after all rejection paths. Every
+rejected reservation preserves the complete Engine state and returns a zero
+message ID and default request expectation; a valid reservation still
+supersedes the prior receipt.
+
+The ghost `Next_Request_Id` models the Engine's next message-ID counter. The
+contract specifies that successful reservations return the prior counter and
+advance it by exactly one without wrapping. If no request is pending and the
+prior counter is `SMB.QWord'Last`, the result is `SMB.Counter_Exhausted`;
+pending-request refusal retains priority. Counter exhaustion is covered by
+the contract and proof only, not a runtime test. Message IDs are not claimed
+to be globally unique across reconnects.
+
+`Test_Request_Receipt_Preservation` uses synthetic NEGOTIATE, SESSION_SETUP
+challenge, and signed CREATE responses accepted through the Engine response
+validation path. It checks nine rejected reservations across those receipt
+fixtures, with exact statuses, full state equality, cleared poisoned outputs,
+and successful consumption of the original receipt afterward. Snapshot/restore
+cases verify that three valid reservations use exactly the next message ID,
+supersede the receipt, and leave pending state unchanged when later receipt
+consumption is rejected; the CREATE case returns no handle after supersession.
+These are internal Engine fixtures, not a reproduction of a user-facing SMB
+network failure or an observation from a real server.
+
+`Test_Handle_Capacity` also fills all 256 handle slots, accepts a signed
+SET_INFO receipt, and checks that direct CREATE reservation rejection with
+`SMB.Resource_Limit` preserves the complete state and receipt and clears the
+reservation outputs. The existing `Core_Client.Prepare_Create` rejection and
+handle validation, close, and reuse checks remain in place. The existing 12
+receipt-free reservation failure cases are unchanged.
+
+The actual-old-code sensitivity control used both Engine source files from
+`origin/main`. Its strict build passed; the selector failed with the expected
+`rejected reservation consumed receipt or changed state/output`. Afterward,
+both authored Engine files were restored byte-for-byte:
+
+- `src/smb-engine.ads`: SHA-256
+  `5017a2a8e987719ba3f401b0ef687f3a2d826f70fba9a8eabfacce7898f1343d`
+- `src/smb-engine.adb`: SHA-256
+  `c19631831a319934546e34b958e5d7610cd7e53f6975374b63f97027f190cf5c`
+
+The strict rebuild and `engine-receipts` selector then passed. After the
+proof-only `Core_Client.Prepare_Next` assertion below was added, the strict
+build and selector passed again. The selector reported the new nine receipt
+rejections, three retries, and three superseding reservations; it also passed
+the existing request-metadata, authentication, lifecycle, owner-allocation,
+receipt-transition, handle-capacity, and handle-failure tests.
+
+The focused Engine proof in fresh `reservation-atomicity-focused` output
+exited 0 with 184 checks (70 flow, 114 prover), 0 unproved and 0 justified,
+and one warning at `smb-engine.adb:433` concerning `Nt_Status`; one unit was
+analyzed.
+
+The first fresh-output full proof, in `reservation-atomicity-full`, exited 1:
+4,481 checks (713 flow, 3,767 prover), 0 justified, and one unproved assertion
+at `smb-core_client.adb:2281` in `Prepare_Next`; it emitted 69 warnings, used
+0 `pragma Assume`, and analyzed 13 units. A targeted replay of that line with
+progressive proof and a 300-second timeout also exited 1 without discharging
+the assertion.
+Following review, a proof-only assertion of the common eight-byte position
+predicate was added immediately before `Transfer_Packet_Matches`. This splits
+the proof obligation and does not change runtime behavior or weaken a
+guarantee. The focused Core_Client proof in fresh
+`reservation-atomicity-client-repair` output then exited 0 with 1,293 checks
+(276 flow, 1,017 prover), 0 unproved, 0 justified, 56 warnings, 0
+`pragma Assume`, and one unit analyzed.
+
+After that proof split, the fresh-output full proof in
+`reservation-atomicity-final` exited 0: 4,487 checks (713 flow, 3,774
+prover), 0 unproved, 0 justified, 69 warnings, 0 `pragma Assume`, and 13
+units analyzed. This was a fresh-output full proof, not a literal
+`make prove` run. `make test`, forced strict `make check
+GPRBUILD="gprbuild -f"`, and the full Samba integration had passed before the
+proof-only assertion was added; they were not rerun after it. The Candidate
+GNAT14 strict build and `engine-receipts` selector were rerun after the
+assertion and passed. An earlier `make test` invocation without the
+Candidate14 `PATH` selected system GNAT 10.5 and failed with a GNAT compiler
+bug at `smb-engine.ads:668:46`; the required Candidate GNAT14 rerun passed.
+`git diff --check` passed.
+
 ## Receipt transition contracts
 
 `Mark_Negotiated` now specifies its exact status: it returns `SMB.Ok` only for

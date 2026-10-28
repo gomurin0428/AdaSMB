@@ -182,6 +182,9 @@ is
    function Last_Allocated_Owner_Id return SMB.QWord
    with Ghost, Global => (Input => Identity_Registry);
 
+   function Next_Request_Id (State : Engine_State) return SMB.QWord
+   with Ghost;
+
    procedure Initialize
      (State : in out Engine_State;
       Status : out SMB.Core_Status)
@@ -389,11 +392,17 @@ is
        Current_Owner_Id (State) = Current_Owner_Id (State'Old)
        and then Current_Epoch (State) = Current_Epoch (State'Old)
        and then
-         (if Status /= SMB.Ok and then not Has_Validated_Response (State'Old)
-          then State = State'Old)
+         (if Status /= SMB.Ok then State = State'Old)
+       and then
+         (if not Has_Pending_Request (State'Old)
+             and then Next_Request_Id (State'Old) = SMB.QWord'Last
+          then Status = SMB.Counter_Exhausted)
        and then
        (if Status = SMB.Ok then
           Has_Pending_Request (State)
+          and Next_Request_Id (State'Old) < SMB.QWord'Last
+          and Message_Id = Next_Request_Id (State'Old)
+          and Next_Request_Id (State) = Next_Request_Id (State'Old) + 1
           and not Has_Validated_Response (State)
           and Current_Async_Id (State) = 0
           and Expected.Command = Command
