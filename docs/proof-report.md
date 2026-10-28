@@ -1,5 +1,71 @@
 # GNATprove and test report
 
+## Lifecycle transition failure atomicity
+
+`Initialize` now specifies its successful reset of observable connection fields:
+it leaves the Engine disconnected with a nonzero owner, zero epoch/session/tree/maximum
+transfer sizes and async identifier, no handles, pending request, validated
+receipt or signing key, and zeroed signing-key bytes. On failure it preserves
+the entire state and returns `SMB.Invalid_State_Status` when the prior state is
+not disconnected or has a pending request, key, receipt or open handles;
+otherwise it returns `SMB.Counter_Exhausted`.
+
+`Mark_Connected` now specifies that success starts from a disconnected state
+with a nonzero owner, changes the phase to transport-connected, and preserves
+the owner, epoch, session/tree identifiers, transfer limits, signing key,
+handle table, pending-request flag and receipt-valid flag. Failure preserves the
+entire state and returns `SMB.Invalid_State_Status`. The runtime
+implementation is unchanged. State preservation on counter-exhaustion rejection
+is covered by the contract and proof, not by a runtime test.
+
+`Test_Lifecycle_Atomicity` checks five rejected initializations and six rejected
+transport transitions. Every rejection compares the complete state and exact
+status. Fixtures cover the default state, transport-connected state, pending
+NEGOTIATE, validated challenge receipt, authenticated state and
+share-connected state, invalidating between reconnect fixtures.
+
+The Candidate GNAT14 strict test build
+(`gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe`) and
+`./build/bin/test_suite engine-receipts` passed before the sensitivity control
+and again after source restoration. The selector reported 11 lifecycle
+rejections, as well as the existing request-metadata, authentication and
+handle cases.
+
+For the sensitivity control, I used the `src/smb-engine.ads` contract from
+`origin/main` and inserted only `State.Epoch := State.Epoch + 1;` in the
+`Mark_Connected` rejection branch before its error status. The mutant build
+passed; the selector exited 1 with the expected diagnostic:
+`rejected transport transition changed state`. Both files were restored
+byte-for-byte before continuing:
+
+- `src/smb-engine.ads`: SHA-256
+  `4207cd5acd7460f34fa87c00109758d2ccc09404ba246ea39102ee9ed7c35924`
+- `src/smb-engine.adb`: SHA-256
+  `7e3279a57f837542d0027942c6991050b583aea619359c5ca1b69aaa7f93e4d4`
+
+The focused Engine proof in fresh `lifecycle-focused` output exited 0 with 181
+checks (67 flow, 114 prover), 0 unproved and 0 justified. It emitted one
+warning at `smb-engine.adb:428` about `Nt_Status` after `Validate_Header`.
+
+`make test`, `make check GPRBUILD="gprbuild -f"`, and
+`sudo -n python3 tests/samba_integration.py` all passed.
+
+The full proof passed on its first attempt in the fresh `lifecycle-full` output
+subdirectory. No generated-ALI failure, cache repair or replay was needed.
+This is a fresh-output full proof, not a literal `make prove` run:
+
+```sh
+gnatprove -P proof.gpr --subdirs=lifecycle-full --mode=all --level=2 \
+  --proof=progressive --report=all --checks-as-errors=on \
+  --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 after analyzing 13 units and discharging 4,478 checks (710 flow,
+3,768 prover), with 0 unproved, 0 justified, 69 warnings, and 0
+`pragma Assume`. Category totals were 2 data dependencies, 1 flow dependency,
+545 initialization, 2 non-aliasing, 2,425 run-time checks, 299 assertions,
+1,038 functional contracts, and 166 termination checks (160 flow, 6 prover).
+
 ## Authentication transition failure atomicity
 
 `Install_Session_Key` now guarantees `SMB.Invalid_Value` and an unchanged
