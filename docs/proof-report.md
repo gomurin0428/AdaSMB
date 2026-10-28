@@ -1,5 +1,66 @@
 # GNATprove and test report
 
+## Authentication transition failure atomicity
+
+`Install_Session_Key` now guarantees `SMB.Invalid_Value` and an unchanged
+complete `Engine_State` on rejection. `Mark_Authenticated` likewise guarantees
+`SMB.Invalid_State_Status` and an unchanged state. This includes keys, session
+identity, pending requests and validated response receipts. Successful key
+installation must remain in the negotiated phase; successful authentication
+must preserve the installed key bytes.
+
+Engine receipt tests exercise 18 rejected key installations and 11 rejected
+authentication transitions: absent, pending, consumed and wrong-status receipts,
+invalid session IDs and invalid key lengths at ordinary and near-`Natural'Last`
+array bounds. Two valid 16-byte inputs with different array bounds then complete
+signed authentication, preserving the expected key and consuming each receipt
+once. These are internal Engine transition guarantees, not a change to the
+public client's disconnect-on-authentication-failure policy. Signed server-error
+receipts are synthetic unit fixtures, not observations of a real server.
+
+The Candidate GNAT14 strict test build
+(`gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe`) and
+`./build/bin/test_suite engine-receipts` passed before the sensitivity control
+and again after source restoration. The selector reported 29 rejected calls
+(18 key-installation and 11 authentication-transition rejections) and two
+successful retries, in addition to the existing request-metadata and handle
+coverage.
+
+For the sensitivity control, I used the `src/smb-engine.ads` contract from
+`origin/main` and added only `State.Receipt_Valid := False;` to the
+`Install_Session_Key` rejection branch before its `Invalid_Value` assignment.
+The mutant build passed; the selector exited 1 with the expected diagnostic:
+`rejected key installation changed state or consumed receipt`. Both files were
+restored byte-for-byte before continuing:
+
+- `src/smb-engine.ads`: SHA-256
+  `7690acfccfb5bdbbf0687b504aea2aaa6720b4d7a23d7a59bf1eea8a3df13a3e`
+- `src/smb-engine.adb`: SHA-256
+  `7e3279a57f837542d0027942c6991050b583aea619359c5ca1b69aaa7f93e4d4`
+
+The focused Engine proof in fresh `auth-atomicity-focused` output exited 0
+with 181 checks (67 flow, 114 prover), 0 unproved and 0 justified. It emitted
+one warning at `smb-engine.adb:428` about `Nt_Status` after `Validate_Header`.
+
+`make test`, `make check GPRBUILD="gprbuild -f"`, and
+`sudo -n python3 tests/samba_integration.py` all passed.
+
+The full proof passed on its first attempt in the fresh `auth-atomicity-full`
+output subdirectory. No generated-ALI failure, cache repair, or replay was
+needed. This is a fresh-output full proof, not a literal `make prove` run:
+
+```sh
+gnatprove -P proof.gpr --subdirs=auth-atomicity-full --mode=all \
+  --level=2 --proof=progressive --report=all --checks-as-errors=on \
+  --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 after analyzing 13 units and discharging 4,478 checks (710 flow,
+3,768 prover), with 0 unproved, 0 justified, 69 warnings, and 0
+`pragma Assume`. Category totals were 2 data dependencies, 1 flow dependency,
+545 initialization, 2 non-aliasing, 2,425 run-time checks, 299 assertions,
+1,038 functional contracts, and 166 termination checks (160 flow, 6 prover).
+
 ## Complete pending-request metadata matching
 
 `Pending_Request_Matches` now compares the complete `Request_Expectation`

@@ -248,10 +248,13 @@ is
           and Session_Id /= 0
           and Key'Length = 16
           and
+          Current_Phase (State) = Negotiated
+          and
           Has_Signing_Key (State)
           and Current_Session_Id (State) = Session_Id
           and Current_Signing_Key (State) = Key
-          and not Has_Validated_Response (State));
+          and not Has_Validated_Response (State)
+        else State = State'Old and Status = SMB.Invalid_Value);
 
    procedure Mark_Authenticated
      (State : in out Engine_State;
@@ -271,7 +274,9 @@ is
           Current_Phase (State) = Authenticated
           and Current_Session_Id (State) = Current_Session_Id (State'Old)
           and Has_Signing_Key (State)
-          and not Has_Validated_Response (State));
+          and Current_Signing_Key (State) = Current_Signing_Key (State'Old)
+          and not Has_Validated_Response (State)
+        else State = State'Old and Status = SMB.Invalid_State_Status);
 
    procedure Mark_Share_Connected
      (State : in out Engine_State;
