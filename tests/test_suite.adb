@@ -3116,6 +3116,74 @@ procedure Test_Suite is
            ("handle capacity: 256 distinct handles, overflow rejection and slot reuse passed");
       end Test_Handle_Capacity;
 
+      procedure Test_Lifecycle_Atomicity is
+         use type SMB.Engine.Engine_State;
+         Target : SMB.Engine.Engine_State;
+         Init_Failures, Connect_Failures : Natural := 0;
+
+         procedure Reject_Initialize is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            SMB.Engine.Initialize (Target, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status and then Target = Before,
+               "rejected initialization changed state");
+            Init_Failures := Init_Failures + 1;
+         end Reject_Initialize;
+
+         procedure Reject_Connect is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            SMB.Engine.Mark_Connected (Target, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status and then Target = Before,
+               "rejected transport transition changed state");
+            Connect_Failures := Connect_Failures + 1;
+         end Reject_Connect;
+      begin
+         Reject_Connect;
+         SMB.Engine.Initialize (Target, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Engine.Current_Owner_Id (Target) /= 0
+            and then SMB.Engine.Current_Epoch (Target) = 0
+            and then SMB.Engine.Current_Max_Read (Target) = 0
+            and then not SMB.Engine.Has_Validated_Response (Target),
+            "lifecycle fixture initialization");
+         SMB.Engine.Mark_Connected (Target, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Engine.Current_Phase (Target) =
+              SMB.Engine.Transport_Connected,
+            "lifecycle fixture transport transition");
+         Reject_Initialize;
+         Reject_Connect;
+         SMB.Engine.Begin_Request
+           (Target, 0, False, False, Message_Id, Expected, Status);
+         Assert (Status = SMB.Ok, "lifecycle pending fixture");
+         Reject_Initialize;
+         Reject_Connect;
+         SMB.Engine.Invalidate (Target, Status);
+         Assert (Status = SMB.Ok, "lifecycle invalidate pending fixture");
+         Reconnect_Share (Target, Stop_At_Challenge => True);
+         Reject_Initialize;
+         Reject_Connect;
+         SMB.Engine.Invalidate (Target, Status);
+         Assert (Status = SMB.Ok, "lifecycle invalidate challenge fixture");
+         Reconnect_Share (Target, Connect_Share_State => False);
+         Reject_Initialize;
+         Reject_Connect;
+         SMB.Engine.Invalidate (Target, Status);
+         Assert (Status = SMB.Ok, "lifecycle invalidate authenticated fixture");
+         Reconnect_Share (Target);
+         Reject_Initialize;
+         Reject_Connect;
+         Assert (Init_Failures = 5 and then Connect_Failures = 6,
+                 "lifecycle failure atomicity coverage");
+         Ada.Text_IO.Put_Line
+           ("lifecycle failure atomicity: 11 rejected calls passed");
+      end Test_Lifecycle_Atomicity;
+
       procedure Test_Handle_Failure_Atomicity is
          use type SMB.Engine.Engine_State;
          Target : SMB.Engine.Engine_State;
@@ -4354,6 +4422,7 @@ procedure Test_Suite is
       end loop;
       Test_Request_Metadata;
       Test_Authentication_Atomicity;
+      Test_Lifecycle_Atomicity;
       Test_Handle_Outcomes;
       Test_Handle_Capacity;
       Test_Handle_Failure_Atomicity;

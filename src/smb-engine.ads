@@ -187,10 +187,25 @@ is
        (if Status = SMB.Ok then
           Current_Phase (State) = Disconnected
           and Current_Owner_Id (State) /= 0
+          and Current_Epoch (State) = 0
+          and Current_Session_Id (State) = 0
+          and Current_Tree_Id (State) = 0
+          and Current_Max_Read (State) = 0
+          and Current_Max_Write (State) = 0
           and not Has_Open_Handles (State)
           and not Has_Pending_Request (State)
+          and not Has_Validated_Response (State)
+          and not Has_Signing_Key (State)
           and Current_Async_Id (State) = 0
-          and Signing_Key_Is_Zero (State));
+          and Signing_Key_Is_Zero (State)
+        else State = State'Old
+          and (if Current_Phase (State'Old) /= Disconnected
+                 or else Has_Pending_Request (State'Old)
+                 or else Has_Signing_Key (State'Old)
+                 or else Has_Validated_Response (State'Old)
+                 or else Has_Open_Handles (State'Old)
+               then Status = SMB.Invalid_State_Status
+               else Status = SMB.Counter_Exhausted));
 
    procedure Mark_Connected
      (State : in out Engine_State;
@@ -198,7 +213,22 @@ is
    with
      Post =>
        (if Status = SMB.Ok then
-          Current_Phase (State) = Transport_Connected);
+          Current_Phase (State'Old) = Disconnected
+          and Current_Owner_Id (State'Old) /= 0
+          and Current_Phase (State) = Transport_Connected
+          and Current_Owner_Id (State) = Current_Owner_Id (State'Old)
+          and Current_Epoch (State) = Current_Epoch (State'Old)
+          and Current_Session_Id (State) = Current_Session_Id (State'Old)
+          and Current_Tree_Id (State) = Current_Tree_Id (State'Old)
+          and Current_Max_Read (State) = Current_Max_Read (State'Old)
+          and Current_Max_Write (State) = Current_Max_Write (State'Old)
+          and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
+          and Current_Signing_Key (State) = Current_Signing_Key (State'Old)
+          and Handle_Table_Equivalent (State'Old, State)
+          and Has_Pending_Request (State) = Has_Pending_Request (State'Old)
+          and Has_Validated_Response (State) =
+            Has_Validated_Response (State'Old)
+        else State = State'Old and Status = SMB.Invalid_State_Status);
 
    procedure Mark_Negotiated
      (State : in out Engine_State;
