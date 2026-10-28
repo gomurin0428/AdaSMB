@@ -5,9 +5,10 @@
 The Ghost getter `Next_Request_Id` exposes the Engine's private request-ID
 counter to contracts. The operation-level conditions complement the existing
 `Begin_Request` contract: successful reservations return the old counter and
-advance it by exactly one; rejection preserves the state and outputs, and
-counter exhaustion is proof-only. Successful `Initialize` and `Invalidate`
-set the counter to zero. Lifecycle transitions, `Register_Handle`,
+advance it by exactly one; rejection preserves the state and clears the
+reservation outputs. Counter exhaustion is proof-only. Successful
+`Initialize` and all `Invalidate` calls set the counter to zero.
+Lifecycle transitions, `Register_Handle`,
 `Close_Handle`, and `Discard_Response_Receipt` preserve it.
 `Inspect_Interim_Response` preserves it on success and resets it on failure.
 `Accept_Response` preserves it except on failure or successful LOGOFF, which
