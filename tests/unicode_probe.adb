@@ -67,6 +67,21 @@ procedure Unicode_Probe is
          then
             raise Program_Error with "UTF-8 result mismatch";
          end if;
+         declare
+            Ample_Output : SMB.Bytes (31 .. 30 + 2 * Input'Length);
+            Ample_Used : Natural;
+            Ample_Status : SMB.Core_Status;
+         begin
+            SMB.Core_Text.UTF8_To_UTF16
+              (Text, Ample_Output, Ample_Used, Ample_Status);
+            if Ample_Status /= SMB.Ok or else Ample_Used /= Expected'Length
+              or else Ample_Output
+                (Ample_Output'First .. Ample_Output'First + Ample_Used - 1)
+                  /= Expected
+            then
+               raise Program_Error with "UTF-8 ample-buffer result mismatch";
+            end if;
+         end;
       else
          begin
             declare

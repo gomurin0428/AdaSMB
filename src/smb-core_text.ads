@@ -47,7 +47,10 @@ package SMB.Core_Text is
          (if Used > 0 then
             Valid_UTF16_Text
               (Output (Output'First .. Output'First + (Used - 1))))
-       and then (if Status = SMB.Ok then (Used = 0) = (Input'Length = 0));
+       and then (if Status = SMB.Ok then (Used = 0) = (Input'Length = 0))
+       and then (if Input'Length = 0 then Status = SMB.Ok)
+       and then (if Output'Length >= 2 * Input'Length then
+          Status in SMB.Ok | SMB.Invalid_Encoding);
 
    procedure UTF16_To_UTF8
      (Input : SMB.Bytes;

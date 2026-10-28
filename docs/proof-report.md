@@ -1,5 +1,80 @@
 # GNATprove and test report
 
+## UTF-8 to UTF-16 capacity outcome guarantee
+
+`UTF8_To_UTF16` now guarantees that empty input returns `SMB.Ok`, and that
+when `Output'Length >= 2 * Input'Length`, the result status is one of
+`SMB.Ok` or `SMB.Invalid_Encoding`; sufficient output capacity therefore
+excludes `SMB.Invalid_Length`. This is a conservative capacity guarantee,
+not a theorem that status is `SMB.Ok` exactly when the entire UTF-8 input is
+valid. The existing valid-output-prefix guarantee and status precedence
+remain unchanged. In particular, with a smaller output, a capacity error can
+precede a malformed byte later in the input.
+
+The public `SMB.Text.To_UTF16LE` wrapper allocates output capacity of
+`2 * Input'Length`, so its call satisfies the sufficient-capacity premise.
+The two checked assertions at the encoder's capacity-failure returns prove
+that each such return implies
+`Output'Length < 2 * Input'Length`. These assertions do not alter runtime
+branches, assignments, encoding behavior, status ordering, public
+parameters, or limits. No whole-input UTF-8 validity iff theorem or
+whole-codec roundtrip theorem is claimed.
+
+To retain the existing emitted-scalar correspondence proof, a Ghost constant
+`Emitted` names only the newly written two- or four-byte slice. Checked
+assertions connect its code units to the original output units before
+proving the unchanged `UTF16_Scalar_At (Emitted, 0) = Decoded_Scalar`
+identity. This does not widen a model domain or scan the whole output for
+each scalar.
+
+`Test_UTF_Capacity` adds coverage for empty input with spare output, input
+containing ASCII `A`, `B` followed by byte `16#FF#` with a two-byte output
+(`SMB.Invalid_Length`, `Used = 2`) versus a six-byte output
+(`SMB.Invalid_Encoding`, `Used = 4`), and 1 MiB of ASCII encoded into
+an exact 2 MiB UTF-16 output. These cases also exercise shifted array
+bounds. In the Unicode probe,
+valid `Check_8` fixtures additionally convert into ample output with a
+shifted lower bound and compare against the existing Python-oracle bytes.
+The corpus generator, oracle, negative controls, and **1,287,503-fixture**
+count are unchanged.
+
+The focused whole-unit proof used fresh `utf8-capacity-slice-focused` output:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf8-capacity-slice-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with **699 checks** (44 flow, 655 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(26 subprograms and packages).
+
+The final-source strict build, capacity selector, Unicode corpus, unit suite,
+forced strict check, and Samba integration each exited 0:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite utf-capacity
+make unicode-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+```
+
+The Unicode run reported 1,287,503 fixtures. The full proof used fresh
+`utf8-capacity-full` output:
+
+```sh
+gnatprove -P proof.gpr --subdirs=utf8-capacity-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with **4,904 checks** (724 flow, 4,180 prover), zero unproved,
+zero justified, 69 warnings, zero `pragma Assume` statements, and 13 units.
+This explicit fresh-output run is not a literal `make prove` result. The
+focused and full summaries are
+`build/proof-obj/utf8-capacity-slice-focused/gnatprove/gnatprove.out` and
+`build/proof-obj/utf8-capacity-full/gnatprove/gnatprove.out`.
+CI and Windows were not run for this revision.
+
 ## UTF-16 to UTF-8 conversion outcome contract
 
 The `UTF16_To_UTF8` postcondition now states an exact outcome under a
