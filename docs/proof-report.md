@@ -1,5 +1,68 @@
 # GNATprove and test report
 
+## Preserving other handles after successful registration and closure
+
+`Other_Handles_Preserved` describes preservation of the phase, owner and epoch,
+and of every active handle record except a specified ticket. Its default
+exception is ticket zero, which cannot designate a valid handle.
+`Register_Handle` now guarantees this predicate on success for all existing
+valid handles. `Close_Handle` guarantees it for every ticket other than the
+closed one. Existing success and failure guarantees remain intact; the changes
+to executable bodies are proof invariants and a ghost predicate only.
+
+The 256-handle capacity test now uses distinct FileIds, all three access modes,
+and both file/directory flags. It validates every slot after filling the table,
+after closing the middle handle, and after reusing that slot with a new FileId,
+access mode, directory flag and ticket. Other live handles must retain their
+original identities and metadata; the old token must remain invalid.
+
+The Candidate GNAT14 strict test build
+(`gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe`) and
+`./build/bin/test_suite engine-receipts` passed. The selector reported 74
+handle-validation cases, the 256-distinct-handle capacity and slot-reuse test,
+and 23 handle-failure-atomicity rejections.
+
+The focused Engine proof exited 0 with 181 checks (67 flow and 114 prover),
+0 unproved and 0 justified:
+
+```sh
+gnatprove -P proof.gpr -u smb-engine.adb \
+  --subdirs=preserve-handles-focused --mode=all --level=2 \
+  --proof=progressive --report=all --checks-as-errors=on \
+  --prover=cvc5,z3 --timeout=120 -j4
+```
+
+`make test`, `make check GPRBUILD="gprbuild -f"`, and
+`sudo -n python3 tests/samba_integration.py` all passed.
+
+The full proof below used the fresh `preserve-handles-full` output subdirectory
+and exited 0 on its first attempt; no generated-ALI failure, cache repair, or
+targeted replay was needed. This is a fresh-output full proof, not a literal
+`make prove` run:
+
+```sh
+gnatprove -P proof.gpr --subdirs=preserve-handles-full --mode=all \
+  --level=2 --proof=progressive --report=all --checks-as-errors=on \
+  --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It analyzed 13 units and discharged 4,478 checks: 710 flow and 3,768 prover,
+with 0 unproved, 0 justified, 69 warnings, and 0 `pragma Assume`. The category
+totals were 2 data dependencies, 1 flow dependency, 545 initialization, 2
+non-aliasing, 2,425 run-time checks, 299 assertions, 1,038 functional
+contracts, and 166 termination checks (160 flow, 6 prover).
+
+### Independent fresh-cache baseline before this change
+
+The preceding version (PR #52) was also proved without using existing generated
+artifacts, via a previously nonexistent `--subdirs` directory. Full proof exited
+0 with 4,473 checks (709 flow, 3,764 prover), 0 unproved, 0 justified, 69 warnings
+and no `pragma Assume`. Separate fresh flow runs at `-j1` and `-j4`, both full
+project and focused Engine followed by full project, all exited 0. None
+reproduced the previously observed malformed generated ALI. Its cause remains
+unconfirmed; these results do not establish that parallelism caused it, and
+the proof settings are unchanged.
+
 ## Atomic rejection of handle registration and closure
 
 `Register_Handle` now guarantees the entire `Engine_State` remains unchanged

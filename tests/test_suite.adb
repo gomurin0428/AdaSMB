@@ -2574,7 +2574,8 @@ procedure Test_Suite is
          Create_Operation : in out SMB.Core_Client.Operation;
          Result_Token : out SMB.Engine.Handle_Token;
          Is_Directory : Boolean := True;
-         Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only)
+         Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+         Response_File_Id : SMB.Bytes := File_Id)
       is
          Request : SMB.Bytes (0 .. 121) := (others => 0);
          Response : SMB.Bytes (0 .. 151) := (others => 0);
@@ -2592,7 +2593,7 @@ procedure Test_Suite is
            (Response, SMB.Core_Wire.Command_Code (5),
             SMB.Wire.U64 (Request, 24), Tree_Id, Session_Id, True);
          Response (64) := 89;
-         Response (128 .. 143) := File_Id;
+         Response (128 .. 143) := Response_File_Id;
          SMB.Wire.Sign (Response, Key);
          SMB.Core_Client.Complete
            (Create_Operation, Target, Response, Nt_Status,
@@ -2743,19 +2744,50 @@ procedure Test_Suite is
          Target : SMB.Engine.Engine_State;
          Tokens : array (1 .. SMB.Engine.Maximum_Handles) of
            SMB.Engine.Handle_Token;
+         File_Ids : array (Tokens'Range) of SMB.Bytes (0 .. 15) :=
+           (others => File_Id);
+         Modes : array (Tokens'Range) of SMB.Engine.Access_Kind :=
+           (others => SMB.Engine.Read_Only);
+         Directories : array (Tokens'Range) of Boolean := (others => False);
          Middle : constant Positive := Tokens'Length / 2;
          Old_Token : SMB.Engine.Handle_Token;
          Output_Id : SMB.Bytes (0 .. 15);
          Output_Access : SMB.Engine.Access_Kind;
          Output_Directory : Boolean;
+
+         procedure Check_Handles (Closed : Natural := 0) is
+         begin
+            for Index in Tokens'Range loop
+               SMB.Engine.Validate_Handle
+                 (Target, Tokens (Index), False, False,
+                  Output_Id, Output_Access, Output_Directory, Status);
+               if Index = Closed then
+                  Assert (Status = SMB.Invalid_Handle_Status,
+                          "closed capacity handle remained valid");
+               else
+                  Assert
+                    (Status = SMB.Ok and then Output_Id = File_Ids (Index)
+                     and then Output_Access = Modes (Index)
+                     and then Output_Directory = Directories (Index),
+                     "capacity handling changed another handle's identity or contents");
+               end if;
+            end loop;
+         end Check_Handles;
       begin
          Reconnect_Share (Target);
          for Index in Tokens'Range loop
+            File_Ids (Index) (0) := SMB.Byte (Index mod 256);
+            File_Ids (Index) (1) := SMB.Byte (Index / 256);
+            Modes (Index) := SMB.Engine.Access_Kind'Val ((Index - 1) mod 3);
+            Directories (Index) := Index mod 2 = 0;
             declare
                Operation : SMB.Core_Client.Operation;
             begin
                Create_Directory_Handle
-                 (Target, Operation, Tokens (Index), Is_Directory => False);
+                 (Target, Operation, Tokens (Index),
+                  Is_Directory => Directories (Index),
+                  Access_Mode => Modes (Index),
+                  Response_File_Id => File_Ids (Index));
             end;
          end loop;
          declare
@@ -2774,6 +2806,7 @@ procedure Test_Suite is
                and then (for all Byte of Request => Byte = 0),
                "full handle table changed state or prepared a request");
          end;
+         Check_Handles;
          Old_Token := Tokens (Middle);
          declare
             Operation : SMB.Core_Client.Operation;
@@ -2795,11 +2828,18 @@ procedure Test_Suite is
               (Operation, Target, Response, Nt_Status, Ignored_Token, Status);
             Assert (Status = SMB.Ok, "capacity CLOSE completion");
          end;
+         Check_Handles (Closed => Middle);
+         File_Ids (Middle) (15) := File_Ids (Middle) (15) xor 1;
+         Modes (Middle) := SMB.Engine.Read_Only;
+         Directories (Middle) := False;
          declare
             Operation : SMB.Core_Client.Operation;
          begin
             Create_Directory_Handle
-              (Target, Operation, Tokens (Middle), Is_Directory => False);
+              (Target, Operation, Tokens (Middle),
+               Is_Directory => Directories (Middle),
+               Access_Mode => Modes (Middle),
+               Response_File_Id => File_Ids (Middle));
          end;
          Assert (Tokens (Middle).Ticket /= Old_Token.Ticket,
                  "reused slot recycled the old ticket");
@@ -2808,18 +2848,9 @@ procedure Test_Suite is
             Output_Id, Output_Access, Output_Directory, Status);
          Assert (Status = SMB.Invalid_Handle_Status,
                  "reused slot revived a stale token");
-         for Token of Tokens loop
-            SMB.Engine.Validate_Handle
-              (Target, Token, True, False,
-               Output_Id, Output_Access, Output_Directory, Status);
-            Assert
-              (Status = SMB.Ok and then Output_Id = File_Id
-               and then Output_Access = SMB.Engine.Read_Only
-               and then not Output_Directory,
-               "capacity handling changed a registered handle");
-         end loop;
+         Check_Handles;
          Ada.Text_IO.Put_Line
-           ("handle capacity: 256 opens, overflow rejection and slot reuse passed");
+           ("handle capacity: 256 distinct handles, overflow rejection and slot reuse passed");
       end Test_Handle_Capacity;
 
       procedure Test_Handle_Failure_Atomicity is
