@@ -703,13 +703,24 @@ is
        and Current_Session_Id (State) = 0
        and Current_Tree_Id (State) = 0
        and Current_Async_Id (State) = 0
+       and Current_Max_Read (State) = 0
+       and Current_Max_Write (State) = 0
+       and Next_Request_Id (State) = 0
+       and SMB.Core_Protocol."="
+         (Current_Response_Info (State),
+          SMB.Core_Protocol.Response_Info'(others => <>))
        and Status =
-         (if Current_Epoch (State)'Old = SMB.QWord'Last
+         (if Current_Epoch (State'Old) = SMB.QWord'Last
           then SMB.Counter_Exhausted
           else SMB.Ok)
        and
-         (Current_Epoch (State) > Current_Epoch (State)'Old
-          or Current_Owner_Id (State) = 0);
+         (if Status = SMB.Ok then
+            Current_Owner_Id (State) = Current_Owner_Id (State'Old)
+            and Current_Epoch (State'Old) < SMB.QWord'Last
+            and Current_Epoch (State) = Current_Epoch (State'Old) + 1
+          else
+            Current_Owner_Id (State) = 0
+            and Current_Epoch (State) = Current_Epoch (State'Old));
 
    function Current_Signing_Key (State : Engine_State) return SMB.Bytes
    with Post => Current_Signing_Key'Result'Length = 16;

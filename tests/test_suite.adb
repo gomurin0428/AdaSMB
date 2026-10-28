@@ -3354,6 +3354,182 @@ procedure Test_Suite is
            ("lifecycle failure atomicity: 11 rejected calls passed");
       end Test_Lifecycle_Atomicity;
 
+      procedure Test_Invalidation_Reset is
+         type Fixture_Kind is
+           (Default_State, Transport_State, Pending_Negotiate_State,
+            Challenge_State, Authenticated_State, Share_Receipt_State,
+            Pending_Async_State);
+         Resets, Restarts : Natural := 0;
+
+         procedure Check_Reset (Target : in out SMB.Engine.Engine_State) is
+            Owner : constant SMB.QWord := SMB.Engine.Current_Owner_Id (Target);
+            Epoch : constant SMB.QWord := SMB.Engine.Current_Epoch (Target);
+         begin
+            SMB.Engine.Invalidate (Target, Status);
+            Assert
+              (Status = SMB.Ok
+               and then SMB.Engine.Current_Owner_Id (Target) = Owner
+               and then SMB.Engine.Current_Epoch (Target) = Epoch + 1
+               and then SMB.Engine.Current_Phase (Target) = SMB.Engine.Disconnected
+               and then not SMB.Engine.Has_Open_Handles (Target)
+               and then not SMB.Engine.Has_Pending_Request (Target)
+               and then not SMB.Engine.Has_Validated_Response (Target)
+               and then not SMB.Engine.Has_Signing_Key (Target)
+               and then SMB.Engine.Signing_Key_Is_Zero (Target)
+               and then SMB.Engine.Current_Session_Id (Target) = 0
+               and then SMB.Engine.Current_Tree_Id (Target) = 0
+               and then SMB.Engine.Current_Async_Id (Target) = 0
+               and then SMB.Engine.Current_Max_Read (Target) = 0
+               and then SMB.Engine.Current_Max_Write (Target) = 0
+               and then SMB.Core_Protocol."="
+                 (SMB.Engine.Current_Response_Info (Target),
+                  SMB.Core_Protocol.Response_Info'(others => <>)),
+               "invalidation did not reset context or advance the same owner's epoch");
+            Resets := Resets + 1;
+         end Check_Reset;
+      begin
+         for Kind in Fixture_Kind loop
+            declare
+               Target : SMB.Engine.Engine_State;
+               Token : SMB.Engine.Handle_Token;
+               Create_Operation : SMB.Core_Client.Operation;
+            begin
+               case Kind is
+                  when Default_State => null;
+                  when Transport_State | Pending_Negotiate_State =>
+                     SMB.Engine.Initialize (Target, Status);
+                     Assert (Status = SMB.Ok, "initialize invalidation fixture");
+                     SMB.Engine.Mark_Connected (Target, Status);
+                     Assert (Status = SMB.Ok, "connect invalidation fixture");
+                     if Kind = Pending_Negotiate_State then
+                        SMB.Engine.Begin_Request
+                          (Target, 0, False, False, Message_Id, Expected, Status);
+                        Assert
+                          (Status = SMB.Ok and then SMB.Engine.Has_Pending_Request (Target),
+                           "reserve invalidation fixture request");
+                     end if;
+                  when Challenge_State =>
+                     Reconnect_Share (Target, Stop_At_Challenge => True);
+                     Assert
+                       (SMB.Engine.Has_Validated_Response (Target)
+                        and then SMB.Engine.Current_Response_Info (Target).Session_Id /= 0,
+                        "invalidation fixture needs challenge metadata");
+                  when Authenticated_State =>
+                     Reconnect_Share (Target, Connect_Share_State => False);
+                     Assert
+                       (SMB.Engine.Has_Signing_Key (Target)
+                        and then not SMB.Engine.Signing_Key_Is_Zero (Target),
+                        "invalidation fixture needs a nonzero key");
+                  when Share_Receipt_State | Pending_Async_State =>
+                     Reconnect_Share (Target);
+                     Create_Directory_Handle
+                       (Target, Create_Operation, Token, Is_Directory => False);
+                     declare
+                        Fixture_File_Id : SMB.Bytes (0 .. 15);
+                        Fixture_Access : SMB.Engine.Access_Kind :=
+                          SMB.Engine.Read_Write;
+                        Fixture_Is_Directory : Boolean := True;
+                     begin
+                        SMB.Engine.Validate_Handle
+                          (Target, Token, False, False, Fixture_File_Id,
+                           Fixture_Access, Fixture_Is_Directory, Status);
+                        Assert
+                          (Status = SMB.Ok
+                           and then SMB.Engine.Current_Max_Read (Target) /= 0
+                           and then SMB.Engine.Current_Max_Write (Target) /= 0,
+                           "invalidation fixture needs a live handle and limits");
+                     end;
+                     if Kind = Share_Receipt_State then
+                        declare
+                           Response : SMB.Bytes (0 .. 65) := (others => 0);
+                        begin
+                           SMB.Engine.Begin_Request
+                             (Target, 17, True, True, Message_Id, Expected, Status);
+                           Assert (Status = SMB.Ok, "reserve invalidation receipt");
+                           Prepare_Response
+                             (Response, 17, Message_Id, Tree_Id, Session_Id, True);
+                           Response (64) := 2;
+                           SMB.Wire.Sign (Response, Key);
+                           SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+                           Assert
+                             (Status = SMB.Ok and then Nt_Status = SMB.Success
+                              and then SMB.Engine.Has_Validated_Response (Target),
+                              "accept invalidation receipt fixture");
+                        end;
+                     else
+                        declare
+                           Response : SMB.Bytes (0 .. 71) := (others => 0);
+                           Is_Interim : Boolean;
+                           Async_Id : constant SMB.QWord := 16#1122_3344_5566_7788#;
+                        begin
+                           SMB.Engine.Begin_Request
+                             (Target, 8, True, True, Message_Id, Expected, Status,
+                              Request_Amount => 1);
+                           Assert (Status = SMB.Ok, "reserve invalidation async request");
+                           Prepare_Response
+                             (Response, 8, Message_Id, 0, Session_Id, False);
+                           SMB.Wire.Put_U32 (Response, 8, SMB.Status_Pending);
+                           SMB.Wire.Put_U32 (Response, 16, 3);
+                           SMB.Wire.Put_U64 (Response, 32, Async_Id);
+                           Response (64) := 9;
+                           SMB.Engine.Inspect_Interim_Response
+                             (Target, Response, Is_Interim, Status);
+                           Assert
+                             (Status = SMB.Ok and then Is_Interim
+                              and then SMB.Engine.Has_Pending_Request (Target)
+                              and then SMB.Engine.Current_Async_Id (Target) = Async_Id,
+                              "invalidation fixture needs a pending async ID");
+                        end;
+                     end if;
+               end case;
+               Check_Reset (Target);
+               if Kind = Default_State then
+                  Check_Reset (Target);
+                  declare
+                     use type SMB.Engine.Engine_State;
+                     Before : constant SMB.Engine.Engine_State := Target;
+                  begin
+                     SMB.Engine.Mark_Connected (Target, Status);
+                     Assert
+                       (Status = SMB.Invalid_State_Status and then Target = Before,
+                        "invalidation fabricated an owner for an uninitialized state");
+                  end;
+               else
+                  if Kind = Share_Receipt_State or else Kind = Pending_Async_State then
+                     declare
+                        Result_Id : SMB.Bytes (0 .. 15) := (others => 16#AA#);
+                        Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Write;
+                        Is_Directory : Boolean := True;
+                     begin
+                        SMB.Engine.Validate_Handle
+                          (Target, Token, True, False,
+                           Result_Id, Access_Mode, Is_Directory, Status);
+                        Assert
+                          (Status = SMB.Invalid_Handle_Status
+                           and then Result_Id = SMB.Bytes'(0 .. 15 => 0)
+                           and then Access_Mode = SMB.Engine.Read_Only
+                           and then not Is_Directory,
+                           "invalidation retained a usable handle or its output");
+                     end;
+                  end if;
+                  SMB.Engine.Mark_Connected (Target, Status);
+                  Assert (Status = SMB.Ok, "reconnect invalidated owner");
+                  SMB.Engine.Begin_Request
+                    (Target, 0, False, False, Message_Id, Expected, Status);
+                  Assert
+                    (Status = SMB.Ok and then Message_Id = 0
+                     and then Expected.Message_Id = 0
+                     and then SMB.Engine.Pending_Request_Matches (Target, Expected),
+                     "invalidation did not restart message IDs at zero");
+                  Restarts := Restarts + 1;
+               end if;
+            end;
+         end loop;
+         Assert (Resets = 8 and then Restarts = 6, "invalidation reset coverage");
+         Ada.Text_IO.Put_Line
+           ("invalidation: 8 resets and 6 message-ID restarts passed");
+      end Test_Invalidation_Reset;
+
       procedure Test_Owner_Allocation is
          use type SMB.Engine.Engine_State;
          Target, Other : SMB.Engine.Engine_State;
@@ -4822,6 +4998,7 @@ procedure Test_Suite is
       Test_Request_Metadata;
       Test_Authentication_Atomicity;
       Test_Lifecycle_Atomicity;
+      Test_Invalidation_Reset;
       Test_Owner_Allocation;
       Test_Receipt_Transitions;
       Test_Request_Receipt_Preservation;
