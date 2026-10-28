@@ -3191,6 +3191,9 @@ procedure Test_Suite is
                   Access_Mode => Modes (Index),
                   Response_File_Id => File_Ids (Index));
             end;
+            Assert
+              (Tokens (Index).Ticket = SMB.QWord (Index),
+               "handle tickets did not advance exactly once per registration");
          end loop;
          SMB.Engine.Begin_Request
            (Target, 17, True, True, Message_Id, Expected, Status);
@@ -3274,16 +3277,82 @@ procedure Test_Suite is
                Access_Mode => Modes (Middle),
                Response_File_Id => File_Ids (Middle));
          end;
-         Assert (Tokens (Middle).Ticket /= Old_Token.Ticket,
-                 "reused slot recycled the old ticket");
+         Assert
+           (Tokens (Middle).Ticket = SMB.QWord (SMB.Engine.Maximum_Handles) + 1,
+            "slot reuse rewound or skipped the handle ticket counter");
          SMB.Engine.Validate_Handle
            (Target, Old_Token, False, False,
             Output_Id, Output_Access, Output_Directory, Status);
          Assert (Status = SMB.Invalid_Handle_Status,
                  "reused slot revived a stale token");
          Check_Handles;
+         declare
+            Disconnect_Response : SMB.Bytes (0 .. 67) := (others => 0);
+            Connect_Response : SMB.Bytes (0 .. 79) := (others => 0);
+            Operation : SMB.Core_Client.Operation;
+            New_Token : SMB.Engine.Handle_Token;
+         begin
+            SMB.Engine.Begin_Request
+              (Target, 4, True, True, Message_Id, Expected, Status);
+            Assert (Status = SMB.Ok, "reserve ticket-preserving tree disconnect");
+            Prepare_Response
+              (Disconnect_Response, 4, Message_Id, Tree_Id, Session_Id, True);
+            Disconnect_Response (64) := 4;
+            SMB.Wire.Sign (Disconnect_Response, Key);
+            SMB.Engine.Accept_Response
+              (Target, Disconnect_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status = SMB.Success
+               and then SMB.Engine.Current_Phase (Target) = SMB.Engine.Authenticated
+               and then not SMB.Engine.Has_Open_Handles (Target),
+               "ticket fixture did not disconnect the old share");
+            SMB.Engine.Begin_Request
+              (Target, 3, True, True, Message_Id, Expected, Status);
+            Assert (Status = SMB.Ok, "reserve ticket-preserving tree reconnect");
+            Prepare_Response
+              (Connect_Response, 3, Message_Id, Tree_Id, Session_Id, True);
+            Connect_Response (64) := 16;
+            Connect_Response (66) := 1;
+            SMB.Wire.Sign (Connect_Response, Key);
+            SMB.Engine.Accept_Response
+              (Target, Connect_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status = SMB.Success,
+               "accept ticket-preserving tree reconnect");
+            SMB.Engine.Mark_Share_Connected (Target, Tree_Id, Status);
+            Assert (Status = SMB.Ok, "restore the same tree ID");
+            Create_Directory_Handle
+              (Target, Operation, New_Token, Is_Directory => False);
+            Assert
+              (New_Token.Owner = Tokens (1).Owner
+               and then New_Token.Epoch = Tokens (1).Epoch
+               and then New_Token.Ticket = SMB.QWord (SMB.Engine.Maximum_Handles) + 2,
+               "share reconnection recycled handle tickets or changed identity");
+            for Stale of Tokens loop
+               SMB.Engine.Validate_Handle
+                 (Target, Stale, False, False,
+                  Output_Id, Output_Access, Output_Directory, Status);
+               Assert
+                 (Status = SMB.Invalid_Handle_Status
+                  and then Output_Id = SMB.Bytes'(0 .. 15 => 0),
+                  "share reconnection revived an old handle");
+            end loop;
+            SMB.Engine.Validate_Handle
+              (Target, Old_Token, False, False,
+               Output_Id, Output_Access, Output_Directory, Status);
+            Assert (Status = SMB.Invalid_Handle_Status,
+                    "share reconnection revived the previously closed handle");
+            SMB.Engine.Validate_Handle
+              (Target, New_Token, False, False,
+               Output_Id, Output_Access, Output_Directory, Status);
+            Assert
+              (Status = SMB.Ok and then Output_Id = File_Id
+               and then Output_Access = SMB.Engine.Read_Only
+               and then not Output_Directory,
+               "share reconnection lost the new handle");
+         end;
          Ada.Text_IO.Put_Line
-           ("handle capacity: 256 distinct handles, overflow rejection and slot reuse passed");
+           ("handle capacity: 258 sequential tickets, slot reuse and share reconnect passed");
       end Test_Handle_Capacity;
 
       procedure Test_Lifecycle_Atomicity is
