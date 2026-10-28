@@ -1,5 +1,68 @@
 # GNATprove and test report
 
+## Complete pending-request metadata matching
+
+`Pending_Request_Matches` now compares the complete `Request_Expectation`
+record. The previous field-by-field comparison omitted `Match_Tree` and
+`Match_Session`, even though these flags control response-ID correlation.
+This strengthens the operation/Engine ownership checks; the existing received
+header validation remains in place. This is not evidence of an observed wire
+response bypass.
+
+`Begin_Request` now specifies the exact tree/session matching policy and the
+returned close token. Any failed reservation must return a default expectation
+and zero message ID. Existing state-preservation conditions are unchanged;
+in particular, a new reservation attempt still discards any preceding receipt.
+
+The Engine receipt tests cover 13 valid reservations across negotiation,
+pre-key and keyed SESSION_SETUP, TREE_CONNECT, every supported share command,
+and authenticated LOGOFF. All 12 scalar metadata fields (including the three
+close-token fields) are individually changed for each reservation, giving 156
+rejections. Twelve unsuccessful reservation calls start with poisoned outputs
+and verify exact errors, cleared outputs, and unchanged receipt-free state.
+The all-default expectation must not match without a pending request.
+
+The Candidate GNAT14 strict test build
+(`gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe`) and
+`./build/bin/test_suite engine-receipts` passed. The selector reported 13
+reservations, 156 individual metadata-field mutations, and 12 rejected
+reservations, along with the existing handle validation, capacity, and
+failure-atomicity cases.
+
+For the sensitivity control, I substituted only the prior fieldwise
+`Pending_Request_Matches` expression from `origin/main`, retaining the new
+contract and tests. The mutant build passed; the selector exited 1 with the
+expected diagnostic at metadata field 4 (`Match_Tree`):
+`request metadata mismatch accepted at field 4`. I restored the full-record
+comparison and verified `src/smb-engine.ads` matched its pre-control SHA-256
+(`7cd5217764e7592cb0c86ab86aa43c7b882e994841bb6c0bb89c3b2b87b21722`). A
+strict rebuild and selector rerun then passed.
+
+The focused Engine proof in the fresh `request-matching-focused` output
+subdirectory exited 0 with 181 checks (67 flow, 114 prover), 0 unproved and
+0 justified. It reported one warning at `smb-engine.adb:428` about `Nt_Status`
+after `Validate_Header`.
+
+`make test`, `make check GPRBUILD="gprbuild -f"`, and
+`sudo -n python3 tests/samba_integration.py` all passed.
+
+The full proof below used the fresh `request-matching-full` output subdirectory
+and passed on its first attempt; no generated-ALI failure, cache repair, or
+targeted replay was needed. This is a fresh-output full proof, not a literal
+`make prove` run:
+
+```sh
+gnatprove -P proof.gpr --subdirs=request-matching-full --mode=all \
+  --level=2 --proof=progressive --report=all --checks-as-errors=on \
+  --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 after analyzing 13 units and discharging 4,478 checks (710 flow,
+3,768 prover), with 0 unproved, 0 justified, 69 warnings, and 0
+`pragma Assume`. Category totals were 2 data dependencies, 1 flow dependency,
+545 initialization, 2 non-aliasing, 2,425 run-time checks, 299 assertions,
+1,038 functional contracts, and 166 termination checks (160 flow, 6 prover).
+
 ## Preserving other handles after successful registration and closure
 
 `Other_Handles_Preserved` describes preservation of the phase, owner and epoch,
