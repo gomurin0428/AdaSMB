@@ -24,7 +24,7 @@ invariants separately describe the ASCII input prefix using input indices
 and the converted output prefix using offsets. The local
 `Assertion_Policy (Loop_Invariant => Ignore)` keeps quantified invariants
 from being evaluated at runtime while GNATprove still proves them. No
-`Relaxed_Initialization`, assertions, assumptions, or proof suppressions
+`Relaxed_Initialization`, temporary `pragma Assert`, assumptions, or proof suppressions
 remain for this contract.
 
 `Test_NTLM_Uppercase` covers 4,100 cases: all 256 one-byte values; each byte
@@ -39,7 +39,7 @@ formed without overflowing in the `Positive'Last` case.
 
 The authorized sensitivity control used both `origin/main` Core_Text files
 and changed only the mapper's `Character_Code - 32` to `-31`. On that
-initial authored version, the strict build passed and the selector failed at
+initial test version with baseline Core_Text sources, the strict build passed and the selector failed at
 `NTLM uppercase character correspondence`. The authored files were restored
 byte-for-byte; their restored hashes were spec
 `d961d11bc067907622e895ab630036523f8a21fc90592bff6d0c831cbb59b002` and
@@ -77,9 +77,14 @@ Final validation:
   `pragma Assume` statements, 13 units.
 - `git diff --check` — exit 0.
 
-The focused and full proof results use the explicit fresh-output GNATprove
-commands and subdirectories recorded above; they are not reported as a
-literal `make prove` run.
+The fresh-output proof commands were:
+
+```text
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=ntlm-uppercase-final-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+gnatprove -P proof.gpr --subdirs=ntlm-uppercase-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+These are not reported as a literal `make prove` run.
 
 ## UTF-16 validator contract
 
