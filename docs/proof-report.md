@@ -1,5 +1,65 @@
 # GNATprove and test report
 
+## Invalidation reset contract
+
+`Invalidate`'s runtime implementation is unchanged and matches
+`origin/main`. Its postcondition now requires a complete reset of the public
+connection context: disconnected phase, no handles, pending request,
+validated receipt, or signing key; zero logical key bytes, session/tree/async
+IDs, negotiated read/write limits, and next request ID; and default
+`Response_Info`. On success it preserves the exact owner and advances the
+epoch by exactly one, requiring the old epoch to be below `SMB.QWord'Last`.
+At epoch exhaustion it returns `SMB.Counter_Exhausted`, clears the owner to
+zero, and preserves the epoch. The established exact return-status
+classification and clearing guarantees for phase, handles, pending/key state,
+and session/tree/async values remain in force.
+
+This is not a claim that the entire `Engine_State` record is erased:
+`Pending_Expected` is intentionally not cleared by the existing runtime.
+Signing-key zeroing describes logical Engine state only, not physical memory
+erasure. Epoch exhaustion is covered by the contract and proof, not by a
+runtime test; no test hook makes that boundary reachable.
+
+`Test_Invalidation_Reset` is selected by `engine-receipts`. Its seven
+synthetic fixtures cover default, transport-connected, pending NEGOTIATE,
+SESSION_SETUP challenge with nonzero receipt session metadata, authenticated
+with a nonzero key, live handle plus signed SET_INFO receipt, and live handle
+plus a synthetic unsigned `STATUS_PENDING` with nonzero AsyncId after a
+signed READ reservation. The async interim fixture is synthetic and is
+distinct from a signed validated response or an observation from a native
+server. The test performs eight resets, including a repeated default-state
+reset, and verifies six same-owner transport/NEGOTIATE restarts reserve
+message ID zero. It also checks cleared public state and limits, stale-handle
+and output rejection, and that the default state does not fabricate an owner.
+Existing reconnection and handle-reuse coverage remains in the suite.
+
+Two runtime sensitivity controls used the weaker `origin/main` Engine spec
+and independently changed only `Invalidate`'s body. Changing the epoch
+increment from `+ 1` to `+ 2` passed the strict build (exit 0), then the
+selector failed (exit 1) at the explicit diagnostic
+`invalidation did not reset context or advance the same owner's epoch`.
+Removing `State.Next_Message_Id := 0;` likewise passed the strict build and
+failed the selector at
+`invalidation did not restart message IDs at zero`. After each control, both
+files were restored byte-for-byte: the spec SHA-256 was
+`14a023463c9612c34183e9f0a3d24da94f4b8a3cb273a97cf2c798aa667172df` and the
+body SHA-256 was
+`c19631831a319934546e34b958e5d7610cd7e53f6975374b63f97027f190cf5c`.
+The strict rebuild and selector passed after each restoration; the selector
+reported eight resets and six message-ID restarts.
+
+The focused Engine proof in fresh `invalidation-focused` output exited 0
+with 184 checks (70 flow, 114 prover), 0 unproved and 0 justified; it
+reported one warning at `smb-engine.adb:433` concerning `Nt_Status`, used
+0 `pragma Assume`, and analyzed one unit. The fresh-output full proof in
+`invalidation-full` exited 0 with 4,487 checks (713 flow, 3,774 prover),
+0 unproved, 0 justified, 69 warnings, 0 `pragma Assume`, and 13 units.
+This was a fresh-output full proof, not a literal `make prove` run.
+
+With Candidate GNAT14, the strict build, `engine-receipts`, `make test`,
+`make check GPRBUILD="gprbuild -f"`, and full Samba integration all exited 0.
+The final `git diff --check` result is recorded with the branch changes.
+
 ## Reservation failure atomicity and message-ID progression
 
 `Begin_Request` previously cleared the validated-response receipt before
