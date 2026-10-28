@@ -1,5 +1,80 @@
 # GNATprove and test report
 
+## UTF-16 conversion input validity
+
+`UTF16_To_UTF8` retains its existing `Used` bounds and empty-input
+equivalence guarantee. Its success postcondition now additionally requires
+an even input byte length and `Valid_UTF16_Text (Input)`. This establishes
+validity of the successful input, not exact UTF-8 output correspondence or
+the exact precedence of all failure statuses. Existing partial `Used` and
+output contents on failure are unchanged and are not specified more
+strongly.
+
+The Ghost model requires each UTF-16 code unit to be nonzero, and requires
+high and low surrogates to be correctly paired; Unicode noncharacters remain
+valid. NUL rejection is the existing SMB policy. `UTF16_Unit`,
+`Valid_UTF16_Unit`, and `Valid_UTF16_Text` now have preconditions up to
+`SMB.Maximum_Frame_Size` (1 MiB), covering the converter's existing input
+domain. The declaration of `UTF16_To_UTF8` was moved below those helpers so
+its contract can reference `Valid_UTF16_Text`. The standalone
+`Validate_UTF16` precondition remains 65,534 bytes.
+
+No conversion or validation runtime assignment or branch changed. The
+converter has a local `Assertion_Policy (Loop_Invariant => Ignore)` and the
+same valid-consumed-prefix and “last processed unit is not a high surrogate”
+invariant used by the validator. GNATprove proves these invariants while
+their quantified checks are not evaluated at runtime.
+
+Four cases were added to `Test_UTF_Capacity` (the `utf-capacity` selector):
+
+1. `DBFF DFFF`, the maximum Unicode scalar, converts to `F4 8F BF BF` with
+   input bounds ending at `Natural'Last` and output bounds ending at
+   `Positive'Last`.
+2. A 65,536-byte input of 32,768 `A` code units converts successfully to
+   32,768 `A` characters, exercising the converter/model beyond the
+   standalone validator's 65,534-byte limit.
+3. Replacing the final code unit with an orphan `D800` yields
+   `SMB.Invalid_Encoding`, `Used = 32,767`, the converted prefix, and a
+   zero-filled output tail.
+4. With output capacity 32,766 on that input, conversion reaches
+   `SMB.Invalid_Length` with `Used = 32,766` before reaching the later
+   orphan surrogate.
+
+The independent Unicode corpus definition remains unchanged at 1,287,503
+fixtures, with its existing generator, seed, categories, and status controls
+unchanged. `make unicode-test` reran that generator and produced the same
+fixture set. The validator continues to receive 1,201,703 calls in that
+oracle. No corpus was expanded, and no additional mutation control was run
+for this contract-only change; the existing oracle controls are described
+in the UTF-16 validator section below.
+
+Focused whole-unit proof used a fresh `utf16-conversion-focused` output:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf16-conversion-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 349 checks (39 flow, 310 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(23 subprograms and packages).
+
+The fresh full proof used `utf16-conversion-full`:
+
+```sh
+gnatprove -P proof.gpr --subdirs=utf16-conversion-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 4,554 checks (719 flow, 3,835 prover), zero unproved,
+zero justified, 69 warnings, zero `pragma Assume` statements, and 13 units.
+Both proof results are from fresh output directories; the full result is
+not a literal `make prove` run.
+
+With Candidate GNAT14, the strict test-suite build and `utf-capacity`
+selector passed. `make unicode-test` passed with all 1,287,503 fixtures.
+The final `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and full Samba integration all exited
+0. `git diff --check` was run after this section was added.
+
 ## NTLM username uppercase contract
 
 `Uppercase_NTLM_User` now specifies exact status priority: unequal input and
