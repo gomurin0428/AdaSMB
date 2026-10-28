@@ -253,6 +253,17 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Status =
+         (if Current_Phase (State'Old) = Transport_Connected
+             and then not Has_Pending_Request (State'Old)
+             and then Response_Receipt_Matches
+               (State'Old, 0, SMB.Success, False, False)
+             and then Maximum_Read in 1 .. SMB.Maximum_Frame_Size
+             and then Maximum_Write in 1 .. SMB.Maximum_Frame_Size
+             and then Current_Response_Info (State'Old).Max_Read = Maximum_Read
+             and then Current_Response_Info (State'Old).Max_Write = Maximum_Write
+          then SMB.Ok else SMB.Invalid_Value)
+       and then
        (if Status = SMB.Ok then
           Current_Phase (State'Old) = Transport_Connected
           and not Has_Pending_Request (State'Old)
@@ -331,6 +342,15 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Status =
+         (if Current_Phase (State'Old) = Authenticated
+             and then not Has_Pending_Request (State'Old)
+             and then Tree_Id /= 0
+             and then Response_Receipt_Matches
+               (State'Old, 3, SMB.Success, True, False)
+             and then Current_Response_Info (State'Old).Tree_Id = Tree_Id
+          then SMB.Ok else SMB.Invalid_State_Status)
+       and then
        (if Status = SMB.Ok then
           Current_Phase (State'Old) = Authenticated
           and not Has_Pending_Request (State'Old)
@@ -346,6 +366,8 @@ is
           and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
           and Handle_Table_Equivalent (State'Old, State)
           and Current_Tree_Id (State) = Tree_Id
+          and Current_Max_Read (State) = Current_Max_Read (State'Old)
+          and Current_Max_Write (State) = Current_Max_Write (State'Old)
           and not Has_Validated_Response (State)
           and not Has_Pending_Request (State)
         else State = State'Old);
@@ -613,7 +635,10 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       Connection_Context_Equivalent (State'Old, State)
+       Status =
+         (if Has_Pending_Request (State'Old)
+          then SMB.Invalid_State_Status else SMB.Ok)
+       and then Connection_Context_Equivalent (State'Old, State)
        and then Current_Phase (State) = Current_Phase (State'Old)
        and then Current_Owner_Id (State) = Current_Owner_Id (State'Old)
        and then Current_Epoch (State) = Current_Epoch (State'Old)
@@ -628,7 +653,11 @@ is
        and then Handle_Table_Equivalent (State'Old, State)
        and then (if Status = SMB.Ok then
           not Has_Validated_Response (State)
-          and not Has_Pending_Request (State));
+          and not Has_Pending_Request (State)
+          and SMB.Core_Protocol."="
+            (Current_Response_Info (State),
+             SMB.Core_Protocol.Response_Info'(others => <>))
+        else State = State'Old);
 
    procedure Close_Handle
      (State : in out Engine_State;
