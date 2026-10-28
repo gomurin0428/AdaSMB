@@ -340,27 +340,24 @@ package body SMB.Core_Text is
       function Encoded_Size (Value : Natural) return Positive is
         (if Value <= 16#7F# then 1 elsif Value <= 16#7FF# then 2
          elsif Value <= 16#FFFF# then 3 else 4);
-      procedure Emit_Byte (Value : Natural) is
-         Previous_Used : constant Natural := Used;
-      begin
-         pragma Assert (Value <= 255 and then Used < Output'Length);
-         Output (Output'First + Used) := Character'Val (Value);
-         Used := Used + 1;
-         pragma Assert (Used = Previous_Used + 1);
-         pragma Assert (Byte_At (Output, Previous_Used) = Value);
-      end Emit_Byte;
-      procedure Emit_Scalar (Value : Natural)
+      procedure Emit_Scalar (Value : Natural; Target : out String)
         with Pre => Value in 1 .. 16#10FFFF#
           and then Value not in 16#D800# .. 16#DFFF#
-          and then Output'Length <= 2 * SMB.Maximum_Frame_Size
-          and then Used <= Output'Length
-          and then Encoded_Size (Value) <= Output'Length - Used,
-          Post => Used = Used'Old + Encoded_Size (Value)
-            and then UTF8_Scalar_At
-              (Output (Output'First + Used'Old .. Output'First + (Used - 1)),
-               0) = Value;
-      procedure Emit_Scalar (Value : Natural) is
+          and then Target'Length = Encoded_Size (Value),
+          Post => UTF8_Scalar_At (Target, 0) = Value;
+      procedure Emit_Scalar (Value : Natural; Target : out String) is
+         Written : Natural := 0;
+         procedure Emit_Byte (Byte_Value : Natural) is
+            Previous_Written : constant Natural := Written;
+         begin
+            pragma Assert (Byte_Value <= 255 and then Written < Target'Length);
+            Target (Target'First + Written) := Character'Val (Byte_Value);
+            Written := Written + 1;
+            pragma Assert (Written = Previous_Written + 1);
+            pragma Assert (Byte_At (Target, Previous_Written) = Byte_Value);
+         end Emit_Byte;
       begin
+         Target := (others => Character'Val (0));
          if Value <= 16#7F# then
             Emit_Byte (Value);
          elsif Value <= 16#7FF# then
@@ -376,12 +373,11 @@ package body SMB.Core_Text is
             Emit_Byte (16#80# + (Value / 64) mod 64);
             Emit_Byte (16#80# + Value mod 64);
          end if;
+         pragma Assert (Written = Encoded_Size (Value));
       end Emit_Scalar;
    begin
       Used := 0;
-      for Index in Output'Range loop
-         Output (Index) := Character'Val (0);
-      end loop;
+      Output := (others => Character'Val (0));
       if Input'Length mod 2 /= 0 then
          Status := SMB.Invalid_Length;
          return;
@@ -435,11 +431,18 @@ package body SMB.Core_Text is
             Status := SMB.Invalid_Length;
             return;
          end if;
-         Emit_Scalar (Scalar);
+         Emit_Scalar
+           (Scalar, Output (Output'First + Used
+                            .. Output'First + (Used + Encoded_Size (Scalar) - 1)));
+         Used := Used + Encoded_Size (Scalar);
          pragma Loop_Invariant (Offset <= Input'Length);
          pragma Loop_Invariant (Offset mod 2 = 0);
          pragma Loop_Invariant (Used <= Output'Length);
          pragma Loop_Invariant (Used <= 2 * Offset);
+         pragma Loop_Invariant
+           (for all Index in Output'Range =>
+              (if Index - Output'First >= Used then
+                 Output (Index) = Character'Val (0)));
          pragma Loop_Invariant ((Used = 0) = (Offset = 0));
          pragma Loop_Invariant
            (if Offset > 0 then

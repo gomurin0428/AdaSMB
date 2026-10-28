@@ -1,5 +1,65 @@
 # GNATprove and test report
 
+## UTF-16 to UTF-8 unused output guarantee
+
+`UTF16_To_UTF8` guarantees that every output character at or beyond `Used`
+is `Character'Val (0)` on every return, including success, odd-length input,
+encoding failure, and capacity failure. A partial prefix on failure does
+not make the conversion successful; callers must check `Status`. This is a
+returned-buffer guarantee, not secure physical-memory erasure.
+
+The output is initialized with an array aggregate, and a bottom-of-loop
+invariant maintains the zero suffix as `Used` advances. Under the existing
+runtime `Loop_Invariant => Ignore` policy, this does not add per-scalar
+whole-output scans. `Emit_Scalar` receives only a target slice whose length
+is exactly `Encoded_Size (Value)`. Its nested byte emitter counts `Written`
+and writes only within that slice; the helper proves
+`UTF8_Scalar_At (Target, 0) = Value`. The outer conversion advances `Used`
+explicitly after the helper returns. The helper therefore has no access to
+the rest of `Output`, while the public postcondition covers the full
+zero-tail guarantee.
+
+`Test_UTF_Capacity` adds seven shifted-bound, `16#A5#`-prefilled fixtures
+covering empty, BMP, and supplementary success; BMP and supplementary
+capacity failures; encoding failure after a valid prefix; and odd-length
+input. The Unicode probe checks ordinary and ample output tails. Its
+existing generator, Python oracle, and **1,287,503-fixture** corpus are
+unchanged.
+
+The focused proof used fresh `utf8-unused-focused` output:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf8-unused-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with **730 checks** (45 flow, 685 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(27 subprograms and packages). `UTF16_To_UTF8` discharged all 97 of its
+checks.
+
+Final-source verification used these commands:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite utf-capacity
+make unicode-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+gnatprove -P proof.gpr --subdirs=utf8-unused-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+git diff --check
+```
+
+Each command exited 0. The Unicode test reported **1,287,503 fixtures**.
+Fresh full-proof output contains **4,935 checks** (725 flow, 4,210 prover),
+zero unproved, zero justified, 69 warnings, zero `pragma Assume` statements,
+and 13 units. This is a fresh explicit GNATprove run, not a literal
+`make prove` result. The proof summaries are
+`build/proof-obj/utf8-unused-focused/gnatprove/gnatprove.out` and
+`build/proof-obj/utf8-unused-full/gnatprove/gnatprove.out`.
+
+CI and Windows were not run for this revision.
+
 ## UTF-8 to UTF-16 unused output guarantee
 
 `UTF8_To_UTF16` guarantees that every output byte at or beyond `Used` is
