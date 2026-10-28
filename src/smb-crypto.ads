@@ -26,8 +26,11 @@ package SMB.Crypto is
      Key'Length <= SMB.Maximum_Frame_Size
      and Message'Length <= SMB.Maximum_Frame_Size;
 
+   -- Keep the potentially short-circuiting equality oracle proof-only.
+   pragma Assertion_Policy (Post => Ignore);
    function Constant_Time_Equal (Left, Right : SMB.Bytes) return Boolean
    with Pre =>
      Left'Length <= Maximum_Hash_Input
-     and Right'Length <= Maximum_Hash_Input;
+     and Right'Length <= Maximum_Hash_Input,
+     Post => Constant_Time_Equal'Result = (Left = Right);
 end SMB.Crypto;

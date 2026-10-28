@@ -1,5 +1,72 @@
 # GNATprove and test report
 
+## Crypto byte equality contract
+
+`SMB.Crypto.Constant_Time_Equal` now specifies
+`Result = (Left = Right)`, under its existing maximum-input precondition.
+The length check and XOR/OR accumulator in the runtime implementation are
+unchanged. A narrowly placed `Assertion_Policy (Post => Ignore)` prevents
+the potentially short-circuiting array-equality oracle from being evaluated
+as a runtime postcondition. The body similarly ignores the loop invariant at
+runtime. These policies do not suppress formal verification: focused
+GNATprove output explicitly reports
+`smb-crypto.ads:35:14: info: postcondition proved`; the invariant's
+initialization and preservation checks are also proved. The focused summary
+reports 193 checks (39 flow, 154 prover), zero unproved or justified checks,
+zero warnings, zero `pragma Assume` statements, and one analyzed unit
+(16 subprograms and packages).
+
+`Test_Crypto_Equality` compares the routine directly with Ada array equality
+in **65,946 cases**: all 65,536 byte-value pairs; all 16 length combinations
+from zero through three, including null arrays; equal 16- and 32-byte
+inputs and every individual bit mismatch in each length (128 and 256
+mismatches); two same-bit differences; shifted bounds including bounds near
+`Natural'Last`; and equal, mismatching, and unequal-length inputs at
+`Maximum_Hash_Input`. The negative control changed exactly one
+`Difference := Difference or` to `Difference := Difference xor`. Its strict
+build exited 0 and the selector exited 1 as expected with
+`byte equality disagrees with Ada array equality`. The original source was
+restored byte-for-byte; the strict rebuild and selector then both exited 0.
+
+Focused verification commands (each exited 0):
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite crypto-equality
+gnatprove -P proof.gpr -u smb-crypto.adb --subdirs=crypto-equality-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+The final gates also exited 0:
+
+```sh
+make crypto-test
+make signing-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+gnatprove -P proof.gpr --subdirs=crypto-equality-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+git diff --check
+```
+
+Crypto conformance passed 445 hash fixtures / 890 rebased cases and 1,832
+HMAC fixtures / 7,328 rebased cases; signing conformance passed 3,135
+fixtures / 12,540 rebased cases. The full unit suite included the 65,946
+equality cases; Samba integration passed on `127.0.0.1:1445`. The fresh full
+GNATprove run reported 4,942 checks (725 flow, 4,217 prover), zero unproved
+or justified checks, 69 warnings, zero `pragma Assume` statements, and 13
+units. The focused and full summaries are
+`build/proof-obj/crypto-equality-focused/gnatprove/gnatprove.out` and
+`build/proof-obj/crypto-equality-full/gnatprove/gnatprove.out`.
+
+The pre-change and forced-build disassemblies were compared using
+`objdump -d --disassemble=smb__crypto__constant_time_equal build/obj/smb-crypto.o`.
+The instruction differences are limited to five source-line arguments to
+existing range, overflow, and index-check failure handlers (confirmed with
+`objdump -dr` relocations). No array-equality oracle or invariant evaluation
+was added to the generated comparison loop. This observation is specific to
+the checked Linux GNAT 14 build, not a timing proof or a guarantee for other
+compiler configurations. CI and Windows tests were not run for this revision.
+
 ## UTF-16 to UTF-8 unused output guarantee
 
 `UTF16_To_UTF8` guarantees that every output character at or beyond `Used`
