@@ -11,6 +11,9 @@ is
 
    function Last_Allocated_Owner_Id return SMB.QWord is (Next_Owner_Id);
 
+   function Next_Request_Id (State : Engine_State) return SMB.QWord is
+     (State.Next_Message_Id);
+
    function Bounded_Slice
      (Packet : SMB.Bytes;
       Offset, Length : Natural) return SMB.Bytes
@@ -209,7 +212,6 @@ is
    begin
       Message_Id := 0;
       Expected := (others => <>);
-      State.Receipt_Valid := False;
       if State.Pending then
          Status := SMB.Invalid_State_Status;
          return;
@@ -305,6 +307,7 @@ is
          Status := SMB.Unsupported_Feature;
          return;
       end if;
+      State.Receipt_Valid := False;
       Tree_Match := State.Current = Share_Connected and then Command /= 2;
       Session_Match :=
         State.Current = Authenticated or else State.Current = Share_Connected

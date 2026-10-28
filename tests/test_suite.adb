@@ -2870,6 +2870,141 @@ procedure Test_Suite is
            ("request metadata: 13 reservations, 156 field mutations and 12 rejected calls passed");
       end Test_Request_Metadata;
 
+      procedure Test_Request_Receipt_Preservation is
+         use type SMB.Engine.Engine_State;
+         use type SMB.Engine.Request_Expectation;
+         type Receipt_Kind is (Negotiate_Receipt, Challenge_Receipt, Create_Receipt);
+         Rejections : Natural := 0;
+      begin
+         for Kind in Receipt_Kind loop
+            declare
+               Target, Base : SMB.Engine.Engine_State;
+               Token : SMB.Engine.Handle_Token;
+               Next_Id : SMB.QWord;
+
+               procedure Reject
+                 (Command : SMB.Core_Wire.Command_Code;
+                  Failure : SMB.Core_Status;
+                  Amount : Natural := 0) is
+                  Before : constant SMB.Engine.Engine_State := Target;
+                  Reserved_Id : SMB.QWord := SMB.QWord'Last;
+                  Reservation : SMB.Engine.Request_Expectation :=
+                    (Command => SMB.Core_Wire.Command_Code'Last,
+                     Message_Id => SMB.QWord'Last,
+                     Tree_Id => SMB.DWord'Last,
+                     Session_Id => SMB.QWord'Last,
+                     Match_Tree | Match_Session | Request_Signed | Signed => True,
+                     Request_Amount => Natural'Last,
+                     Close_Token => (others => SMB.QWord'Last));
+               begin
+                  Assert (SMB.Engine.Has_Validated_Response (Target),
+                          "reservation preservation fixture has no receipt");
+                  SMB.Engine.Begin_Request
+                    (Target, Command, True, True, Reserved_Id, Reservation,
+                     Status, Request_Amount => Amount);
+                  Assert
+                    (Status = Failure and then Target = Before
+                     and then Reserved_Id = 0
+                     and then Reservation =
+                       SMB.Engine.Request_Expectation'(others => <>),
+                     "rejected reservation consumed receipt or changed state/output");
+                  Rejections := Rejections + 1;
+               end Reject;
+
+               procedure Consume_Receipt is
+               begin
+                  case Kind is
+                     when Negotiate_Receipt =>
+                        SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, Status);
+                     when Challenge_Receipt =>
+                        SMB.Engine.Install_Session_Key (Target, Session_Id, Key, Status);
+                     when Create_Receipt =>
+                        SMB.Engine.Register_Handle
+                          (Target, File_Id, SMB.Engine.Read_Only, False, Token, Status);
+                  end case;
+               end Consume_Receipt;
+            begin
+               Reconnect_Share
+                 (Target, Stop_At_Negotiate => Kind = Negotiate_Receipt,
+                  Stop_At_Challenge => Kind = Challenge_Receipt);
+               if Kind = Create_Receipt then
+                  SMB.Engine.Begin_Request
+                    (Target, 5, True, True, Message_Id, Expected, Status);
+                  Assert (Status = SMB.Ok, "reserve CREATE receipt fixture");
+                  declare
+                     Response : SMB.Bytes (0 .. 151) := (others => 0);
+                  begin
+                     Prepare_Response
+                       (Response, 5, Message_Id, Tree_Id, Session_Id, True);
+                     Response (64) := 89;
+                     Response (128 .. 143) := File_Id;
+                     SMB.Wire.Sign (Response, Key);
+                     SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+                     Assert (Status = SMB.Ok and then Nt_Status = SMB.Success,
+                             "accept CREATE receipt fixture");
+                  end;
+               end if;
+               Base := Target;
+               Next_Id := Message_Id + 1;
+               Reject (SMB.Core_Wire.Command_Code'Last, SMB.Unsupported_Feature);
+               Reject (0, SMB.Invalid_State_Status);
+               if Kind = Create_Receipt then
+                  Reject (8, SMB.Invalid_Value);
+                  Reject
+                    (8, SMB.Invalid_Value,
+                     Amount => SMB.Core_Protocol.Maximum_IO_Chunk + 1);
+                  Reject (6, SMB.Invalid_Handle_Status);
+               end if;
+               Consume_Receipt;
+               Assert
+                 (Status = SMB.Ok and then not SMB.Engine.Has_Validated_Response (Target),
+                  "rejected reservation prevented receipt consumption retry");
+               if Kind = Create_Receipt then
+                  Assert
+                    (Token.Owner = SMB.Engine.Current_Owner_Id (Target)
+                     and then Token.Epoch = SMB.Engine.Current_Epoch (Target)
+                     and then Token.Ticket /= 0,
+                     "CREATE receipt retry did not register its handle");
+               end if;
+               Target := Base;
+               SMB.Engine.Begin_Request
+                 (Target,
+                  (case Kind is
+                     when Negotiate_Receipt => 0,
+                     when Challenge_Receipt => 1,
+                     when Create_Receipt => 17),
+                  Kind = Create_Receipt, Kind = Create_Receipt,
+                  Message_Id, Expected, Status);
+               Assert
+                 (Status = SMB.Ok and then Message_Id = Next_Id
+                  and then Expected.Message_Id = Next_Id
+                  and then SMB.Engine.Has_Pending_Request (Target)
+                  and then not SMB.Engine.Has_Validated_Response (Target),
+                  "new reservation skipped an ID or retained the old receipt");
+               declare
+                  Before : constant SMB.Engine.Engine_State := Target;
+               begin
+                  Consume_Receipt;
+                  Assert
+                    (Status =
+                       (if Kind = Create_Receipt
+                        then SMB.Invalid_State_Status else SMB.Invalid_Value)
+                     and then Target = Before,
+                     "superseded receipt remained usable");
+                  if Kind = Create_Receipt then
+                     Assert
+                       (Token.Owner = 0 and then Token.Epoch = 0
+                        and then Token.Ticket = 0,
+                        "superseded CREATE receipt returned a handle");
+                  end if;
+               end;
+            end;
+         end loop;
+         Assert (Rejections = 9, "reservation receipt preservation coverage");
+         Ada.Text_IO.Put_Line
+           ("reservation receipts: 9 rejections, 3 retries and 3 superseding requests passed");
+      end Test_Request_Receipt_Preservation;
+
       procedure Test_Handle_Outcomes is
          Target : SMB.Engine.Engine_State;
          Tokens : array (SMB.Engine.Access_Kind, Boolean) of
@@ -3057,6 +3192,37 @@ procedure Test_Suite is
                   Response_File_Id => File_Ids (Index));
             end;
          end loop;
+         SMB.Engine.Begin_Request
+           (Target, 17, True, True, Message_Id, Expected, Status);
+         Assert (Status = SMB.Ok, "reserve capacity receipt fixture");
+         declare
+            Response : SMB.Bytes (0 .. 65) := (others => 0);
+         begin
+            Prepare_Response
+              (Response, 17, Message_Id, Tree_Id, Session_Id, True);
+            Response (64) := 2;
+            SMB.Wire.Sign (Response, Key);
+            SMB.Engine.Accept_Response (Target, Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Ok and then Nt_Status = SMB.Success
+               and then SMB.Engine.Has_Validated_Response (Target),
+               "accept capacity receipt fixture");
+         end;
+         declare
+            use type SMB.Engine.Request_Expectation;
+            Before : constant SMB.Engine.Engine_State := Target;
+            Reserved_Id : SMB.QWord := SMB.QWord'Last;
+            Reservation : SMB.Engine.Request_Expectation :=
+              (Command => SMB.Core_Wire.Command_Code'Last, others => <>);
+         begin
+            SMB.Engine.Begin_Request
+              (Target, 5, True, True, Reserved_Id, Reservation, Status);
+            Assert
+              (Status = SMB.Resource_Limit and then Target = Before
+               and then Reserved_Id = 0
+               and then Reservation = SMB.Engine.Request_Expectation'(others => <>),
+               "capacity rejection consumed receipt or retained reservation outputs");
+         end;
          declare
             Before : constant SMB.Engine.Engine_State := Target;
             Operation : SMB.Core_Client.Operation;
@@ -4658,6 +4824,7 @@ procedure Test_Suite is
       Test_Lifecycle_Atomicity;
       Test_Owner_Allocation;
       Test_Receipt_Transitions;
+      Test_Request_Receipt_Preservation;
       Test_Handle_Outcomes;
       Test_Handle_Capacity;
       Test_Handle_Failure_Atomicity;
