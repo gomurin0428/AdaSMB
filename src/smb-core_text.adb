@@ -3,10 +3,56 @@ package body SMB.Core_Text is
 
    function Byte_At (Value : String; Offset : Natural) return Natural
      with Pre => Offset < Value'Length,
-       Post => Byte_At'Result <= 255;
+       Post => Byte_At'Result <= 255
+         and then Byte_At'Result =
+           Character'Pos (Value (Value'First + Offset));
 
    function Byte_At (Value : String; Offset : Natural) return Natural is
      (Character'Pos (Value (Value'First + Offset)));
+
+   --  Zero denotes an invalid or missing scalar under the SMB no-NUL policy.
+   function UTF8_Scalar_At (Value : String; Position : Natural) return Natural is
+     (if Position = Value'Length then 0
+      elsif Byte_At (Value, Position) in 1 .. 16#7F# then
+         Byte_At (Value, Position)
+      elsif Value'Length - Position >= 2
+        and then Byte_At (Value, Position) in 16#C2# .. 16#DF#
+        and then Byte_At (Value, Position + 1) in 16#80# .. 16#BF#
+      then
+         (Byte_At (Value, Position) mod 32) * 64
+         + Byte_At (Value, Position + 1) mod 64
+      elsif Value'Length - Position >= 3
+        and then Byte_At (Value, Position) in 16#E0# .. 16#EF#
+        and then
+          (if Byte_At (Value, Position) = 16#E0# then
+              Byte_At (Value, Position + 1) in 16#A0# .. 16#BF#
+           elsif Byte_At (Value, Position) = 16#ED# then
+              Byte_At (Value, Position + 1) in 16#80# .. 16#9F#
+           else Byte_At (Value, Position + 1) in 16#80# .. 16#BF#)
+        and then Byte_At (Value, Position + 2) in 16#80# .. 16#BF#
+      then
+         (Byte_At (Value, Position) mod 16) * 4_096
+         + (Byte_At (Value, Position + 1) mod 64) * 64
+         + Byte_At (Value, Position + 2) mod 64
+      elsif Value'Length - Position >= 4
+        and then Byte_At (Value, Position) in 16#F0# .. 16#F4#
+        and then
+          (if Byte_At (Value, Position) = 16#F0# then
+              Byte_At (Value, Position + 1) in 16#90# .. 16#BF#
+           elsif Byte_At (Value, Position) = 16#F4# then
+              Byte_At (Value, Position + 1) in 16#80# .. 16#8F#
+           else Byte_At (Value, Position + 1) in 16#80# .. 16#BF#)
+        and then Byte_At (Value, Position + 2) in 16#80# .. 16#BF#
+        and then Byte_At (Value, Position + 3) in 16#80# .. 16#BF#
+      then
+         (Byte_At (Value, Position) mod 8) * 262_144
+         + (Byte_At (Value, Position + 1) mod 64) * 4_096
+         + (Byte_At (Value, Position + 2) mod 64) * 64
+         + Byte_At (Value, Position + 3) mod 64
+      else 0)
+   with Ghost,
+     Pre => Value'Length <= SMB.Maximum_Frame_Size
+       and then Position <= Value'Length;
 
    procedure Decode_UTF8
      (Value : String;
@@ -16,6 +62,15 @@ package body SMB.Core_Text is
      with Pre => Value'Length <= SMB.Maximum_Frame_Size
        and then Position <= Value'Length,
        Post => Position <= Value'Length
+         and then Scalar = UTF8_Scalar_At (Value, Position'Old)
+         and then Status =
+           (if Scalar = 0 then SMB.Invalid_Encoding else SMB.Ok)
+         and then Position = Position'Old +
+           (if Scalar = 0 then 0
+            elsif Scalar <= 16#7F# then 1
+            elsif Scalar <= 16#7FF# then 2
+            elsif Scalar <= 16#FFFF# then 3
+            else 4)
          and then (if Status = SMB.Ok then
            Position > Position'Old and then Scalar in 1 .. 16#10FFFF#
            and then Scalar not in 16#D800# .. 16#DFFF#
