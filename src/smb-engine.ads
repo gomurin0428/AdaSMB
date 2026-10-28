@@ -327,6 +327,13 @@ is
           and Expected.Request_Signed = Request_Signed
           and Expected.Signed = Response_Signed
           and Expected.Request_Amount = Request_Amount
+          and Expected.Close_Token = Close_Token
+          and Expected.Match_Tree =
+            (Current_Phase (State) = Share_Connected and then Command /= 2)
+          and Expected.Match_Session =
+            (Current_Phase (State) = Authenticated
+             or else Current_Phase (State) = Share_Connected
+             or else (Command = 1 and then Has_Signing_Key (State)))
           and Expected.Session_Id = Current_Session_Id (State)
           and Expected.Tree_Id =
             (if Command = 0 or else Command = 2 or else Command = 3
@@ -336,7 +343,7 @@ is
           and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
           and Handle_Table_Equivalent (State'Old, State)
           and Pending_Request_Matches (State, Expected)
-        else Message_Id = 0);
+        else Message_Id = 0 and Expected = Request_Expectation'(others => <>));
 
    procedure Inspect_Interim_Response
      (State : in out Engine_State;
@@ -665,23 +672,9 @@ private
 
    function Pending_Request_Matches
      (State : Engine_State;
-      Expected : Request_Expectation) return Boolean is
+     Expected : Request_Expectation) return Boolean is
      (State.Pending
-      and then State.Pending_Expected.Command = Expected.Command
-      and then State.Pending_Expected.Message_Id = Expected.Message_Id
-      and then State.Pending_Expected.Session_Id = Expected.Session_Id
-      and then State.Pending_Expected.Tree_Id = Expected.Tree_Id
-      and then State.Pending_Expected.Request_Signed =
-        Expected.Request_Signed
-      and then State.Pending_Expected.Signed = Expected.Signed
-      and then State.Pending_Expected.Request_Amount =
-        Expected.Request_Amount
-      and then State.Pending_Expected.Close_Token.Owner =
-        Expected.Close_Token.Owner
-      and then State.Pending_Expected.Close_Token.Epoch =
-        Expected.Close_Token.Epoch
-      and then State.Pending_Expected.Close_Token.Ticket =
-        Expected.Close_Token.Ticket);
+      and then State.Pending_Expected = Expected);
 
    function Pending_Command
      (State : Engine_State) return SMB.Core_Wire.Command_Code is

@@ -2449,6 +2449,7 @@ procedure Test_Suite is
       Session_Id : constant SMB.QWord := 16#1234#;
       Tree_Id : constant SMB.DWord := 16#1020_3040#;
       Key : SMB.Bytes (0 .. 15) := (others => 0);
+      Reservation_Checks, Metadata_Mutations : Natural := 0;
       Final_Token : constant SMB.Bytes (0 .. 28) :=
         (16#A1#, 16#1B#, 16#30#, 16#19#,
          16#A0#, 16#03#, 16#0A#, 16#01#, 0,
@@ -2470,10 +2471,47 @@ procedure Test_Suite is
          SMB.Wire.Put_U32 (Packet, 16, (if Signed then 9 else 1));
       end Prepare_Response;
 
+      procedure Check_Request_Metadata
+        (Target : SMB.Engine.Engine_State;
+         Metadata : SMB.Engine.Request_Expectation;
+         Match_Tree, Match_Session : Boolean) is
+         Changed : SMB.Engine.Request_Expectation;
+      begin
+         Assert
+           (Metadata.Match_Tree = Match_Tree
+            and then Metadata.Match_Session = Match_Session
+            and then SMB.Engine.Pending_Request_Matches (Target, Metadata),
+            "request reservation selected incorrect correlation flags");
+         Reservation_Checks := Reservation_Checks + 1;
+         for Field in 0 .. 11 loop
+            Changed := Metadata;
+            case Field is
+               when 0 => Changed.Command := Changed.Command xor 1;
+               when 1 => Changed.Message_Id := Changed.Message_Id xor 1;
+               when 2 => Changed.Tree_Id := Changed.Tree_Id xor 1;
+               when 3 => Changed.Session_Id := Changed.Session_Id xor 1;
+               when 4 => Changed.Match_Tree := not Changed.Match_Tree;
+               when 5 => Changed.Match_Session := not Changed.Match_Session;
+               when 6 => Changed.Request_Signed := not Changed.Request_Signed;
+               when 7 => Changed.Signed := not Changed.Signed;
+               when 8 => Changed.Request_Amount :=
+                 (if Changed.Request_Amount = 0 then 1 else 0);
+               when 9 => Changed.Close_Token.Owner := Changed.Close_Token.Owner xor 1;
+               when 10 => Changed.Close_Token.Epoch := Changed.Close_Token.Epoch xor 1;
+               when 11 => Changed.Close_Token.Ticket := Changed.Close_Token.Ticket xor 1;
+            end case;
+            Assert
+              (not SMB.Engine.Pending_Request_Matches (Target, Changed),
+               "request metadata mismatch accepted at field" & Natural'Image (Field));
+            Metadata_Mutations := Metadata_Mutations + 1;
+         end loop;
+      end Check_Request_Metadata;
+
       procedure Reconnect_Share
         (Target : in out SMB.Engine.Engine_State;
          Initialize_State : Boolean := True;
-         Connect_Share_State : Boolean := True) is
+         Connect_Share_State : Boolean := True;
+         Check_Requests : Boolean := False) is
       begin
          if Initialize_State then
             SMB.Engine.Initialize (Target, Status);
@@ -2488,6 +2526,9 @@ procedure Test_Suite is
               (Target, SMB.Core_Wire.Command_Code (0), False, False,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect negotiate request");
+            if Check_Requests then
+               Check_Request_Metadata (Target, Expected, False, False);
+            end if;
             Prepare_Response
               (Response, SMB.Core_Wire.Command_Code (0), Message_Id, 0, 0,
                False);
@@ -2509,6 +2550,9 @@ procedure Test_Suite is
               (Target, SMB.Core_Wire.Command_Code (1), False, False,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect challenge request");
+            if Check_Requests then
+               Check_Request_Metadata (Target, Expected, False, False);
+            end if;
             Prepare_Response
               (Response, SMB.Core_Wire.Command_Code (1), Message_Id,
                0, Session_Id, False);
@@ -2527,6 +2571,9 @@ procedure Test_Suite is
               (Target, SMB.Core_Wire.Command_Code (1), False, True,
                Message_Id, Expected, Status);
             Assert (Status = SMB.Ok, "reconnect final session request");
+            if Check_Requests then
+               Check_Request_Metadata (Target, Expected, False, True);
+            end if;
             Prepare_Response
               (Response, SMB.Core_Wire.Command_Code (1), Message_Id,
                0, Session_Id, True);
@@ -2550,6 +2597,9 @@ procedure Test_Suite is
                  (Target, SMB.Core_Wire.Command_Code (3), True, True,
                   Message_Id, Expected, Status);
                Assert (Status = SMB.Ok, "reconnect tree connect request");
+               if Check_Requests then
+                  Check_Request_Metadata (Target, Expected, False, True);
+               end if;
                Prepare_Response
                  (Response, SMB.Core_Wire.Command_Code (3), Message_Id,
                   Tree_Id, Session_Id, True);
@@ -2602,6 +2652,89 @@ procedure Test_Suite is
            (Status = SMB.Ok and then Nt_Status = SMB.Success,
             "complete directory test CREATE");
       end Create_Directory_Handle;
+
+      procedure Test_Request_Metadata is
+         use type SMB.Engine.Engine_State;
+         use type SMB.Engine.Request_Expectation;
+         Base, Target, Authenticated_State : SMB.Engine.Engine_State;
+         Handle : SMB.Engine.Handle_Token;
+         Commands : constant array (Positive range <>) of
+           SMB.Core_Wire.Command_Code := (2, 4, 5, 6, 8, 9, 14, 17);
+         Poison : constant SMB.Engine.Request_Expectation :=
+           (Command => SMB.Core_Wire.Command_Code'Last,
+            Message_Id => SMB.QWord'Last,
+            Tree_Id => SMB.DWord'Last,
+            Session_Id => SMB.QWord'Last,
+            Match_Tree | Match_Session | Request_Signed | Signed => True,
+            Request_Amount => Natural'Last,
+            Close_Token => (others => SMB.QWord'Last));
+         Reservation : SMB.Engine.Request_Expectation;
+         Reserved_Id : SMB.QWord;
+         Result : SMB.Core_Status;
+         Rejections : Natural := 0;
+
+         procedure Reject
+           (Command : SMB.Core_Wire.Command_Code;
+            Request_Signed, Response_Signed : Boolean;
+            Amount : Natural;
+            Close_Token : SMB.Engine.Handle_Token;
+            Expected_Status : SMB.Core_Status) is
+            Before : constant SMB.Engine.Engine_State := Target;
+         begin
+            Assert (not SMB.Engine.Has_Validated_Response (Target),
+                    "reservation rejection fixture retained a receipt");
+            Reservation := Poison;
+            Reserved_Id := SMB.QWord'Last;
+            SMB.Engine.Begin_Request
+              (Target, Command, Request_Signed, Response_Signed,
+               Reserved_Id, Reservation, Result, Amount, Close_Token);
+            Assert
+              (Result = Expected_Status and then Target = Before
+               and then Reserved_Id = 0
+               and then Reservation = SMB.Engine.Request_Expectation'(others => <>),
+               "rejected reservation retained outputs or changed existing state");
+            Rejections := Rejections + 1;
+         end Reject;
+      begin
+         Assert
+           (not SMB.Engine.Pending_Request_Matches
+              (Target, SMB.Engine.Request_Expectation'(others => <>)),
+            "default expectation matched without a pending request");
+         Reconnect_Share (Base, Check_Requests => True);
+         declare
+            Operation : SMB.Core_Client.Operation;
+         begin
+            Create_Directory_Handle (Base, Operation, Handle);
+         end;
+         for Command of Commands loop
+            Target := Base;
+            SMB.Engine.Begin_Request
+              (Target, Command, True, True,
+               Reserved_Id, Reservation, Result,
+               Request_Amount => (if Command = 8 or Command = 9 then 1 else 0),
+               Close_Token => (if Command = 6 then Handle else (others => 0)));
+            Assert (Result = SMB.Ok, "reserve share-operation metadata fixture");
+            Check_Request_Metadata (Target, Reservation, Command /= 2, True);
+            Reject (Command, True, True, 1, Handle, SMB.Invalid_State_Status);
+         end loop;
+         Target := Base;
+         Reject (SMB.Core_Wire.Command_Code'Last, True, True, 0,
+                 (others => 0), SMB.Unsupported_Feature);
+         Reject (5, False, True, 0, (others => 0), SMB.Invalid_State_Status);
+         Reject (8, True, True, 0, (others => 0), SMB.Invalid_Value);
+         Reject (6, True, True, 0, (others => 0), SMB.Invalid_Handle_Status);
+         Reconnect_Share (Authenticated_State, Connect_Share_State => False);
+         SMB.Engine.Begin_Request
+           (Authenticated_State, 2, True, True, Reserved_Id, Reservation, Result);
+         Assert (Result = SMB.Ok, "reserve authenticated LOGOFF metadata fixture");
+         Check_Request_Metadata (Authenticated_State, Reservation, False, True);
+         Assert
+           (Reservation_Checks = 13 and then Metadata_Mutations = 156
+            and then Rejections = 12,
+            "request metadata coverage");
+         Ada.Text_IO.Put_Line
+           ("request metadata: 13 reservations, 156 field mutations and 12 rejected calls passed");
+      end Test_Request_Metadata;
 
       procedure Test_Handle_Outcomes is
          Target : SMB.Engine.Engine_State;
@@ -4089,6 +4222,7 @@ procedure Test_Suite is
       for Index in Key'Range loop
          Key (Index) := SMB.Byte (Index);
       end loop;
+      Test_Request_Metadata;
       Test_Handle_Outcomes;
       Test_Handle_Capacity;
       Test_Handle_Failure_Atomicity;
