@@ -1,5 +1,85 @@
 # GNATprove and test report
 
+## UTF-8 scalar decoding contract
+
+`Byte_At` now specifies both the byte-range bound and the exact mapping
+`Character'Pos (Value (Value'First + Offset))`. The private Ghost expression
+function `UTF8_Scalar_At` models one scalar at one position; it returns zero
+for invalid or missing input, including `Position = Value'Length`. It is not
+a validator for the entire remaining string. Its precondition keeps the input
+within `SMB.Maximum_Frame_Size` and the position within the input length.
+
+The model follows the canonical byte ranges in
+[RFC 3629 section 4](https://www.rfc-editor.org/rfc/rfc3629#section-4):
+non-NUL ASCII `01..7F`; two-byte forms `C2..DF 80..BF`; three-byte forms
+`E0 A0..BF 80..BF`, `ED 80..9F 80..BF`, and
+`E1..EC`/`EE..EF 80..BF 80..BF`; and four-byte forms
+`F0 90..BF 80..BF 80..BF`, `F4 80..8F 80..BF 80..BF`, and
+`F1..F3 80..BF 80..BF 80..BF`. Length guards precede reads of subsequent
+bytes. Reconstruction uses leading-byte `mod 32`, `mod 16`, or `mod 8` and
+continuation-byte `mod 64`, distinct from the runtime decoder's subtraction
+arithmetic. The model enforces the existing SMB no-NUL policy; Unicode
+noncharacters remain valid.
+
+`Decode_UTF8` now guarantees that `Scalar` equals this model at the old
+position; `Status` is `SMB.Invalid_Encoding` exactly when `Scalar = 0` and
+`SMB.Ok` otherwise. The new position guarantee is exact: no advancement for
+zero, then advancement by one, two, three, or four bytes for scalar values
+`<= 16#7F#`, `<= 16#7FF#`, `<= 16#FFFF#`, or greater, respectively. Its
+existing successful scalar bounds, surrogate exclusion, progress, and
+four-byte supplementary-scalar guarantee remain. Thus decoding at end of
+input is an invalid single-scalar operation with unchanged position, while
+the whole-string `UTF8_To_UTF16` conversion of empty input remains successful.
+No public interface, limit, runtime decoder assignment or branch, or codec
+behavior changed. This does not claim an exact whole-codec UTF-8/UTF-16
+roundtrip theorem.
+
+The final Ghost model uses GNATprove's default expression-function treatment,
+without `Inline_For_Proof`. A forced-inlining experiment left three caller
+checks in the existing UTF-16 output-prefix proof unproved; that annotation
+was removed, after which the whole-unit focused proof passed. The possibility
+that expansion introduced irrelevant conditional and modulo terms into those
+caller obligations is a hypothesis, not an established solver diagnosis.
+There are no assumptions or suppressions.
+
+The existing `utf-capacity` selector and independent Unicode corpus, oracle,
+and negative controls were reused without new test cases, fixtures, or
+generator changes. The corpus run reported 1,287,503 fixtures across the
+existing scalar-pair, fixed-sequence, byte, UTF-16-unit, mixed, random, and
+malformed-input categories. The strict test-suite build, `utf-capacity`, and
+`make unicode-test` all exited 0 before the proof-annotation-only removal;
+the final source was subsequently compiled by the final `make test` and
+forced strict `make check` gates.
+
+The final focused whole-unit proof used fresh `utf8-scalar-axiom-focused`
+output:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf8-scalar-axiom-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 464 checks (40 flow, 424 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(24 subprograms and packages).
+
+The final full proof used fresh `utf8-scalar-full` output:
+
+```sh
+gnatprove -P proof.gpr --subdirs=utf8-scalar-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 4,669 checks (720 flow, 3,949 prover), zero unproved,
+zero justified, 69 warnings, zero `pragma Assume` statements, and 13 units.
+This explicit fresh-output run is not a literal `make prove` result. The
+focused and full summaries are
+`build/proof-obj/utf8-scalar-axiom-focused/gnatprove/gnatprove.out` and
+`build/proof-obj/utf8-scalar-full/gnatprove/gnatprove.out`.
+
+With Candidate GNAT14, the final `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and
+`sudo -n python3 tests/samba_integration.py` all exited 0.
+`git diff --check` was run after this section was added.
+
 ## UTF-8-to-UTF-16 output-prefix validity
 
 `UTF8_To_UTF16` retains its existing bounds, even-length guarantee, and
