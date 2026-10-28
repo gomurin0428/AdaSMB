@@ -224,6 +224,30 @@ procedure Test_Suite is
          end loop;
       end Check_Zero_Tail;
 
+      procedure Check_UTF8_Zero_Tail
+        (UTF16 : SMB.Bytes; Capacity : Natural;
+         Expected_Status : SMB.Core_Status; Expected_Prefix : String) is
+         Input : constant SMB.Bytes (17 .. 16 + UTF16'Length) := UTF16;
+         Output : String (31 .. 30 + Capacity) :=
+           (others => Character'Val (16#A5#));
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF16_To_UTF8 (Input, Output, Used, Status);
+         Assert
+           (Status = Expected_Status and then Used = Expected_Prefix'Length
+            and then Used <= Output'Length,
+            "UTF-8 zero-tail status and length");
+         for I in Output'Range loop
+            Assert
+              (Output (I) =
+                 (if I - Output'First < Used then
+                    Expected_Prefix (Expected_Prefix'First + I - Output'First)
+                  else Character'Val (0)),
+               "UTF-8 exact prefix and zero tail");
+         end loop;
+      end Check_UTF8_Zero_Tail;
+
       E_Acute : constant String :=
         Character'Val (16#C3#) & Character'Val (16#A9#);
       Euro : constant String := Character'Val (16#E2#)
@@ -232,6 +256,18 @@ procedure Test_Suite is
         & Character'Val (16#9F#) & Character'Val (16#98#)
         & Character'Val (16#80#);
    begin
+      Check_UTF8_Zero_Tail (SMB.Bytes'(1 .. 0 => 0), 5, SMB.Ok, "");
+      Check_UTF8_Zero_Tail (SMB.Bytes'(16#41#, 0), 4, SMB.Ok, "A");
+      Check_UTF8_Zero_Tail
+        (SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#), 7, SMB.Ok, Smile);
+      Check_UTF8_Zero_Tail
+        (SMB.Bytes'(16#41#, 0, 16#AC#, 16#20#), 2, SMB.Invalid_Length, "A");
+      Check_UTF8_Zero_Tail
+        (SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#), 3, SMB.Invalid_Length, "");
+      Check_UTF8_Zero_Tail
+        (SMB.Bytes'(16#41#, 0, 0, 0), 4, SMB.Invalid_Encoding, "A");
+      Check_UTF8_Zero_Tail
+        (SMB.Bytes'(16#41#, 0, 16#FF#), 4, SMB.Invalid_Length, "");
       Check_Zero_Tail ("", 5, SMB.Ok, SMB.Bytes'(1 .. 0 => 0));
       Check_Zero_Tail ("A", 5, SMB.Ok, SMB.Bytes'(16#41#, 0));
       Check_Zero_Tail

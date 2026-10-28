@@ -114,7 +114,7 @@ procedure Unicode_Probe is
      (Input, Expected : SMB.Bytes; Expected_Status : SMB.Core_Status) is
       Capacity : constant Natural :=
         (if Expected_Status = SMB.Ok then Expected'Length else 2 * Input'Length);
-      Output : String (13 .. 12 + Capacity);
+      Output : String (13 .. 12 + Capacity) := (others => Character'Val (16#A5#));
       Used : Natural;
       Status : SMB.Core_Status;
       Validation_Status : SMB.Core_Status;
@@ -130,6 +130,11 @@ procedure Unicode_Probe is
          raise Program_Error with "UTF-16 status/bounds mismatch: "
            & SMB.Core_Status'Image (Status);
       end if;
+      for I in Output'Range loop
+         if I - Output'First >= Used and then Output (I) /= Character'Val (0) then
+            raise Program_Error with "UTF-16 unused output is not zero";
+         end if;
+      end loop;
       if Status = SMB.Ok then
          if Used /= Expected'Length
            or else Output (Output'First .. Output'First + Used - 1) /=
@@ -139,7 +144,8 @@ procedure Unicode_Probe is
             raise Program_Error with "UTF-16 result mismatch";
          end if;
          declare
-            Ample_Output : String (23 .. 22 + 2 * Input'Length);
+            Ample_Output : String (23 .. 22 + 2 * Input'Length) :=
+              (others => Character'Val (16#A5#));
             Ample_Used : Natural;
             Ample_Status : SMB.Core_Status;
          begin
@@ -152,6 +158,13 @@ procedure Unicode_Probe is
             then
                raise Program_Error with "UTF-16 ample-buffer result mismatch";
             end if;
+            for I in Ample_Output'Range loop
+               if I - Ample_Output'First >= Ample_Used
+                 and then Ample_Output (I) /= Character'Val (0)
+               then
+                  raise Program_Error with "UTF-16 ample unused output is not zero";
+               end if;
+            end loop;
          end;
       else
          begin

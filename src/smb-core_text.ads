@@ -72,7 +72,9 @@ package SMB.Core_Text is
           elsif Output'Length >= 2 * Input'Length then
              Status =
                (if Valid_UTF16_Text (Input) then SMB.Ok
-                else SMB.Invalid_Encoding));
+                else SMB.Invalid_Encoding))
+       and then (for all Index in Output'Range =>
+          (if Index - Output'First >= Used then Output (Index) = Character'Val (0)));
 
    procedure Validate_UTF16
      (Input : SMB.Bytes;
