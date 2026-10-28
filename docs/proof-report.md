@@ -14,7 +14,7 @@ pending request, a nonzero tree ID, and an unconsumed signed successful
 TREE_CONNECT receipt matching that ID; otherwise it returns
 `SMB.Invalid_State_Status`. Rejection preserves the complete Engine state.
 Success consumes the receipt, connects the tree, and preserves the prior
-transfer limits and existing connection context.
+transfer limits, identity, signing key, and handle table.
 
 `Discard_Response_Receipt` returns `SMB.Invalid_State_Status` exactly when the
 old state has a pending request, preserving the complete state on rejection.
