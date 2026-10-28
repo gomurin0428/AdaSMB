@@ -117,8 +117,8 @@ array lower bounds. This is not a proof of the socket result itself: the
 adapter must supply the actual returned index and valid initialized bytes.
 Socket pumps, retry decisions, deadlines and exception cleanup remain trusted.
 
-Only `Core_Transport`'s loop invariants use runtime assertion policy `Ignore`
-to avoid rescanning a growing prefix on every copied byte. This does **not**
+Prefix-processing loop invariants in `Core_Transport` and `Core_Text` use
+runtime assertion policy `Ignore` to avoid repeatedly rescanning a growing prefix. This does **not**
 remove them from GNATprove: their initialization and preservation are proved,
 as specified by [AdaCore's assertion-policy documentation](https://docs.adacore.com/spark2014-docs/html/ug/en/source/assertion_pragmas.html).
 Compiler run-time checks and pre/postcondition checking remain enabled in the

@@ -1,5 +1,91 @@
 # GNATprove and test report
 
+## NTLM username uppercase contract
+
+`Uppercase_NTLM_User` now specifies exact status priority: unequal input and
+output lengths yield `SMB.Invalid_Length` before encoding is considered;
+otherwise an ASCII input yields `SMB.Ok`, and a non-ASCII input yields
+`SMB.Invalid_Encoding`. On success, ASCII lowercase `a` through `z` map to
+`A` through `Z`; all other ASCII characters remain unchanged.
+`SMB.Invalid_Length` guarantees every output character is zero. There is no
+cleared-output guarantee for `SMB.Invalid_Encoding`: the existing partial
+converted prefix remains, and `SMB.Text.NTLM_Username` raises
+`SMB.Authentication_Error` for the failure.
+
+The case mapper continues to accept empty input and NUL as ASCII; it is not
+credential validation. `Validate_Credentials` separately rejects an empty
+username, and `UTF8_To_UTF16` rejects NUL under the existing SMB policy.
+
+The initial output zeroing is now the equivalent aggregate assignment
+`Output := (others => Character'Val (0));`, replacing the zeroing loop to
+provide definite initialization to GNATprove without changing behavior.
+The mapping loop and runtime rejection rules are unchanged. Its proof
+invariants separately describe the ASCII input prefix using input indices
+and the converted output prefix using offsets. The local
+`Assertion_Policy (Loop_Invariant => Ignore)` keeps quantified invariants
+from being evaluated at runtime while GNATprove still proves them. No
+`Relaxed_Initialization`, temporary `pragma Assert`, assumptions, or proof suppressions
+remain for this contract.
+
+`Test_NTLM_Uppercase` covers 4,100 cases: all 256 one-byte values; each byte
+at each of three positions in `azm` with capacities 0 through 4 (3,840
+cases); empty input at capacities 0 and 1; a 4,096-character lowercase
+credential; and a one-character input/output starting at `Positive'Last`.
+Successful bytes are checked against `Ada.Characters.Handling.To_Upper`,
+independently of the Ghost mapping helper. Matching-length cases also check
+the public `SMB.Text.NTLM_Username` adapter, including
+`Authentication_Error` for non-ASCII input. The helper's output bounds are
+formed without overflowing in the `Positive'Last` case.
+
+The authorized sensitivity control used both `origin/main` Core_Text files
+and changed only the mapper's `Character_Code - 32` to `-31`. On that
+initial test version with baseline Core_Text sources, the strict build passed and the selector failed at
+`NTLM uppercase character correspondence`. The authored files were restored
+byte-for-byte; their restored hashes were spec
+`d961d11bc067907622e895ab630036523f8a21fc90592bff6d0c831cbb59b002` and
+body `94e9b81307083e21efc30f89652c036ff865bee4aa27d38a41b29ee51f1c653e`.
+The restored build and selector passed. This control preceded the later
+aggregate initialization and final proof-invariant refinements; the final
+source was separately rebuilt and retested below.
+
+The first focused proof exited 1 with 344 checks and five unproved checks
+(four output-initialization checks and the status postcondition). After the
+aggregate initialization rewrite, one status-postcondition check remained
+unproved. Splitting the invariant into an input-indexed ASCII prefix and an
+offset-indexed output mapping prefix resolved that obligation. Temporary
+diagnostic assertions were removed; the final whole-unit proof below is
+from the final source. A separate limited-subprogram run also passed, but
+the reported whole-unit and full-project statistics are from fresh-output
+runs, not extrapolated from that limited run.
+
+Final validation:
+
+- Candidate GNAT14 strict test-suite build:
+  `gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe` — exit 0.
+- `./build/bin/test_suite ntlm-uppercase` — exit 0, 4,100 cases passed.
+- Fresh whole-unit proof in `ntlm-uppercase-final-focused` — exit 0, 341
+  checks (39 flow, 302 prover), zero unproved, zero justified, zero
+  warnings, zero `pragma Assume` statements, one unit (23 subprograms and
+  packages).
+- `make test` — exit 0; the full Ada test suite passed, including the
+  4,100-case selector.
+- `make check GPRBUILD="gprbuild -f"` — exit 0, including source dependency
+  checks.
+- `sudo -n python3 tests/samba_integration.py` — exit 0.
+- Fresh full proof in `ntlm-uppercase-full` — exit 0, 4,546 checks (719
+  flow, 3,827 prover), zero unproved, zero justified, 69 warnings, zero
+  `pragma Assume` statements, 13 units.
+- `git diff --check` — exit 0.
+
+The fresh-output proof commands were:
+
+```text
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=ntlm-uppercase-final-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+gnatprove -P proof.gpr --subdirs=ntlm-uppercase-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+These are not reported as a literal `make prove` run.
+
 ## UTF-16 validator contract
 
 Ghost helpers model a little-endian UTF-16 code unit, whether an individual

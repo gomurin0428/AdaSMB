@@ -62,13 +62,33 @@ package SMB.Core_Text is
         elsif Valid_UTF16_Text (Input) then SMB.Ok
         else SMB.Invalid_Encoding);
 
+   function ASCII_Only (Input : String) return Boolean is
+     (for all C of Input => Character'Pos (C) <= 16#7F#)
+   with Ghost;
+
+   function NTLM_Uppercase_Character (C : Character) return Character is
+     (if C in 'a' .. 'z' then Character'Val (Character'Pos (C) - 32) else C)
+   with Ghost;
+
    procedure Uppercase_NTLM_User
      (Input : String;
       Output : out String;
       Status : out SMB.Core_Status)
    with Pre =>
      Input'Length <= SMB.Maximum_Frame_Size
-     and Output'Length <= SMB.Maximum_Frame_Size;
+     and Output'Length <= SMB.Maximum_Frame_Size,
+     Post => Status =
+       (if Output'Length /= Input'Length then SMB.Invalid_Length
+        elsif ASCII_Only (Input) then SMB.Ok
+        else SMB.Invalid_Encoding)
+       and then
+         (if Status = SMB.Ok and then Input'Length > 0 then
+            (for all Offset in 0 .. Input'Length - 1 =>
+               Output (Output'First + Offset) =
+                 NTLM_Uppercase_Character (Input (Input'First + Offset))))
+       and then
+         (if Status = SMB.Invalid_Length then
+            (for all C of Output => C = Character'Val (0)));
 
    function Is_Path_Separator (C : Character) return Boolean is
      (C = '/' or else C = '\');
