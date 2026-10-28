@@ -58,11 +58,14 @@ units. The focused and full summaries are
 `build/proof-obj/crypto-equality-focused/gnatprove/gnatprove.out` and
 `build/proof-obj/crypto-equality-full/gnatprove/gnatprove.out`.
 
-The supplied baseline was compared with the forced-build disassembly:
-`/home/ubuntu/crypto-equal-final-disassembly.txt` and
-`/home/ubuntu/crypto-equal-disassembly.diff`. The raw diff is non-empty
-(2,978 bytes); this comparison is not a timing proof or a binary
-constant-time proof. CI and Windows tests were not run for this revision.
+The pre-change and forced-build disassemblies were compared using
+`objdump -d --disassemble=smb__crypto__constant_time_equal build/obj/smb-crypto.o`.
+The instruction differences are limited to five source-line arguments to
+existing range, overflow, and index-check failure handlers (confirmed with
+`objdump -dr` relocations). No array-equality oracle or invariant evaluation
+was added to the generated comparison loop. This observation is specific to
+the checked Linux GNAT 14 build, not a timing proof or a guarantee for other
+compiler configurations. CI and Windows tests were not run for this revision.
 
 ## UTF-16 to UTF-8 unused output guarantee
 
