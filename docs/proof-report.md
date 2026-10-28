@@ -24,17 +24,18 @@ aspects. Its former precondition and postcondition are retained as body
 assertions, and a constant-time body assertion identifies the little-endian
 unit just written. GNATprove uses contextual analysis at the three call
 sites; the body checks are proved there rather than reported as separate
-checks for `Store_Unit`. This avoids a per-scalar quantified frame
-postcondition and quadratic runtime invariant evaluation. The
+checks for `Store_Unit`. This exposes byte updates without a per-scalar
+quantified frame postcondition. The
 `UTF16_Unit` and `Valid_UTF16_Unit` expression functions use
 `Annotate => (GNATprove, Inline_For_Proof)`, so GNATprove reasons from their
 expression definitions. This follows the
 [AdaCore proof-inlining guidance](https://docs.adacore.com/spark2014-docs/html/ug/en/appendix/additional_annotate_pragmas.html#annotation-for-inlining-functions-for-proof)
 and does not introduce assumptions or weaken a contract. The local
 `Assertion_Policy (Loop_Invariant => Ignore)` disables runtime evaluation
-of loop invariants only; GNATprove still proves them. Body assertions and
-public postconditions remain enabled and checked. The valid-produced-prefix
-and no-trailing-high-surrogate loop invariant remains unchanged. No encoding
+of loop invariants only, avoiding quadratic prefix scans; GNATprove still
+proves them. Body assertions and public postconditions remain enabled and
+checked. The new loop invariant covers the valid produced prefix and
+excludes a trailing high surrogate. No encoding
 assignment, conversion branch, or status decision changed.
 
 `Test_UTF_Capacity` adds coverage for the produced prefix:
