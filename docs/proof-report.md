@@ -2,8 +2,8 @@
 
 ## Lifecycle transition failure atomicity
 
-`Initialize` now specifies its complete successful reset: it leaves the Engine
-disconnected with a fresh nonzero owner, zero epoch/session/tree/maximum
+`Initialize` now specifies its successful reset of observable connection fields:
+it leaves the Engine disconnected with a nonzero owner, zero epoch/session/tree/maximum
 transfer sizes and async identifier, no handles, pending request, validated
 receipt or signing key, and zeroed signing-key bytes. On failure it preserves
 the entire state and returns `SMB.Invalid_State_Status` when the prior state is
@@ -13,10 +13,10 @@ otherwise it returns `SMB.Counter_Exhausted`.
 `Mark_Connected` now specifies that success starts from a disconnected state
 with a nonzero owner, changes the phase to transport-connected, and preserves
 the owner, epoch, session/tree identifiers, transfer limits, signing key,
-handle table, pending-request state and receipt state. Failure preserves the
+handle table, pending-request flag and receipt-valid flag. Failure preserves the
 entire state and returns `SMB.Invalid_State_Status`. The runtime
-implementation is unchanged. Counter exhaustion is covered by the contract
-and proof, not by a runtime test.
+implementation is unchanged. State preservation on counter-exhaustion rejection
+is covered by the contract and proof, not by a runtime test.
 
 `Test_Lifecycle_Atomicity` checks five rejected initializations and six rejected
 transport transitions. Every rejection compares the complete state and exact
