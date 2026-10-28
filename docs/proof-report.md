@@ -1,5 +1,83 @@
 # GNATprove and test report
 
+## UTF-16 scalar extraction contract
+
+The private Ghost expression function `UTF16_Scalar_At` models one
+little-endian UTF-16 scalar at an even byte offset, independently of the
+array's lower bound. Its precondition bounds the input by
+`SMB.Maximum_Frame_Size` and the position by the input length. It returns
+zero for a missing or truncated scalar, NUL under the SMB no-NUL policy, or an
+unpaired surrogate; otherwise it returns the BMP unit or reconstructs a
+supplementary scalar from the high- and low-surrogate low ten bits.
+Noncharacters remain valid. The model follows
+[RFC 2781 sections 2.2 and 3.1](https://www.rfc-editor.org/rfc/rfc2781.html).
+
+`UTF16_To_UTF8` records the current byte offset in the Ghost variable
+`Scalar_Start` before its existing scalar extraction. After successful
+extraction, checked assertions establish that the extracted scalar equals
+`UTF16_Scalar_At (Input, Scalar_Start)` and that the offset advanced exactly
+two bytes for a BMP scalar or four for a surrogate pair. Further checked
+assertions establish validity of the one newly consumed UTF-16 unit, and of
+the second unit for a supplementary scalar. The existing scalar extraction,
+rejection ordering, output-capacity handling, runtime encoder, public limits,
+and status behavior are unchanged.
+
+The unchanged `UTF16_To_UTF8` loop invariant block and loop variant now sit
+immediately after `Emit_Scalar`. This proof cutpoint exposes the validated
+one- or two-unit frontier to the existing consumed-prefix invariant,
+including on the final successful iteration; it adds no whole-prefix
+runtime scan. `pragma Assertion_Policy (Loop_Invariant => Ignore)` retains
+its existing runtime-only effect; the loop invariants remain GNATprove
+obligations and are not proof suppressions.
+
+In the existing `UTF8_To_UTF16.Store_Unit`, the checked guard now includes
+even `Used`. Before the unchanged little-endian byte assignments, checked
+constant-time assertions establish
+`2 * (Previous_Used / 2) = Previous_Used` and exact byte reconstruction:
+`Natural (SMB.Byte (Unit mod 256)) + 256 * Natural (SMB.Byte (Unit / 256)) = Unit`.
+The existing identity assertion for the newly stored unit remains. These
+checks separate alignment and byte reconstruction from the array update;
+they do not add assumptions or change runtime byte assignments. No public
+interface, failure-position guarantee, whole-string validation result, or
+whole-codec roundtrip theorem is claimed by this single-step extraction
+contract.
+
+The initial strict build and targeted `utf-capacity` selector passed on the
+first scalar-model revision. The later auxiliary assertions and invariant
+relocation were covered by the final full unit and forced strict builds below.
+The existing Unicode corpus, oracle, and negative
+controls were reused without new test cases or fixtures. On the final source,
+`make unicode-test` exited 0 and reported **1,287,503 fixtures** across the
+unchanged scalar-pair, fixed-sequence, UTF-8 byte, UTF-16 unit, mixed, random,
+and malformed-input categories. Final `make test`, forced strict
+`make check GPRBUILD="gprbuild -f"`, and
+`sudo -n python3 tests/samba_integration.py` also exited 0.
+
+The focused whole-unit proof used fresh `utf16-scalar-bottom-focused` output:
+
+```sh
+gnatprove -P proof.gpr -u smb-core_text.adb --subdirs=utf16-scalar-bottom-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 608 checks (42 flow, 566 prover), zero unproved, zero
+justified, zero warnings, zero `pragma Assume` statements, and one unit
+(25 subprograms and packages).
+
+The full proof used fresh `utf16-scalar-full` output:
+
+```sh
+gnatprove -P proof.gpr --subdirs=utf16-scalar-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+It exited 0 with 4,813 checks (722 flow, 4,091 prover), zero unproved,
+zero justified, 69 warnings, zero `pragma Assume` statements, and 13 units.
+This explicit fresh-output run is not a literal `make prove` result. The
+focused and full summaries are
+`build/proof-obj/utf16-scalar-bottom-focused/gnatprove/gnatprove.out` and
+`build/proof-obj/utf16-scalar-full/gnatprove/gnatprove.out`.
+
+`git diff --check` was run after this section was added.
+
 ## UTF-8 scalar emission contract
 
 The private `UTF16_To_UTF8.Emit_Scalar` precondition requires a nonzero scalar

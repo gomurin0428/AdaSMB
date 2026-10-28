@@ -54,6 +54,26 @@ package body SMB.Core_Text is
      Pre => Value'Length <= SMB.Maximum_Frame_Size
        and then Position <= Value'Length;
 
+   function UTF16_Scalar_At
+     (Input : SMB.Bytes; Position : Natural) return Natural is
+     (if Input'Length - Position < 2 then 0
+      elsif UTF16_Unit (Input, Position / 2) = 0 then 0
+      elsif UTF16_Unit (Input, Position / 2) in 16#D800# .. 16#DBFF# then
+         (if Input'Length - Position >= 4
+           and then UTF16_Unit (Input, Position / 2 + 1)
+             in 16#DC00# .. 16#DFFF#
+          then
+             16#10000#
+             + (UTF16_Unit (Input, Position / 2) mod 1_024) * 1_024
+             + UTF16_Unit (Input, Position / 2 + 1) mod 1_024
+          else 0)
+      elsif UTF16_Unit (Input, Position / 2) in 16#DC00# .. 16#DFFF# then 0
+      else UTF16_Unit (Input, Position / 2))
+   with Ghost,
+     Pre => Input'Length <= SMB.Maximum_Frame_Size
+       and then Position <= Input'Length
+       and then Position mod 2 = 0;
+
    procedure Decode_UTF8
      (Value : String;
       Position : in out Natural;
@@ -171,7 +191,11 @@ package body SMB.Core_Text is
          pragma Assert
            (Output'Length <= 2 * SMB.Maximum_Frame_Size
             and then Unit <= 16#FFFF# and then Used <= Output'Length
-            and then Output'Length - Used >= 2);
+            and then Output'Length - Used >= 2 and then Used mod 2 = 0);
+         pragma Assert (2 * (Previous_Used / 2) = Previous_Used);
+         pragma Assert
+           (Natural (SMB.Byte (Unit mod 256))
+            + 256 * Natural (SMB.Byte (Unit / 256)) = Unit);
          Output (Output'First + Used) := SMB.Byte (Unit mod 256);
          Output (Output'First + Used + 1) := SMB.Byte (Unit / 256);
          Used := Used + 2;
@@ -230,6 +254,7 @@ package body SMB.Core_Text is
       Status : out SMB.Core_Status) is
       pragma Assertion_Policy (Loop_Invariant => Ignore);
       Offset : Natural := 0;
+      Scalar_Start : Natural with Ghost;
       Scalar : Natural;
       First : Natural;
       Second : Natural;
@@ -283,18 +308,7 @@ package body SMB.Core_Text is
          return;
       end if;
       while Offset < Input'Length loop
-         pragma Loop_Invariant (Offset <= Input'Length);
-         pragma Loop_Invariant (Offset mod 2 = 0);
-         pragma Loop_Invariant (Used <= Output'Length);
-         pragma Loop_Invariant (Used <= 2 * Offset);
-         pragma Loop_Invariant ((Used = 0) = (Offset = 0));
-         pragma Loop_Invariant
-           (if Offset > 0 then
-              (for all Index in 0 .. Offset / 2 - 1 =>
-                 Valid_UTF16_Unit (Input, Index))
-              and then UTF16_Unit (Input, Offset / 2 - 1)
-                not in 16#D800# .. 16#DBFF#);
-         pragma Loop_Variant (Increases => Offset);
+         Scalar_Start := Offset;
          First := Natural (Input (Input'First + Offset))
            + Natural (Input (Input'First + Offset + 1)) * 256;
          Offset := Offset + 2;
@@ -321,11 +335,31 @@ package body SMB.Core_Text is
          else
             Scalar := First;
          end if;
+         pragma Assert (Scalar = UTF16_Scalar_At (Input, Scalar_Start));
+         pragma Assert
+           (Offset = Scalar_Start + (if Scalar > 16#FFFF# then 4 else 2));
+         pragma Assert
+           (Valid_UTF16_Unit (Input, Scalar_Start / 2)
+            and then
+              (if Scalar > 16#FFFF# then
+                 Valid_UTF16_Unit (Input, Scalar_Start / 2 + 1)));
          if Encoded_Size (Scalar) > Output'Length - Used then
             Status := SMB.Invalid_Length;
             return;
          end if;
          Emit_Scalar (Scalar);
+         pragma Loop_Invariant (Offset <= Input'Length);
+         pragma Loop_Invariant (Offset mod 2 = 0);
+         pragma Loop_Invariant (Used <= Output'Length);
+         pragma Loop_Invariant (Used <= 2 * Offset);
+         pragma Loop_Invariant ((Used = 0) = (Offset = 0));
+         pragma Loop_Invariant
+           (if Offset > 0 then
+              (for all Index in 0 .. Offset / 2 - 1 =>
+                 Valid_UTF16_Unit (Input, Index))
+              and then UTF16_Unit (Input, Offset / 2 - 1)
+                not in 16#D800# .. 16#DBFF#);
+         pragma Loop_Variant (Increases => Offset);
       end loop;
       Status := SMB.Ok;
    end UTF16_To_UTF8;
