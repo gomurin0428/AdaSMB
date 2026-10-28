@@ -14,6 +14,9 @@ is
    function Next_Request_Id (State : Engine_State) return SMB.QWord is
      (State.Next_Message_Id);
 
+   function Last_Allocated_Handle_Ticket (State : Engine_State) return SMB.QWord is
+     (State.Next_Ticket);
+
    function Bounded_Slice
      (Packet : SMB.Bytes;
       Offset, Length : Natural) return SMB.Bytes

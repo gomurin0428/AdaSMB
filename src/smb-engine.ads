@@ -185,6 +185,9 @@ is
    function Next_Request_Id (State : Engine_State) return SMB.QWord
    with Ghost;
 
+   function Last_Allocated_Handle_Ticket (State : Engine_State) return SMB.QWord
+   with Ghost;
+
    procedure Initialize
      (State : in out Engine_State;
       Status : out SMB.Core_Status)
@@ -208,6 +211,7 @@ is
           and Current_Owner_Id (State) = Last_Allocated_Owner_Id
           and Current_Owner_Id (State) /= 0
           and Current_Epoch (State) = 0
+          and Last_Allocated_Handle_Ticket (State) = 0
           and Current_Session_Id (State) = 0
           and Current_Tree_Id (State) = 0
           and Current_Max_Read (State) = 0
@@ -232,6 +236,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       and then
        (if Status = SMB.Ok then
           Current_Phase (State'Old) = Disconnected
           and Current_Owner_Id (State'Old) /= 0
@@ -256,6 +262,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       and then
        Status =
          (if Current_Phase (State'Old) = Transport_Connected
              and then not Has_Pending_Request (State'Old)
@@ -296,6 +304,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       and then
        (if Status = SMB.Ok then
           Current_Owner_Id (State) = Current_Owner_Id (State'Old)
           and Current_Epoch (State) = Current_Epoch (State'Old)
@@ -322,6 +332,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       and then
        (if Status = SMB.Ok then
           Current_Owner_Id (State) = Current_Owner_Id (State'Old)
           and Current_Epoch (State) = Current_Epoch (State'Old)
@@ -345,6 +357,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       and then
        Status =
          (if Current_Phase (State'Old) = Authenticated
              and then not Has_Pending_Request (State'Old)
@@ -387,6 +401,8 @@ is
       Close_Token : Handle_Token := (others => 0))
    with
      Post =>
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       and then
        Connection_Context_Equivalent (State'Old, State)
        and then
        Current_Owner_Id (State) = Current_Owner_Id (State'Old)
@@ -398,6 +414,12 @@ is
              and then Next_Request_Id (State'Old) = SMB.QWord'Last
           then Status = SMB.Counter_Exhausted)
        and then
+         (if not Has_Pending_Request (State'Old)
+             and then Current_Phase (State'Old) = Share_Connected
+             and then Command = 5 and then Request_Signed and then Response_Signed
+             and then Last_Allocated_Handle_Ticket (State'Old) = SMB.QWord'Last
+          then Status = SMB.Counter_Exhausted)
+       and then
        (if Status = SMB.Ok then
           Has_Pending_Request (State)
           and Next_Request_Id (State'Old) < SMB.QWord'Last
@@ -405,6 +427,7 @@ is
           and Next_Request_Id (State) = Next_Request_Id (State'Old) + 1
           and not Has_Validated_Response (State)
           and Current_Async_Id (State) = 0
+          and (if Command = 5 then Last_Allocated_Handle_Ticket (State) < SMB.QWord'Last)
           and Expected.Command = Command
           and Message_Id = Expected.Message_Id
           and Expected.Request_Signed = Request_Signed
@@ -436,6 +459,9 @@ is
    with
      Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Last_Allocated_Handle_Ticket (State) =
+         (if Status = SMB.Ok then Last_Allocated_Handle_Ticket (State'Old) else 0)
+       and then
        (if Status = SMB.Ok then
           (if Is_Interim then
              Interim_Context_Equivalent (State'Old, State)
@@ -472,6 +498,11 @@ is
    with
      Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Last_Allocated_Handle_Ticket (State) =
+         (if Status /= SMB.Ok
+             or else (Pending_Command (State'Old) = 2 and then Nt_Status = SMB.Success)
+          then 0 else Last_Allocated_Handle_Ticket (State'Old))
+       and then
        (if Status /= SMB.Ok then
           Current_Phase (State) = Disconnected
           and not Has_Signing_Key (State)
@@ -604,7 +635,15 @@ is
       Status : out SMB.Core_Status)
    with
       Post =>
+       (if Status = SMB.Counter_Exhausted then
+          Last_Allocated_Handle_Ticket (State) = SMB.QWord'Last)
+       and then
        (if Status = SMB.Ok then
+          Last_Allocated_Handle_Ticket (State'Old) < SMB.QWord'Last
+          and Last_Allocated_Handle_Ticket (State) =
+            Last_Allocated_Handle_Ticket (State'Old) + 1
+          and Token.Ticket = Last_Allocated_Handle_Ticket (State)
+          and
           Current_Phase (State'Old) = Share_Connected
           and not Has_Pending_Request (State'Old)
           and Create_Receipt_Matches_File_Id (State'Old, File_Id)
@@ -644,6 +683,8 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       and then
        Status =
          (if Has_Pending_Request (State'Old)
           then SMB.Invalid_State_Status else SMB.Ok)
@@ -675,6 +716,8 @@ is
       Close_Token : Handle_Token := (others => 0))
    with
      Post =>
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       and then
        (if Status = SMB.Ok then
           Current_Phase (State'Old) = Share_Connected
           and not Has_Pending_Request (State'Old)
@@ -706,6 +749,7 @@ is
        and Current_Max_Read (State) = 0
        and Current_Max_Write (State) = 0
        and Next_Request_Id (State) = 0
+       and Last_Allocated_Handle_Ticket (State) = 0
        and SMB.Core_Protocol."="
          (Current_Response_Info (State),
           SMB.Core_Protocol.Response_Info'(others => <>))

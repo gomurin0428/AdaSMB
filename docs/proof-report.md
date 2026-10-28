@@ -1,5 +1,62 @@
 # GNATprove and test report
 
+## Handle ticket allocation and continuity
+
+The Ghost getter `Last_Allocated_Handle_Ticket` exposes the private
+`Next_Ticket` counter to contracts. The operation-level contracts specify
+that successful `Initialize` and all `Invalidate` calls reset it to zero.
+Successful `Register_Handle` calls require the old counter to be below
+`SMB.QWord'Last`, advance it by exactly one, and assign that value to the
+returned token. A `SMB.Counter_Exhausted` registration result implies the
+counter is already at `SMB.QWord'Last`; tickets do not wrap. Other lifecycle
+operations, handle close, request reservation, and receipt discard preserve
+the counter. Interim-response inspection preserves it on success and resets
+it on failure. `Accept_Response` preserves it except when validation failure
+invalidates the state or a successful LOGOFF resets the Engine. In particular,
+a successful TREE_DISCONNECT clears the handle table but retains the ticket.
+The CREATE reservation contract also specifies the exact counter-exhaustion
+condition without a test-only setter.
+
+These are contracts over each Engine operation, not a separate whole-history
+temporal theorem or a global ticket registry. Counter exhaustion is
+proof-only; no runtime hook makes the boundary reachable.
+
+`Test_Handle_Capacity`, selected by `engine-receipts`, verifies tickets
+1 through 256 for the initial registrations. After the capacity refusal and
+a CLOSE, reusing a slot receives ticket 257. It then accepts synthetic signed
+TREE_DISCONNECT and TREE_CONNECT responses using the same TreeId, while
+preserving owner and epoch, and verifies that the next handle receives
+ticket 258. It rejects all 256 prior tokens and the earlier closed token,
+while accepting the new token. This internal synthetic fixture is not a
+native-server observation and does not claim that a real server permits
+TreeId reuse.
+
+Two sensitivity controls each used both Engine files from `origin/main` with
+the authored tests. Changing only `Register_Handle`'s ticket increment from
+`+ 1` to `+ 2` passed the strict build (exit 0), then the selector failed
+(exit 1) with `handle tickets did not advance exactly once per
+registration`. Adding only `State.Next_Ticket := 0;` to the successful
+TREE_DISCONNECT branch passed the strict build and failed the selector with
+`share reconnection recycled handle tickets or changed identity`. After each
+control, both authored Engine files were restored byte-for-byte: the spec
+SHA-256 was
+`d2cbe79a171da4def7a906057c86544c771b03797d9b4983ef0e641f4ab17181` and the
+body SHA-256 was
+`d7e7ea04a7df91966fdae3f2dd45d0e2958a4f4a9f0cdc9dab36cd01ee9176cc`.
+The strict rebuild and selector passed after each restoration.
+
+The focused Engine proof in fresh `handle-ticket-focused` output exited 0
+with 185 checks (71 flow, 114 prover), 0 unproved, 0 justified, one warning
+at `smb-engine.adb:436` concerning `Nt_Status`, 0 `pragma Assume`, and one
+unit analyzed. The fresh-output full proof in `handle-ticket-full` exited 0
+with 4,488 checks (714 flow, 3,774 prover), 0 unproved, 0 justified,
+69 warnings, 0 `pragma Assume`, and 13 units. This was a fresh-output proof,
+not a literal `make prove` run.
+
+With Candidate GNAT14, the strict build, `engine-receipts`, `make test`,
+`make check GPRBUILD="gprbuild -f"`, and full Samba integration all exited 0.
+The final `git diff --check` result is recorded with the branch changes.
+
 ## Invalidation reset contract
 
 `Invalidate`'s runtime implementation is unchanged and matches
