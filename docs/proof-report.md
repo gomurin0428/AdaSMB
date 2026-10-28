@@ -24,8 +24,8 @@ proves them. The model and exact status contract are not weakened.
 `unicode_probe.Check_16` now calls `Validate_UTF16` on the rebased input
 starting at index 29 and compares its status with the existing strict
 Python-codec oracle before running the existing conversion and public-adapter
-checks. The existing corpus remains unchanged at 1,287,503 fixtures; it was
-not regenerated. The validator receives 1,201,703 calls: 1,112,063 scalar
+checks. The existing corpus remains unchanged at 1,287,503 fixtures; its
+generator and categories were not changed. The validator receives 1,201,703 calls: 1,112,063 scalar
 pairs, 4 fixed sequences, 4,096 mixed sequences, 65,536 UTF-16 code units,
 20,000 random UTF-16 sequences, and 4 malformed UTF-16 sequences. Two
 negative controls require the validator-specific diagnostic for valid ASCII
