@@ -2,9 +2,9 @@
 
 ## UTF-16 conversion input validity
 
-`UTF16_To_UTF8` retains its existing `Used` bounds and empty-input
-equivalence guarantee. Its success postcondition now additionally requires
-an even input byte length and `Valid_UTF16_Text (Input)`. This establishes
+`UTF16_To_UTF8` retains its existing `Used` bounds and its success guarantees
+of even input byte length and empty-input equivalence. Its success
+postcondition now additionally requires `Valid_UTF16_Text (Input)`. This establishes
 validity of the successful input, not exact UTF-8 output correspondence or
 the exact precedence of all failure statuses. Existing partial `Used` and
 output contents on failure are unchanged and are not specified more
