@@ -220,6 +220,49 @@ procedure Test_Suite is
       Check_Vector
         (Smile & "A", SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#, 16#41#, 0), 4, 4);
       declare
+         Output : SMB.Bytes (11 .. 16) := (others => 16#FF#);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF8_To_UTF16 ("", Output, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = 0
+            and then (for all B of Output => B = 0),
+            "empty UTF-8 succeeds with unused output capacity");
+      end;
+      declare
+         Input : constant String (11 .. 13) := "AB" & Character'Val (16#FF#);
+         Output : SMB.Bytes (23 .. 28);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF8_To_UTF16
+           (Input, Output (23 .. 24), Used, Status);
+         Assert
+           (Status = SMB.Invalid_Length and then Used = 2
+            and then Output (23 .. 24) = SMB.Bytes'(16#41#, 0),
+            "UTF-8 capacity failure can precede a later encoding failure");
+         SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
+         Assert
+           (Status = SMB.Invalid_Encoding and then Used = 4
+            and then Output = SMB.Bytes'(16#41#, 0, 16#42#, 0, 0, 0),
+            "ample UTF-16 capacity exposes the invalid UTF-8 suffix");
+      end;
+      declare
+         Input : constant String (5 .. 4 + SMB.Maximum_Frame_Size) :=
+           (others => 'A');
+         Output : SMB.Bytes (11 .. 10 + 2 * Input'Length);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = Output'Length
+            and then (for all I in Output'Range =>
+              Output (I) = (if (I - Output'First) mod 2 = 0 then 16#41# else 0)),
+            "maximum UTF-8 ASCII input fits the two-times capacity bound");
+      end;
+      declare
          Input : constant String (Positive'Last - 3 .. Positive'Last) :=
            Character'Val (16#F4#) & Character'Val (16#8F#)
            & Character'Val (16#BF#) & Character'Val (16#BF#);
