@@ -302,11 +302,10 @@ package body SMB.Core_Text is
      (Input : String;
       Output : out String;
       Status : out SMB.Core_Status) is
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
       Character_Code : Natural;
    begin
-      for Index in Output'Range loop
-         Output (Index) := Character'Val (0);
-      end loop;
+      Output := (others => Character'Val (0));
       if Output'Length /= Input'Length then
          Status := SMB.Invalid_Length;
          return;
@@ -322,6 +321,13 @@ package body SMB.Core_Text is
                Character_Code := Character_Code - 32;
             end if;
             Output (Output'First + Offset) := Character'Val (Character_Code);
+            pragma Loop_Invariant
+              (for all J in Input'First .. Input'First + Offset =>
+                 Character'Pos (Input (J)) <= 16#7F#);
+            pragma Loop_Invariant
+              (for all J in 0 .. Offset =>
+                 Output (Output'First + J) =
+                   NTLM_Uppercase_Character (Input (Input'First + J)));
          end loop;
       end if;
       Status := SMB.Ok;

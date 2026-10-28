@@ -1,6 +1,7 @@
 with Ada.Text_IO;
 with Ada.Streams;
 with Ada.Command_Line;
+with Ada.Characters.Handling;
 with SMB;
 with SMB.Core_Auth;
 with SMB.Clock;
@@ -81,6 +82,76 @@ procedure Test_Suite is
       Check ("user", Nul, "", SMB.Unsupported_Feature);
       Check ("user", "", Nul, SMB.Unsupported_Feature);
    end Test_Authentication_Preflight;
+
+   procedure Test_NTLM_Uppercase is
+      Count : Natural := 0;
+
+      procedure Check
+        (Input : String; Capacity : Natural; Output_First : Positive := 29) is
+         Output : String (Output_First .. Output_First - 1 + Capacity) :=
+           (others => '!');
+         Status : SMB.Core_Status;
+         Expected_Status : constant SMB.Core_Status :=
+           (if Capacity /= Input'Length then SMB.Invalid_Length
+            elsif (for all C of Input => Character'Pos (C) < 128) then SMB.Ok
+            else SMB.Invalid_Encoding);
+      begin
+         SMB.Core_Text.Uppercase_NTLM_User (Input, Output, Status);
+         Assert (Status = Expected_Status, "NTLM uppercase exact status");
+         if Status = SMB.Ok then
+            Assert
+              (Output = Ada.Characters.Handling.To_Upper (Input),
+               "NTLM uppercase character correspondence");
+         elsif Status = SMB.Invalid_Length then
+            Assert
+              ((for all C of Output => C = Character'Val (0)),
+               "NTLM uppercase length rejection clears output");
+         end if;
+         if Capacity = Input'Length then
+            if Expected_Status = SMB.Ok then
+               Assert
+                 (SMB.Text.NTLM_Username (Input) =
+                    Ada.Characters.Handling.To_Upper (Input),
+                  "public NTLM uppercase correspondence");
+            else
+               begin
+                  declare
+                     Unexpected : constant String :=
+                       SMB.Text.NTLM_Username (Input);
+                     pragma Unreferenced (Unexpected);
+                  begin
+                     raise Program_Error with "public NTLM accepted non-ASCII";
+                  end;
+               exception
+                  when SMB.Authentication_Error => null;
+               end;
+            end if;
+         end if;
+         Count := Count + 1;
+      end Check;
+   begin
+      for Code in 0 .. 255 loop
+         Check (String'(17 => Character'Val (Code)), 1);
+         for Position in 17 .. 19 loop
+            declare
+               Input : String (17 .. 19) := "azm";
+            begin
+               Input (Position) := Character'Val (Code);
+               for Capacity in 0 .. 4 loop
+                  Check (Input, Capacity);
+               end loop;
+            end;
+         end loop;
+      end loop;
+      Check ("", 0);
+      Check ("", 1);
+      Check
+        (String'(1 .. SMB.Core_Auth.Maximum_Credential_Bytes => 'a'),
+         SMB.Core_Auth.Maximum_Credential_Bytes);
+      Check (String'(Positive'Last => 'z'), 1, Positive'Last);
+      Assert (Count = 4_100, "NTLM uppercase coverage");
+      Ada.Text_IO.Put_Line ("NTLM uppercase: 4100 cases passed");
+   end Test_NTLM_Uppercase;
 
    procedure Test_UTF_Capacity is
       procedure Check_Vector
@@ -6745,6 +6816,7 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "clock-core"
                  and then Ada.Command_Line.Argument (1) /= "path-contracts"
                  and then Ada.Command_Line.Argument (1) /= "utf-capacity"
+                 and then Ada.Command_Line.Argument (1) /= "ntlm-uppercase"
                  and then Ada.Command_Line.Argument (1) /= "engine-receipts"
                  and then Ada.Command_Line.Argument (1) /= "auth-preflight"
                  and then Ada.Command_Line.Argument (1) /= "authentication"
@@ -6810,6 +6882,8 @@ begin
       elsif Ada.Command_Line.Argument (1) = "utf-capacity" then
          Test_UTF_Capacity;
          Ada.Text_IO.Put_Line ("AdaSMB UTF capacity tests passed");
+      elsif Ada.Command_Line.Argument (1) = "ntlm-uppercase" then
+         Test_NTLM_Uppercase;
       elsif Ada.Command_Line.Argument (1) = "path-contracts" then
          Test_Path_Contracts;
          Ada.Text_IO.Put_Line ("AdaSMB path contract tests passed");
@@ -6835,6 +6909,7 @@ begin
    Test_Core_Clock;
    Test_Path_Contracts;
    Test_UTF_Capacity;
+   Test_NTLM_Uppercase;
    Test_Core_Transport;
    Test_Core_Wire;
    Test_Wire_Primitive_Boundaries;
