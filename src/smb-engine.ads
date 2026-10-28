@@ -178,14 +178,31 @@ is
      (State : Engine_State;
       Token : Handle_Token) return Boolean
    with Ghost;
+
+   function Last_Allocated_Owner_Id return SMB.QWord
+   with Ghost, Global => (Input => Identity_Registry);
+
    procedure Initialize
      (State : in out Engine_State;
       Status : out SMB.Core_Status)
    with
      Global => (In_Out => Identity_Registry),
      Post =>
+       Last_Allocated_Owner_Id = Last_Allocated_Owner_Id'Old
+         + (if Status = SMB.Ok then 1 else 0)
+       and (Status /= SMB.Ok
+            or Last_Allocated_Owner_Id'Old < SMB.QWord'Last)
+       and (Status /= SMB.Counter_Exhausted
+            or Last_Allocated_Owner_Id'Old = SMB.QWord'Last)
+       and
        (if Status = SMB.Ok then
-          Current_Phase (State) = Disconnected
+          Current_Phase (State'Old) = Disconnected
+          and not Has_Pending_Request (State'Old)
+          and not Has_Signing_Key (State'Old)
+          and not Has_Validated_Response (State'Old)
+          and not Has_Open_Handles (State'Old)
+          and Current_Phase (State) = Disconnected
+          and Current_Owner_Id (State) = Last_Allocated_Owner_Id
           and Current_Owner_Id (State) /= 0
           and Current_Epoch (State) = 0
           and Current_Session_Id (State) = 0

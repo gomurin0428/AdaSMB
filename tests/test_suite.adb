@@ -3184,6 +3184,46 @@ procedure Test_Suite is
            ("lifecycle failure atomicity: 11 rejected calls passed");
       end Test_Lifecycle_Atomicity;
 
+      procedure Test_Owner_Allocation is
+         use type SMB.Engine.Engine_State;
+         Target, Other : SMB.Engine.Engine_State;
+         Previous : SMB.QWord;
+
+         procedure Allocate_Next (Value : in out SMB.Engine.Engine_State) is
+         begin
+            SMB.Engine.Initialize (Value, Status);
+            Assert
+              (Status = SMB.Ok
+               and then SMB.Engine.Current_Owner_Id (Value) = Previous + 1
+               and then SMB.Engine.Current_Owner_Id (Value) > Previous
+               and then SMB.Engine.Current_Epoch (Value) = 0,
+               "owner allocation skipped or reused an ID");
+            Previous := SMB.Engine.Current_Owner_Id (Value);
+         end Allocate_Next;
+      begin
+         SMB.Engine.Initialize (Target, Status);
+         Assert (Status = SMB.Ok, "owner allocation initial fixture");
+         Previous := SMB.Engine.Current_Owner_Id (Target);
+         for Cycle in 1 .. 32 loop
+            SMB.Engine.Mark_Connected (Target, Status);
+            Assert (Status = SMB.Ok, "owner allocation connected fixture");
+            declare
+               Before : constant SMB.Engine.Engine_State := Target;
+            begin
+               SMB.Engine.Initialize (Target, Status);
+               Assert
+                 (Status = SMB.Invalid_State_Status and then Target = Before,
+                  "owner allocation rejected initialization changed state");
+            end;
+            Allocate_Next (Other);
+            SMB.Engine.Invalidate (Target, Status);
+            Assert (Status = SMB.Ok, "owner allocation invalidate fixture");
+            Allocate_Next (Target);
+         end loop;
+         Ada.Text_IO.Put_Line
+           ("owner allocation: 65 successes and 32 rejected calls passed");
+      end Test_Owner_Allocation;
+
       procedure Test_Handle_Failure_Atomicity is
          use type SMB.Engine.Engine_State;
          Target : SMB.Engine.Engine_State;
@@ -4423,6 +4463,7 @@ procedure Test_Suite is
       Test_Request_Metadata;
       Test_Authentication_Atomicity;
       Test_Lifecycle_Atomicity;
+      Test_Owner_Allocation;
       Test_Handle_Outcomes;
       Test_Handle_Capacity;
       Test_Handle_Failure_Atomicity;
