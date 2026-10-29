@@ -2,6 +2,7 @@ with SMB.Crypto;
 
 package SMB.Core_Auth is
    pragma SPARK_Mode (On);
+   use type SMB.Byte;
 
    Maximum_Credential_Bytes : constant := 4_096;
    Maximum_Security_Token : constant := 65_535;
@@ -35,7 +36,9 @@ package SMB.Core_Auth is
    with
      Pre => Storage_Bounded (Output, Maximum_Security_Token),
      Post => Used <= Output'Length
-       and then (if Status /= SMB.Ok then Used = 0);
+       and then (if Status /= SMB.Ok then Used = 0)
+       and then (for all Index in Output'Range =>
+          (if Index - Output'First >= Used then Output (Index) = 0));
 
    procedure Authenticate
      (User, Password, Domain : String;
@@ -59,5 +62,7 @@ package SMB.Core_Auth is
        Used <= Output'Length
        and then
          (if Status /= SMB.Ok then
-            Used = 0 and Session_Key = (Session_Key'Range => 0));
+            Used = 0 and Session_Key = (Session_Key'Range => 0))
+       and then (for all Index in Output'Range =>
+          (if Index - Output'First >= Used then Output (Index) = 0));
 end SMB.Core_Auth;
