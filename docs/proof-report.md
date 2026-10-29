@@ -1,5 +1,68 @@
 # GNATprove and test report
 
+## Final SPNEGO MIC contract
+
+`Validate_Final_Token` guarantees that an accepted nonempty token with a
+nonempty `Expected_MIC` has a 16-byte expected MIC and ends with exactly those
+16 bytes. An empty token is accepted only when `Expected_MIC` is empty;
+otherwise its status is `SMB.Signature_Error`. The contract does not prove
+HMAC correctness, all DER parser semantics, or machine-level timing behavior.
+The runtime parser and constant-time MIC comparison were not changed.
+
+The equality-bearing postcondition and loop invariant are ignored by runtime
+assertion policy to avoid evaluating an early-exit array equality as an
+oracle. GNATprove still proves both. The invariant states that, once the MIC
+field has been accepted, `Previous_Tag` is `A3`, the expected MIC is 16 bytes,
+and the parsed prefix ends in that MIC. Because accepted tags must increase,
+no field can follow `A3`; the invariant therefore supports the final-token
+suffix guarantee.
+
+The mutation corpus passed **34,695 final-SPNEGO cases** across three rebased
+bounds, including a token ending at `Natural'Last`. It mutates token bytes and
+every expected-MIC position/value, covers empty-token expected-MIC lengths
+0 through 16, and checks state-only acceptance without a MIC. The tests check
+returned statuses directly and do not rely on ignored assertions.
+
+The focused commands exited 0:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite final-spnego
+gnatprove -P proof.gpr -u smb-core_ntlm.adb --subdirs=final-mic-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+Focused GNATprove reported **219 checks** (41 flow, 178 prover), zero
+unproved or justified checks, zero warnings, zero `pragma Assume` statements,
+and one analyzed unit (7 subprograms/packages). It explicitly proved the
+postcondition at `smb-core_ntlm.ads:42:08` and loop-invariant initialization
+and preservation at `smb-core_ntlm.adb:404:13`.
+
+The final commands exited 0:
+
+```sh
+./build/bin/test_suite authentication
+make ntlm-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+gnatprove -P proof.gpr --subdirs=final-mic-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+git diff --check
+```
+
+NTLM tests passed 211 AV fixtures / 422 rebased cases and 5,896
+challenge-field fixtures / 11,792 rebased cases. Samba integration passed on
+`127.0.0.1:1445`. Full GNATprove reported **4,963 checks** (725 flow, 4,238
+prover), zero unproved or justified checks, **69 warnings**, zero
+`pragma Assume` statements, and 13 units.
+
+The pre- and post-build disassembly texts differ (the raw unified diff is
+72,987 bytes and includes instruction changes). Inspection found the
+`Validate_Final_Token` call to `smb__crypto__constant_time_equal`; the
+object's `memcmp` relocation is in the separate `Challenge_Slice_Valid` ghost
+helper, outside this function. This comparison does not establish binary
+identity or machine-level constant-time behavior. CI and Windows were not run
+for this revision.
+
 ## NTLM authentication output suffix contract
 
 `Build_Negotiate_Token` and `Authenticate` guarantee that every output byte

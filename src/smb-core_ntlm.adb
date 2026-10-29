@@ -355,6 +355,7 @@ package body SMB.Core_NTLM is
       Status : out SMB.Core_Status;
       Expected_MIC : SMB.Bytes := (1 .. 0 => 0))
    is
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
       Position : Natural := 0;
       Tag : SMB.Byte;
       Outer_Offset : Natural;
@@ -399,6 +400,14 @@ package body SMB.Core_NTLM is
       while Position < Sequence_Offset + Sequence_Length loop
          pragma Loop_Invariant
            (Position <= Sequence_Offset + Sequence_Length);
+         pragma Loop_Invariant
+           (if MIC_Seen then
+              Previous_Tag = 16#A3#
+              and then Expected_MIC'Length = 16
+              and then Position >= 16
+              and then Token
+                (Token'First + (Position - 16)
+                 .. Token'First + (Position - 1)) = Expected_MIC);
          pragma Loop_Variant (Increases => Position);
          Read_TLV
            (Token, Position, Tag, Field_Offset, Field_Length, Parse_Status);

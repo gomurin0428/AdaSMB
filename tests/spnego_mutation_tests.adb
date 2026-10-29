@@ -39,10 +39,15 @@ procedure Spnego_Mutation_Tests is
       end if;
    end Check;
 begin
-   for Rebased in 0 .. 1 loop
+   for Rebased in 0 .. 2 loop
       declare
-         First : constant Natural := 7 * Rebased;
-         Token : SMB.Bytes (First .. First + Seed'Length - 1);
+         First : constant Natural :=
+           (if Rebased = 2 then Natural'Last - (Seed'Length - 1)
+            else 7 * Rebased);
+         MIC_First : constant Natural :=
+           (if Rebased = 2 then Natural'Last - 15 else 11 * Rebased);
+         Token : SMB.Bytes (First .. First + (Seed'Length - 1));
+         Expected : SMB.Bytes (MIC_First .. MIC_First + 15);
       begin
          for Offset in 0 .. Seed'Length - 1 loop
             for Value in SMB.Byte loop
@@ -65,6 +70,18 @@ begin
                end if;
                Check (Short, False, "final SPNEGO truncation");
             end;
+         end loop;
+         Token := Seed;
+         for Offset in 0 .. 15 loop
+            for Value in SMB.Byte loop
+               Expected := MIC;
+               Expected (MIC_First + Offset) := Value;
+               Check
+                 (Token, Value = MIC (MIC'First + Offset),
+                  "final SPNEGO expected MIC mutation",
+                  Signature_Error => Value /= MIC (MIC'First + Offset),
+                  Expected_MIC => Expected);
+            end loop;
          end loop;
       end;
    end loop;
@@ -96,5 +113,12 @@ begin
       Check
         (Seed, False, "short expected MIC", Expected_MIC => MIC (MIC'First .. MIC'First + Length - 1));
    end loop;
+   for Length in 0 .. 16 loop
+      Check
+        (Empty, Length = 0, "empty final token MIC policy",
+         Signature_Error => Length /= 0,
+         Expected_MIC => MIC (MIC'First .. MIC'First + Length - 1));
+   end loop;
+   Check (Wrap (State_Field), True, "MIC not required", Expected_MIC => Empty);
    Ada.Text_IO.Put_Line ("final SPNEGO mutation cases:" & Cases'Image);
 end Spnego_Mutation_Tests;
