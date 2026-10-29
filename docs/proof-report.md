@@ -1,5 +1,59 @@
 # GNATprove and test report
 
+## NTLM authentication output suffix contract
+
+`Build_Negotiate_Token` and `Authenticate` guarantee that every output byte
+at or after `Used` is zero on every return; failures return `Used = 0`.
+`Authenticate` clears its output before validation, and private `Build_Type3`
+preserves the suffix from its entry value while writing only the used prefix.
+The implementation's runtime decision and output-building statements were
+not changed. This is a returned-buffer guarantee, not secure erasure of
+internal temporaries or a guarantee of physical-memory erasure.
+
+`Test_NTLM_Authenticate` passed **57 output-buffer cases**. They cover three
+array lower bounds (including one ending at `Natural'Last`); zero, one-byte,
+short, exact, extra, and maximum capacities; malformed input; unsupported
+credentials; and success followed by failure using the same output buffer.
+The buffers are prefilled with nonzero bytes so unused suffixes and failures
+are checked for clearing.
+
+The focused commands exited 0:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite ntlm-maxlen
+gnatprove -P proof.gpr -u smb-core_auth.adb --subdirs=auth-output-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+Focused GNATprove reported **453 checks** (66 flow, 387 prover), zero
+unproved or justified checks, **6 warnings**, zero `pragma Assume` statements,
+and one analyzed unit (20 subprograms and packages). It explicitly proved
+the private `Build_Type3` suffix-preservation postcondition at
+`smb-core_auth.adb:244:14` and the public postconditions at
+`smb-core_auth.ads:38:14` and `smb-core_auth.ads:62:08`.
+
+Final gates exited 0:
+
+```sh
+make ntlm-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+gnatprove -P proof.gpr --subdirs=auth-output-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+git diff --check
+```
+
+`make ntlm-test` passed 211 AV fixtures / 422 rebased cases and 5,896
+challenge-field fixtures / 11,792 rebased cases. `make test` included the
+57 output-buffer cases, and local Samba integration passed on
+`127.0.0.1:1445`. Full GNATprove reported **4,955 checks** (725 flow,
+4,230 prover), zero unproved or justified checks, **69 warnings**, zero
+`pragma Assume` statements, and 13 analyzed units. An initial strict build
+reported that the body-level `use type SMB.Byte` was redundant after the
+specification made it visible for the new contract; removing that redundant
+clause resolved the `-gnatwe` failure. CI and Windows tests were not run for
+this revision.
+
 ## Unsigned SMB header signature-field contract
 
 For `Validate_Header`, a successful non-interim result with

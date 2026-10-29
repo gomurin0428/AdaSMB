@@ -6,7 +6,6 @@ with SMB.Core_Wire;
 package body SMB.Core_Auth is
    pragma SPARK_Mode (On);
 
-   use type SMB.Byte;
    use type SMB.DWord;
    use type SMB.QWord;
    use type SMB.Word;
@@ -245,7 +244,10 @@ package body SMB.Core_Auth is
      Post => Used <= Output'Length
        and then
          (if Status /= SMB.Ok then
-            Used = 0 and Session_Key = (Session_Key'Range => 0));
+            Used = 0 and Session_Key = (Session_Key'Range => 0))
+       and then (for all Index in Output'Range =>
+          (if Index - Output'First >= Used then
+             Output (Index) = Output'Old (Index)));
 
    procedure Process_Target_Info
      (Input : SMB.Bytes;

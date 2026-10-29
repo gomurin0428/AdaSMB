@@ -1284,7 +1284,116 @@ procedure Test_Suite is
       Auth : constant SMB.NTLM.Authentication_Result :=
         SMB.NTLM.Authenticate
           ("User", "Password", "Domain", Hex ("ffffff0011223344"), Challenge);
+
+      procedure Check_Output_Buffers is
+         Negotiate : constant SMB.Bytes := Hex
+           ("604006062b0601050502a0363034a00e300c060a2b06010401823702020a"
+            & "a22204204e544c4d5353500001000000158288200000000000000000"
+            & "0000000000000000");
+         Nonce : constant SMB.Bytes := Hex ("ffffff0011223344");
+         Key : constant SMB.Bytes := Hex ("e711de05352dfa50de477e818cffec55");
+         Invalid_UTF8 : constant String := (1 => Character'Val (16#FF#));
+         Cases : Natural := 0;
+
+         procedure Check
+           (Capacity, Rebased : Natural; Is_Auth : Boolean;
+            User : String := "User"; Password : String := "Password";
+            Domain : String := "Domain"; Token : SMB.Bytes := Challenge;
+            Want : SMB.Core_Status := SMB.Ok)
+         is
+            First : constant Natural :=
+              (if Rebased = 2 then
+                 (if Capacity = 0 then Natural'Last
+                  else Natural'Last - (Capacity - 1))
+               else 1 + 17 * Rebased);
+            Output : SMB.Bytes (First .. First + (Capacity - 1)) :=
+              (others => 16#A5#);
+            Session_Key : SMB.Crypto.Digest_128 := (others => 16#A5#);
+            Used : Natural := Natural'Last;
+            Status : SMB.Core_Status;
+
+            procedure Check_Cleared is
+            begin
+               Assert (Used = 0, "rejected authentication retained length");
+               Assert
+                 (Session_Key = (Session_Key'Range => 0),
+                  "rejected authentication retained key");
+               Assert
+                 (Output = (Output'Range => 0),
+                  "rejected token retained output bytes");
+            end Check_Cleared;
+         begin
+            if Is_Auth then
+               SMB.Core_Auth.Authenticate
+                 (User, Password, Domain, Nonce, Token, 0,
+                  Output, Used, Session_Key, Status);
+            else
+               SMB.Core_Auth.Build_Negotiate_Token (Output, Used, Status);
+            end if;
+            Assert (Status = Want, "token output status mismatch");
+            Cases := Cases + 1;
+            if Status = SMB.Ok then
+               Assert
+                 (Used = (if Is_Auth then Expected'Length else Negotiate'Length),
+                  "token output length mismatch");
+               Assert_Equal
+                 (Output (First .. First + (Used - 1)),
+                  (if Is_Auth then Expected else Negotiate),
+                  "token output changed with buffer bounds");
+               if Is_Auth then
+                  Assert_Equal (Session_Key, Key, "token output key mismatch");
+               end if;
+            else
+               Assert (Used = 0, "rejected token retained length");
+               if Is_Auth then
+                  Check_Cleared;
+               end if;
+            end if;
+            Assert
+              ((for all Index in Output'Range =>
+                 (if Index - First >= Used then Output (Index) = 0)),
+               "token output retained unused bytes");
+            if Is_Auth and then Status = SMB.Ok then
+               SMB.Core_Auth.Authenticate
+                 (User, Password, Domain, Nonce, SMB.Bytes'(1 .. 0 => 0), 0,
+                  Output, Used, Session_Key, Status);
+               Assert (Status = SMB.Invalid_Encoding, "reused token rejection");
+               Check_Cleared;
+               Cases := Cases + 1;
+            end if;
+         end Check;
+      begin
+         for Rebased in 0 .. 2 loop
+            for Is_Auth in Boolean loop
+               declare
+                  Length : constant Natural :=
+                    (if Is_Auth then Expected'Length else Negotiate'Length);
+                  Capacities : constant array (Positive range <>) of Natural :=
+                    (0, 1, Length - 1, Length, Length + 1,
+                     SMB.Core_Auth.Maximum_Security_Token);
+               begin
+                  for Capacity of Capacities loop
+                     Check
+                       (Capacity, Rebased, Is_Auth,
+                        Want => (if Capacity < Length then SMB.Resource_Limit
+                                 else SMB.Ok));
+                  end loop;
+               end;
+            end loop;
+            Check (Expected'Length + 1, Rebased, True, User => "",
+                   Want => SMB.Unsupported_Feature);
+            Check (Expected'Length + 1, Rebased, True,
+                   Password => Invalid_UTF8, Want => SMB.Unsupported_Feature);
+            Check (Expected'Length + 1, Rebased, True,
+                   Domain => Invalid_UTF8, Want => SMB.Unsupported_Feature);
+            Check (Expected'Length + 1, Rebased, True,
+                   Token => SMB.Bytes'(0 .. 15 => 0),
+                   Want => SMB.Invalid_Encoding);
+         end loop;
+         Ada.Text_IO.Put_Line ("authentication output buffer cases:" & Cases'Image);
+      end Check_Output_Buffers;
    begin
+      Check_Output_Buffers;
       Assert_Equal
         (Auth.Security_Token, Expected, "NTLM Type3 and SPNEGO MIC vector");
       Assert_Equal
