@@ -269,6 +269,9 @@ package SMB.Core_Wire is
           and then
             (if not Interim then
                ((Encoded_U32 (Data, 16) and 8) /= 0) = Expected.Signed)
+          and then
+            (if not Interim and then not Expected.Signed then
+               (for all Index in 48 .. 63 => Data (Data'First + Index) = 0))
         else Nt_Status = 0);
 
    procedure Sign

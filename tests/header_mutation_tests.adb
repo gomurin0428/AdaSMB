@@ -30,23 +30,29 @@ procedure Header_Mutation_Tests is
       end if;
    end Seed;
 
-   procedure Check (Packet : SMB.Bytes; Want : SMB.Core_Status; Label : String) is
+   procedure Check
+     (Packet : SMB.Bytes; Want : SMB.Core_Status; Label : String;
+      Interim : Boolean := False) is
       Status : SMB.Core_Status;
       Nt_Status : SMB.DWord;
    begin
-      SMB.Core_Wire.Validate_Header (Packet, Expected, Nt_Status, Status);
+      SMB.Core_Wire.Validate_Header
+        (Packet, Expected, Nt_Status, Status, Interim => Interim);
       Cases := Cases + 1;
       if Status /= Want
-        or else Nt_Status /= (if Want = SMB.Ok then Peer_Status else 0)
+        or else Nt_Status /=
+          (if Want /= SMB.Ok then 0
+           elsif Interim then SMB.Status_Pending else Peer_Status)
       then
          raise Program_Error with Label & " case" & Cases'Image
            & " got " & Status'Image & " expected " & Want'Image;
       end if;
    end Check;
 begin
-   for Rebased in 0 .. 1 loop
+   for Rebased in 0 .. 2 loop
       declare
-         First : constant Natural := 7 * Rebased;
+         First : constant Natural :=
+           (if Rebased = 2 then Natural'Last - 95 else 7 * Rebased);
          Packet : SMB.Bytes (First .. First + 95);
       begin
          Seed (Packet);
@@ -118,11 +124,36 @@ begin
          Check (Packet, SMB.Ok, "unsigned preauthentication header");
          Packet (First + 16) := 9;
          Check (Packet, SMB.Signature_Error, "unexpected SIGNED flag");
-         for Offset in 48 .. 63 loop
-            for Bit in 0 .. 7 loop
-               Seed (Packet);
-               Packet (First + Offset) := 2 ** Bit;
-               Check (Packet, SMB.Signature_Error, "unsigned header nonzero signature");
+         for Signed in Boolean loop
+            Expected.Signed := Signed;
+            for Interim in Boolean loop
+               for Offset in 48 .. 63 loop
+                  for Value in SMB.Byte loop
+                     Seed (Packet);
+                     if Interim then
+                        declare
+                           Status : SMB.Core_Status;
+                        begin
+                           Packet (First + 16) := (if Signed then 11 else 3);
+                           SMB.Core_Wire.Write_U64 (Packet, 32, 17, Status);
+                           if Status /= SMB.Ok then
+                              raise Program_Error with "pending fixture AsyncId";
+                           end if;
+                           SMB.Core_Wire.Write_U32
+                             (Packet, 8, SMB.Status_Pending, Status);
+                           if Status /= SMB.Ok then
+                              raise Program_Error with "pending fixture NTSTATUS";
+                           end if;
+                        end;
+                     end if;
+                     Packet (First + Offset) := Value;
+                     Check
+                       (Packet,
+                        (if Signed or Interim or Value = 0 then SMB.Ok
+                         else SMB.Signature_Error),
+                        "header signature field policy", Interim);
+                  end loop;
+               end loop;
             end loop;
          end loop;
          Expected.Signed := True;

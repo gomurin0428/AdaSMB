@@ -1,5 +1,61 @@
 # GNATprove and test report
 
+## Unsigned SMB header signature-field contract
+
+For `Validate_Header`, a successful non-interim result with
+`Expected.Signed = False` now guarantees that all 16 signature bytes
+(offsets 48 through 63) are zero. This strengthens the postcondition without
+changing the runtime decision algorithm. The existing signature-field loop
+maintains the invariant that `Signature_Zero` is equivalent to all
+signature bytes processed so far being zero. The invariant is ignored at
+runtime but is formally proved: GNATprove reports both initialization and
+preservation, and proves the `Validate_Header` postcondition. This contract
+does not establish HMAC correctness or authenticate pending responses.
+Structurally accepted signed or interim headers are not thereby
+cryptographically verified; signature verification remains separate.
+
+`Header_Mutation_Tests` passed **77,025 cases** over three array lower bounds,
+including a packet ending at `Natural'Last`. This includes **49,152**
+signature-field cases: each of 16 signature-byte positions, all 256 byte
+values, `Expected.Signed` true and false, `Interim` true and false, and all
+three rebases. Interim fixtures carry `STATUS_PENDING` and a nonzero
+`AsyncId`. The other structural, truncation, flag, and correlation mutation
+cases remain covered.
+
+The focused checks all exited 0:
+
+```sh
+gprbuild -p -P smb_tests.gpr test_suite.adb -cargs:Ada -gnatwe
+./build/bin/test_suite header-mutations
+./build/bin/test_suite async-responses
+gnatprove -P proof.gpr -u smb-core_wire.adb --subdirs=unsigned-header-focused --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+The focused proof reports **357 checks** (34 flow, 323 prover), zero
+unproved or justified checks, zero warnings, zero `pragma Assume` statements,
+and one analyzed unit (18 subprograms and packages). `Validate_Header`
+discharged all 44 of its checks, including the new postcondition; the
+invariant initialization and preservation checks are explicitly reported
+proved.
+
+Final-source gates all exited 0:
+
+```sh
+make signing-test
+make test
+make check GPRBUILD="gprbuild -f"
+sudo -n python3 tests/samba_integration.py
+gnatprove -P proof.gpr --subdirs=unsigned-header-full --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+git diff --check
+```
+
+The full test suite reported 77,025 header mutation cases, and Samba
+integration passed on `127.0.0.1:1445`. The full GNATprove run reported
+**4,948 checks** (725 flow, 4,223 prover), zero unproved or justified
+checks, 69 warnings, zero `pragma Assume` statements, and 13 units. These
+are fresh explicit proof results, not a `make prove` result. CI and Windows
+tests were not run for this revision.
+
 ## Crypto byte equality contract
 
 `SMB.Crypto.Constant_Time_Equal` now specifies
