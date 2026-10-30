@@ -1980,6 +1980,58 @@ procedure Test_Suite is
       end;
 
       declare
+         Abort_State : SMB.Engine.Engine_State;
+         Abort_Value : SMB.Core_Client.Authentication;
+         Abort_Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
+         Abort_Used : Natural;
+         Abort_Message : SMB.QWord;
+         Abort_Owner : SMB.QWord;
+         Abort_Epoch : SMB.QWord;
+      begin
+         Prepare_Negotiated (Abort_State);
+         SMB.Core_Client.Prepare_Negotiate
+           (Abort_Value, Abort_State, Abort_Request, Abort_Used, Status);
+         Assert (Status = SMB.Ok, "prepare negotiate before abort");
+         Abort_Message := SMB.Wire.U64 (Abort_Request, 24);
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Abort_Value, Abort_State, Status);
+         Assert (Status = SMB.Ok, "acknowledge negotiate before abort");
+         SMB.Core_Client.Complete_Challenge
+           (Abort_Value, Abort_State,
+            Challenge_Response
+              (Abort_Message, SMB.Status_More_Processing_Required, Challenge),
+            Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Authentication_Challenge_Length_Of
+              (Abort_Value) = Challenge'Length
+            and then SMB.Core_Client.Authentication_Session_Id_Of
+              (Abort_Value) = Session_Id,
+            "challenge retained before abort");
+         Abort_Owner := SMB.Engine.Current_Owner_Id (Abort_State);
+         Abort_Epoch := SMB.Engine.Current_Epoch (Abort_State);
+         SMB.Core_Client.Abort_Authentication
+           (Abort_Value, Abort_State, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Authentication_Stage_Of (Abort_Value) =
+              SMB.Core_Client.Authentication_Failed
+            and then SMB.Engine.Current_Phase (Abort_State) =
+              SMB.Engine.Disconnected
+            and then not SMB.Engine.Has_Pending_Request (Abort_State)
+            and then not SMB.Engine.Has_Validated_Response (Abort_State)
+            and then SMB.Engine.Signing_Key_Is_Zero (Abort_State)
+            and then SMB.Engine.Current_Owner_Id (Abort_State) = Abort_Owner
+            and then SMB.Engine.Current_Epoch (Abort_State) = Abort_Epoch + 1
+            and then SMB.Engine.Current_Session_Id (Abort_State) = 0
+            and then SMB.Core_Client.Authentication_Challenge_Length_Of
+              (Abort_Value) = 0,
+            "successful abort left authentication state");
+      end;
+
+      declare
          Failed_State : SMB.Engine.Engine_State;
          Failed_Value : SMB.Core_Client.Authentication;
          Failed_Request : SMB.Bytes
