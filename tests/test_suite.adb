@@ -1716,6 +1716,77 @@ procedure Test_Suite is
       Used : Natural;
       Message_Id : SMB.QWord;
    begin
+      for Failure_Case in 1 .. 5 loop
+         declare
+            Fail_State : SMB.Engine.Engine_State;
+            Fail_Value : SMB.Core_Client.Authentication;
+            Fail_Request : SMB.Bytes
+              (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+                (others => 0);
+            Fail_Used : Natural;
+            Fail_Message : SMB.QWord;
+            Fail_Nt : SMB.DWord;
+            Expected : SMB.Core_Status;
+         begin
+            Prepare_Negotiated (Fail_State);
+            SMB.Core_Client.Prepare_Negotiate
+              (Fail_Value, Fail_State, Fail_Request, Fail_Used, Status);
+            Assert (Status = SMB.Ok, "prepare failing challenge negotiate");
+            Fail_Message := SMB.Wire.U64 (Fail_Request, 24);
+            SMB.Core_Client.Authentication_Send_Succeeded
+              (Fail_Value, Fail_State, Status);
+            Assert (Status = SMB.Ok, "acknowledge failing challenge negotiate");
+            declare
+               Fail_Response : SMB.Bytes := Challenge_Response
+                 (Fail_Message,
+                  (case Failure_Case is
+                     when 1 => 16#C000006D#,
+                     when 2 => SMB.Success,
+                     when others => SMB.Status_More_Processing_Required),
+                  Challenge);
+            begin
+               case Failure_Case is
+                  when 1 =>
+                     SMB.Wire.Put_U32 (Fail_Response, 68, 0);
+                     Expected := SMB.Ok;
+                  when 2 => Expected := SMB.Invalid_Protocol;
+                  when 3 =>
+                     SMB.Wire.Put_U64 (Fail_Response, 40, 0);
+                     Expected := SMB.Invalid_Protocol;
+                  when 4 =>
+                     SMB.Wire.Put_U16
+                       (Fail_Response, 70,
+                        SMB.Word (Challenge'Length + 1));
+                     Expected := SMB.Invalid_Offset;
+                  when others =>
+                     SMB.Wire.Put_U64 (Fail_Response, 24, Fail_Message + 1);
+                     Expected := SMB.Correlation_Error;
+               end case;
+               SMB.Core_Client.Complete_Challenge
+                 (Fail_Value, Fail_State, Fail_Response, Fail_Nt, Status);
+            end;
+            Assert
+              (Status = Expected
+               and then not
+                 (Status = SMB.Ok
+                  and then Fail_Nt = SMB.Status_More_Processing_Required)
+               and then SMB.Core_Client.Authentication_Stage_Of (Fail_Value) =
+                 SMB.Core_Client.Authentication_Failed
+               and then
+                 SMB.Core_Client.Authentication_Challenge_Length_Of
+                   (Fail_Value) = 0
+               and then SMB.Engine.Current_Phase (Fail_State) =
+                 SMB.Engine.Disconnected
+               and then not SMB.Engine.Has_Pending_Request (Fail_State)
+               and then not SMB.Engine.Has_Validated_Response (Fail_State)
+               and then SMB.Engine.Signing_Key_Is_Zero (Fail_State)
+               and then SMB.Engine.Current_Session_Id (Fail_State) = 0,
+               "failed challenge completion left state, case"
+               & Integer'Image (Failure_Case) & " status "
+               & SMB.Core_Status'Image (Status));
+         end;
+      end loop;
+      Ada.Text_IO.Put_Line ("challenge failure cleanup: 5 rejected responses passed");
       Prepare_Negotiated (State);
       SMB.Core_Client.Prepare_Negotiate
         (Value, State, Request, Used, Status);

@@ -254,7 +254,23 @@ is
             SMB.Engine.Has_Signing_Key (State)'Old
           and then SMB.Engine.Current_Response_Info (State) =
             SMB.Engine.Current_Response_Info (State)'Old
-        else True);
+        else
+          Authentication_Stage_Of (Value)'Old = Negotiate_Sent
+          and then Authentication_Owner_Of (Value)'Old =
+            SMB.Engine.Current_Owner_Id (State)'Old
+          and then Authentication_Epoch_Of (Value)'Old =
+            SMB.Engine.Current_Epoch (State)'Old
+          and then Authentication_Stage_Of (Value) = Authentication_Failed
+          and then Authentication_Challenge_Length_Of (Value) = 0
+          and then
+            (for all Index in Authentication_Buffer_Of (Value)'Range =>
+               Authentication_Buffer_Of (Value) (Index) = 0)
+          and then SMB.Engine.Current_Phase (State) =
+            SMB.Engine.Disconnected
+          and then not SMB.Engine.Has_Pending_Request (State)
+          and then not SMB.Engine.Has_Validated_Response (State)
+          and then SMB.Engine.Signing_Key_Is_Zero (State)
+          and then SMB.Engine.Current_Session_Id (State) = 0);
 
    procedure Prepare_Authenticate
      (Value : in out Authentication;
