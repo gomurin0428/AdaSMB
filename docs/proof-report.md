@@ -3949,3 +3949,15 @@ is zero, matching the failed-completion cleanup contract. The runtime body is
 unchanged. A unit test aborts after a sent NEGOTIATE whose retained token is
 non-zero and checks the cleared state. Full proof: 5,089 checks (728 flow,
 4,361 prover), zero unproved.
+
+## Complete authentication abort outcomes
+
+`SMB.Core_Client.Abort_Authentication` now has a total postcondition: the
+result is `Ok`, `Counter_Exhausted`, or `Invalid_State_Status` for a
+foreign/inactive context, and no other status is possible. On `Ok` the owner
+is preserved, the epoch advances by one and the session ID is zero. On
+`Counter_Exhausted` (epoch already at `QWord'Last`) the abort still
+disconnects the engine, clears key, pending and validated state, sets the
+owner to zero and clears the retained token. Epoch exhaustion is covered by
+proof only; reaching it at runtime would need 2**64 invalidations. Full proof:
+5,090 checks (728 flow, 4,362 prover), zero unproved.
