@@ -3895,6 +3895,21 @@ Full proof: 5,083 checks (728 flow, 4,355 prover), zero unproved, no
 `pragma Assume`. Unit, NTLM, crypto, strict build/source checks and local Samba
 integration tests passed. No CI or Windows run was performed.
 
+## Successful authentication completion state
+
+On success, `SMB.Core_Client.Complete_Authenticate` now also proves that no
+validated response remains, that the retained response's session ID equals the
+Engine session ID, and that the Engine session ID is unchanged by completion.
+The positive coordinator test additionally checks no pending request, a non-zero
+session ID and equality with the authentication's recorded session ID at run
+time. A "no pending request" postcondition was not added: adding the required
+`Mark_Authenticated` frame fact made the existing final-MIC transfer unprovable
+within the standard settings, so it remains a runtime-tested property only.
+
+Full proof: 5,089 checks (728 flow, 4,361 prover), zero unproved, no
+`pragma Assume`. Unit, NTLM, crypto, strict build/source checks and local Samba
+integration tests passed. No CI or Windows run was performed.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:

@@ -540,6 +540,9 @@ is
       Initial_Command : constant SMB.Core_Wire.Command_Code :=
         SMB.Engine.Pending_Command (State)
       with Ghost;
+      Initial_Session : constant SMB.QWord :=
+        SMB.Engine.Current_Session_Id (State)
+      with Ghost;
    begin
       Nt_Status := 0;
       if Value.Stage /= Authenticate_Sent
@@ -616,6 +619,19 @@ is
             Clear_Authentication_Buffer (Value);
             Value.Stage := Authentication_Finished;
             pragma Assert (Value.Stage = Authentication_Finished);
+            pragma Assert (not SMB.Engine.Has_Validated_Response (State));
+            pragma Assert
+              (SMB.Engine.Current_Response_Info (State).Session_Id =
+               SMB.Engine.Current_Session_Id (State));
+            pragma Assert
+              (SMB.Engine.Current_Session_Id (State) = Initial_Session);
+            pragma Assert
+              (SMB.Engine.Final_Token_MIC_Matches
+                 (Packet, SMB.Engine.Current_Response_Info (State),
+                  SMB.Core_NTLM.Mechanism_List_MIC
+                    (SMB.Crypto.Digest_128
+                       (SMB.Engine.Current_Signing_Key (State)), True)));
+            pragma Assert (Authentication_Context_Matches (Value, State));
          else
             Failure_Status := Status;
             SMB.Engine.Invalidate (State, Invalidate_Status);
