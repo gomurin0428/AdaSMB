@@ -1633,7 +1633,8 @@ procedure Test_Suite is
       function Final_Response
         (Message_Id : SMB.QWord;
          Reply_Status : SMB.DWord;
-         Tamper_Signature, Tamper_MIC : Boolean) return SMB.Bytes
+         Tamper_Signature, Tamper_MIC : Boolean;
+         MIC_Index : Natural := 4) return SMB.Bytes
       is
          Packet : SMB.Bytes (0 .. 100) := (others => 0);
          Final_Token : SMB.Bytes (0 .. 28) :=
@@ -1648,7 +1649,8 @@ procedure Test_Suite is
             Final_Token (13 + Index) := Server_MIC (Index);
          end loop;
          if Tamper_MIC then
-            Final_Token (17) := Final_Token (17) xor 1;
+            Final_Token (13 + MIC_Index) :=
+              Final_Token (13 + MIC_Index) xor 1;
          end if;
          SMB.Wire.Initialize_Header
            (Packet, 1, Message_Id, 0, Session_Id);
@@ -2130,6 +2132,37 @@ procedure Test_Suite is
                     (Failed_Value) = SMB.Core_Client.Authentication_Failed,
                   "bad final MIC was accepted");
             end if;
+         end;
+      end loop;
+
+      for MIC_Index in 0 .. 15 loop
+         declare
+            Failed_State : SMB.Engine.Engine_State;
+            Failed_Value : SMB.Core_Client.Authentication;
+            Failed_Request : SMB.Bytes
+              (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+                (others => 0);
+            Failed_Response : SMB.Bytes (0 .. 100) := (others => 0);
+            Failed_Used : Natural;
+         begin
+            Prepare_Negotiated (Failed_State);
+            Prepare_Final_Request
+              (Failed_State, Failed_Value, Failed_Request, Failed_Used);
+            Message_Id := SMB.Wire.U64 (Failed_Request, 24);
+            Failed_Response := Final_Response
+              (Message_Id, SMB.Success, False, True, MIC_Index);
+            SMB.Core_Client.Complete_Authenticate
+              (Failed_Value, Failed_State, Failed_Response, Nt_Status, Status);
+            Assert
+              (Status = SMB.Invalid_Protocol
+               and then Nt_Status = 0
+               and then SMB.Engine.Current_Phase (Failed_State) =
+                 SMB.Engine.Disconnected
+               and then SMB.Engine.Signing_Key_Is_Zero (Failed_State)
+               and then not SMB.Engine.Has_Pending_Request (Failed_State)
+               and then SMB.Core_Client.Authentication_Stage_Of
+                 (Failed_Value) = SMB.Core_Client.Authentication_Failed,
+               "final MIC byte mutation was accepted");
          end;
       end loop;
    end Test_Core_Client_Authentication;
