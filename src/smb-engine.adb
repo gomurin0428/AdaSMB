@@ -41,6 +41,11 @@ is
          .. Packet'Last - (Packet'Length - Offset - Length));
    end Bounded_Slice;
 
+   procedure Lemma_Final_Token_MIC_Transfer
+     (Packet : SMB.Bytes;
+      Left_Info, Right_Info : SMB.Core_Protocol.Response_Info;
+      Left_MIC, Right_MIC : SMB.Crypto.Digest_128) is null;
+
    procedure Lemma_Final_Token_MIC
      (Packet : SMB.Bytes;
       Info : SMB.Core_Protocol.Response_Info;
@@ -925,17 +930,6 @@ is
    function Current_Response_Info (State : Engine_State)
      return SMB.Core_Protocol.Response_Info is
      (State.Receipt_Info);
-
-   function Response_Receipt_Matches
-     (State : Engine_State;
-      Command : SMB.Core_Wire.Command_Code;
-      Nt_Status : SMB.DWord;
-      Signed, MIC_Valid : Boolean) return Boolean is
-     (State.Receipt_Valid
-      and then State.Receipt_Command = Command
-      and then State.Receipt_Status = Nt_Status
-      and then State.Receipt_Signed = Signed
-      and then State.Receipt_MIC_Valid = MIC_Valid);
 
    function Create_Receipt_Matches_File_Id
      (State : Engine_State;

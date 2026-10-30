@@ -1,3 +1,5 @@
+with SMB.Crypto;
+with SMB.Core_NTLM;
 with SMB.Core_Auth;
 with SMB.Core_Protocol;
 with SMB.Core_Wire;
@@ -353,6 +355,11 @@ is
           and then Authentication_Stage_Of (Value) = Authentication_Finished
           and then SMB.Engine.Current_Phase (State) = SMB.Engine.Authenticated
           and then SMB.Engine.Has_Signing_Key (State)
+          and then SMB.Engine.Final_Token_MIC_Matches
+            (Packet, SMB.Engine.Current_Response_Info (State),
+             SMB.Core_NTLM.Mechanism_List_MIC
+               (SMB.Crypto.Digest_128
+                  (SMB.Engine.Current_Signing_Key (State)), True))
         elsif Authentication_Stage_Of (Value)'Old = Authenticate_Sent
           and then Authentication_Owner_Of (Value)'Old =
             SMB.Engine.Current_Owner_Id (State)'Old

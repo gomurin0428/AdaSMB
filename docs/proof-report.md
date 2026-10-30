@@ -3859,6 +3859,25 @@ checks. Full proof: 5,064 checks (728 flow, 4,336 prover), zero unproved, no
 `pragma Assume`. Unit, NTLM, crypto, strict build/dependency audit and Samba
 integration tests passed. No CI or Windows run was performed.
 
+## Completed authentication final MIC
+
+`SMB.Core_Client.Complete_Authenticate` now proves that a successful
+`STATUS_SUCCESS` completion leaves the Engine authenticated with response
+metadata whose final 16 data bytes in the supplied `Packet` equal
+`Mechanism_List_MIC (Current_Signing_Key, True)` (`Final_Token_MIC_Matches`).
+`Mark_Authenticated` additionally guarantees that a successful transition
+preserves `Current_Response_Info` and the server-direction mechanism-list MIC.
+`Response_Receipt_Matches` moved to the private part as an expression
+function so callers can relate the receipt command to the accepted request.
+The ghost lemma `Lemma_Final_Token_MIC_Transfer` (null body) carries the MIC
+fact across equal metadata and MIC values. Runtime checks are unchanged.
+
+The public coordinator test now checks the accepted final response's MIC bytes
+against an independently computed mechanism-list MIC after authentication. Full
+proof: 5,082 checks (728 flow, 4,354 prover), zero unproved, no
+`pragma Assume`. Unit, NTLM, crypto, strict build/source checks and local Samba
+integration tests passed. No CI or Windows run was performed.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:
