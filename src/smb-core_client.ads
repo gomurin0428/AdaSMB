@@ -373,6 +373,13 @@ is
             Authentication_Session_Id_Of (Value)'Old
           and then SMB.Engine.Current_Phase (State) =
             SMB.Engine.Disconnected
+          and then not SMB.Engine.Has_Pending_Request (State)
+          and then not SMB.Engine.Has_Validated_Response (State)
+          and then SMB.Engine.Signing_Key_Is_Zero (State)
+          and then Authentication_Challenge_Length_Of (Value) = 0
+          and then
+            (for all Index in Authentication_Buffer_Of (Value)'Range =>
+               Authentication_Buffer_Of (Value) (Index) = 0)
           and then (Nt_Status = 0 or else Status = SMB.Ok)
         else
           Authentication_Stage_Of (Value) =

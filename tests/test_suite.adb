@@ -2089,7 +2089,11 @@ procedure Test_Suite is
               (Status /= SMB.Ok and then Nt_Status = 0
                and then SMB.Engine.Current_Phase (Failed_State) =
                  SMB.Engine.Disconnected
-               and then SMB.Engine.Signing_Key_Is_Zero (Failed_State),
+               and then SMB.Engine.Signing_Key_Is_Zero (Failed_State)
+               and then not SMB.Engine.Has_Pending_Request (Failed_State)
+               and then not SMB.Engine.Has_Validated_Response (Failed_State)
+               and then SMB.Core_Client.Authentication_Challenge_Length_Of
+                 (Failed_Value) = 0,
                "unverified response advanced authentication");
             Assert
               (SMB.Core_Client.Unverified_Authentication_Status
@@ -2125,7 +2129,10 @@ procedure Test_Suite is
               (SMB.Engine.Current_Phase (Failed_State) =
                  SMB.Engine.Disconnected
                and then SMB.Engine.Signing_Key_Is_Zero (Failed_State)
-               and then not SMB.Engine.Has_Pending_Request (Failed_State),
+               and then not SMB.Engine.Has_Pending_Request (Failed_State)
+               and then not SMB.Engine.Has_Validated_Response (Failed_State)
+               and then SMB.Core_Client.Authentication_Challenge_Length_Of
+                 (Failed_Value) = 0,
                "rejected final authentication retained session state");
             if Fault = 3 then
                Assert
@@ -2177,6 +2184,9 @@ procedure Test_Suite is
                  SMB.Engine.Disconnected
                and then SMB.Engine.Signing_Key_Is_Zero (Failed_State)
                and then not SMB.Engine.Has_Pending_Request (Failed_State)
+               and then not SMB.Engine.Has_Validated_Response (Failed_State)
+               and then SMB.Core_Client.Authentication_Challenge_Length_Of
+                 (Failed_Value) = 0
                and then SMB.Core_Client.Authentication_Stage_Of
                  (Failed_Value) = SMB.Core_Client.Authentication_Failed,
                "final MIC byte mutation was accepted");

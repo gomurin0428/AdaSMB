@@ -3878,6 +3878,23 @@ proof: 5,082 checks (728 flow, 4,354 prover), zero unproved, no
 `pragma Assume`. Unit, NTLM, crypto, strict build/source checks and local Samba
 integration tests passed. No CI or Windows run was performed.
 
+## Failed authentication completion cleanup
+
+When `SMB.Core_Client.Complete_Authenticate` rejects a matching final
+SESSION_SETUP exchange (bad signature or MIC, verification failure, or a signed
+non-success NT status), its postcondition now also proves that the Engine has
+no pending request, no validated response and an all-zero signing key, and that
+the authentication challenge length is 0 with every challenge buffer byte 0.
+Runtime behavior is unchanged; these facts follow from the existing
+`Accept_Response`, `Invalidate` and `Clear_Authentication_Buffer`
+contracts. The rejection tests (signature/MIC/status faults, every final MIC
+byte position, unverified-response faults) now also check the validated-response
+flag and public challenge length.
+
+Full proof: 5,083 checks (728 flow, 4,355 prover), zero unproved, no
+`pragma Assume`. Unit, NTLM, crypto, strict build/source checks and local Samba
+integration tests passed. No CI or Windows run was performed.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:
