@@ -1785,6 +1785,23 @@ procedure Test_Suite is
          and then SMB.Core_Client.Authentication_Stage_Of (Value) =
            SMB.Core_Client.Authentication_Finished,
          "coordinator completed signed authentication");
+      declare
+         Info : constant SMB.Core_Protocol.Response_Info :=
+           SMB.Engine.Current_Response_Info (State);
+         Expected_MIC : constant SMB.Crypto.Digest_128 :=
+           SMB.Core_NTLM.Mechanism_List_MIC
+             (SMB.Crypto.Digest_128
+                (SMB.Engine.Current_Signing_Key (State)), True);
+      begin
+         Assert
+           (Info.Data_Length >= 16
+            and then Info.Data_Offset + Info.Data_Length <= Response'Length
+            and then Response
+              (Response'First + Info.Data_Offset + Info.Data_Length - 16
+               .. Response'First + Info.Data_Offset + Info.Data_Length - 1) =
+              Expected_MIC,
+            "authenticated state retains the accepted final MIC evidence");
+      end;
 
       declare
          State_A, State_B : SMB.Engine.Engine_State;

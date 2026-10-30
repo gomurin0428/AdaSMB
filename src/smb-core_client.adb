@@ -537,6 +537,9 @@ is
       Receipt_Status : SMB.Core_Status;
       Invalidate_Status : SMB.Core_Status;
       Failure_Status : SMB.Core_Status;
+      Initial_Command : constant SMB.Core_Wire.Command_Code :=
+        SMB.Engine.Pending_Command (State)
+      with Ghost;
    begin
       Nt_Status := 0;
       if Value.Stage /= Authenticate_Sent
@@ -561,19 +564,67 @@ is
          Status := SMB.Ok;
          return;
       end if;
-      SMB.Engine.Mark_Authenticated (State, Status);
-      if Status = SMB.Ok then
-         Clear_Authentication_Buffer (Value);
-         Value.Stage := Authentication_Finished;
-         pragma Assert (Value.Stage = Authentication_Finished);
-      else
-         Failure_Status := Status;
-         SMB.Engine.Invalidate (State, Invalidate_Status);
-         Clear_Authentication_Buffer (Value);
-         Value.Stage := Authentication_Failed;
-         Status := (if Invalidate_Status = SMB.Ok then Failure_Status
-                    else Invalidate_Status);
-      end if;
+      pragma Assert
+        (if Initial_Command = 1 then
+           SMB.Engine.Final_Token_MIC_Matches
+             (Packet, SMB.Engine.Current_Response_Info (State),
+              SMB.Core_NTLM.Mechanism_List_MIC
+                (SMB.Crypto.Digest_128
+                   (SMB.Engine.Current_Signing_Key (State)), True)));
+      declare
+         Info_Before : constant SMB.Core_Protocol.Response_Info :=
+           SMB.Engine.Current_Response_Info (State)
+         with Ghost;
+         Key_Before : constant SMB.Crypto.Digest_128 :=
+           SMB.Crypto.Digest_128 (SMB.Engine.Current_Signing_Key (State))
+         with Ghost;
+         Expected_MIC : constant SMB.Crypto.Digest_128 :=
+           SMB.Core_NTLM.Mechanism_List_MIC (Key_Before, True)
+         with Ghost;
+         MIC_Before : constant Boolean :=
+           SMB.Engine.Final_Token_MIC_Matches
+             (Packet, Info_Before, Expected_MIC)
+         with Ghost;
+      begin
+         pragma Assert (if Initial_Command = 1 then MIC_Before);
+         SMB.Engine.Mark_Authenticated (State, Status);
+         if Status = SMB.Ok then
+            pragma Assert (Initial_Command = 1);
+            pragma Assert
+              (SMB.Core_Protocol."="
+                 (SMB.Engine.Current_Response_Info (State), Info_Before)
+               and then SMB.Crypto.Digest_128
+                 (SMB.Engine.Current_Signing_Key (State)) = Key_Before);
+            pragma Assert
+              (SMB.Core_NTLM.Mechanism_List_MIC
+                 (SMB.Crypto.Digest_128
+                    (SMB.Engine.Current_Signing_Key (State)), True) =
+               Expected_MIC);
+            pragma Assert (MIC_Before);
+            SMB.Engine.Lemma_Final_Token_MIC_Transfer
+              (Packet, Info_Before, SMB.Engine.Current_Response_Info (State),
+               Expected_MIC,
+               SMB.Core_NTLM.Mechanism_List_MIC
+                 (SMB.Crypto.Digest_128
+                    (SMB.Engine.Current_Signing_Key (State)), True));
+            pragma Assert
+              (SMB.Engine.Final_Token_MIC_Matches
+                 (Packet, SMB.Engine.Current_Response_Info (State),
+                  SMB.Core_NTLM.Mechanism_List_MIC
+                    (SMB.Crypto.Digest_128
+                       (SMB.Engine.Current_Signing_Key (State)), True)));
+            Clear_Authentication_Buffer (Value);
+            Value.Stage := Authentication_Finished;
+            pragma Assert (Value.Stage = Authentication_Finished);
+         else
+            Failure_Status := Status;
+            SMB.Engine.Invalidate (State, Invalidate_Status);
+            Clear_Authentication_Buffer (Value);
+            Value.Stage := Authentication_Failed;
+            Status := (if Invalidate_Status = SMB.Ok then Failure_Status
+                       else Invalidate_Status);
+         end if;
+      end;
    end Complete_Authenticate;
 
    procedure Abort_Authentication

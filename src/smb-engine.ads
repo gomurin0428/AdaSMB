@@ -359,6 +359,12 @@ is
           and Current_Session_Id (State) = Current_Session_Id (State'Old)
           and Has_Signing_Key (State)
           and Current_Signing_Key (State) = Current_Signing_Key (State'Old)
+          and SMB.Core_Protocol."="
+            (Current_Response_Info (State), Current_Response_Info (State'Old))
+          and SMB.Core_NTLM.Mechanism_List_MIC
+            (SMB.Crypto.Digest_128 (Current_Signing_Key (State)), True) =
+            SMB.Core_NTLM.Mechanism_List_MIC
+              (SMB.Crypto.Digest_128 (Current_Signing_Key (State'Old)), True)
           and not Has_Validated_Response (State)
         else State = State'Old and Status = SMB.Invalid_State_Status);
 
@@ -522,6 +528,17 @@ is
             - (Packet'Length - Info.Data_Offset - Info.Data_Length)) =
         Expected_MIC)
    with Ghost;
+
+   procedure Lemma_Final_Token_MIC_Transfer
+     (Packet : SMB.Bytes;
+      Left_Info, Right_Info : SMB.Core_Protocol.Response_Info;
+      Left_MIC, Right_MIC : SMB.Crypto.Digest_128)
+   with Ghost,
+     Pre =>
+       Final_Token_MIC_Matches (Packet, Left_Info, Left_MIC)
+       and then SMB.Core_Protocol."=" (Left_Info, Right_Info)
+       and then Left_MIC = Right_MIC,
+     Post => Final_Token_MIC_Matches (Packet, Right_Info, Right_MIC);
 
    procedure Accept_Response
      (State : in out Engine_State;
@@ -866,6 +883,17 @@ private
 
    function Has_Validated_Response (State : Engine_State) return Boolean is
      (State.Receipt_Valid);
+
+   function Response_Receipt_Matches
+     (State : Engine_State;
+      Command : SMB.Core_Wire.Command_Code;
+      Nt_Status : SMB.DWord;
+      Signed, MIC_Valid : Boolean) return Boolean is
+     (State.Receipt_Valid
+      and then State.Receipt_Command = Command
+      and then State.Receipt_Status = Nt_Status
+      and then State.Receipt_Signed = Signed
+      and then State.Receipt_MIC_Valid = MIC_Valid);
 
    function Pending_Request_Matches
      (State : Engine_State;
