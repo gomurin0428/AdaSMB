@@ -3965,3 +3965,18 @@ success outcome: failed stage, disconnected engine, no pending or validated
 response, zero key, preserved owner, epoch plus one, session ID zero and
 challenge length zero. Full proof:
 5,090 checks (728 flow, 4,362 prover), zero unproved.
+
+## Failed challenge completion cleanup
+
+`SMB.Core_Client.Complete_Challenge` no longer ends its postcondition with
+`else True`. Every outcome other than an accepted CHALLENGE, an unchanged
+rejected call, or a failed invalidation now proves that the context was a
+matching `Negotiate_Sent` context and that the call left stage
+`Authentication_Failed`, challenge length zero, every authentication buffer
+byte zero, a disconnected engine, no pending or validated response, a zero
+signing key and session ID zero. A unit test drives five rejected responses
+(logon failure, unsigned SUCCESS, zero session ID, inflated token length,
+mismatched message ID) through the public API and checks the observable part
+of that cleanup; buffer bytes are ghost-only and are covered by proof. The
+`Unsupported_Feature` result for an accepted SUCCESS is covered by proof only.
+Full proof: 5,091 checks (728 flow, 4,363 prover), zero unproved.
