@@ -3980,3 +3980,23 @@ mismatched message ID) through the public API and checks the observable part
 of that cleanup; buffer bytes are ghost-only and are covered by proof. The
 `Unsupported_Feature` result for an accepted SUCCESS is covered by proof only.
 Full proof: 5,091 checks (728 flow, 4,363 prover), zero unproved.
+
+## Failed AUTHENTICATE preparation cleanup
+
+`SMB.Core_Client.Prepare_Authenticate` no longer ends its postcondition with
+`else True`. Every outcome other than a prepared AUTHENTICATE request or an
+unchanged `Invalid_State_Status` rejection now proves `Used = 0`, an
+all-zero output buffer, a matching `Challenge_Received` starting context,
+stage `Authentication_Failed`, challenge length zero, every authentication
+buffer byte zero, a disconnected engine, no pending or validated response, a
+zero signing key and session ID zero.
+
+Proving the zero output exposed a gap: after the SESSION_SETUP body (including
+the NTLM AUTHENTICATE token) had been written into the caller's buffer, the
+failure paths for session-key installation, request reservation and header
+preparation returned with that token still in the buffer. Those paths now
+clear the output before failing. They are not reachable through ordinary public
+inputs, so they are covered by proof; a unit test drives three reachable
+failures (output too short, invalid password encoding, invalid user encoding)
+with a pre-filled output buffer and checks the observable cleanup.
+Full proof: 5,096 checks (728 flow, 4,368 prover), zero unproved.

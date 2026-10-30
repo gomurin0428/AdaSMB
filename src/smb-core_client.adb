@@ -79,11 +79,11 @@ is
       Buffer := (others => 0);
    end Clear_Transfer_Buffer;
 
-   procedure Clear_Output (Output : out SMB.Bytes) is
+   procedure Clear_Output (Output : out SMB.Bytes)
+   with Post => (for all Index in Output'Range => Output (Index) = 0)
+   is
    begin
-      for Index in Output'Range loop
-         Output (Index) := 0;
-      end loop;
+      Output := (others => 0);
    end Clear_Output;
 
    procedure Clear_Authentication_Buffer (Value : in out Authentication)
@@ -485,6 +485,7 @@ is
          Output (Output'First + Header_Length .. Output'Last),
          Body_Used, Engine_Status);
       if Engine_Status /= SMB.Ok then
+         Clear_Output (Output);
          Clear_Output (Key);
          Clear_Output (Token);
          Fail_Authentication (Value, State, Engine_Status, Status);
@@ -493,6 +494,7 @@ is
       SMB.Engine.Install_Session_Key
         (State, Value.Session_Id, Key, Engine_Status);
       if Engine_Status /= SMB.Ok then
+         Clear_Output (Output);
          Clear_Output (Key);
          Clear_Output (Token);
          Fail_Authentication (Value, State, Engine_Status, Status);
@@ -501,6 +503,7 @@ is
       SMB.Engine.Begin_Request
         (State, 1, False, True, Message_Id, Expected, Engine_Status);
       if Engine_Status /= SMB.Ok then
+         Clear_Output (Output);
          Clear_Output (Key);
          Clear_Output (Token);
          Fail_Authentication (Value, State, Engine_Status, Status);
@@ -510,6 +513,7 @@ is
       Value.Stage := Authenticate_Prepared;
       Prepare_Unsigned_Header (Output, Expected, Field_Status);
       if Field_Status /= SMB.Ok then
+         Clear_Output (Output);
          Clear_Output (Key);
          Clear_Output (Token);
          Fail_Authentication (Value, State, Field_Status, Status);
