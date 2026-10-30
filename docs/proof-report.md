@@ -3813,6 +3813,30 @@ wrapper remains a tested trust boundary rather than a completely proved facade.
 Full unit/Samba tests, strict forced build/dependency audit and a clean full
 proof passed. No CI or Unicode oracle rerun was performed.
 
+## Mechanism-list MIC construction
+
+`SMB.Core_NTLM.Mechanism_List_MIC` now has an exact functional contract in
+terms of the MS-NLMP signature without key exchange: bytes 0 .. 3 are version
+1, bytes 12 .. 15 are sequence number 0, and bytes 4 .. 11 are the first eight
+bytes of `HMAC_MD5 (MD5 (Signing_Key_Material (Session_Key, From_Server)),
+Mechanism_List_Signature_Input)`. `Signing_Key_Material` is proved to be the
+16-byte session key followed by the NUL-terminated client-to-server or
+server-to-client magic selected by `From_Server`; the signature input is
+sequence number zero followed by the DER NTLM mechanism list. The hash
+functions remain trusted primitives checked by their existing differential
+tests; this contract fixes how the MIC is composed from them.
+
+The material construction was moved into `Signing_Key_Material` without
+changing the computed bytes. `make crypto-test` adds 774 fixtures (259 keys
+and all 128 single-bit key changes, both directions) checked against Python
+`hashlib`/`hmac`, two known vectors, and corrupted-MIC and swapped-direction
+sensitivity checks.
+
+Focused proof of `smb-core_ntlm.adb`: 243 checks (43 flow, 200 prover), zero
+unproved. Full proof: 4,987 checks (727 flow, 4,260 prover), zero unproved, no
+`pragma Assume`. Unit, NTLM, strict forced build/dependency audit and Samba
+integration tests passed. No CI or Windows run was performed.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:

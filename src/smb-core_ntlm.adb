@@ -1,31 +1,36 @@
 package body SMB.Core_NTLM is
    pragma SPARK_Mode (On);
 
-   use type SMB.Byte;
+   function Signing_Key_Material
+     (Session_Key : SMB.Crypto.Digest_128;
+      From_Server : Boolean) return SMB.Bytes
+   is
+      Magic : constant String := Signing_Magic (From_Server);
+      Material : SMB.Bytes (0 .. 15 + Magic'Length) := (others => 0);
+   begin
+      Material (0 .. 15) := Session_Key;
+      for I in Magic'Range loop
+         Material (16 + I - Magic'First) := SMB.Byte (Character'Pos (Magic (I)));
+         pragma Loop_Invariant (Material (0 .. 15) = Session_Key);
+         pragma Loop_Invariant
+           (for all J in Magic'First .. I =>
+              Material (16 + J - Magic'First) =
+                SMB.Byte (Character'Pos (Magic (J))));
+      end loop;
+      return Material;
+   end Signing_Key_Material;
 
    function Mechanism_List_MIC
      (Session_Key : SMB.Crypto.Digest_128;
       From_Server : Boolean) return SMB.Crypto.Digest_128
    is
-      Magic : constant String :=
-        (if From_Server then
-           "session key to server-to-client signing key magic constant"
-         else "session key to client-to-server signing key magic constant")
-        & Character'Val (0);
-      Material : SMB.Bytes (0 .. 15 + Magic'Length) := (others => 0);
-      Message : constant SMB.Bytes :=
-        (0, 0, 0, 0, 16#30#, 16#0C#, 16#06#, 16#0A#,
-         16#2B#, 16#06#, 16#01#, 16#04#, 16#01#,
-         16#82#, 16#37#, 16#02#, 16#02#, 16#0A#);
       Result : SMB.Crypto.Digest_128 := (others => 0);
    begin
-      Material (0 .. 15) := Session_Key;
-      for I in Magic'Range loop
-         Material (16 + I - Magic'First) := SMB.Byte (Character'Pos (Magic (I)));
-      end loop;
       declare
-         Key : constant SMB.Crypto.Digest_128 := SMB.Crypto.MD5 (Material);
-         Hash : constant SMB.Crypto.Digest_128 := SMB.Crypto.HMAC_MD5 (Key, Message);
+         Key : constant SMB.Crypto.Digest_128 :=
+           SMB.Crypto.MD5 (Signing_Key_Material (Session_Key, From_Server));
+         Hash : constant SMB.Crypto.Digest_128 :=
+           SMB.Crypto.HMAC_MD5 (Key, Mechanism_List_Signature_Input);
       begin
          Result (0) := 1;
          Result (4 .. 11) := Hash (0 .. 7);
