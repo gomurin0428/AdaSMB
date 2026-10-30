@@ -1787,6 +1787,73 @@ procedure Test_Suite is
          end;
       end loop;
       Ada.Text_IO.Put_Line ("challenge failure cleanup: 5 rejected responses passed");
+      for Failure_Case in 1 .. 3 loop
+         declare
+            Fail_State : SMB.Engine.Engine_State;
+            Fail_Value : SMB.Core_Client.Authentication;
+            Fail_Request : SMB.Bytes
+              (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+                (others => 0);
+            Fail_Output : SMB.Bytes
+              (0 .. (if Failure_Case = 1 then 99
+                     else SMB.Core_Client.Authentication_Request_Size - 1)) :=
+                (others => 16#AA#);
+            Fail_Used : Natural;
+            Fail_Message : SMB.QWord;
+            Fail_Nt : SMB.DWord;
+            Bad_Text : constant String := "Pa" & Character'Val (16#FF#);
+         begin
+            Prepare_Negotiated (Fail_State);
+            SMB.Core_Client.Prepare_Negotiate
+              (Fail_Value, Fail_State, Fail_Request, Fail_Used, Status);
+            Assert (Status = SMB.Ok, "prepare failing authenticate negotiate");
+            Fail_Message := SMB.Wire.U64 (Fail_Request, 24);
+            SMB.Core_Client.Authentication_Send_Succeeded
+              (Fail_Value, Fail_State, Status);
+            Assert (Status = SMB.Ok, "acknowledge failing authenticate negotiate");
+            SMB.Core_Client.Complete_Challenge
+              (Fail_Value, Fail_State,
+               Challenge_Response
+                 (Fail_Message, SMB.Status_More_Processing_Required, Challenge),
+               Fail_Nt, Status);
+            Assert (Status = SMB.Ok, "challenge before failing authenticate");
+            case Failure_Case is
+               when 1 =>
+                  SMB.Core_Client.Prepare_Authenticate
+                    (Fail_Value, Fail_State, "User", "Password", "Domain",
+                     Nonce, 0, Fail_Output, Fail_Used, Status);
+               when 2 =>
+                  SMB.Core_Client.Prepare_Authenticate
+                    (Fail_Value, Fail_State, "User", Bad_Text, "Domain",
+                     Nonce, 0, Fail_Output, Fail_Used, Status);
+               when others =>
+                  SMB.Core_Client.Prepare_Authenticate
+                    (Fail_Value, Fail_State, Bad_Text, "Password", "Domain",
+                     Nonce, 0, Fail_Output, Fail_Used, Status);
+            end case;
+            Assert
+              (Status /= SMB.Ok
+               and then Status /= SMB.Invalid_State_Status
+               and then Fail_Used = 0
+               and then (for all B of Fail_Output => B = 0)
+               and then SMB.Core_Client.Authentication_Stage_Of (Fail_Value) =
+                 SMB.Core_Client.Authentication_Failed
+               and then
+                 SMB.Core_Client.Authentication_Challenge_Length_Of
+                   (Fail_Value) = 0
+               and then SMB.Engine.Current_Phase (Fail_State) =
+                 SMB.Engine.Disconnected
+               and then not SMB.Engine.Has_Pending_Request (Fail_State)
+               and then not SMB.Engine.Has_Validated_Response (Fail_State)
+               and then SMB.Engine.Signing_Key_Is_Zero (Fail_State)
+               and then SMB.Engine.Current_Session_Id (Fail_State) = 0,
+               "failed authenticate preparation left state, case"
+               & Integer'Image (Failure_Case) & " status "
+               & SMB.Core_Status'Image (Status));
+         end;
+      end loop;
+      Ada.Text_IO.Put_Line
+        ("authenticate preparation failure cleanup: 3 rejected inputs passed");
       Prepare_Negotiated (State);
       SMB.Core_Client.Prepare_Negotiate
         (Value, State, Request, Used, Status);
