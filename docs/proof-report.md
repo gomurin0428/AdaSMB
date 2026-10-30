@@ -3969,8 +3969,8 @@ challenge length zero. Full proof:
 ## Failed challenge completion cleanup
 
 `SMB.Core_Client.Complete_Challenge` no longer ends its postcondition with
-`else True`. Every outcome other than an accepted CHALLENGE, an unchanged
-rejected call, or a failed invalidation now proves that the context was a
+`else True`. Every outcome other than an accepted CHALLENGE or an unchanged
+`Invalid_State_Status` rejection now proves that the context was a
 matching `Negotiate_Sent` context and that the call left stage
 `Authentication_Failed`, challenge length zero, every authentication buffer
 byte zero, a disconnected engine, no pending or validated response, a zero
