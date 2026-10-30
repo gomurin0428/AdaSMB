@@ -1,6 +1,7 @@
 with Ada.Unchecked_Deallocation;
 with Ada.Text_IO;
 with SMB.Crypto;
+with SMB.Core_NTLM;
 with SMB.Core_Wire;
 with SMB.Wire;
 
@@ -101,6 +102,19 @@ procedure Crypto_Probe is
          end loop;
       end loop;
    end Check_HMAC;
+
+   procedure Check_MIC (Key : SMB.Bytes; From_Server : Boolean;
+                        Expected : SMB.Bytes) is
+   begin
+      if Key'Length /= 16 or else Expected'Length /= 16 then
+         raise Program_Error with "invalid MIC fixture";
+      end if;
+      if SMB.Core_NTLM.Mechanism_List_MIC
+        (SMB.Crypto.Digest_128 (Key), From_Server) /= Expected
+      then
+         raise Program_Error with "mechanism-list MIC mismatch";
+      end if;
+   end Check_MIC;
 
    procedure Check_Wire
      (Key, Data, Expected : SMB.Bytes;
@@ -205,9 +219,15 @@ begin
                  (Hex (Field (2)), Hex (Field (3)),
                   Hex (Field (4)), Hex (Field (5)));
             elsif Field (1) = "H" then
-               Check_HMAC
-                 (Hex (Field (2)), Hex (Field (3)),
-                  Hex (Field (4)), Hex (Field (5)));
+              Check_HMAC
+                (Hex (Field (2)), Hex (Field (3)),
+                 Hex (Field (4)), Hex (Field (5)));
+            elsif Field (1) = "M" then
+               if Field (5) /= "-" then
+                  raise Program_Error with "invalid MIC fixture";
+               end if;
+               Check_MIC
+                 (Hex (Field (2)), Boolean'Value (Field (3)), Hex (Field (4)));
             elsif Field (1) = "S" then
                Check_Wire
                  (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)),

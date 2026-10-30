@@ -89,6 +89,29 @@ def fixtures() -> list[str]:
     for key_size, size in ((0, FRAME), (64, FRAME), (65, FRAME), (FRAME, 0),
                            (FRAME, 55), (FRAME, FRAME), (FRAME - 1, FRAME - 1)):
         mac(patterned(key_size, 197), patterned(size, 11))
+
+    # MS-NLMP mechListMIC without key exchange: version 1, sequence 0.
+    mech_list = bytes.fromhex("300c060a2b06010401823702020a")
+
+    def mic(key: bytes, from_server: bool) -> None:
+        direction = b"server-to-client" if from_server else b"client-to-server"
+        magic = b"session key to " + direction + b" signing key magic constant\0"
+        sign_key = hashlib.md5(key + magic).digest()
+        checksum = hmac.digest(sign_key, b"\0" * 4 + mech_list, "md5")[:8]
+        expected = b"\1\0\0\0" + checksum + b"\0" * 4
+        cases.append(f"M {key.hex()} {str(from_server).lower()} {expected.hex()} -")
+
+    keys = [bytes(range(16)), b"\0" * 16, b"\xff" * 16]
+    keys += [patterned(16, seed) for seed in range(256)]
+    base = bytes(range(16))
+    for position in range(16):
+        for bit in range(8):
+            changed = bytearray(base)
+            changed[position] ^= 1 << bit
+            keys.append(bytes(changed))
+    for key in keys:
+        for from_server in (False, True):
+            mic(key, from_server)
     return cases
 
 
@@ -100,7 +123,14 @@ def main() -> None:
     if result.returncode != 0 or result.stdout.strip() != f"PASS {len(cases)}":
         print(result.stdout + result.stderr, file=sys.stderr)
         raise RuntimeError("hash/HMAC conformance failed")
-    for mode, columns in (("D", (2, 3, 4)), ("H", (3, 4))):
+    known = {("000102030405060708090a0b0c0d0e0f", "false"):
+             "0100000049ea442beb10414700000000",
+             ("000102030405060708090a0b0c0d0e0f", "true"):
+             "010000000afb34903a3e4e5400000000"}
+    for (key, direction), expected in known.items():
+        if f"M {key} {direction} {expected} -" not in cases:
+            raise AssertionError("mechanism-list MIC oracle differs from known vector")
+    for mode, columns in (("D", (2, 3, 4)), ("H", (3, 4)), ("M", (3,))):
         original = next(case for case in cases if case.startswith(mode + " "))
         for column in columns:
             fields = original.split()
@@ -111,10 +141,18 @@ def main() -> None:
                                    text=True, capture_output=True, timeout=30)
             if check.returncode == 0 or "raised PROGRAM_ERROR" not in check.stderr:
                 raise RuntimeError("crypto probe sensitivity check failed or could not execute")
+    original = next(case for case in cases if case.startswith("M ")).split()
+    original[2] = "true" if original[2] == "false" else "false"
+    check = subprocess.run([str(probe)], input=" ".join(original) + "\n",
+                           text=True, capture_output=True, timeout=30)
+    if check.returncode == 0 or "raised PROGRAM_ERROR" not in check.stderr:
+        raise RuntimeError("crypto probe MIC direction sensitivity check failed")
     hashes = sum(case.startswith("D ") for case in cases)
-    macs = len(cases) - hashes
+    mics = sum(case.startswith("M ") for case in cases)
+    macs = len(cases) - hashes - mics
     print(f"PASS: {hashes} hash fixtures / {2 * hashes} rebased cases; "
-          f"{macs} HMAC fixtures / {4 * macs} rebased cases; five sensitivity checks")
+          f"{macs} HMAC fixtures / {4 * macs} rebased cases; "
+          f"{mics} mechanism-list MIC fixtures; seven sensitivity checks")
 
 
 if __name__ == "__main__":
