@@ -1783,7 +1783,14 @@ procedure Test_Suite is
         (Status = SMB.Ok and then Nt_Status = SMB.Success
          and then SMB.Engine.Current_Phase (State) = SMB.Engine.Authenticated
          and then SMB.Core_Client.Authentication_Stage_Of (Value) =
-           SMB.Core_Client.Authentication_Finished,
+           SMB.Core_Client.Authentication_Finished
+         and then not SMB.Engine.Has_Pending_Request (State)
+         and then not SMB.Engine.Has_Validated_Response (State)
+         and then SMB.Engine.Current_Session_Id (State) /= 0
+         and then SMB.Engine.Current_Response_Info (State).Session_Id =
+           SMB.Engine.Current_Session_Id (State)
+         and then SMB.Engine.Current_Session_Id (State) =
+           SMB.Core_Client.Authentication_Session_Id_Of (Value),
          "coordinator completed signed authentication");
       declare
          Info : constant SMB.Core_Protocol.Response_Info :=
