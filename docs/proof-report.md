@@ -3946,8 +3946,8 @@ security.
 On success, `SMB.Core_Client.Abort_Authentication` now also proves that the
 retained challenge length is zero and every byte of the authentication buffer
 is zero, matching the failed-completion cleanup contract. The runtime body is
-unchanged. A unit test aborts after a sent NEGOTIATE whose retained token is
-non-zero and checks the cleared state. Full proof: 5,089 checks (728 flow,
+unchanged. The buffer contents are ghost-only, so that part is covered by proof;
+a later runtime unit test checks the observable outcome. Full proof: 5,089 checks (728 flow,
 4,361 prover), zero unproved.
 
 ## Complete authentication abort outcomes
@@ -3959,5 +3959,9 @@ is preserved, the epoch advances by one and the session ID is zero. On
 `Counter_Exhausted` (epoch already at `QWord'Last`) the abort still
 disconnects the engine, clears key, pending and validated state, sets the
 owner to zero and clears the retained token. Epoch exhaustion is covered by
-proof only; reaching it at runtime would need 2**64 invalidations. Full proof:
+proof only; reaching it at runtime would need 2**64 invalidations.
+A unit test aborts after a received CHALLENGE and checks the observable
+success outcome: failed stage, disconnected engine, no pending or validated
+response, zero key, preserved owner, epoch plus one, session ID zero and
+challenge length zero. Full proof:
 5,090 checks (728 flow, 4,362 prover), zero unproved.
