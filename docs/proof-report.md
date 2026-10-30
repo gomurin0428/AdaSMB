@@ -3940,3 +3940,12 @@ lists the proved scope and non-SPARK adapter inventory. A successful proof
 covers the stated core contracts under their bounds and trust assumptions; it
 does not prove the entire public facade, operating system, or cryptographic
 security.
+
+## Successful authentication abort clears retained token state
+
+On success, `SMB.Core_Client.Abort_Authentication` now also proves that the
+retained challenge length is zero and every byte of the authentication buffer
+is zero, matching the failed-completion cleanup contract. The runtime body is
+unchanged. A unit test aborts after a sent NEGOTIATE whose retained token is
+non-zero and checks the cleared state. Full proof: 5,089 checks (728 flow,
+4,361 prover), zero unproved.
