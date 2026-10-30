@@ -3902,9 +3902,11 @@ validated response remains, that the retained response's session ID equals the
 Engine session ID, and that the Engine session ID is unchanged by completion.
 The positive coordinator test additionally checks no pending request, a non-zero
 session ID and equality with the authentication's recorded session ID at run
-time. A "no pending request" postcondition was not added: adding the required
-`Mark_Authenticated` frame fact made the existing final-MIC transfer unprovable
-within the standard settings, so it remains a runtime-tested property only.
+time. A follow-up adds `not Has_Pending_Request (State)` to the success branch of
+`SMB.Engine.Mark_Authenticated` and to `Complete_Authenticate`, so successful
+completion is also proved to leave no pending request. Stating it inside the
+success branch (rather than as a top-level pending-flag frame equality) keeps
+the existing final-MIC transfer provable.
 
 Full proof: 5,089 checks (728 flow, 4,361 prover), zero unproved, no
 `pragma Assume`. Unit, NTLM, crypto, strict build/source checks and local Samba

@@ -355,6 +355,7 @@ is
           and then Authentication_Stage_Of (Value) = Authentication_Finished
           and then SMB.Engine.Current_Phase (State) = SMB.Engine.Authenticated
           and then SMB.Engine.Has_Signing_Key (State)
+          and then not SMB.Engine.Has_Pending_Request (State)
           and then not SMB.Engine.Has_Validated_Response (State)
           and then SMB.Engine.Current_Response_Info (State).Session_Id =
             SMB.Engine.Current_Session_Id (State)
