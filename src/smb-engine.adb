@@ -1,6 +1,3 @@
-with SMB.Core_NTLM;
-with SMB.Crypto;
-
 package body SMB.Engine
   with SPARK_Mode,
        Refined_State => (Identity_Registry => Next_Owner_Id)
@@ -25,7 +22,12 @@ is
      and then
      Offset <= Packet'Length
      and then Length <= Packet'Length - Offset,
-     Post => Bounded_Slice'Result'Length = Length;
+     Post => Bounded_Slice'Result'Length = Length
+       and then
+         (if Length > 0 then
+            Bounded_Slice'Result =
+              Packet (Packet'First + Offset
+                      .. Packet'Last - (Packet'Length - Offset - Length)));
 
    function Bounded_Slice
      (Packet : SMB.Bytes;
@@ -38,6 +40,29 @@ is
         (Packet'First + Offset
          .. Packet'Last - (Packet'Length - Offset - Length));
    end Bounded_Slice;
+
+   procedure Lemma_Final_Token_MIC
+     (Packet : SMB.Bytes;
+      Info : SMB.Core_Protocol.Response_Info;
+      Expected_MIC : SMB.Crypto.Digest_128)
+   with Ghost,
+     Pre =>
+       Packet'Length <= SMB.Maximum_Frame_Size
+       and then Info.Data_Length >= 16
+       and then Info.Data_Offset <= Packet'Length
+       and then Info.Data_Length <= Packet'Length - Info.Data_Offset
+       and then Packet
+         (Packet'Last
+          - (Packet'Length - Info.Data_Offset - Info.Data_Length) - 15
+          .. Packet'Last
+             - (Packet'Length - Info.Data_Offset - Info.Data_Length)) =
+         Expected_MIC,
+     Post => Final_Token_MIC_Matches (Packet, Info, Expected_MIC);
+
+   procedure Lemma_Final_Token_MIC
+     (Packet : SMB.Bytes;
+      Info : SMB.Core_Protocol.Response_Info;
+      Expected_MIC : SMB.Crypto.Digest_128) is null;
 
    procedure Initialize
       (State : in out Engine_State;
@@ -473,6 +498,9 @@ is
       Parse_Status : SMB.Core_Status;
       Parsed : SMB.Core_Protocol.Response_Info;
       Mic_Status : SMB.Core_Status;
+      Initial_Command : constant SMB.Core_Wire.Command_Code :=
+        State.Pending_Expected.Command
+      with Ghost;
    begin
       Nt_Status := 0;
       if not State.Pending then
@@ -546,33 +574,80 @@ is
       if State.Pending_Expected.Command = 1
         and then Nt_Status = SMB.Success
       then
-         if Parsed.Data_Length = 0 then
-            declare
-               Empty : constant SMB.Bytes := (1 .. 0 => 0);
-            begin
-               SMB.Core_NTLM.Validate_Final_Token
-                 (Empty, Mic_Status,
+         declare
+            Expected_MIC : constant SMB.Crypto.Digest_128 :=
+              SMB.Core_NTLM.Mechanism_List_MIC
+                (SMB.Crypto.Digest_128 (State.Signing_Key), True);
+         begin
+            if Parsed.Data_Length = 0 then
+               declare
+                  Empty : constant SMB.Bytes := (1 .. 0 => 0);
+               begin
+                  SMB.Core_NTLM.Validate_Final_Token
+                    (Empty, Mic_Status, Expected_MIC);
+                  pragma Assert (Mic_Status /= SMB.Ok);
+               end;
+            else
+               declare
+                  Token : constant SMB.Bytes :=
+                    Bounded_Slice
+                      (Packet, Parsed.Data_Offset, Parsed.Data_Length);
+               begin
+                  SMB.Core_NTLM.Validate_Final_Token
+                    (Token, Mic_Status, Expected_MIC);
+                  if Mic_Status = SMB.Ok then
+                     declare
+                        Tail_Last : constant Natural :=
+                          Packet'Last
+                          - (Packet'Length - Parsed.Data_Offset
+                             - Parsed.Data_Length);
+                     begin
+                        pragma Assert
+                          (Token'Last - Token'First =
+                             Tail_Last - (Packet'First + Parsed.Data_Offset));
+                        pragma Assert
+                          (for all I in 0 .. 15 =>
+                             Token (Token'Last - 15 + I) = Expected_MIC (I));
+                        pragma Assert
+                          (for all I in 0 .. 15 =>
+                             Token (Token'Last - 15 + I) =
+                               Packet (Tail_Last - 15 + I));
+                        pragma Assert
+                          (Packet (Tail_Last - 15 .. Tail_Last) =
+                             Expected_MIC);
+                     end;
+                  end if;
+               end;
+            end if;
+            if Mic_Status /= SMB.Ok then
+               Invalidate (State, Ignore_Status);
+               Nt_Status := 0;
+               Status := SMB.Invalid_Protocol;
+               return;
+            end if;
+            pragma Assert
+              (Parsed.Data_Length >= 16
+               and then Packet
+                 (Packet'Last
+                  - (Packet'Length - Parsed.Data_Offset
+                     - Parsed.Data_Length) - 15
+                  .. Packet'Last
+                     - (Packet'Length - Parsed.Data_Offset
+                        - Parsed.Data_Length)) = Expected_MIC);
+            pragma Assert
+              (Expected_MIC =
+                 SMB.Core_NTLM.Mechanism_List_MIC
+                   (SMB.Crypto.Digest_128 (State.Signing_Key), True));
+            Lemma_Final_Token_MIC
+              (Packet, Parsed,
+               SMB.Core_NTLM.Mechanism_List_MIC
+                 (SMB.Crypto.Digest_128 (State.Signing_Key), True));
+            pragma Assert
+              (Final_Token_MIC_Matches
+                 (Packet, Parsed,
                   SMB.Core_NTLM.Mechanism_List_MIC
-                    (SMB.Crypto.Digest_128 (State.Signing_Key), True));
-            end;
-         else
-            declare
-               Token : constant SMB.Bytes :=
-                 Bounded_Slice
-                   (Packet, Parsed.Data_Offset, Parsed.Data_Length);
-            begin
-               SMB.Core_NTLM.Validate_Final_Token
-                 (Token, Mic_Status,
-                  SMB.Core_NTLM.Mechanism_List_MIC
-                    (SMB.Crypto.Digest_128 (State.Signing_Key), True));
-            end;
-         end if;
-         if Mic_Status /= SMB.Ok then
-            Invalidate (State, Ignore_Status);
-            Nt_Status := 0;
-            Status := SMB.Invalid_Protocol;
-            return;
-         end if;
+                    (SMB.Crypto.Digest_128 (State.Signing_Key), True)));
+         end;
          State.Receipt_MIC_Valid := True;
       end if;
       State.Receipt_Valid := True;
@@ -584,9 +659,18 @@ is
       State.Pending := False;
       State.Pending_Async_Id := 0;
       State.Pending_Expected := (others => <>);
+      pragma Assert
+        (if Initial_Command = 1 then State.Receipt_Command = 1);
+      pragma Assert
+        (if Initial_Command = 1 and then Nt_Status = SMB.Success then
+           Final_Token_MIC_Matches
+             (Packet, State.Receipt_Info,
+              SMB.Core_NTLM.Mechanism_List_MIC
+                (SMB.Crypto.Digest_128 (State.Signing_Key), True)));
       if Nt_Status = SMB.Success
         and then State.Receipt_Command = 4
       then
+         pragma Assert (Initial_Command /= 1);
          State.Handles := (others => <>);
          State.Tree_Id := 0;
          State.Current := Authenticated;
@@ -600,8 +684,15 @@ is
       elsif Nt_Status = SMB.Success
         and then State.Receipt_Command = 2
       then
+         pragma Assert (Initial_Command /= 1);
          Invalidate (State, Ignore_Status);
       end if;
+      pragma Assert
+        (if Initial_Command = 1 and then Nt_Status = SMB.Success then
+           Final_Token_MIC_Matches
+             (Packet, Current_Response_Info (State),
+              SMB.Core_NTLM.Mechanism_List_MIC
+                (SMB.Crypto.Digest_128 (Current_Signing_Key (State)), True)));
       Status := SMB.Ok;
    end Accept_Response;
 

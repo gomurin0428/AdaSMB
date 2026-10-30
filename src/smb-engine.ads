@@ -1,5 +1,7 @@
 with SMB.Core_Wire;
 with SMB.Core_Protocol;
+with SMB.Core_NTLM;
+with SMB.Crypto;
 
 package SMB.Engine
   with SPARK_Mode,
@@ -504,6 +506,23 @@ is
           and then not Has_Open_Handles (State)
           and then Signing_Key_Is_Zero (State));
 
+   function Final_Token_MIC_Matches
+     (Packet : SMB.Bytes;
+      Info : SMB.Core_Protocol.Response_Info;
+      Expected_MIC : SMB.Crypto.Digest_128) return Boolean
+   is
+     (Packet'Length <= SMB.Maximum_Frame_Size
+      and then Info.Data_Length >= 16
+      and then Info.Data_Offset <= Packet'Length
+      and then Info.Data_Length <= Packet'Length - Info.Data_Offset
+      and then Packet
+        (Packet'Last
+         - (Packet'Length - Info.Data_Offset - Info.Data_Length) - 15
+         .. Packet'Last
+            - (Packet'Length - Info.Data_Offset - Info.Data_Length)) =
+        Expected_MIC)
+   with Ghost;
+
    procedure Accept_Response
      (State : in out Engine_State;
       Packet : SMB.Bytes;
@@ -571,6 +590,14 @@ is
                 Pending_Response_Is_Signed (State'Old),
                 Pending_Command (State'Old) = 1
                   and then Nt_Status = SMB.Success)
+               and then
+                 (if Pending_Command (State'Old) = 1
+                    and then Nt_Status = SMB.Success
+                  then Final_Token_MIC_Matches
+                    (Packet, Current_Response_Info (State),
+                     SMB.Core_NTLM.Mechanism_List_MIC
+                       (SMB.Crypto.Digest_128 (Current_Signing_Key (State)),
+                        True)))
                and then
                  (if Pending_Command (State'Old) = 0
                     and then Nt_Status = SMB.Success

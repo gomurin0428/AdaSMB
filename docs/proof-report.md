@@ -3837,6 +3837,28 @@ unproved. Full proof: 4,987 checks (727 flow, 4,260 prover), zero unproved, no
 `pragma Assume`. Unit, NTLM, strict forced build/dependency audit and Samba
 integration tests passed. No CI or Windows run was performed.
 
+## Accepted SESSION_SETUP final MIC
+
+`SMB.Engine.Accept_Response` now guarantees that when a pending SESSION_SETUP
+(command 1) is accepted with `STATUS_SUCCESS`, the recorded response data
+area lies inside the packet, is at least 16 bytes long, and its last 16 bytes
+equal `Mechanism_List_MIC (Current_Signing_Key (State), From_Server => True)`.
+The ghost function `Final_Token_MIC_Matches` states this relation and the
+ghost lemma `Lemma_Final_Token_MIC` packages it inside the body.
+`Bounded_Slice` now also proves element equality with the selected packet
+range, so the `Validate_Final_Token` postcondition transfers to the packet.
+The runtime check order and comparison primitive are unchanged.
+
+The unit suite adds a signed final SESSION_SETUP response for each of the 16
+MIC byte positions with one flipped bit; each is rejected with
+`Invalid_Protocol`, disconnects, clears the signing key and leaves no pending
+request.
+
+Focused proof of `smb-engine.adb` exited successfully with zero unproved
+checks. Full proof: 5,064 checks (728 flow, 4,336 prover), zero unproved, no
+`pragma Assume`. Unit, NTLM, crypto, strict build/dependency audit and Samba
+integration tests passed. No CI or Windows run was performed.
+
 ## Reproduction
 
 With GNATprove, GPRbuild, cvc5 and z3 on `PATH`:
