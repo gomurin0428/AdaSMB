@@ -610,15 +610,10 @@ is
                SMB.Core_NTLM.Mechanism_List_MIC
                  (SMB.Crypto.Digest_128
                     (SMB.Engine.Current_Signing_Key (State)), True));
-            pragma Assert
-              (SMB.Engine.Final_Token_MIC_Matches
-                 (Packet, SMB.Engine.Current_Response_Info (State),
-                  SMB.Core_NTLM.Mechanism_List_MIC
-                    (SMB.Crypto.Digest_128
-                       (SMB.Engine.Current_Signing_Key (State)), True)));
             Clear_Authentication_Buffer (Value);
             Value.Stage := Authentication_Finished;
             pragma Assert (Value.Stage = Authentication_Finished);
+            pragma Assert (not SMB.Engine.Has_Pending_Request (State));
             pragma Assert (not SMB.Engine.Has_Validated_Response (State));
             pragma Assert
               (SMB.Engine.Current_Response_Info (State).Session_Id =

@@ -366,6 +366,7 @@ is
             SMB.Core_NTLM.Mechanism_List_MIC
               (SMB.Crypto.Digest_128 (Current_Signing_Key (State'Old)), True)
           and not Has_Validated_Response (State)
+          and not Has_Pending_Request (State)
         else State = State'Old and Status = SMB.Invalid_State_Status);
 
    procedure Mark_Share_Connected
