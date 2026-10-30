@@ -30,10 +30,21 @@ package SMB.Core_NTLM is
          Challenge_Slice_Valid (Token, Type2_Offset, Type2_Length)
          else Type2_Offset = 0 and then Type2_Length = 0);
 
+   -- Keep the potentially short-circuiting equality oracle proof-only.
+   pragma Assertion_Policy (Post => Ignore);
    procedure Validate_Final_Token
      (Token : SMB.Bytes;
       Status : out SMB.Core_Status;
       Expected_MIC : SMB.Bytes := (1 .. 0 => 0))
    with Pre => Token'Length <= SMB.Maximum_Frame_Size
-     and Expected_MIC'Length <= 16;
+     and Expected_MIC'Length <= 16,
+     Post =>
+       (if Token'Length = 0 then
+          Status = (if Expected_MIC'Length = 0 then SMB.Ok
+                    else SMB.Signature_Error))
+       and then
+         (if Status = SMB.Ok and then Expected_MIC'Length /= 0 then
+            Expected_MIC'Length = 16
+            and then Token'Length >= 16
+            and then Token (Token'Last - 15 .. Token'Last) = Expected_MIC);
 end SMB.Core_NTLM;
