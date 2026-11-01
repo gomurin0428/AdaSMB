@@ -12,6 +12,7 @@ is
    use type SMB.Core_Wire.Command_Code;
    use type SMB.DWord;
    use type SMB.QWord;
+   pragma Unevaluated_Use_Of_Old (Allow);
 
    Maximum_Handles : constant := 256;
 
@@ -204,11 +205,11 @@ is
             or Last_Allocated_Owner_Id'Old = SMB.QWord'Last)
        and
        (if Status = SMB.Ok then
-          Current_Phase (State'Old) = Disconnected
-          and not Has_Pending_Request (State'Old)
-          and not Has_Signing_Key (State'Old)
-          and not Has_Validated_Response (State'Old)
-          and not Has_Open_Handles (State'Old)
+          Current_Phase (State)'Old = Disconnected
+          and not Has_Pending_Request (State)'Old
+          and not Has_Signing_Key (State)'Old
+          and not Has_Validated_Response (State)'Old
+          and not Has_Open_Handles (State)'Old
           and Current_Phase (State) = Disconnected
           and Current_Owner_Id (State) = Last_Allocated_Owner_Id
           and Current_Owner_Id (State) /= 0
@@ -226,11 +227,11 @@ is
           and Current_Async_Id (State) = 0
           and Signing_Key_Is_Zero (State)
         else State = State'Old
-          and (if Current_Phase (State'Old) /= Disconnected
-                 or else Has_Pending_Request (State'Old)
-                 or else Has_Signing_Key (State'Old)
-                 or else Has_Validated_Response (State'Old)
-                 or else Has_Open_Handles (State'Old)
+          and (if Current_Phase (State)'Old /= Disconnected
+                 or else Has_Pending_Request (State)'Old
+                 or else Has_Signing_Key (State)'Old
+                 or else Has_Validated_Response (State)'Old
+                 or else Has_Open_Handles (State)'Old
                then Status = SMB.Invalid_State_Status
                else Status = SMB.Counter_Exhausted));
 
@@ -239,26 +240,26 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       Next_Request_Id (State) = Next_Request_Id (State)'Old
        and then
-       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State)'Old
        and then
        (if Status = SMB.Ok then
-          Current_Phase (State'Old) = Disconnected
-          and Current_Owner_Id (State'Old) /= 0
+          Current_Phase (State)'Old = Disconnected
+          and Current_Owner_Id (State)'Old /= 0
           and Current_Phase (State) = Transport_Connected
-          and Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-          and Current_Epoch (State) = Current_Epoch (State'Old)
-          and Current_Session_Id (State) = Current_Session_Id (State'Old)
-          and Current_Tree_Id (State) = Current_Tree_Id (State'Old)
-          and Current_Max_Read (State) = Current_Max_Read (State'Old)
-          and Current_Max_Write (State) = Current_Max_Write (State'Old)
-          and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
-          and Current_Signing_Key (State) = Current_Signing_Key (State'Old)
+          and Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+          and Current_Epoch (State) = Current_Epoch (State)'Old
+          and Current_Session_Id (State) = Current_Session_Id (State)'Old
+          and Current_Tree_Id (State) = Current_Tree_Id (State)'Old
+          and Current_Max_Read (State) = Current_Max_Read (State)'Old
+          and Current_Max_Write (State) = Current_Max_Write (State)'Old
+          and Has_Signing_Key (State) = Has_Signing_Key (State)'Old
+          and Current_Signing_Key (State) = Current_Signing_Key (State)'Old
           and Handle_Table_Equivalent (State'Old, State)
-          and Has_Pending_Request (State) = Has_Pending_Request (State'Old)
+          and Has_Pending_Request (State) = Has_Pending_Request (State)'Old
           and Has_Validated_Response (State) =
-            Has_Validated_Response (State'Old)
+            Has_Validated_Response (State)'Old
         else State = State'Old and Status = SMB.Invalid_State_Status);
 
    procedure Mark_Negotiated
@@ -267,35 +268,35 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       Next_Request_Id (State) = Next_Request_Id (State)'Old
        and then
-       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State)'Old
        and then
        Status =
-         (if Current_Phase (State'Old) = Transport_Connected
-             and then not Has_Pending_Request (State'Old)
+         (if Current_Phase (State)'Old = Transport_Connected
+             and then not Has_Pending_Request (State)'Old
              and then Response_Receipt_Matches
-               (State'Old, 0, SMB.Success, False, False)
+               (State, 0, SMB.Success, False, False)'Old
              and then Maximum_Read in 1 .. SMB.Maximum_Frame_Size
              and then Maximum_Write in 1 .. SMB.Maximum_Frame_Size
-             and then Current_Response_Info (State'Old).Max_Read = Maximum_Read
-             and then Current_Response_Info (State'Old).Max_Write = Maximum_Write
+             and then Current_Response_Info (State)'Old.Max_Read = Maximum_Read
+             and then Current_Response_Info (State)'Old.Max_Write = Maximum_Write
           then SMB.Ok else SMB.Invalid_Value)
        and then
        (if Status = SMB.Ok then
-          Current_Phase (State'Old) = Transport_Connected
-          and not Has_Pending_Request (State'Old)
+          Current_Phase (State)'Old = Transport_Connected
+          and not Has_Pending_Request (State)'Old
           and Response_Receipt_Matches
-            (State'Old, 0, SMB.Success, False, False)
-          and Current_Response_Info (State'Old).Max_Read = Maximum_Read
-          and Current_Response_Info (State'Old).Max_Write = Maximum_Write
+            (State, 0, SMB.Success, False, False)'Old
+          and Current_Response_Info (State)'Old.Max_Read = Maximum_Read
+          and Current_Response_Info (State)'Old.Max_Write = Maximum_Write
           and
           Current_Phase (State) = Negotiated
-          and Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-          and Current_Epoch (State) = Current_Epoch (State'Old)
-          and Current_Tree_Id (State) = Current_Tree_Id (State'Old)
-          and Current_Signing_Key (State) = Current_Signing_Key (State'Old)
-          and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
+          and Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+          and Current_Epoch (State) = Current_Epoch (State)'Old
+          and Current_Tree_Id (State) = Current_Tree_Id (State)'Old
+          and Current_Signing_Key (State) = Current_Signing_Key (State)'Old
+          and Has_Signing_Key (State) = Has_Signing_Key (State)'Old
           and Handle_Table_Equivalent (State'Old, State)
           and Current_Max_Read (State) = Maximum_Read
           and Current_Max_Write (State) = Maximum_Write
@@ -311,20 +312,20 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       Next_Request_Id (State) = Next_Request_Id (State)'Old
        and then
-       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State)'Old
        and then
        (if Status = SMB.Ok then
-          Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-          and Current_Epoch (State) = Current_Epoch (State'Old)
-          and Current_Phase (State'Old) = Negotiated
-          and not Has_Pending_Request (State'Old)
+          Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+          and Current_Epoch (State) = Current_Epoch (State)'Old
+          and Current_Phase (State)'Old = Negotiated
+          and not Has_Pending_Request (State)'Old
           and Response_Receipt_Matches
-            (State'Old, 1, SMB.Status_More_Processing_Required, False, False)
-          and Current_Response_Info (State'Old).Session_Id = Session_Id
-          and not Has_Signing_Key (State'Old)
-          and not Has_Pending_Request (State'Old)
+            (State, 1, SMB.Status_More_Processing_Required, False, False)'Old
+          and Current_Response_Info (State)'Old.Session_Id = Session_Id
+          and not Has_Signing_Key (State)'Old
+          and not Has_Pending_Request (State)'Old
           and Session_Id /= 0
           and Key'Length = 16
           and
@@ -341,30 +342,30 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       Next_Request_Id (State) = Next_Request_Id (State)'Old
        and then
-       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State)'Old
        and then
        (if Status = SMB.Ok then
-          Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-          and Current_Epoch (State) = Current_Epoch (State'Old)
-          and Current_Phase (State'Old) = Negotiated
-          and Has_Signing_Key (State'Old)
-          and not Has_Pending_Request (State'Old)
-          and Response_Receipt_Matches (State'Old, 1, SMB.Success, True, True)
-          and Current_Response_Info (State'Old).Session_Id =
-            Current_Session_Id (State'Old)
+          Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+          and Current_Epoch (State) = Current_Epoch (State)'Old
+          and Current_Phase (State)'Old = Negotiated
+          and Has_Signing_Key (State)'Old
+          and not Has_Pending_Request (State)'Old
+          and Response_Receipt_Matches (State, 1, SMB.Success, True, True)'Old
+          and Current_Response_Info (State)'Old.Session_Id =
+            Current_Session_Id (State)'Old
           and
           Current_Phase (State) = Authenticated
-          and Current_Session_Id (State) = Current_Session_Id (State'Old)
+          and Current_Session_Id (State) = Current_Session_Id (State)'Old
           and Has_Signing_Key (State)
-          and Current_Signing_Key (State) = Current_Signing_Key (State'Old)
+          and Current_Signing_Key (State) = Current_Signing_Key (State)'Old
           and SMB.Core_Protocol."="
-            (Current_Response_Info (State), Current_Response_Info (State'Old))
+            (Current_Response_Info (State), Current_Response_Info (State)'Old)
           and SMB.Core_NTLM.Mechanism_List_MIC
             (SMB.Crypto.Digest_128 (Current_Signing_Key (State)), True) =
             SMB.Core_NTLM.Mechanism_List_MIC
-              (SMB.Crypto.Digest_128 (Current_Signing_Key (State'Old)), True)
+              (SMB.Crypto.Digest_128 (Current_Signing_Key (State)'Old), True)
           and not Has_Validated_Response (State)
           and not Has_Pending_Request (State)
         else State = State'Old and Status = SMB.Invalid_State_Status);
@@ -375,36 +376,36 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       Next_Request_Id (State) = Next_Request_Id (State)'Old
        and then
-       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State)'Old
        and then
        Status =
-         (if Current_Phase (State'Old) = Authenticated
-             and then not Has_Pending_Request (State'Old)
+         (if Current_Phase (State)'Old = Authenticated
+             and then not Has_Pending_Request (State)'Old
              and then Tree_Id /= 0
              and then Response_Receipt_Matches
-               (State'Old, 3, SMB.Success, True, False)
-             and then Current_Response_Info (State'Old).Tree_Id = Tree_Id
+               (State, 3, SMB.Success, True, False)'Old
+             and then Current_Response_Info (State)'Old.Tree_Id = Tree_Id
           then SMB.Ok else SMB.Invalid_State_Status)
        and then
        (if Status = SMB.Ok then
-          Current_Phase (State'Old) = Authenticated
-          and not Has_Pending_Request (State'Old)
+          Current_Phase (State)'Old = Authenticated
+          and not Has_Pending_Request (State)'Old
           and Tree_Id /= 0
-          and Response_Receipt_Matches (State'Old, 3, SMB.Success, True, False)
-          and Current_Response_Info (State'Old).Tree_Id = Tree_Id
+          and Response_Receipt_Matches (State, 3, SMB.Success, True, False)'Old
+          and Current_Response_Info (State)'Old.Tree_Id = Tree_Id
           and
           Current_Phase (State) = Share_Connected
-          and Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-          and Current_Epoch (State) = Current_Epoch (State'Old)
-          and Current_Session_Id (State) = Current_Session_Id (State'Old)
-          and Current_Signing_Key (State) = Current_Signing_Key (State'Old)
-          and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
+          and Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+          and Current_Epoch (State) = Current_Epoch (State)'Old
+          and Current_Session_Id (State) = Current_Session_Id (State)'Old
+          and Current_Signing_Key (State) = Current_Signing_Key (State)'Old
+          and Has_Signing_Key (State) = Has_Signing_Key (State)'Old
           and Handle_Table_Equivalent (State'Old, State)
           and Current_Tree_Id (State) = Tree_Id
-          and Current_Max_Read (State) = Current_Max_Read (State'Old)
-          and Current_Max_Write (State) = Current_Max_Write (State'Old)
+          and Current_Max_Read (State) = Current_Max_Read (State)'Old
+          and Current_Max_Write (State) = Current_Max_Write (State)'Old
           and not Has_Validated_Response (State)
           and not Has_Pending_Request (State)
         else State = State'Old);
@@ -421,30 +422,30 @@ is
       Close_Token : Handle_Token := (others => 0))
    with
      Post =>
-       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State)'Old
        and then
        Connection_Context_Equivalent (State'Old, State)
        and then
-       Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-       and then Current_Epoch (State) = Current_Epoch (State'Old)
+       Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+       and then Current_Epoch (State) = Current_Epoch (State)'Old
        and then
          (if Status /= SMB.Ok then State = State'Old)
        and then
-         (if not Has_Pending_Request (State'Old)
-             and then Next_Request_Id (State'Old) = SMB.QWord'Last
+         (if not Has_Pending_Request (State)'Old
+             and then Next_Request_Id (State)'Old = SMB.QWord'Last
           then Status = SMB.Counter_Exhausted)
        and then
-         (if not Has_Pending_Request (State'Old)
-             and then Current_Phase (State'Old) = Share_Connected
+         (if not Has_Pending_Request (State)'Old
+             and then Current_Phase (State)'Old = Share_Connected
              and then Command = 5 and then Request_Signed and then Response_Signed
-             and then Last_Allocated_Handle_Ticket (State'Old) = SMB.QWord'Last
+             and then Last_Allocated_Handle_Ticket (State)'Old = SMB.QWord'Last
           then Status = SMB.Counter_Exhausted)
        and then
        (if Status = SMB.Ok then
           Has_Pending_Request (State)
-          and Next_Request_Id (State'Old) < SMB.QWord'Last
-          and Message_Id = Next_Request_Id (State'Old)
-          and Next_Request_Id (State) = Next_Request_Id (State'Old) + 1
+          and Next_Request_Id (State)'Old < SMB.QWord'Last
+          and Message_Id = Next_Request_Id (State)'Old
+          and Next_Request_Id (State) = Next_Request_Id (State)'Old + 1
           and not Has_Validated_Response (State)
           and Current_Async_Id (State) = 0
           and (if Command = 5 then Last_Allocated_Handle_Ticket (State) < SMB.QWord'Last)
@@ -464,9 +465,9 @@ is
           and Expected.Tree_Id =
             (if Command = 0 or else Command = 2 or else Command = 3
              then 0 else Current_Tree_Id (State))
-          and Current_Session_Id (State) = Current_Session_Id (State'Old)
-          and Current_Phase (State) = Current_Phase (State'Old)
-          and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
+          and Current_Session_Id (State) = Current_Session_Id (State)'Old
+          and Current_Phase (State) = Current_Phase (State)'Old
+          and Has_Signing_Key (State) = Has_Signing_Key (State)'Old
           and Handle_Table_Equivalent (State'Old, State)
           and Pending_Request_Matches (State, Expected)
         else Message_Id = 0 and Expected = Request_Expectation'(others => <>));
@@ -480,15 +481,15 @@ is
      Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
        Next_Request_Id (State) =
-         (if Status = SMB.Ok then Next_Request_Id (State'Old) else 0)
+         (if Status = SMB.Ok then Next_Request_Id (State)'Old else 0)
        and then
        Last_Allocated_Handle_Ticket (State) =
-         (if Status = SMB.Ok then Last_Allocated_Handle_Ticket (State'Old) else 0)
+         (if Status = SMB.Ok then Last_Allocated_Handle_Ticket (State)'Old else 0)
        and then
        (if Status = SMB.Ok then
           (if Is_Interim then
              Interim_Context_Equivalent (State'Old, State)
-             and then Has_Pending_Request (State'Old)
+             and then Has_Pending_Request (State)'Old
              and then Has_Pending_Request (State)
              and then not Has_Validated_Response (State)
              and then Current_Async_Id (State) /= 0
@@ -496,10 +497,10 @@ is
              and then Current_Async_Id (State) =
                SMB.Core_Wire.Encoded_U64 (Packet, 32)
              and then Response_Header_Matches_Request
-               (State'Old, Packet, True)
+               (State, Packet, True)'Old
              and then
-               (if Current_Async_Id (State'Old) /= 0 then
-                  Current_Async_Id (State) = Current_Async_Id (State'Old))
+               (if Current_Async_Id (State)'Old /= 0 then
+                  Current_Async_Id (State) = Current_Async_Id (State)'Old)
            else State = State'Old)
         else
           not Is_Interim
@@ -551,13 +552,13 @@ is
      Post =>
        Next_Request_Id (State) =
          (if Status /= SMB.Ok
-             or else (Pending_Command (State'Old) = 2 and then Nt_Status = SMB.Success)
-          then 0 else Next_Request_Id (State'Old))
+             or else (Pending_Command (State)'Old = 2 and then Nt_Status = SMB.Success)
+          then 0 else Next_Request_Id (State)'Old)
        and then
        Last_Allocated_Handle_Ticket (State) =
          (if Status /= SMB.Ok
-             or else (Pending_Command (State'Old) = 2 and then Nt_Status = SMB.Success)
-          then 0 else Last_Allocated_Handle_Ticket (State'Old))
+             or else (Pending_Command (State)'Old = 2 and then Nt_Status = SMB.Success)
+          then 0 else Last_Allocated_Handle_Ticket (State)'Old)
        and then
        (if Status /= SMB.Ok then
           Current_Phase (State) = Disconnected
@@ -572,28 +573,28 @@ is
           and Signing_Key_Is_Zero (State)
         else
           Packet'Length >= SMB.Core_Wire.Header_Size
-          and then Response_Header_Matches_Request (State'Old, Packet, False)
+          and then Response_Header_Matches_Request (State, Packet, False)'Old
           and then Nt_Status = SMB.Core_Wire.Header_Nt_Status (Packet)
           and then
-          (if Pending_Command (State'Old) = 2
+          (if Pending_Command (State)'Old = 2
                 and then Nt_Status = SMB.Success
            then True
-           else Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-             and then Current_Epoch (State) = Current_Epoch (State'Old))
+           else Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+             and then Current_Epoch (State) = Current_Epoch (State)'Old)
           and then
           not Has_Pending_Request (State)
           and then Current_Async_Id (State) = 0
           and then
-            (if Pending_Command (State'Old) = 4
+            (if Pending_Command (State)'Old = 4
                and then Nt_Status = SMB.Success
              then Current_Phase (State) = Authenticated
                and Current_Tree_Id (State) = 0
-               and Current_Session_Id (State) = Current_Session_Id (State'Old)
-               and Current_Signing_Key (State) = Current_Signing_Key (State'Old)
-               and Has_Signing_Key (State) = Has_Signing_Key (State'Old)
+               and Current_Session_Id (State) = Current_Session_Id (State)'Old
+               and Current_Signing_Key (State) = Current_Signing_Key (State)'Old
+               and Has_Signing_Key (State) = Has_Signing_Key (State)'Old
                and not Has_Open_Handles (State)
                and not Has_Validated_Response (State)
-             elsif Pending_Command (State'Old) = 2
+             elsif Pending_Command (State)'Old = 2
                and then Nt_Status = SMB.Success
              then Current_Phase (State) = Disconnected
                and Signing_Key_Is_Zero (State)
@@ -604,12 +605,12 @@ is
                and not Has_Validated_Response (State)
              else Connection_Context_Equivalent (State'Old, State)
                and then Response_Receipt_Matches
-               (State, Pending_Command (State'Old), Nt_Status,
-                Pending_Response_Is_Signed (State'Old),
-                Pending_Command (State'Old) = 1
+               (State, Pending_Command (State)'Old, Nt_Status,
+                Pending_Response_Is_Signed (State)'Old,
+                Pending_Command (State)'Old = 1
                   and then Nt_Status = SMB.Success)
                and then
-                 (if Pending_Command (State'Old) = 1
+                 (if Pending_Command (State)'Old = 1
                     and then Nt_Status = SMB.Success
                   then Final_Token_MIC_Matches
                     (Packet, Current_Response_Info (State),
@@ -617,7 +618,7 @@ is
                        (SMB.Crypto.Digest_128 (Current_Signing_Key (State)),
                         True)))
                and then
-                 (if Pending_Command (State'Old) = 0
+                 (if Pending_Command (State)'Old = 0
                     and then Nt_Status = SMB.Success
                   then Packet'Length >= 128
                     and then Current_Response_Info (State).Max_Read in
@@ -632,14 +633,14 @@ is
                       Natural (SMB.DWord'Min
                         (SMB.Core_Protocol.Maximum_IO_Chunk,
                          SMB.Core_Wire.Encoded_U32 (Packet, 100)))
-                  elsif Pending_Command (State'Old) = 3
+                  elsif Pending_Command (State)'Old = 3
                     and then Nt_Status = SMB.Success
                   then Packet'Length >= 80
                     and then Current_Response_Info (State).Tree_Id /= 0
                     and then Current_Response_Info (State).Tree_Id =
                       SMB.Core_Wire.Encoded_U32 (Packet, 36))
                and then
-                 (if Pending_Command (State'Old) = 1
+                 (if Pending_Command (State)'Old = 1
                     and then Nt_Status =
                       SMB.Status_More_Processing_Required
                   then Packet'Length >= 72
@@ -648,7 +649,7 @@ is
                     and then Current_Response_Info (State).Data_Length =
                       Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70)))
                and then
-                 (if Pending_Command (State'Old) = 8
+                 (if Pending_Command (State)'Old = 8
                     and then Nt_Status = SMB.Success
                   then Packet'Length >= 80
                     and then Current_Response_Info (State).Data_Offset =
@@ -657,14 +658,14 @@ is
                       SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
                     and then Current_Response_Info (State).Data_Length =
                       Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
-                  elsif Pending_Command (State'Old) = 9
+                  elsif Pending_Command (State)'Old = 9
                     and then Nt_Status = SMB.Success
                   then Packet'Length >= 80
                     and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
                       SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
                     and then Current_Response_Info (State).Count =
                       Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
-                  elsif Pending_Command (State'Old) = 14
+                  elsif Pending_Command (State)'Old = 14
                     and then Nt_Status = SMB.Success
                   then Packet'Length >= 72
                     and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
@@ -685,8 +686,8 @@ is
                         Current_Response_Info (State).Data_Offset
                     ))
                and then
-                 (if Pending_Command (State'Old) = 17 then
-                    Current_Phase (State) = Current_Phase (State'Old)
+                 (if Pending_Command (State)'Old = 17 then
+                    Current_Phase (State) = Current_Phase (State)'Old
                     and then Handle_Table_Equivalent (State'Old, State)));
    --  A failed wire/signature check invalidates the session and all handles.
 
@@ -699,20 +700,20 @@ is
       Status : out SMB.Core_Status)
    with
       Post =>
-       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       Next_Request_Id (State) = Next_Request_Id (State)'Old
        and then
        (if Status = SMB.Counter_Exhausted then
           Last_Allocated_Handle_Ticket (State) = SMB.QWord'Last)
        and then
        (if Status = SMB.Ok then
-          Last_Allocated_Handle_Ticket (State'Old) < SMB.QWord'Last
+          Last_Allocated_Handle_Ticket (State)'Old < SMB.QWord'Last
           and Last_Allocated_Handle_Ticket (State) =
-            Last_Allocated_Handle_Ticket (State'Old) + 1
+            Last_Allocated_Handle_Ticket (State)'Old + 1
           and Token.Ticket = Last_Allocated_Handle_Ticket (State)
           and
-          Current_Phase (State'Old) = Share_Connected
-          and not Has_Pending_Request (State'Old)
-          and Create_Receipt_Matches_File_Id (State'Old, File_Id)
+          Current_Phase (State)'Old = Share_Connected
+          and not Has_Pending_Request (State)'Old
+          and Create_Receipt_Matches_File_Id (State, File_Id)'Old
           and
           Handle_Matches (State, Token, File_Id, Access_Mode, Is_Directory)
           and Other_Handles_Preserved (State'Old, State)
@@ -749,25 +750,25 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       Next_Request_Id (State) = Next_Request_Id (State)'Old
        and then
-       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State)'Old
        and then
        Status =
-         (if Has_Pending_Request (State'Old)
+         (if Has_Pending_Request (State)'Old
           then SMB.Invalid_State_Status else SMB.Ok)
        and then Connection_Context_Equivalent (State'Old, State)
-       and then Current_Phase (State) = Current_Phase (State'Old)
-       and then Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-       and then Current_Epoch (State) = Current_Epoch (State'Old)
+       and then Current_Phase (State) = Current_Phase (State)'Old
+       and then Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+       and then Current_Epoch (State) = Current_Epoch (State)'Old
        and then Current_Session_Id (State) =
-         Current_Session_Id (State'Old)
-       and then Current_Tree_Id (State) = Current_Tree_Id (State'Old)
-       and then Current_Max_Read (State) = Current_Max_Read (State'Old)
-       and then Current_Max_Write (State) = Current_Max_Write (State'Old)
-       and then Has_Signing_Key (State) = Has_Signing_Key (State'Old)
+         Current_Session_Id (State)'Old
+       and then Current_Tree_Id (State) = Current_Tree_Id (State)'Old
+       and then Current_Max_Read (State) = Current_Max_Read (State)'Old
+       and then Current_Max_Write (State) = Current_Max_Write (State)'Old
+       and then Has_Signing_Key (State) = Has_Signing_Key (State)'Old
        and then Current_Signing_Key (State) =
-         Current_Signing_Key (State'Old)
+         Current_Signing_Key (State)'Old
        and then Handle_Table_Equivalent (State'Old, State)
        and then (if Status = SMB.Ok then
           not Has_Validated_Response (State)
@@ -784,15 +785,15 @@ is
       Close_Token : Handle_Token := (others => 0))
    with
      Post =>
-       Next_Request_Id (State) = Next_Request_Id (State'Old)
+       Next_Request_Id (State) = Next_Request_Id (State)'Old
        and then
-       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State'Old)
+       Last_Allocated_Handle_Ticket (State) = Last_Allocated_Handle_Ticket (State)'Old
        and then
        (if Status = SMB.Ok then
-          Current_Phase (State'Old) = Share_Connected
-          and not Has_Pending_Request (State'Old)
-          and Valid_Handle (State'Old, Token, False, False)
-          and Close_Receipt_Matches (State'Old, Token)
+          Current_Phase (State)'Old = Share_Connected
+          and not Has_Pending_Request (State)'Old
+          and Valid_Handle (State, Token, False, False)'Old
+          and Close_Receipt_Matches (State, Token)'Old
           and Close_Token.Owner = Token.Owner
           and Close_Token.Epoch = Token.Epoch
           and Close_Token.Ticket = Token.Ticket
@@ -824,17 +825,17 @@ is
          (Current_Response_Info (State),
           SMB.Core_Protocol.Response_Info'(others => <>))
        and Status =
-         (if Current_Epoch (State'Old) = SMB.QWord'Last
+         (if Current_Epoch (State)'Old = SMB.QWord'Last
           then SMB.Counter_Exhausted
           else SMB.Ok)
        and
          (if Status = SMB.Ok then
-            Current_Owner_Id (State) = Current_Owner_Id (State'Old)
-            and Current_Epoch (State'Old) < SMB.QWord'Last
-            and Current_Epoch (State) = Current_Epoch (State'Old) + 1
+            Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+            and Current_Epoch (State)'Old < SMB.QWord'Last
+            and Current_Epoch (State) = Current_Epoch (State)'Old + 1
           else
             Current_Owner_Id (State) = 0
-            and Current_Epoch (State) = Current_Epoch (State'Old));
+            and Current_Epoch (State) = Current_Epoch (State)'Old);
 
    function Current_Signing_Key (State : Engine_State) return SMB.Bytes
    with Post => Current_Signing_Key'Result'Length = 16;

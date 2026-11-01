@@ -935,7 +935,7 @@ is
        Used <= Output'Length
        and then
          (if not Metadata_Preparation_Context_Matches
-               (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+               (Metadata_Snapshot_Of (Value), State, Token)'Old
              or else Output'Length <
                Header_Length +
                  (if Kind = Disposition_Metadata then 33 else 52 + Name'Length)
@@ -948,7 +948,7 @@ is
        and then
          (if Status = SMB.Invalid_State_Status
               and then not Metadata_Preparation_Context_Matches
-                (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+                (Metadata_Snapshot_Of (Value), State, Token)'Old
           then Metadata_Snapshot_Of (Value) =
                  Metadata_Snapshot_Of (Value)'Old
             and then State = State'Old

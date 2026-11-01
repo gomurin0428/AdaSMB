@@ -236,11 +236,21 @@ does not make the above bodies formally verified.
 * Stack usage is outside GNATprove's scope. `make stack-check` sums the largest
   static frame chain below each public `SMB.Client` subprogram from GCC
   call-graph data (GNAT runtime frames and the indirect entropy callback are not
-  counted) and enforces 896 KiB; the largest is `Authenticate` at about 757 KiB
-  with runtime contract checks enabled. It also rejects runtime-sized frames in
-  `SMB.Client` and `SMB.Transport` other than those sized by host, path, name or
-  exception-message strings: frame-, packet- and transfer-sized buffers there
-  are heap-allocated and sockets are read in 64-KiB chunks. SHA-256 and
+  counted) and enforces 256 KiB per call, with `Authenticate` allowed 704 KiB
+  until the `Core_Auth` NTLM buffers are reduced (it is about 629 KiB; the
+  largest other call, `Connect_Share`, is about 184 KiB), all with runtime
+  contract checks enabled. Postconditions keep pre-state values as
+  `F (State)'Old` rather than `F (State'Old)`, so the runtime check stores a
+  function result instead of a copy of the whole engine state; only two-state
+  relations and `State = State'Old` copy it. The check also rejects
+  runtime-sized frames in `SMB.Client` and `SMB.Transport` other than those
+  sized by host, path, name or exception-message strings: frame-, packet-,
+  transfer-, request- and directory-sized buffers there are heap-allocated, the
+  directory listing result is built on the secondary stack, and sockets are
+  read in 16-KiB chunks. The secondary stack (unconstrained function results
+  such as received frames and directory listings) is not counted; on the
+  native GNAT 14.2 runtime it grows from the heap, and a 100,000-entry listing
+  (about 3.2 MB) returned this way succeeded in a task with a 256-KiB stack. SHA-256 and
   HMAC-SHA256 absorb input in 64-byte blocks, and `Core_Wire.Verify_Signature`
   feeds the response to an incremental HMAC in three pieces (before, zeroed,
   after the signature field) instead of copying it; the check also requires

@@ -327,7 +327,7 @@ is
              or else Authentication_Expected_Of (Value)'Old.Signed
              or else Authentication_Expected_Of (Value)'Old.Session_Id /= 0
              or else not SMB.Engine.Pending_Request_Matches
-               (State'Old, Authentication_Expected_Of (Value)'Old))
+               (State, Authentication_Expected_Of (Value))'Old)
         then
           Authentication_Stage_Of (Value) =
             Authentication_Stage_Of (Value)'Old
@@ -1081,11 +1081,11 @@ is
               (Directory_Stage_Of (Value)'Old /= Query_Ready
                or else not Directory_Invariant (Value)'Old
                or else not Directory_Snapshot_Context_Matches
-                 (Directory_Snapshot_Of (Value)'Old, State'Old)
-               or else SMB.Engine.Current_Phase (State'Old) /=
+                 (Directory_Snapshot_Of (Value), State)'Old
+               or else SMB.Engine.Current_Phase (State)'Old /=
                  SMB.Engine.Share_Connected
-               or else SMB.Engine.Has_Pending_Request (State'Old)
-               or else SMB.Engine.Has_Validated_Response (State'Old))
+               or else SMB.Engine.Has_Pending_Request (State)'Old
+               or else SMB.Engine.Has_Validated_Response (State)'Old)
           then Directory_Snapshot_Of (Value) =
             Directory_Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -1168,10 +1168,10 @@ is
               (Directory_Stage_Of (Value)'Old /= Query_Sent
                or else not Directory_Invariant (Value)'Old
                or else not Directory_Snapshot_Context_Matches
-                 (Directory_Snapshot_Of (Value)'Old, State'Old)
+                 (Directory_Snapshot_Of (Value), State)'Old
                or else not SMB.Engine.Pending_Request_Matches
-                 (State'Old, Directory_Expected_Of (Value)'Old)
-               or else SMB.Engine.Has_Validated_Response (State'Old))
+                 (State, Directory_Expected_Of (Value))'Old
+               or else SMB.Engine.Has_Validated_Response (State)'Old)
           then Directory_Snapshot_Of (Value) =
             Directory_Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -1242,8 +1242,8 @@ is
                or else not Directory_Invariant (Value)'Old
                or else not Directory_Snapshot_Context_Matches
                  (Directory_Snapshot_Of (Value)'Old, State'Old)
-               or else SMB.Engine.Has_Pending_Request (State'Old)
-               or else SMB.Engine.Has_Validated_Response (State'Old))
+               or else SMB.Engine.Has_Pending_Request (State)'Old
+               or else SMB.Engine.Has_Validated_Response (State)'Old)
           then Directory_Snapshot_Of (Value) =
             Directory_Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -1265,17 +1265,17 @@ is
               (Directory_Stage_Of (Value)'Old not in
                  Query_Ready | Query_Prepared | Query_Sent | Page_Ready
                or else not Directory_Snapshot_Context_Matches
-                 (Directory_Snapshot_Of (Value)'Old, State'Old)
+                 (Directory_Snapshot_Of (Value), State)'Old
                or else
                  (if Directory_Stage_Of (Value)'Old in
                        Query_Prepared | Query_Sent
                   then
                     not SMB.Engine.Pending_Request_Matches
-                      (State'Old, Directory_Expected_Of (Value)'Old)
-                    or else SMB.Engine.Has_Validated_Response (State'Old)
+                      (State, Directory_Expected_Of (Value))'Old
+                    or else SMB.Engine.Has_Validated_Response (State)'Old
                   else
-                    SMB.Engine.Has_Pending_Request (State'Old)
-                    or else SMB.Engine.Has_Validated_Response (State'Old)))
+                    SMB.Engine.Has_Pending_Request (State)'Old
+                    or else SMB.Engine.Has_Validated_Response (State)'Old))
           then Directory_Snapshot_Of (Value) =
             Directory_Snapshot_Of (Value)'Old
             and then Directory_Page_Of (Value) =
@@ -1325,7 +1325,7 @@ is
        Used <= Output'Length
        and then
          (if not Metadata_Preparation_Context_Matches
-               (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+               (Metadata_Snapshot_Of (Value), State, Token)'Old
              or else Output'Length < SMB.Core_Wire.Header_Size + 33
           then Status /= SMB.Ok
             and then Metadata_Snapshot_Of (Value) =
@@ -1334,7 +1334,7 @@ is
        and then
          (if Status = SMB.Invalid_State_Status
               and then not Metadata_Preparation_Context_Matches
-                (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+                (Metadata_Snapshot_Of (Value), State, Token)'Old
           then Metadata_Snapshot_Of (Value) =
                  Metadata_Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -1381,7 +1381,7 @@ is
        Used <= Output'Length
        and then
          (if not Metadata_Preparation_Context_Matches
-               (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+               (Metadata_Snapshot_Of (Value), State, Token)'Old
              or else Name'Length = 0 or else Name'Length mod 2 /= 0
              or else Output'Length <
                SMB.Core_Wire.Header_Size + 52 + Name'Length
@@ -1392,7 +1392,7 @@ is
        and then
          (if Status = SMB.Invalid_State_Status
               and then not Metadata_Preparation_Context_Matches
-                (Metadata_Snapshot_Of (Value)'Old, State'Old, Token)
+                (Metadata_Snapshot_Of (Value), State, Token)'Old
           then Metadata_Snapshot_Of (Value) =
                  Metadata_Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -1498,7 +1498,7 @@ is
      Post =>
        (if Metadata_Stage_Of (Value)'Old /= Metadata_Sent
                 or else not Metadata_Continuation_Context_Matches
-                  (Metadata_Snapshot_Of (Value)'Old, State'Old)
+                  (Metadata_Snapshot_Of (Value), State)'Old
         then Status = SMB.Invalid_State_Status
           and then Metadata_Snapshot_Of (Value) = Metadata_Snapshot_Of (Value)'Old
           and then State = State'Old)
@@ -1557,11 +1557,11 @@ is
      (if Metadata_Snapshot_Of (Value)'Old.Stage not in
            Metadata_Prepared | Metadata_Sent
           or else Metadata_Snapshot_Of (Value)'Old.Owner /=
-            SMB.Engine.Current_Owner_Id (State'Old)
+            SMB.Engine.Current_Owner_Id (State)'Old
           or else Metadata_Snapshot_Of (Value)'Old.Epoch /=
-            SMB.Engine.Current_Epoch (State'Old)
+            SMB.Engine.Current_Epoch (State)'Old
           or else not SMB.Engine.Pending_Request_Matches
-            (State'Old, Metadata_Snapshot_Of (Value)'Old.Expected)
+            (State, Metadata_Snapshot_Of (Value).Expected)'Old
       then Status = SMB.Invalid_State_Status
         and then Metadata_Snapshot_Of (Value) =
           Metadata_Snapshot_Of (Value)'Old
