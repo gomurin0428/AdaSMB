@@ -236,10 +236,12 @@ does not make the above bodies formally verified.
 * Stack usage is outside GNATprove's scope. `make stack-check` sums the largest
   static frame chain below each public `SMB.Client` subprogram from GCC
   call-graph data (GNAT runtime frames and the indirect entropy callback are not
-  counted) and enforces 256 KiB per call, with `Authenticate` allowed 704 KiB
-  until the `Core_Auth` NTLM buffers are reduced (it is about 629 KiB; the
-  largest other call, `Connect_Share`, is about 184 KiB), all with runtime
-  contract checks enabled. Postconditions keep pre-state values as
+  counted) and enforces 256 KiB per call (the largest is `Authenticate` at
+  about 229 KiB), all with runtime contract checks enabled. `Core_Auth` writes
+  the SPNEGO wrapping and the NTLMv2 blob in place and computes HMAC-MD5 over
+  the challenge, the blob and the Type1/Type2/Type3 messages incrementally, so
+  no stack frame on the NTLM path grows with the server's challenge or target
+  information. Postconditions keep pre-state values as
   `F (State)'Old` rather than `F (State'Old)`, so the runtime check stores a
   function result instead of a copy of the whole engine state; only two-state
   relations and `State = State'Old` copy it. The check also rejects
@@ -254,8 +256,10 @@ does not make the above bodies formally verified.
   HMAC-SHA256 absorb input in 64-byte blocks, and `Core_Wire.Verify_Signature`
   feeds the response to an incremental HMAC in three pieces (before, zeroed,
   after the signature field) instead of copying it; the check also requires
-  those frames to stay fixed-size, because the peer chooses the response
-  length before the signature is known to be valid.
+  those frames, the MD5/HMAC-MD5 frames and `Core_Auth.Authenticate`,
+  `Process_Target_Info` and `Build_Type3` to stay fixed-size, because the peer
+  chooses those lengths (for responses, before the signature is known to be
+  valid).
 * An entire read/write API operation is capped at 1 MiB, each wire I/O chunk at
   64 KiB, encoded names at 65,534 bytes, open handles at 256, directory pages at
   4,096 and directory entries at 100,000. Exhaustion is reported, not wrapped.

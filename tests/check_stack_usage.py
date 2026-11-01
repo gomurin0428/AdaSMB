@@ -13,11 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OBJ = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "build/obj/stack-usage"
-# Static stack budget per public call. Authenticate still builds the NTLM
-# message through several 64-KiB Core_Auth buffers; it must stay within a 1 MiB
-# thread stack with room for the GNAT runtime, the OS and the caller.
+# Static stack budget per public call.
 STATIC_BUDGET = 256 * 1024
-BUDGET_EXCEPTIONS = {"smb__client__authenticate": 704 * 1024}
 IO_UNITS = {"smb-client.adb", "smb-transport.adb"}
 # Runtime-sized frames allowed in the non-SPARK I/O layer. Each one is sized by
 # a host, path or name string or by an exception message, never by a frame,
@@ -33,14 +30,22 @@ DYNAMIC_ALLOWED = {
     ("smb-client.adb", "REQUIRE_TRANSFER_STATUS"),
     ("smb-client.adb", "VALIDATED_PATH"),
 }
-# Response signatures are verified before they are known to be valid, so these
-# frames must not grow with the peer-chosen packet length.
+# These frames handle peer-chosen lengths (response signatures before they are
+# known to be valid, the NTLM challenge and its target information), so they
+# must not grow with that length.
 STATIC_REQUIRED = {
     ("smb-core_wire.adb", "VERIFY_SIGNATURE"),
     ("smb-crypto.adb", "SHA256"),
     ("smb-crypto.adb", "SHA256_UPDATE"),
     ("smb-crypto.adb", "HMAC_SHA256"),
     ("smb-crypto.adb", "HMAC_SHA256_UPDATE"),
+    ("smb-crypto.adb", "MD5"),
+    ("smb-crypto.adb", "MD5_UPDATE"),
+    ("smb-crypto.adb", "HMAC_MD5"),
+    ("smb-crypto.adb", "HMAC_MD5_UPDATE"),
+    ("smb-core_auth.adb", "AUTHENTICATE"),
+    ("smb-core_auth.adb", "PROCESS_TARGET_INFO"),
+    ("smb-core_auth.adb", "BUILD_TYPE3"),
 }
 
 NODE = re.compile(r'node: \{ title: "([^"]+)" label: "([^"]*)"')
@@ -92,11 +97,10 @@ if not entries:
 failures = []
 for title in entries:
     total, chain = deepest(title, ())
-    budget = BUDGET_EXCEPTIONS.get(title, STATIC_BUDGET)
     print(f"{total:>9,} bytes  {title}")
-    if total > budget:
+    if total > STATIC_BUDGET:
         failures.append(
-            f"{title} needs {total:,} bytes (budget {budget:,}): "
+            f"{title} needs {total:,} bytes (budget {STATIC_BUDGET:,}): "
             + " -> ".join(frames[t]["name"] for t in chain))
 
 seen = set()
@@ -113,5 +117,4 @@ for key in sorted(STATIC_REQUIRED - seen):
 
 if failures:
     raise SystemExit("stack usage check failed:\n  " + "\n  ".join(failures))
-print(f"stack usage within {STATIC_BUDGET:,} bytes per public call"
-      + "".join(f" ({t}: {b:,})" for t, b in BUDGET_EXCEPTIONS.items()))
+print(f"stack usage within {STATIC_BUDGET:,} bytes per public call")

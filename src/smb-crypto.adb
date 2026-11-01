@@ -141,70 +141,6 @@ package body SMB.Crypto is
       return State;
    end MD4;
 
-   function MD5 (Message : SMB.Bytes) return Digest_128 is
-      Input : constant SMB.Bytes := Padded (Message, True);
-      K : constant Round_Constants (0 .. 63) :=
-        (16#D76AA478#, 16#E8C7B756#, 16#242070DB#, 16#C1BDCEEE#,
-         16#F57C0FAF#, 16#4787C62A#, 16#A8304613#, 16#FD469501#,
-         16#698098D8#, 16#8B44F7AF#, 16#FFFF5BB1#, 16#895CD7BE#,
-         16#6B901122#, 16#FD987193#, 16#A679438E#, 16#49B40821#,
-         16#F61E2562#, 16#C040B340#, 16#265E5A51#, 16#E9B6C7AA#,
-         16#D62F105D#, 16#02441453#, 16#D8A1E681#, 16#E7D3FBC8#,
-         16#21E1CDE6#, 16#C33707D6#, 16#F4D50D87#, 16#455A14ED#,
-         16#A9E3E905#, 16#FCEFA3F8#, 16#676F02D9#, 16#8D2A4C8A#,
-         16#FFFA3942#, 16#8771F681#, 16#6D9D6122#, 16#FDE5380C#,
-         16#A4BEEA44#, 16#4BDECFA9#, 16#F6BB4B60#, 16#BEBFBC70#,
-         16#289B7EC6#, 16#EAA127FA#, 16#D4EF3085#, 16#04881D05#,
-         16#D9D4D039#, 16#E6DB99E5#, 16#1FA27CF8#, 16#C4AC5665#,
-         16#F4292244#, 16#432AFF97#, 16#AB9423A7#, 16#FC93A039#,
-         16#655B59C3#, 16#8F0CCC92#, 16#FFEFF47D#, 16#85845DD1#,
-         16#6FA87E4F#, 16#FE2CE6E0#, 16#A3014314#, 16#4E0811A1#,
-         16#F7537E82#, 16#BD3AF235#, 16#2AD7D2BB#, 16#EB86D391#);
-      S : constant Round_Shifts (0 .. 63) :=
-        (7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-         5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-         4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-         6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21);
-      A, B, C, D : U32;
-      AA, BB, CC, DD : U32;
-      State : Digest_128 := (others => 0);
-   begin
-      A := 16#67452301#; B := 16#EFCDAB89#;
-      C := 16#98BADCFE#; D := 16#10325476#;
-      for Block in 0 .. Input'Length / 64 - 1 loop
-         declare
-            X : Block_Words;
-            Fv, T : U32;
-            Index : Natural;
-         begin
-            for I in X'Range loop
-               X (I) := Get_Le (Input, Block * 64 + I * 4);
-            end loop;
-            AA := A; BB := B; CC := C; DD := D;
-            for I in 0 .. 63 loop
-               if I < 16 then
-                  Fv := (B and C) or ((not B) and D); Index := I;
-               elsif I < 32 then
-                  Fv := (D and B) or ((not D) and C);
-                  Index := (5 * I + 1) mod 16;
-               elsif I < 48 then
-                  Fv := B xor C xor D; Index := (3 * I + 5) mod 16;
-               else
-                  Fv := C xor (B or (not D)); Index := (7 * I) mod 16;
-               end if;
-               T := D;
-               D := C; C := B;
-               B := B + Rol (A + Fv + K (I) + X (Index), S (I));
-               A := T;
-            end loop;
-            A := A + AA; B := B + BB; C := C + CC; D := D + DD;
-         end;
-      end loop;
-      Store_Le (State, 0, A); Store_Le (State, 4, B);
-      Store_Le (State, 8, C); Store_Le (State, 12, D);
-      return State;
-   end MD5;
-
    SHA256_K : constant Round_Constants (0 .. 63) :=
      (16#428A2F98#, 16#71374491#, 16#B5C0FBCF#, 16#E9B5DBA5#,
       16#3956C25B#, 16#59F111F1#, 16#923F82A4#, 16#AB1C5ED5#,
@@ -338,33 +274,182 @@ package body SMB.Crypto is
       return Digest;
    end SHA256;
 
-   function HMAC_MD5 (Key, Message : SMB.Bytes) return Digest_128 is
+   MD5_K : constant Round_Constants (0 .. 63) :=
+     (16#D76AA478#, 16#E8C7B756#, 16#242070DB#, 16#C1BDCEEE#,
+      16#F57C0FAF#, 16#4787C62A#, 16#A8304613#, 16#FD469501#,
+      16#698098D8#, 16#8B44F7AF#, 16#FFFF5BB1#, 16#895CD7BE#,
+      16#6B901122#, 16#FD987193#, 16#A679438E#, 16#49B40821#,
+      16#F61E2562#, 16#C040B340#, 16#265E5A51#, 16#E9B6C7AA#,
+      16#D62F105D#, 16#02441453#, 16#D8A1E681#, 16#E7D3FBC8#,
+      16#21E1CDE6#, 16#C33707D6#, 16#F4D50D87#, 16#455A14ED#,
+      16#A9E3E905#, 16#FCEFA3F8#, 16#676F02D9#, 16#8D2A4C8A#,
+      16#FFFA3942#, 16#8771F681#, 16#6D9D6122#, 16#FDE5380C#,
+      16#A4BEEA44#, 16#4BDECFA9#, 16#F6BB4B60#, 16#BEBFBC70#,
+      16#289B7EC6#, 16#EAA127FA#, 16#D4EF3085#, 16#04881D05#,
+      16#D9D4D039#, 16#E6DB99E5#, 16#1FA27CF8#, 16#C4AC5665#,
+      16#F4292244#, 16#432AFF97#, 16#AB9423A7#, 16#FC93A039#,
+      16#655B59C3#, 16#8F0CCC92#, 16#FFEFF47D#, 16#85845DD1#,
+      16#6FA87E4F#, 16#FE2CE6E0#, 16#A3014314#, 16#4E0811A1#,
+      16#F7537E82#, 16#BD3AF235#, 16#2AD7D2BB#, 16#EB86D391#);
+   MD5_S : constant Round_Shifts (0 .. 63) :=
+     (7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+      5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+      4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+      6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21);
+   MD5_IV : constant MD5_State :=
+     (16#67452301#, 16#EFCDAB89#, 16#98BADCFE#, 16#10325476#);
+
+   procedure MD5_Compress (H : in out MD5_State; Block : Block_Bytes)
+     with Global => null
+   is
+      X : Block_Words;
+      A : U32 := H (0); B : U32 := H (1);
+      C : U32 := H (2); D : U32 := H (3);
+      Fv, T : U32;
+      Index : Natural;
+   begin
+      for I in X'Range loop
+         X (I) := Get_Le (Block, I * 4);
+      end loop;
+      for I in 0 .. 63 loop
+         if I < 16 then
+            Fv := (B and C) or ((not B) and D); Index := I;
+         elsif I < 32 then
+            Fv := (D and B) or ((not D) and C);
+            Index := (5 * I + 1) mod 16;
+         elsif I < 48 then
+            Fv := B xor C xor D; Index := (3 * I + 5) mod 16;
+         else
+            Fv := C xor (B or (not D)); Index := (7 * I) mod 16;
+         end if;
+         T := D;
+         D := C; C := B;
+         B := B + Rol (A + Fv + MD5_K (I) + X (Index), MD5_S (I));
+         A := T;
+      end loop;
+      H (0) := H (0) + A; H (1) := H (1) + B;
+      H (2) := H (2) + C; H (3) := H (3) + D;
+   end MD5_Compress;
+
+   procedure MD5_Start (Context : out MD5_Context)
+     with Post => Context.Total = 0
+   is
+   begin
+      Context :=
+        (H => MD5_IV, Block => (others => 0), Used => 0, Total => 0);
+   end MD5_Start;
+
+   procedure MD5_Update (Context : in out MD5_Context; Message : SMB.Bytes)
+     with Pre => Message'Length <= Maximum_Hash_Input
+       and then Context.Total <= Maximum_Hash_Input - Message'Length,
+       Post => Context.Total = Context.Total'Old + Message'Length
+   is
+   begin
+      for I in Message'Range loop
+         Context.Block (Context.Used) := Message (I);
+         if Context.Used = Block_Position'Last then
+            MD5_Compress (Context.H, Context.Block);
+            Context.Used := 0;
+         else
+            Context.Used := Context.Used + 1;
+         end if;
+         pragma Loop_Invariant (Context.Total = Context.Total'Loop_Entry);
+      end loop;
+      Context.Total := Context.Total + Message'Length;
+   end MD5_Update;
+
+   procedure MD5_Finish
+     (Context : in out MD5_Context; Digest : out Digest_128)
+     with Pre => Context.Total <= Maximum_Hash_Input
+   is
+      Bits : constant U64 := U64 (Context.Total) * 8;
+   begin
+      Context.Block (Context.Used) := 16#80#;
+      if Context.Used >= 56 then
+         Context.Block (Context.Used + 1 .. 63) := (others => 0);
+         MD5_Compress (Context.H, Context.Block);
+         Context.Block := (others => 0);
+      else
+         Context.Block (Context.Used + 1 .. 55) := (others => 0);
+      end if;
+      for I in 0 .. 7 loop
+         Context.Block (56 + I) :=
+           SMB.Byte (Interfaces.Shift_Right (Bits, I * 8) and 16#FF#);
+      end loop;
+      MD5_Compress (Context.H, Context.Block);
+      Digest := (others => 0);
+      Store_Le (Digest, 0, Context.H (0)); Store_Le (Digest, 4, Context.H (1));
+      Store_Le (Digest, 8, Context.H (2)); Store_Le (Digest, 12, Context.H (3));
+   end MD5_Finish;
+
+   function MD5 (Message : SMB.Bytes) return Digest_128 is
+      Context : MD5_Context;
+      Digest : Digest_128;
+   begin
+      MD5_Start (Context);
+      MD5_Update (Context, Message);
+      MD5_Finish (Context, Digest);
+      return Digest;
+   end MD5;
+
+   procedure HMAC_MD5_Start
+     (Context : out HMAC_MD5_Context;
+      Key : SMB.Bytes)
+   is
       K0 : SMB.Bytes (0 .. 63) := (others => 0);
-      Inner : SMB.Bytes (0 .. 63 + Message'Length) := (others => 0);
-      Outer : SMB.Bytes (0 .. 79) := (others => 0);
+      Inner_Pad : SMB.Bytes (0 .. 63) := (others => 0);
    begin
       if Key'Length > 64 then
-         declare
-            D : constant SMB.Bytes := MD5 (Key);
-         begin
-            K0 (0 .. D'Length - 1) := D;
-         end;
+         K0 (0 .. 15) := MD5 (Key);
       elsif Key'Length > 0 then
          K0 (0 .. Key'Length - 1) := Key;
       end if;
+      Context.Outer_Pad := (others => 0);
       for I in 0 .. 63 loop
-         Inner (I) := K0 (I) xor 16#36#;
-         Outer (I) := K0 (I) xor 16#5C#;
+         Inner_Pad (I) := K0 (I) xor 16#36#;
+         Context.Outer_Pad (I) := K0 (I) xor 16#5C#;
       end loop;
-      if Message'Length > 0 then
-         Inner (64 .. Inner'Last) := Message;
-      end if;
-      declare
-         ID : constant SMB.Bytes := MD5 (Inner);
-      begin
-         Outer (64 .. 79) := ID;
-      end;
-      return MD5 (Outer);
+      MD5_Start (Context.Inner);
+      MD5_Update (Context.Inner, Inner_Pad);
+      Context.Length := 0;
+   end HMAC_MD5_Start;
+
+   procedure HMAC_MD5_Update
+     (Context : in out HMAC_MD5_Context;
+      Message : SMB.Bytes)
+   is
+   begin
+      MD5_Update (Context.Inner, Message);
+      Context.Length := Context.Length + Message'Length;
+   end HMAC_MD5_Update;
+
+   procedure HMAC_MD5_Finish
+     (Context : in out HMAC_MD5_Context;
+      Digest : out Digest_128)
+   is
+      Inner_Digest : Digest_128;
+      Outer : MD5_Context;
+   begin
+      MD5_Finish (Context.Inner, Inner_Digest);
+      MD5_Start (Outer);
+      MD5_Update (Outer, Context.Outer_Pad);
+      MD5_Update (Outer, Inner_Digest);
+      MD5_Finish (Outer, Digest);
+      Context :=
+        (Inner =>
+           (H => (others => 0), Block => (others => 0), Used => 0, Total => 0),
+         Outer_Pad => (others => 0),
+         Length => 0);
+   end HMAC_MD5_Finish;
+
+   function HMAC_MD5 (Key, Message : SMB.Bytes) return Digest_128 is
+      Context : HMAC_MD5_Context;
+      Digest : Digest_128;
+   begin
+      HMAC_MD5_Start (Context, Key);
+      HMAC_MD5_Update (Context, Message);
+      HMAC_MD5_Finish (Context, Digest);
+      return Digest;
    end HMAC_MD5;
 
    procedure HMAC_SHA256_Start
