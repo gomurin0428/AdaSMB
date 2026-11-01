@@ -232,9 +232,13 @@ def main() -> int:
         try:
             run(["smbpasswd", "-c", str(config), "-a", "-s", USER],
                 input=f"{PASSWORD}\n{PASSWORD}\n")
+            # smbd -F exits on EOF when stdin is a pipe or socket, and CI steps
+            # run with a closed one; hold a pipe open so smbd also stops if
+            # this harness dies.
             with (work / "smbd.out").open("wb") as output:
                 daemon = subprocess.Popen(
                     ["smbd", "-F", "--no-process-group", "-s", str(config)],
+                    stdin=subprocess.PIPE,
                     stdout=output,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
@@ -572,6 +576,7 @@ def main() -> int:
                 except ProcessLookupError:
                     pass
                 daemon.wait(timeout=10)
+                daemon.stdin.close()
         finally:
             subprocess.run(["userdel", USER], check=False,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
