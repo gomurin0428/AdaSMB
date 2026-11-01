@@ -4298,3 +4298,27 @@ crypto and signing conformance tests pass; the Samba integration test needs
 Linux and was not run.
 Full proof: 5,191 checks (754 flow, 4,437 prover), zero unproved, 0
 `pragma Assume`, 13 units analyzed.
+
+## Heap buffers freed by owners
+
+The heap buffers and coordinators introduced to keep frames off the stack
+(`Transfer`, `Authentication`, `Directory_Enumeration`, request, name, frame
+and packet buffers in `SMB.Client` and `SMB.Transport`) were freed by explicit
+`Unchecked_Deallocation` calls on the normal path and in each exception
+handler; a missed path leaked the buffer (one such leak was found in review
+earlier). They are now held by owners from the new private generic
+`SMB.Heap_Owner`, a limited controlled type whose `Finalize` frees the object
+whenever the subprogram is left, also when an exception propagates.
+Authentication requests, which carry the NTLM token, are erased before they are
+freed, as before. `Read` and `List_Directory` still release their transfer and
+enumeration buffers before building the result, so peak heap use is unchanged.
+
+A unit test instantiates the owner with an access type on a counting storage
+pool and checks that the object is cleared and freed on normal exit, on an
+exception, after an early `Release` (and not freed twice), and that an empty
+owner does nothing; with `Finalize` disabled the test fails.
+
+No SPARK unit changed, so the proof is unaffected. Static stack: `Authenticate`
+234,976 bytes (+32), `List_Directory` 57,920 (+16), `Write` 45,520 (+48), the
+rest unchanged. On Windows the strict builds, unit tests, `make stack-check`,
+`transport_integration.py` and the conformance tests pass.

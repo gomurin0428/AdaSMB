@@ -1,7 +1,6 @@
 with Ada.Containers.Vectors;
 with Ada.Exceptions;
 with Ada.Real_Time;
-with Ada.Unchecked_Deallocation;
 with SMB.Clock;
 with SMB.Entropy;
 with SMB.Core_Auth;
@@ -10,6 +9,7 @@ with SMB.Core_Connection;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
 with SMB.Core_Wire;
+with SMB.Heap_Owner;
 
 package body SMB.Client is
    use type Ada.Exceptions.Exception_Id;
@@ -29,19 +29,28 @@ package body SMB.Client is
    Share_Connected : constant SMB.Engine.Phase := SMB.Engine.Share_Connected;
 
    --  Transfers, coordinators and request buffers hold 64 KiB to 1 MiB, so
-   --  they are kept off the caller's stack.
+   --  they are kept off the caller's stack. Each one is held by an owner that
+   --  frees it when the subprogram is left, normally or by an exception.
    type Transfer_Access is access SMB.Core_Client.Transfer;
-   procedure Free is new Ada.Unchecked_Deallocation
+   package Transfer_Owners is new SMB.Heap_Owner
      (SMB.Core_Client.Transfer, Transfer_Access);
    type Authentication_Access is access SMB.Core_Client.Authentication;
-   procedure Free is new Ada.Unchecked_Deallocation
+   package Authentication_Owners is new SMB.Heap_Owner
      (SMB.Core_Client.Authentication, Authentication_Access);
    type Enumeration_Access is access SMB.Core_Client.Directory_Enumeration;
-   procedure Free is new Ada.Unchecked_Deallocation
+   package Enumeration_Owners is new SMB.Heap_Owner
      (SMB.Core_Client.Directory_Enumeration, Enumeration_Access);
    type Bytes_Access is access SMB.Bytes;
-   procedure Free is new Ada.Unchecked_Deallocation
-     (SMB.Bytes, Bytes_Access);
+   package Bytes_Owners is new SMB.Heap_Owner (SMB.Bytes, Bytes_Access);
+
+   procedure Erase (Item : in out SMB.Bytes) is
+   begin
+      Item := (others => 0);
+   end Erase;
+
+   --  Authentication requests carry the NTLM token, so they are erased first.
+   package Erased_Bytes_Owners is new SMB.Heap_Owner
+     (SMB.Bytes, Bytes_Access, Erase);
 
    package Entry_Vectors is new Ada.Containers.Vectors
      (Index_Type => Natural, Element_Type => Directory_Entry);
@@ -198,23 +207,18 @@ package body SMB.Client is
          return SMB.Bytes'(1 .. 0 => 0);
       end if;
       declare
-         Result : Bytes_Access := new SMB.Bytes'
-           (0 .. SMB.Core_Protocol.Maximum_Name_Bytes - 1 => 0);
+         Result : Bytes_Owners.Owner;
       begin
+         Result.Item := new SMB.Bytes'
+           (0 .. SMB.Core_Protocol.Maximum_Name_Bytes - 1 => 0);
          SMB.Core_Text.UTF8_To_UTF16
-           (Value, Result.all, Used, Text_Status);
+           (Value, Result.Item.all, Used, Text_Status);
          if Text_Status /= SMB.Ok
            or else Used > SMB.Core_Protocol.Maximum_Name_Bytes
          then
             raise SMB.Protocol_Error with "SMB name exceeds protocol limit";
          end if;
-         return Encoded : constant SMB.Bytes := Result (0 .. Used - 1) do
-            Free (Result);
-         end return;
-      exception
-         when others =>
-            Free (Result);
-            raise;
+         return Result.Item (0 .. Used - 1);
       end;
    end Encode_Name;
 
@@ -584,37 +588,29 @@ package body SMB.Client is
      (Client : in out Connection;
       User, Password : String;
       Domain : String := "") is
-      Authentication : Authentication_Access;
-      Request : Bytes_Access;
+      Authentication : Authentication_Owners.Owner;
+      Request : Erased_Bytes_Owners.Owner;
       Used : Natural;
       Engine_Status : SMB.Core_Status;
       Nt_Status : SMB.DWord;
       Nonce : SMB.Bytes (0 .. 7);
       Started : Boolean := False;
       Unverified_Status : SMB.DWord := 0;
-
-      procedure Release is
-      begin
-         if Request /= null then
-            Request.all := (others => 0);
-         end if;
-         Free (Request);
-         Free (Authentication);
-      end Release;
    begin
-      Authentication := new SMB.Core_Client.Authentication;
-      Request := new SMB.Bytes'
+      Authentication.Item := new SMB.Core_Client.Authentication;
+      Request.Item := new SMB.Bytes'
         (0 .. SMB.Core_Client.Authentication_Request_Size - 1 => 0);
       SMB.Core_Client.Prepare_Negotiate
-        (Authentication.all, Client.Engine_Core, Request.all, Used,
+        (Authentication.Item.all, Client.Engine_Core, Request.Item.all, Used,
          Engine_Status);
       Require_Authentication_Status
         (Engine_Status, "cannot prepare SMB authentication negotiate");
       Started := True;
       SMB.Transport.Send_Frame
-        (Client.Channel, Request (Request'First .. Request'First + Used - 1));
+        (Client.Channel,
+         Request.Item (Request.Item'First .. Request.Item'First + Used - 1));
       SMB.Core_Client.Authentication_Send_Succeeded
-        (Authentication.all, Client.Engine_Core, Engine_Status);
+        (Authentication.Item.all, Client.Engine_Core, Engine_Status);
       Require_Authentication_Status
         (Engine_Status, "authentication negotiate send was not acknowledged");
       declare
@@ -622,7 +618,7 @@ package body SMB.Client is
            Receive_Response (Client);
       begin
          SMB.Core_Client.Complete_Challenge
-           (Authentication.all, Client.Engine_Core, Response, Nt_Status,
+           (Authentication.Item.all, Client.Engine_Core, Response, Nt_Status,
             Engine_Status);
          Client.Last_Status := Nt_Status;
       end;
@@ -642,14 +638,16 @@ package body SMB.Client is
       end if;
       Get_Entropy (Client, Nonce);
       SMB.Core_Client.Prepare_Authenticate
-        (Authentication.all, Client.Engine_Core, User, Password, Domain, Nonce,
-         SMB.Clock.Current_Filetime, Request.all, Used, Engine_Status);
+        (Authentication.Item.all, Client.Engine_Core, User, Password, Domain,
+         Nonce, SMB.Clock.Current_Filetime, Request.Item.all, Used,
+         Engine_Status);
       Require_Authentication_Status
         (Engine_Status, "cannot construct NTLM authentication token");
       SMB.Transport.Send_Frame
-        (Client.Channel, Request (Request'First .. Request'First + Used - 1));
+        (Client.Channel,
+         Request.Item (Request.Item'First .. Request.Item'First + Used - 1));
       SMB.Core_Client.Authentication_Send_Succeeded
-        (Authentication.all, Client.Engine_Core, Engine_Status);
+        (Authentication.Item.all, Client.Engine_Core, Engine_Status);
       Require_Authentication_Status
         (Engine_Status, "authentication token send was not acknowledged");
       declare
@@ -657,9 +655,9 @@ package body SMB.Client is
            Receive_Response (Client);
       begin
          Unverified_Status := SMB.Core_Client.Unverified_Authentication_Status
-           (Authentication.all, Client.Engine_Core, Response);
+           (Authentication.Item.all, Client.Engine_Core, Response);
          SMB.Core_Client.Complete_Authenticate
-           (Authentication.all, Client.Engine_Core, Response, Nt_Status,
+           (Authentication.Item.all, Client.Engine_Core, Response, Nt_Status,
             Engine_Status);
          Client.Last_Status := Nt_Status;
       end;
@@ -673,11 +671,11 @@ package body SMB.Client is
            "server did not complete signed SMB authentication";
       end if;
       Require_Status (Client, Nt_Status);
-      Release;
    exception
       when E : others =>
          if Started
-           and then SMB.Core_Client.Authentication_Stage_Of (Authentication.all) in
+           and then SMB.Core_Client.Authentication_Stage_Of
+             (Authentication.Item.all) in
               SMB.Core_Client.Negotiate_Prepared |
               SMB.Core_Client.Negotiate_Sent |
               SMB.Core_Client.Challenge_Received |
@@ -687,9 +685,8 @@ package body SMB.Client is
              Disconnected
          then
             SMB.Core_Client.Abort_Authentication
-              (Authentication.all, Client.Engine_Core, Engine_Status);
+              (Authentication.Item.all, Client.Engine_Core, Engine_Status);
          end if;
-         Release;
          if Ada.Exceptions.Exception_Identity (E) = SMB.Invalid_State'Identity
            and then not Started
          then
@@ -808,39 +805,40 @@ package body SMB.Client is
          return Length;
       end Checked_Length;
       Capacity : constant Natural := Checked_Length;
-      Transfer : Transfer_Access;
-      Output : Bytes_Access;
-      Packet : Bytes_Access;
+      Transfer : Transfer_Owners.Owner;
+      Output : Bytes_Owners.Owner;
+      Packet : Bytes_Owners.Owner;
       Used : Natural;
       Completed : Natural;
       Nt_Status : SMB.DWord;
       Core_Status : SMB.Core_Status;
    begin
-      Transfer := new SMB.Core_Client.Transfer (Capacity);
-      Output := new SMB.Bytes (0 .. Capacity - 1);
-      Packet := new SMB.Bytes
+      Transfer.Item := new SMB.Core_Client.Transfer (Capacity);
+      Output.Item := new SMB.Bytes (0 .. Capacity - 1);
+      Packet.Item := new SMB.Bytes
         (0 .. SMB.Core_Wire.Header_Size + 48
            + SMB.Core_Protocol.Maximum_IO_Chunk - 1);
       SMB.Core_Client.Start_Read
-        (Transfer.all, Client.Engine_Core, File.Engine_Token, Offset, Capacity,
-         Core_Status);
+        (Transfer.Item.all, Client.Engine_Core, File.Engine_Token, Offset,
+         Capacity, Core_Status);
       Require_Transfer_Status (Core_Status, "SMB READ start");
-      while SMB.Core_Client.Transfer_Stage_Of (Transfer.all) /=
+      while SMB.Core_Client.Transfer_Stage_Of (Transfer.Item.all) /=
         SMB.Core_Client.Transfer_Finished
       loop
          SMB.Core_Client.Prepare_Next
-           (Transfer.all, Client.Engine_Core, Packet.all, Used, Core_Status);
+           (Transfer.Item.all, Client.Engine_Core, Packet.Item.all, Used,
+            Core_Status);
          Require_Transfer_Status (Core_Status, "SMB READ preparation");
-         SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
+         SMB.Transport.Send_Frame (Client.Channel, Packet.Item (0 .. Used - 1));
          SMB.Core_Client.Transfer_Send_Succeeded
-           (Transfer.all, Client.Engine_Core, Core_Status);
+           (Transfer.Item.all, Client.Engine_Core, Core_Status);
          Require_Transfer_Status (Core_Status, "SMB READ send acknowledgement");
          declare
             Response : constant SMB.Bytes :=
               Receive_Response (Client);
          begin
             SMB.Core_Client.Complete_Read
-              (Transfer.all, Client.Engine_Core, Response, Nt_Status,
+              (Transfer.Item.all, Client.Engine_Core, Response, Nt_Status,
                Core_Status);
             Require_Transfer_Status (Core_Status, "SMB READ response");
             Client.Last_Status := Nt_Status;
@@ -850,31 +848,25 @@ package body SMB.Client is
          end;
       end loop;
       SMB.Core_Client.Copy_Read_Result
-        (Transfer.all, Output.all, Completed, Core_Status);
+        (Transfer.Item.all, Output.Item.all, Completed, Core_Status);
       Require_Transfer_Status (Core_Status, "SMB READ result");
-      Free (Transfer);
-      Free (Packet);
-      return Result : constant SMB.Bytes :=
+      Transfer_Owners.Release (Transfer);
+      Bytes_Owners.Release (Packet);
+      return
         (if Completed = 0 then SMB.Bytes'(1 .. 0 => 0)
-         else Output (0 .. Completed - 1))
-      do
-         Free (Output);
-      end return;
+         else Output.Item (0 .. Completed - 1));
    exception
       when others =>
-         if Transfer /= null
+         if Transfer.Item /= null
            and then
-             (SMB.Core_Client.Transfer_Stage_Of (Transfer.all) =
+             (SMB.Core_Client.Transfer_Stage_Of (Transfer.Item.all) =
                 SMB.Core_Client.Transfer_Prepared
-              or else SMB.Core_Client.Transfer_Stage_Of (Transfer.all) =
+              or else SMB.Core_Client.Transfer_Stage_Of (Transfer.Item.all) =
                 SMB.Core_Client.Transfer_Sent)
          then
             SMB.Core_Client.Abort_Transfer
-              (Transfer.all, Client.Engine_Core, Core_Status);
+              (Transfer.Item.all, Client.Engine_Core, Core_Status);
          end if;
-         Free (Transfer);
-         Free (Output);
-         Free (Packet);
          if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
             Clear_State_Preserving_Status (Client);
          end if;
@@ -894,29 +886,30 @@ package body SMB.Client is
          return Data'Length;
       end Checked_Length;
       Capacity : constant Natural := Checked_Length;
-      Transfer : Transfer_Access;
-      Packet : Bytes_Access;
+      Transfer : Transfer_Owners.Owner;
+      Packet : Bytes_Owners.Owner;
       Used : Natural;
       Nt_Status : SMB.DWord;
       Core_Status : SMB.Core_Status;
    begin
-      Transfer := new SMB.Core_Client.Transfer (Capacity);
-      Packet := new SMB.Bytes
+      Transfer.Item := new SMB.Core_Client.Transfer (Capacity);
+      Packet.Item := new SMB.Bytes
         (0 .. SMB.Core_Wire.Header_Size + 48
            + SMB.Core_Protocol.Maximum_IO_Chunk - 1);
       SMB.Core_Client.Start_Write
-        (Transfer.all, Client.Engine_Core, File.Engine_Token, Offset, Data,
-         Core_Status);
+        (Transfer.Item.all, Client.Engine_Core, File.Engine_Token, Offset,
+         Data, Core_Status);
       Require_Transfer_Status (Core_Status, "SMB WRITE start");
-      while SMB.Core_Client.Transfer_Stage_Of (Transfer.all) /=
+      while SMB.Core_Client.Transfer_Stage_Of (Transfer.Item.all) /=
         SMB.Core_Client.Transfer_Finished
       loop
          SMB.Core_Client.Prepare_Next
-           (Transfer.all, Client.Engine_Core, Packet.all, Used, Core_Status);
+           (Transfer.Item.all, Client.Engine_Core, Packet.Item.all, Used,
+            Core_Status);
          Require_Transfer_Status (Core_Status, "SMB WRITE preparation");
-         SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
+         SMB.Transport.Send_Frame (Client.Channel, Packet.Item (0 .. Used - 1));
          SMB.Core_Client.Transfer_Send_Succeeded
-           (Transfer.all, Client.Engine_Core, Core_Status);
+           (Transfer.Item.all, Client.Engine_Core, Core_Status);
          Require_Transfer_Status
            (Core_Status, "SMB WRITE send acknowledgement");
          declare
@@ -924,29 +917,25 @@ package body SMB.Client is
               Receive_Response (Client);
          begin
             SMB.Core_Client.Complete_Write
-              (Transfer.all, Client.Engine_Core, Response, Nt_Status,
+              (Transfer.Item.all, Client.Engine_Core, Response, Nt_Status,
                Core_Status);
             Require_Transfer_Status (Core_Status, "SMB WRITE response");
             Client.Last_Status := Nt_Status;
             Require_Status (Client, Nt_Status);
          end;
       end loop;
-      Free (Transfer);
-      Free (Packet);
    exception
       when others =>
-         if Transfer /= null
+         if Transfer.Item /= null
            and then
-             (SMB.Core_Client.Transfer_Stage_Of (Transfer.all) =
+             (SMB.Core_Client.Transfer_Stage_Of (Transfer.Item.all) =
                 SMB.Core_Client.Transfer_Prepared
-              or else SMB.Core_Client.Transfer_Stage_Of (Transfer.all) =
+              or else SMB.Core_Client.Transfer_Stage_Of (Transfer.Item.all) =
                 SMB.Core_Client.Transfer_Sent)
          then
             SMB.Core_Client.Abort_Transfer
-              (Transfer.all, Client.Engine_Core, Core_Status);
+              (Transfer.Item.all, Client.Engine_Core, Core_Status);
          end if;
-         Free (Transfer);
-         Free (Packet);
          if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
             Clear_State_Preserving_Status (Client);
          end if;
@@ -968,19 +957,19 @@ package body SMB.Client is
       UTF16_Name : constant SMB.Bytes := Encode_Name (Safe_Path);
       Entries : Entry_Vectors.Vector;
       Core_Status : SMB.Core_Status;
-      Enumeration_Buffer : Enumeration_Access;
-      Name_Storage : Bytes_Access;
+      Enumeration_Buffer : Enumeration_Owners.Owner;
+      Name_Storage : Bytes_Owners.Owner;
    begin
-      Enumeration_Buffer := new SMB.Core_Client.Directory_Enumeration;
-      Name_Storage := new SMB.Bytes'
+      Enumeration_Buffer.Item := new SMB.Core_Client.Directory_Enumeration;
+      Name_Storage.Item := new SMB.Bytes'
         (0 .. SMB.Core_Protocol.Maximum_Name_Bytes - 1 => 0);
       declare
          Enumeration : SMB.Core_Client.Directory_Enumeration renames
-           Enumeration_Buffer.all;
+           Enumeration_Buffer.Item.all;
          Request : SMB.Bytes
            (0 .. SMB.Core_Client.Directory_Request_Size - 1) :=
              (others => 0);
-         Name_Buffer : SMB.Bytes renames Name_Storage.all;
+         Name_Buffer : SMB.Bytes renames Name_Storage.Item.all;
          Used : Natural := 0;
          Nt_Status : SMB.DWord := 0;
          Started : Boolean := False;
@@ -1091,8 +1080,8 @@ package body SMB.Client is
             end;
             raise;
       end;
-      Free (Enumeration_Buffer);
-      Free (Name_Storage);
+      Enumeration_Owners.Release (Enumeration_Buffer);
+      Bytes_Owners.Release (Name_Storage);
       return Result : Directory_Entry_Array (1 .. Natural (Entries.Length)) do
          for I in Result'Range loop
             Result (I) := Entries.Element (I - 1);
@@ -1100,8 +1089,6 @@ package body SMB.Client is
       end return;
    exception
       when E : others =>
-         Free (Enumeration_Buffer);
-         Free (Name_Storage);
          if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
