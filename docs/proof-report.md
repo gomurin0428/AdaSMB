@@ -4234,3 +4234,67 @@ On Windows the forced strict builds, unit tests, `make stack-check`,
 conformance tests pass; the Samba integration test needs Linux and was not run.
 Full proof: 5,140 checks (746 flow, 4,394 prover), zero unproved, 0
 `pragma Assume`, 13 units analyzed.
+
+## NTLM authentication without challenge-sized stack copies
+
+`Authenticate` was the one public call over 256 KiB (644,160 bytes static),
+and its `Core_Auth` frames also grew with the server's challenge: building the
+NTLM AUTHENTICATE token copied the message through four 64-KiB SPNEGO
+buffers, `Build_Type3` held runtime-sized `Blob`, `Challenge_Blob`,
+`NT_Response` and `Auth_Material` (Type1, Type2 and Type3 concatenated for the
+MIC, up to about 128 KiB) arrays, `HMAC_MD5` concatenated its key block with
+the message, and `Authenticate` and `Process_Target_Info` each decoded names
+into a 128-KiB UTF-8 buffer only to reject NUL characters.
+
+- `SMB.Crypto` gains incremental MD5 (64-byte block compression over a
+  context, like SHA-256 in #94) and a public `HMAC_MD5_Start`/`Update`/`Finish`
+  with the same length and readiness contracts as HMAC-SHA256. `MD5` and
+  `HMAC_MD5` keep their signatures and use the context, so neither copies its
+  input.
+- `Build_Type3` feeds the user and domain names to the response-key HMAC
+  separately, writes the NTLMv2 blob directly where the NT response lives in
+  the Type3 buffer and computes the proof over the challenge and that region,
+  records the NT response with a new `Reserve_Field` (Put_Field without the
+  copy), and computes the MIC over Type1, Type2 and Type3 incrementally.
+- The SPNEGO `NegTokenResp` is written straight into `Output` once its total
+  length is known to fit, using `DER_Header_Size` and a `Put_Header` with a
+  position contract; nothing is written when it does not fit. Its contract
+  now requires an all-zero `Output` (which `Authenticate` establishes) and
+  ensures a zero tail, instead of comparing the tail with `Output'Old`, which
+  copied the whole output at run time.
+- Target names and AV-pair names are checked with `Core_Text.Validate_UTF16`,
+  whose contract accepts exactly valid UTF-16 without NUL code units, the same
+  acceptance as decoding to UTF-8 and rejecting NUL. A 65,535-byte target name
+  (odd, so previously rejected) is rejected before the call because of its
+  65,534-byte precondition.
+- The Type2 handling moved into `Authenticate_Challenge`, which takes the
+  challenge slice as a parameter: SPARK rejects renaming a slice whose bounds
+  depend on variables, and the previous constant copied it.
+
+Proof found a missing bound: the nested `Put_Header` is analyzed with its own
+precondition only, so it now states that `Output` is at most
+`Maximum_Security_Token` bytes.
+
+The generated token is unchanged: the unit test that compares a full Type3
+token with a known value, `make ntlm-test` (211 AV and 5,896 challenge-field
+fixtures, core/public agreement), `make crypto-test` (including MD5 and
+HMAC-MD5 against Python and OpenSSL and 774 mechanism-list MIC fixtures) and
+`make signing-test` pass.
+
+Static stack: `Authenticate` 644,160 -> 234,944 bytes (`Build_Type3`
+374,384-byte runtime-sized frame -> 95,424 bytes fixed, `Core_Auth.Authenticate`
+197,504 -> 66,416). The only runtime-sized frame left in `Core_Auth` and
+`SMB.Crypto` is `Padded`, used by MD4 on the password. `make stack-check`
+drops the `Authenticate` exception, so every public call must fit 256 KiB, and
+additionally requires `MD5`, `MD5_Update`, `HMAC_MD5`, `HMAC_MD5_Update` and
+`Core_Auth.Authenticate`, `Process_Target_Info` and `Build_Type3` to stay
+fixed-size; against the previous `main` it reports `Authenticate` over budget
+and those `Core_Auth` and `HMAC_MD5` frames as runtime-sized.
+
+Focused proofs: `smb-crypto.adb` 255 checks and `smb-core_auth.adb` 475
+checks, zero unproved. On Windows the forced strict builds, unit tests,
+`make stack-check`, `transport_integration.py` and the unicode, NTLM, clock,
+crypto and signing conformance tests pass; the Samba integration test needs
+Linux and was not run.
+Full proof: 5,191 checks (754 flow, 4,437 prover), zero unproved, 0
+`pragma Assume`, 13 units analyzed.

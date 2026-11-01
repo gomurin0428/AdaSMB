@@ -28,12 +28,12 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   large-MTU negotiation は実装していません。
 * スタック使用量は証明の対象外です。フレーム・転送・要求・ディレクトリ
   一覧のバッファはヒープに置き、ソケットは 16 KiB 単位で読みます。応答の
-  署名検証は HMAC-SHA256 を 64 byte のブロック単位で逐次計算し、受信
-  パケットをスタックにコピーしません。`make stack-check` は公開 API ごとの
-  最悪スタック量（GNAT ランタイムを除く静的見積り）を検査します。
-  `Authenticate` 以外は 256 KiB 以内（最大は `Connect_Share` の約 184 KiB）、
-  `Authenticate` は約 630 KiB です。1 MiB 以上のスタックを持つスレッドや
-  タスクから呼び出してください。
+  署名検証と NTLM 認証は HMAC-SHA256 / HMAC-MD5 を 64 byte のブロック単位で
+  逐次計算し、相手が長さを決めるデータをスタックにコピーしません。
+  `make stack-check` は公開 API ごとの最悪スタック量（GNAT ランタイムを除く
+  静的見積り）が 256 KiB 以内であることを検査します（最大は `Authenticate`
+  の約 230 KiB）。1 MiB 以上のスタックを持つスレッドやタスクから呼び出して
+  ください。
 
 公開 API は同期型で、一度に 1 要求だけを送信します。認証後の
 LOGOFF、TREE_DISCONNECT、CREATE、CLOSE、READ、WRITE、QUERY_DIRECTORY、
