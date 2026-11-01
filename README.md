@@ -184,3 +184,22 @@ project Example is
    for Main use ("client.adb");
 end Example;
 ```
+
+## Alire
+
+Alire のクレート名は `smb` です（[`alire.toml`](alire.toml)）。コミュニティ
+インデックスに登録された後は、次のように依存関係へ追加できます。
+
+```sh
+alr with smb
+```
+
+Alire 経由のビルドでは GNAT 14 以上を要求し、`ADASMB_OS` を OS に応じて
+`Windows_NT` または `Unix` に設定します。Alire のクレート設定ファイル
+（`config/`）は生成しません。
+
+## ライセンス
+
+`MIT OR Apache-2.0` のデュアルライセンスです。利用者はどちらか一方を選んで
+利用できます。本文は [`LICENSE-MIT`](LICENSE-MIT) と
+[`LICENSE-APACHE`](LICENSE-APACHE) を参照してください。

@@ -2,3 +2,5 @@
 /gnatprove.out
 __pycache__/
 *.pyc
+/alire/
+/config/
