@@ -164,7 +164,23 @@ SMB_USER=alice SMB_PASSWORD='...' SMB_DOMAIN=WORKGROUP \
 ください。専用の一時 Samba 設定、共有、`ada_smb_test_only` ユーザー
 （テスト専用の既知のパスワード）を作り、終了時に削除します。リモート
 ホストへ接続するテストではありません。
-`smbd`、`smbpasswd`、Python 3 が必要です。CI の自動実行は設定していません。
+`smbd`、`smbpasswd`、Python 3 が必要です。
+
+## CI
+
+GitHub Actions（`.github/workflows`）で次を実行します。ツールチェーンは
+Alire 2.1.1 で GNAT 14.2.1・gprbuild 25.0.1・gnatprove 14.1.1 を導入します
+（`alr` はリリースの SHA-256 を照合し、導入結果はキャッシュします）。
+
+* `ci.yml`（main への push、pull request、手動実行。文書だけの変更では
+  動きません）
+  * Linux: `make check`（`stack-check` を含む）、`make test`、各照合試験、
+    `make transport-test`、使い捨ての VM 上での Samba 統合試験
+  * Windows: 警告をエラー扱いにしたビルド、ソース・スタック検査、単体試験、
+    各照合試験、TCP 転送試験
+  * macOS（ARM64）: 警告をエラー扱いにしたビルド
+* `proof.yml`（毎週月曜 03:00 JST と手動実行）: `make prove` による全体証明。
+  GitHub は、60 日間活動のないリポジトリでは定期実行を止めます。
 
 ## プロトコル根拠
 

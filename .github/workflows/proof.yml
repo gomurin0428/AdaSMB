@@ -1,0 +1,31 @@
+name: Proof
+
+on:
+  schedule:
+    - cron: '0 18 * * 0' # Sunday 18:00 UTC (Monday 03:00 JST)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    name: GNATprove (all units)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/ada-prover
+          key: ada-${{ runner.os }}-${{ runner.arch }}-alr2.1.1-gnat14.2.1-gprbuild25.0.1-gnatprove14.1.1-v1
+      - name: Install Ada toolchain and GNATprove
+        run: >
+          bash .github/scripts/install-ada.sh "$HOME/ada-prover"
+          gnat_native=14.2.1 gprbuild=25.0.1 gnatprove=14.1.1
+      - name: Prove
+        run: make prove

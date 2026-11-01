@@ -39,6 +39,16 @@ def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str
     return subprocess.run(command, check=True, text=True, **kwargs)
 
 
+def smbd_diagnostics(work: pathlib.Path) -> str:
+    lines = []
+    for name in ("smbd.out", "smbd.log"):
+        path = work / name
+        if path.exists():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            lines += [f"--- {name} ---", *text.splitlines()[-40:]]
+    return "\n".join(lines)
+
+
 def run_directory_mutation_cases(env: dict[str, str]) -> None:
     selected = os.environ.get("ADASMB_DIRECTORY_MODE")
     if selected is not None and selected not in DIRECTORY_MODES:
@@ -222,12 +232,17 @@ def main() -> int:
         try:
             run(["smbpasswd", "-c", str(config), "-a", "-s", USER],
                 input=f"{PASSWORD}\n{PASSWORD}\n")
-            daemon = subprocess.Popen(
-                ["smbd", "-F", "--no-process-group", "-s", str(config)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            # smbd -F exits on EOF when stdin is a pipe or socket, and CI steps
+            # run with a closed one; hold a pipe open so smbd also stops if
+            # this harness dies.
+            with (work / "smbd.out").open("wb") as output:
+                daemon = subprocess.Popen(
+                    ["smbd", "-F", "--no-process-group", "-s", str(config)],
+                    stdin=subprocess.PIPE,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
             try:
                 deadline = time.monotonic() + 10
                 while True:
@@ -236,7 +251,9 @@ def main() -> int:
                             break
                     except OSError:
                         if daemon.poll() is not None or time.monotonic() >= deadline:
-                            raise RuntimeError("local smbd did not open its test port")
+                            raise RuntimeError(
+                                "local smbd did not open its test port "
+                                f"(exit status {daemon.poll()})\n" + smbd_diagnostics(work))
                         time.sleep(0.1)
                 env = os.environ.copy()
                 env.update(
@@ -559,6 +576,7 @@ def main() -> int:
                 except ProcessLookupError:
                     pass
                 daemon.wait(timeout=10)
+                daemon.stdin.close()
         finally:
             subprocess.run(["userdel", USER], check=False,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
