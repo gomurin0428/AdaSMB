@@ -277,7 +277,10 @@ does not make the above bodies formally verified.
   causes local `Protocol_Error` and disconnect; rollback and exactly-once
   semantics are not claimed.
 * No `Assume`, `False_Positive`, or SPARK-off body substitutes for proof.
-  `make prove` uses checks-as-errors. CI is not run automatically.
+  `make prove` uses checks-as-errors. GitHub Actions runs the builds, unit,
+  conformance and transport tests (Linux and Windows) and the Samba
+  integration test (Linux) on pushes to `main` and pull requests, and the full
+  proof weekly and on demand; see `.github/workflows`.
 
 ## Unverified authentication diagnostics
 

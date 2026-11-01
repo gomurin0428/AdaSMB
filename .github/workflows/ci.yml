@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE-*']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ADA_TOOLCHAIN: gnat_native=14.2.1 gprbuild=25.0.1
+  TOOLCHAIN_KEY: alr2.1.1-gnat14.2.1-gprbuild25.0.1-v1
+
+jobs:
+  linux:
+    name: Linux (tests and Samba integration)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/ada-toolchain
+          key: ada-${{ runner.os }}-${{ runner.arch }}-${{ env.TOOLCHAIN_KEY }}
+      - name: Install Ada toolchain
+        run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
+      - name: Install Samba
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends samba
+      - name: Strict build, source and stack checks
+        run: make check
+      - name: Unit tests
+        run: make test
+      - name: Conformance tests
+        run: make crypto-test signing-test ntlm-test unicode-test clock-test
+      - name: Transport test
+        run: make transport-test
+      - name: Samba integration
+        # Creates a test-only account and a private smbd on 127.0.0.1:1445.
+        run: sudo env "PATH=$PATH" python3 tests/samba_integration.py
+
+  windows:
+    name: Windows (tests)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/ada-toolchain
+          key: ada-${{ runner.os }}-${{ runner.arch }}-${{ env.TOOLCHAIN_KEY }}
+      - name: Install Ada toolchain
+        run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
+      - name: Strict build, source and stack checks
+        run: |
+          for project in smb.gpr smb_tests.gpr smb_example.gpr; do
+            gprbuild -p -P "$project" -cargs:Ada -gnatwe
+          done
+          python tests/check_sources.py
+          gprbuild -p -P smb.gpr --subdirs=stack-usage -cargs:Ada -fcallgraph-info=su
+          python tests/check_stack_usage.py
+      - name: Unit tests
+        run: ./build/bin/test_suite.exe
+      - name: Conformance tests
+        run: |
+          python tests/crypto_conformance.py
+          python tests/signing_conformance.py
+          python tests/ntlm_av_conformance.py
+          python tests/ntlm_challenge_fields.py
+          python tests/unicode_conformance.py
+          python tests/clock_conformance.py
+      - name: Transport test
+        run: python tests/transport_integration.py
+
+  macos:
+    name: macOS (build)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/ada-toolchain
+          key: ada-${{ runner.os }}-${{ runner.arch }}-${{ env.TOOLCHAIN_KEY }}
+      - name: Install Ada toolchain
+        run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
+      - name: Strict build
+        run: |
+          gprbuild -p -P smb.gpr -cargs:Ada -gnatwe
+          gprbuild -p -P smb_example.gpr -cargs:Ada -gnatwe

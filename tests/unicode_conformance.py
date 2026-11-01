@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import random
 import subprocess
+import sys
 import tempfile
 
 
@@ -89,7 +90,10 @@ def check_probe(probe):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--probe", default="build/bin/unicode_probe")
+    parser.add_argument(
+        "--probe",
+        default="build/bin/unicode_probe.exe" if sys.platform == "win32"
+        else "build/bin/unicode_probe")
     args = parser.parse_args()
     probe = str(Path(args.probe).resolve())
     if not Path(probe).is_file():
