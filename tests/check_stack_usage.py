@@ -103,15 +103,23 @@ for title in entries:
             f"{title} needs {total:,} bytes (budget {STATIC_BUDGET:,}): "
             + " -> ".join(frames[t]["name"] for t in chain))
 
+def runtime_sized(kind):
+    # "dynamic,bounded" (e.g. stack realignment or probing on x86_64 Linux)
+    # reports an upper bound, so the budget above already covers it.
+    return "dynamic" in kind and "bounded" not in kind
+
+
 seen = set()
 for title, frame in sorted(frames.items()):
     key = (frame["file"], frame["name"])
     seen.add(key)
-    if frame["file"] in IO_UNITS and "dynamic" in frame["kind"] \
+    if frame["file"] in IO_UNITS and runtime_sized(frame["kind"]) \
             and key not in DYNAMIC_ALLOWED:
-        failures.append(f"runtime-sized stack frame in {key[0]}: {key[1]}")
-    if key in STATIC_REQUIRED and "dynamic" in frame["kind"]:
-        failures.append(f"packet-sized stack frame in {key[0]}: {key[1]}")
+        failures.append(
+            f"runtime-sized stack frame in {key[0]}: {key[1]} ({frame['kind']})")
+    if key in STATIC_REQUIRED and runtime_sized(frame["kind"]):
+        failures.append(
+            f"packet-sized stack frame in {key[0]}: {key[1]} ({frame['kind']})")
 for key in sorted(STATIC_REQUIRED - seen):
     failures.append(f"expected subprogram not in call graph: {key[0]}: {key[1]}")
 
