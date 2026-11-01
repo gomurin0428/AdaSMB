@@ -129,10 +129,83 @@ is
      Post =>
        Used <= Output'Length
        and then
-         (Status /= SMB.Ok
-          or else
-            (Authentication_Stage_Of (Value) = Negotiate_Prepared
-             and then Authentication_Packet_Matches (Value, State, Output, Used)));
+         (if Status = SMB.Ok then
+            Authentication_Stage_Of (Value)'Old = Authentication_Ready
+            and then SMB.Engine.Current_Phase (State)'Old =
+              SMB.Engine.Negotiated
+            and then SMB.Engine.Current_Session_Id (State)'Old = 0
+            and then not SMB.Engine.Has_Pending_Request (State)'Old
+            and then not SMB.Engine.Has_Validated_Response (State)'Old
+            and then not SMB.Engine.Has_Signing_Key (State)'Old
+            and then Authentication_Stage_Of (Value) = Negotiate_Prepared
+            and then Authentication_Context_Matches (Value, State)
+            and then Authentication_Session_Id_Of (Value) = 0
+            and then Authentication_Challenge_Length_Of (Value) = 0
+            and then SMB.Engine.Current_Owner_Id (State) =
+              SMB.Engine.Current_Owner_Id (State)'Old
+            and then SMB.Engine.Current_Epoch (State) =
+              SMB.Engine.Current_Epoch (State)'Old
+            and then SMB.Engine.Current_Phase (State) =
+              SMB.Engine.Negotiated
+            and then SMB.Engine.Current_Session_Id (State) = 0
+            and then SMB.Engine.Has_Pending_Request (State)
+            and then not SMB.Engine.Has_Validated_Response (State)
+            and then not SMB.Engine.Has_Signing_Key (State)
+            and then Authentication_Packet_Matches (Value, State, Output, Used)
+          elsif Status = SMB.Invalid_State_Status
+            and then
+              (Authentication_Stage_Of (Value)'Old /= Authentication_Ready
+               or else SMB.Engine.Current_Phase (State)'Old /=
+                 SMB.Engine.Negotiated
+               or else SMB.Engine.Current_Session_Id (State)'Old /= 0
+               or else SMB.Engine.Has_Pending_Request (State)'Old
+               or else SMB.Engine.Has_Validated_Response (State)'Old
+               or else SMB.Engine.Has_Signing_Key (State)'Old
+               or else Output'Length < SMB.Core_Wire.Header_Size
+               or else Output'First >
+                 Natural'Last - SMB.Core_Wire.Header_Size)
+          then
+            Used = 0
+            and then (for all Index in Output'Range => Output (Index) = 0)
+            and then Authentication_Stage_Of (Value) =
+              Authentication_Stage_Of (Value)'Old
+            and then Authentication_Owner_Of (Value) =
+              Authentication_Owner_Of (Value)'Old
+            and then Authentication_Epoch_Of (Value) =
+              Authentication_Epoch_Of (Value)'Old
+            and then Authentication_Session_Id_Of (Value) =
+              Authentication_Session_Id_Of (Value)'Old
+            and then Authentication_Challenge_Length_Of (Value) =
+              Authentication_Challenge_Length_Of (Value)'Old
+            and then Authentication_Buffer_Of (Value) =
+              Authentication_Buffer_Of (Value)'Old
+            and then SMB.Engine."=" (Authentication_Expected_Of (Value),
+              Authentication_Expected_Of (Value)'Old)
+            and then State = State'Old
+          else
+            Used = 0
+            and then (for all Index in Output'Range => Output (Index) = 0)
+            and then Authentication_Stage_Of (Value)'Old = Authentication_Ready
+            and then SMB.Engine.Current_Phase (State)'Old =
+              SMB.Engine.Negotiated
+            and then SMB.Engine.Current_Session_Id (State)'Old = 0
+            and then not SMB.Engine.Has_Pending_Request (State)'Old
+            and then not SMB.Engine.Has_Validated_Response (State)'Old
+            and then not SMB.Engine.Has_Signing_Key (State)'Old
+            and then Authentication_Stage_Of (Value) = Authentication_Failed
+            and then Authentication_Owner_Of (Value) =
+              Authentication_Owner_Of (Value)'Old
+            and then Authentication_Epoch_Of (Value) =
+              Authentication_Epoch_Of (Value)'Old
+            and then Authentication_Session_Id_Of (Value) =
+              Authentication_Session_Id_Of (Value)'Old
+            and then SMB.Engine."=" (Authentication_Expected_Of (Value),
+              Authentication_Expected_Of (Value)'Old)
+            and then Authentication_Challenge_Length_Of (Value) = 0
+            and then
+              (for all Index in Authentication_Buffer_Of (Value)'Range =>
+                 Authentication_Buffer_Of (Value) (Index) = 0)
+            and then State = State'Old);
 
    procedure Authentication_Send_Succeeded
      (Value : in out Authentication;
@@ -140,24 +213,56 @@ is
       Status : out SMB.Core_Status)
    with
      Post =>
-     (if Status = SMB.Ok then
-           (Authentication_Stage_Of (Value) in
-             Negotiate_Sent | Authenticate_Sent
-           and then Authentication_Stage_Of (Value)'Old in
-             Negotiate_Prepared | Authenticate_Prepared
-           and then Authentication_Context_Matches (Value, State)
-           and then Authentication_Owner_Of (Value) =
-             Authentication_Owner_Of (Value)'Old
-           and then Authentication_Epoch_Of (Value) =
-             Authentication_Epoch_Of (Value)'Old
-           and then Authentication_Owner_Of (Value)'Old =
-             SMB.Engine.Current_Owner_Id (State)'Old
-           and then Authentication_Epoch_Of (Value)'Old =
-             SMB.Engine.Current_Epoch (State)'Old
-           and then Authentication_Session_Id_Of (Value) =
-             Authentication_Session_Id_Of (Value)'Old
-           and then SMB.Engine."=" (Authentication_Expected_Of (Value),
-             Authentication_Expected_Of (Value)'Old)));
+       (if Status = SMB.Ok then
+          (if Authentication_Stage_Of (Value)'Old = Negotiate_Prepared
+           then Authentication_Stage_Of (Value) = Negotiate_Sent
+           else Authentication_Stage_Of (Value)'Old = Authenticate_Prepared
+             and then Authentication_Stage_Of (Value) = Authenticate_Sent)
+          and then Authentication_Context_Matches (Value, State)
+          and then Authentication_Owner_Of (Value) =
+            Authentication_Owner_Of (Value)'Old
+          and then Authentication_Epoch_Of (Value) =
+            Authentication_Epoch_Of (Value)'Old
+          and then Authentication_Owner_Of (Value)'Old =
+            SMB.Engine.Current_Owner_Id (State)'Old
+          and then Authentication_Epoch_Of (Value)'Old =
+            SMB.Engine.Current_Epoch (State)'Old
+          and then Authentication_Session_Id_Of (Value) =
+            Authentication_Session_Id_Of (Value)'Old
+          and then Authentication_Challenge_Length_Of (Value) =
+            Authentication_Challenge_Length_Of (Value)'Old
+          and then Authentication_Buffer_Of (Value) =
+            Authentication_Buffer_Of (Value)'Old
+          and then SMB.Engine."=" (Authentication_Expected_Of (Value),
+            Authentication_Expected_Of (Value)'Old)
+          and then SMB.Engine.Pending_Request_Matches
+            (State, Authentication_Expected_Of (Value))
+        elsif Status = SMB.Invalid_State_Status
+          and then
+            (Authentication_Owner_Of (Value)'Old /=
+               SMB.Engine.Current_Owner_Id (State)
+             or else Authentication_Epoch_Of (Value)'Old /=
+               SMB.Engine.Current_Epoch (State)
+             or else not SMB.Engine.Pending_Request_Matches
+               (State, Authentication_Expected_Of (Value)'Old)
+             or else Authentication_Stage_Of (Value)'Old not in
+               Negotiate_Prepared | Authenticate_Prepared)
+        then
+          Authentication_Stage_Of (Value) =
+            Authentication_Stage_Of (Value)'Old
+          and then Authentication_Owner_Of (Value) =
+            Authentication_Owner_Of (Value)'Old
+          and then Authentication_Epoch_Of (Value) =
+            Authentication_Epoch_Of (Value)'Old
+          and then Authentication_Session_Id_Of (Value) =
+            Authentication_Session_Id_Of (Value)'Old
+          and then Authentication_Challenge_Length_Of (Value) =
+            Authentication_Challenge_Length_Of (Value)'Old
+          and then Authentication_Buffer_Of (Value) =
+            Authentication_Buffer_Of (Value)'Old
+          and then SMB.Engine."=" (Authentication_Expected_Of (Value),
+            Authentication_Expected_Of (Value)'Old)
+        else False);
 
    procedure Complete_Challenge
      (Value : in out Authentication;

@@ -1,5 +1,3 @@
-with SMB.Crypto;
-
 package body SMB.Core_Client
   with SPARK_Mode
 is
@@ -110,6 +108,10 @@ is
    with
      Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Status =
+         (if Packet'Length >= Header_Length then SMB.Ok
+          else SMB.Invalid_Length)
+       and then
        (if Status = SMB.Ok then
           SMB.Core_Wire.Encoded_U16 (Packet, 12) =
             SMB.Word (Expected.Command)
@@ -230,6 +232,27 @@ is
                  else Invalidate_Status);
    end Fail_Authentication;
 
+   procedure Fail_Negotiate_Preparation
+     (Value : in out Authentication;
+      Output : out SMB.Bytes)
+   with Post =>
+     Value.Stage = Authentication_Failed
+     and then Value.Owner = Value.Owner'Old
+     and then Value.Epoch = Value.Epoch'Old
+     and then Value.Session_Id = Value.Session_Id'Old
+     and then SMB.Engine."=" (Value.Expected, Value.Expected'Old)
+     and then Value.Challenge_Length = 0
+     and then
+       (for all Index in Value.Challenge'Range =>
+          Value.Challenge (Index) = 0)
+     and then (for all Index in Output'Range => Output (Index) = 0)
+   is
+   begin
+      Clear_Output (Output);
+      Clear_Authentication_Buffer (Value);
+      Value.Stage := Authentication_Failed;
+   end Fail_Negotiate_Preparation;
+
    procedure Prepare_Negotiate
      (Value : in out Authentication;
       State : in out SMB.Engine.Engine_State;
@@ -261,12 +284,12 @@ is
       end if;
       SMB.Core_Auth.Build_Negotiate_Token (Token, Token_Used, Status);
       if Status /= SMB.Ok then
-         Value.Stage := Authentication_Failed;
+         Fail_Negotiate_Preparation (Value, Output);
          return;
       end if;
       if Token_Used = 0 or else Output'Length < Header_Length + 24 + Token_Used
       then
-         Value.Stage := Authentication_Failed;
+         Fail_Negotiate_Preparation (Value, Output);
          Status := SMB.Resource_Limit;
          return;
       end if;
@@ -275,13 +298,13 @@ is
          Output (Output'First + Header_Length .. Output'Last),
          Body_Used, Status);
       if Status /= SMB.Ok then
-         Value.Stage := Authentication_Failed;
+         Fail_Negotiate_Preparation (Value, Output);
          return;
       end if;
       SMB.Engine.Begin_Request
         (State, 1, False, False, Message_Id, Expected, Begin_Status);
       if Begin_Status /= SMB.Ok then
-         Value.Stage := Authentication_Failed;
+         Fail_Negotiate_Preparation (Value, Output);
          Status := Begin_Status;
          return;
       end if;
@@ -294,6 +317,7 @@ is
       Value.Challenge_Length := 0;
       Prepare_Unsigned_Header (Output, Expected, Field_Status);
       if Field_Status /= SMB.Ok then
+         Clear_Output (Output);
          Fail_Authentication (Value, State, Field_Status, Status);
          return;
       end if;

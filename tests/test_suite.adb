@@ -1854,6 +1854,185 @@ procedure Test_Suite is
       end loop;
       Ada.Text_IO.Put_Line
         ("authenticate preparation failure cleanup: 3 rejected inputs passed");
+      for Reject_Case in 1 .. 3 loop
+         declare
+            Reject_State : SMB.Engine.Engine_State;
+            Reject_Value : SMB.Core_Client.Authentication;
+            First_Request : SMB.Bytes
+              (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+                (others => 0);
+            Reject_Output : SMB.Bytes
+              (0 .. (if Reject_Case = 1 then 62
+                     else SMB.Core_Client.Authentication_Request_Size - 1)) :=
+                (others => 16#AA#);
+            Reject_Used : Natural;
+            Expected_Stage : SMB.Core_Client.Authentication_Stage :=
+              SMB.Core_Client.Authentication_Ready;
+            Expected_Phase : SMB.Engine.Phase := SMB.Engine.Negotiated;
+            Owner, Epoch : SMB.QWord;
+            Pending : Boolean;
+         begin
+            if Reject_Case = 2 then
+               SMB.Engine.Initialize (Reject_State, Status);
+               Assert (Status = SMB.Ok, "negotiate rejection initialize");
+               SMB.Engine.Mark_Connected (Reject_State, Status);
+               Assert (Status = SMB.Ok, "negotiate rejection connect");
+               Expected_Phase := SMB.Engine.Transport_Connected;
+            else
+               Prepare_Negotiated (Reject_State);
+            end if;
+            if Reject_Case = 3 then
+               SMB.Core_Client.Prepare_Negotiate
+                 (Reject_Value, Reject_State, First_Request, Reject_Used,
+                  Status);
+               Assert (Status = SMB.Ok, "negotiate before repeated preparation");
+               Expected_Stage := SMB.Core_Client.Negotiate_Prepared;
+            end if;
+            Owner := SMB.Engine.Current_Owner_Id (Reject_State);
+            Epoch := SMB.Engine.Current_Epoch (Reject_State);
+            Pending := SMB.Engine.Has_Pending_Request (Reject_State);
+            SMB.Core_Client.Prepare_Negotiate
+              (Reject_Value, Reject_State, Reject_Output, Reject_Used, Status);
+            Assert
+              (Status = SMB.Invalid_State_Status
+               and then Reject_Used = 0
+               and then (for all B of Reject_Output => B = 0)
+               and then SMB.Core_Client.Authentication_Stage_Of (Reject_Value) =
+                 Expected_Stage
+               and then SMB.Engine.Current_Phase (Reject_State) =
+                 Expected_Phase
+               and then SMB.Engine.Has_Pending_Request (Reject_State) = Pending
+               and then SMB.Engine.Current_Owner_Id (Reject_State) = Owner
+               and then SMB.Engine.Current_Epoch (Reject_State) = Epoch,
+               "rejected negotiate preparation changed state, case"
+               & Integer'Image (Reject_Case));
+            if Reject_Case = 3 then
+               SMB.Core_Client.Authentication_Send_Succeeded
+                 (Reject_Value, Reject_State, Status);
+               Assert
+                 (Status = SMB.Ok,
+                  "repeated preparation disturbed the pending negotiate");
+            end if;
+         end;
+      end loop;
+      declare
+         Short_State : SMB.Engine.Engine_State;
+         Short_Value : SMB.Core_Client.Authentication;
+         Retry_Value : SMB.Core_Client.Authentication;
+         Short_Output : SMB.Bytes (0 .. 99) := (others => 16#AA#);
+         Retry_Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
+         Short_Used, Retry_Used : Natural;
+         Owner, Epoch : SMB.QWord;
+      begin
+         Prepare_Negotiated (Short_State);
+         Owner := SMB.Engine.Current_Owner_Id (Short_State);
+         Epoch := SMB.Engine.Current_Epoch (Short_State);
+         SMB.Core_Client.Prepare_Negotiate
+           (Short_Value, Short_State, Short_Output, Short_Used, Status);
+         Assert
+           (Status = SMB.Resource_Limit
+            and then Short_Used = 0
+            and then (for all B of Short_Output => B = 0)
+            and then SMB.Core_Client.Authentication_Stage_Of (Short_Value) =
+              SMB.Core_Client.Authentication_Failed
+            and then SMB.Core_Client.Authentication_Challenge_Length_Of
+              (Short_Value) = 0
+            and then SMB.Core_Client.Authentication_Session_Id_Of
+              (Short_Value) = 0
+            and then SMB.Engine.Current_Phase (Short_State) =
+              SMB.Engine.Negotiated
+            and then not SMB.Engine.Has_Pending_Request (Short_State)
+            and then not SMB.Engine.Has_Validated_Response (Short_State)
+            and then not SMB.Engine.Has_Signing_Key (Short_State)
+            and then SMB.Engine.Current_Session_Id (Short_State) = 0
+            and then SMB.Engine.Current_Owner_Id (Short_State) = Owner
+            and then SMB.Engine.Current_Epoch (Short_State) = Epoch,
+            "short negotiate output left state");
+         SMB.Core_Client.Prepare_Negotiate
+           (Short_Value, Short_State, Retry_Request, Retry_Used, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then Retry_Used = 0
+            and then SMB.Core_Client.Authentication_Stage_Of (Short_Value) =
+              SMB.Core_Client.Authentication_Failed
+            and then not SMB.Engine.Has_Pending_Request (Short_State),
+            "failed negotiate coordinator was reused");
+         SMB.Core_Client.Prepare_Negotiate
+           (Retry_Value, Short_State, Retry_Request, Retry_Used, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Authentication_Stage_Of (Retry_Value) =
+              SMB.Core_Client.Negotiate_Prepared
+            and then SMB.Engine.Has_Pending_Request (Short_State),
+            "engine unusable after failed negotiate preparation");
+      end;
+      Ada.Text_IO.Put_Line
+        ("negotiate preparation outcomes: 3 rejected calls, 1 short output"
+         & " and 1 retry passed");
+      for Reject_Case in 1 .. 4 loop
+         declare
+            Ack_State, Other_State : SMB.Engine.Engine_State;
+            Ack_Value : SMB.Core_Client.Authentication;
+            Ack_Request : SMB.Bytes
+              (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+                (others => 0);
+            Ack_Used : Natural;
+            Expected_Stage : SMB.Core_Client.Authentication_Stage :=
+              SMB.Core_Client.Negotiate_Prepared;
+         begin
+            Prepare_Negotiated (Ack_State);
+            if Reject_Case = 1 then
+               Expected_Stage := SMB.Core_Client.Authentication_Ready;
+            else
+               SMB.Core_Client.Prepare_Negotiate
+                 (Ack_Value, Ack_State, Ack_Request, Ack_Used, Status);
+               Assert
+                 (Status = SMB.Ok,
+                  "prepare negotiate before rejected acknowledgement");
+            end if;
+            case Reject_Case is
+               when 1 =>
+                  null;
+               when 2 =>
+                  SMB.Core_Client.Authentication_Send_Succeeded
+                    (Ack_Value, Ack_State, Status);
+                  Assert (Status = SMB.Ok, "first negotiate acknowledgement");
+                  Expected_Stage := SMB.Core_Client.Negotiate_Sent;
+               when 3 =>
+                  Prepare_Negotiated (Other_State);
+               when others =>
+                  SMB.Engine.Invalidate (Ack_State, Status);
+                  Assert
+                    (Status = SMB.Ok,
+                     "invalidate before stale acknowledgement");
+                  SMB.Engine.Mark_Connected (Ack_State, Status);
+                  Assert
+                    (Status = SMB.Ok,
+                     "reconnect before stale acknowledgement");
+            end case;
+            if Reject_Case = 3 then
+               SMB.Core_Client.Authentication_Send_Succeeded
+                 (Ack_Value, Other_State, Status);
+            else
+               SMB.Core_Client.Authentication_Send_Succeeded
+                 (Ack_Value, Ack_State, Status);
+            end if;
+            Assert
+              (Status = SMB.Invalid_State_Status
+               and then SMB.Core_Client.Authentication_Stage_Of (Ack_Value) =
+                 Expected_Stage
+               and then SMB.Core_Client.Authentication_Session_Id_Of
+                 (Ack_Value) = 0
+               and then SMB.Core_Client.Authentication_Challenge_Length_Of
+                 (Ack_Value) = 0,
+               "rejected send acknowledgement changed authentication, case"
+               & Integer'Image (Reject_Case));
+         end;
+      end loop;
+      Ada.Text_IO.Put_Line
+        ("send acknowledgement rejections: 4 rejected calls passed");
       Prepare_Negotiated (State);
       SMB.Core_Client.Prepare_Negotiate
         (Value, State, Request, Used, Status);
