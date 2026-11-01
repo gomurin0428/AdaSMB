@@ -1,7 +1,7 @@
 GPRBUILD ?= gprbuild
 PYTHON ?= python3
 
-.PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test signing-test clock-test check clean example prove
+.PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test signing-test clock-test check stack-check clean example prove
 
 all: build
 
@@ -44,11 +44,15 @@ transport-test:
 	$(GPRBUILD) -p -P smb_tests.gpr transport_client.adb
 	$(PYTHON) tests/transport_integration.py
 
-check:
+check: stack-check
 	$(GPRBUILD) -p -P smb.gpr -cargs:Ada -gnatwe
 	$(GPRBUILD) -p -P smb_tests.gpr -cargs:Ada -gnatwe
 	$(GPRBUILD) -p -P smb_example.gpr -cargs:Ada -gnatwe
 	$(PYTHON) tests/check_sources.py
+
+stack-check:
+	$(GPRBUILD) -p -P smb.gpr --subdirs=stack-usage -cargs:Ada -fcallgraph-info=su
+	$(PYTHON) tests/check_stack_usage.py
 
 prove:
 	@command -v gnatprove >/dev/null 2>&1 || { echo "gnatprove is required"; exit 127; }

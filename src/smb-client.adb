@@ -1,6 +1,7 @@
 with Ada.Containers.Vectors;
 with Ada.Exceptions;
 with Ada.Real_Time;
+with Ada.Unchecked_Deallocation;
 with SMB.Clock;
 with SMB.Entropy;
 with SMB.Core_Auth;
@@ -26,6 +27,14 @@ package body SMB.Client is
    Disconnected : constant SMB.Engine.Phase := SMB.Engine.Disconnected;
    Authenticated : constant SMB.Engine.Phase := SMB.Engine.Authenticated;
    Share_Connected : constant SMB.Engine.Phase := SMB.Engine.Share_Connected;
+
+   --  Transfers hold up to 1 MiB, so they are kept off the caller's stack.
+   type Transfer_Access is access SMB.Core_Client.Transfer;
+   procedure Free is new Ada.Unchecked_Deallocation
+     (SMB.Core_Client.Transfer, Transfer_Access);
+   type Bytes_Access is access SMB.Bytes;
+   procedure Free is new Ada.Unchecked_Deallocation
+     (SMB.Bytes, Bytes_Access);
 
    package Entry_Vectors is new Ada.Containers.Vectors
      (Index_Type => Natural, Element_Type => Directory_Entry);
@@ -773,8 +782,8 @@ package body SMB.Client is
          return Length;
       end Checked_Length;
       Capacity : constant Natural := Checked_Length;
-      Transfer : SMB.Core_Client.Transfer (Capacity);
-      Output : SMB.Bytes (0 .. Capacity - 1);
+      Transfer : Transfer_Access := new SMB.Core_Client.Transfer (Capacity);
+      Output : Bytes_Access := new SMB.Bytes (0 .. Capacity - 1);
       Packet : SMB.Bytes
         (0 .. SMB.Core_Wire.Header_Size + 48
            + SMB.Core_Protocol.Maximum_IO_Chunk - 1);
@@ -784,25 +793,26 @@ package body SMB.Client is
       Core_Status : SMB.Core_Status;
    begin
       SMB.Core_Client.Start_Read
-        (Transfer, Client.Engine_Core, File.Engine_Token, Offset, Capacity,
+        (Transfer.all, Client.Engine_Core, File.Engine_Token, Offset, Capacity,
          Core_Status);
       Require_Transfer_Status (Core_Status, "SMB READ start");
-      while SMB.Core_Client.Transfer_Stage_Of (Transfer) /=
+      while SMB.Core_Client.Transfer_Stage_Of (Transfer.all) /=
         SMB.Core_Client.Transfer_Finished
       loop
          SMB.Core_Client.Prepare_Next
-           (Transfer, Client.Engine_Core, Packet, Used, Core_Status);
+           (Transfer.all, Client.Engine_Core, Packet, Used, Core_Status);
          Require_Transfer_Status (Core_Status, "SMB READ preparation");
          SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
          SMB.Core_Client.Transfer_Send_Succeeded
-           (Transfer, Client.Engine_Core, Core_Status);
+           (Transfer.all, Client.Engine_Core, Core_Status);
          Require_Transfer_Status (Core_Status, "SMB READ send acknowledgement");
          declare
             Response : constant SMB.Bytes :=
               Receive_Response (Client);
          begin
             SMB.Core_Client.Complete_Read
-              (Transfer, Client.Engine_Core, Response, Nt_Status, Core_Status);
+              (Transfer.all, Client.Engine_Core, Response, Nt_Status,
+               Core_Status);
             Require_Transfer_Status (Core_Status, "SMB READ response");
             Client.Last_Status := Nt_Status;
             if Nt_Status /= SMB.Status_End_Of_File then
@@ -811,22 +821,29 @@ package body SMB.Client is
          end;
       end loop;
       SMB.Core_Client.Copy_Read_Result
-        (Transfer, Output, Completed, Core_Status);
+        (Transfer.all, Output.all, Completed, Core_Status);
       Require_Transfer_Status (Core_Status, "SMB READ result");
-      if Completed = 0 then
-         return SMB.Bytes'(1 .. 0 => 0);
-      end if;
-      return Output (0 .. Completed - 1);
+      Free (Transfer);
+      return Result : constant SMB.Bytes :=
+        (if Completed = 0 then SMB.Bytes'(1 .. 0 => 0)
+         else Output (0 .. Completed - 1))
+      do
+         Free (Output);
+      end return;
    exception
       when others =>
-         if SMB.Core_Client.Transfer_Stage_Of (Transfer) =
-              SMB.Core_Client.Transfer_Prepared
-           or else SMB.Core_Client.Transfer_Stage_Of (Transfer) =
-             SMB.Core_Client.Transfer_Sent
+         if Transfer /= null
+           and then
+             (SMB.Core_Client.Transfer_Stage_Of (Transfer.all) =
+                SMB.Core_Client.Transfer_Prepared
+              or else SMB.Core_Client.Transfer_Stage_Of (Transfer.all) =
+                SMB.Core_Client.Transfer_Sent)
          then
             SMB.Core_Client.Abort_Transfer
-              (Transfer, Client.Engine_Core, Core_Status);
+              (Transfer.all, Client.Engine_Core, Core_Status);
          end if;
+         Free (Transfer);
+         Free (Output);
          if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
             Clear_State_Preserving_Status (Client);
          end if;
@@ -846,7 +863,7 @@ package body SMB.Client is
          return Data'Length;
       end Checked_Length;
       Capacity : constant Natural := Checked_Length;
-      Transfer : SMB.Core_Client.Transfer (Capacity);
+      Transfer : Transfer_Access := new SMB.Core_Client.Transfer (Capacity);
       Packet : SMB.Bytes
         (0 .. SMB.Core_Wire.Header_Size + 48
            + SMB.Core_Protocol.Maximum_IO_Chunk - 1);
@@ -855,18 +872,18 @@ package body SMB.Client is
       Core_Status : SMB.Core_Status;
    begin
       SMB.Core_Client.Start_Write
-        (Transfer, Client.Engine_Core, File.Engine_Token, Offset, Data,
+        (Transfer.all, Client.Engine_Core, File.Engine_Token, Offset, Data,
          Core_Status);
       Require_Transfer_Status (Core_Status, "SMB WRITE start");
-      while SMB.Core_Client.Transfer_Stage_Of (Transfer) /=
+      while SMB.Core_Client.Transfer_Stage_Of (Transfer.all) /=
         SMB.Core_Client.Transfer_Finished
       loop
          SMB.Core_Client.Prepare_Next
-           (Transfer, Client.Engine_Core, Packet, Used, Core_Status);
+           (Transfer.all, Client.Engine_Core, Packet, Used, Core_Status);
          Require_Transfer_Status (Core_Status, "SMB WRITE preparation");
          SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
          SMB.Core_Client.Transfer_Send_Succeeded
-           (Transfer, Client.Engine_Core, Core_Status);
+           (Transfer.all, Client.Engine_Core, Core_Status);
          Require_Transfer_Status
            (Core_Status, "SMB WRITE send acknowledgement");
          declare
@@ -874,22 +891,27 @@ package body SMB.Client is
               Receive_Response (Client);
          begin
             SMB.Core_Client.Complete_Write
-              (Transfer, Client.Engine_Core, Response, Nt_Status, Core_Status);
+              (Transfer.all, Client.Engine_Core, Response, Nt_Status,
+               Core_Status);
             Require_Transfer_Status (Core_Status, "SMB WRITE response");
             Client.Last_Status := Nt_Status;
             Require_Status (Client, Nt_Status);
          end;
       end loop;
+      Free (Transfer);
    exception
       when others =>
-         if SMB.Core_Client.Transfer_Stage_Of (Transfer) =
-              SMB.Core_Client.Transfer_Prepared
-           or else SMB.Core_Client.Transfer_Stage_Of (Transfer) =
-             SMB.Core_Client.Transfer_Sent
+         if Transfer /= null
+           and then
+             (SMB.Core_Client.Transfer_Stage_Of (Transfer.all) =
+                SMB.Core_Client.Transfer_Prepared
+              or else SMB.Core_Client.Transfer_Stage_Of (Transfer.all) =
+                SMB.Core_Client.Transfer_Sent)
          then
             SMB.Core_Client.Abort_Transfer
-              (Transfer, Client.Engine_Core, Core_Status);
+              (Transfer.all, Client.Engine_Core, Core_Status);
          end if;
+         Free (Transfer);
          if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
             Clear_State_Preserving_Status (Client);
          end if;
