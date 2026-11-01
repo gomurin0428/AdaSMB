@@ -23,7 +23,14 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   epoch、open ticket を記録し、foreign/stale/closed handle はネットワーク
   I/O より前に拒否します。
 * フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
-  受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB3、
+  受信オフセット・長さ・加算の範囲を検査します。
+* スタック使用量は証明の対象外です。フレーム・転送サイズのバッファは
+  ヒープに置き、ソケットは 64 KiB 単位で読みます。`make stack-check` は
+  公開 API ごとの最悪スタック量（GNAT ランタイムを除く静的見積り）を
+  検査し、最大は `Authenticate` の約 760 KiB です。ただし署名付き応答の
+  検証では応答長の約 2 倍の一時領域をスタックに確保するため、相手が
+  1 MiB 近いフレームを送ると約 2 MiB 増えます（既知の制限）。4 MiB 以上の
+  スタックを持つスレッドやタスクから呼び出してください。SMB1、SMB3、
   encryption、compression、compound、Kerberos、guest/null fallback、
   large-MTU negotiation は実装していません。
 
@@ -122,7 +129,8 @@ make ntlm-test              # NTLM challenge と認証出力の差分試験
 make crypto-test            # OpenSSL / Python と hash・HMAC の差分試験
 make signing-test           # SMB 署名の組立て・改ざん拒否を Python と照合
 make clock-test             # FILETIME の全暦日・秒・100ns 端数を Python と照合
-make check                  # warnings-as-errors と依存関係検査
+make check                  # warnings-as-errors と依存関係検査（stack-check を含む）
+make stack-check            # 公開 API ごとの最悪スタック使用量を GCC の呼び出しグラフで検査
 make example                # build/bin/smb_example
 make prove                  # GNATprove + cvc5/z3 が必要。未証明があれば失敗
 make transport-test         # TCP 断片化、送受信 timeout、途中切断・復旧試験

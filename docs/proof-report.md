@@ -4070,3 +4070,52 @@ On this toolchain the unchanged `main` (#89) reproduces 5,096 checks (728
 flow, 4,368 prover), zero unproved.
 Full proof: 5,103 checks (729 flow, 4,374 prover), zero unproved, 0
 `pragma Assume`, 13 units analyzed.
+
+## Stack usage of frame-sized buffers
+
+GNATprove does not cover `Storage_Error`, and the buffers involved are in the
+trusted facade and transport. On Windows (gnat_native 14.2.1), executables that
+use `Ada.Real_Time` were linked with a 2 MiB main-thread stack reserve (the
+others with 32 MiB), and `transport_client` failed in `make transport-test`
+with `EXCEPTION_STACK_OVERFLOW`: three 1-MiB-class arrays were on the stack at
+once — the test's own frame, the `Receive_Frame` packet and, through runtime
+evaluation of `Core_Transport.Receive_Chunk`'s `Buffer'Old` postcondition, a
+copy of the whole receive buffer for every socket chunk.
+
+The trusted layer now keeps runtime-sized buffers off the stack:
+
+- `SMB.Transport.Send_Frame` builds the frame in a heap buffer and
+  `Receive_Frame` reads into one, both freed on success and failure.
+- `Read_Exact` receives into a fixed 64-KiB chunk and passes
+  `Core_Transport.Receive_Chunk` only the window being filled, so the runtime
+  `Buffer'Old` copy is at most 64 KiB. The proved contract applies unchanged to
+  the window; bytes outside it are not passed.
+- `SMB.Client.Read` and `Write` allocate the `Core_Client.Transfer` (up to
+  1 MiB) and the read result buffer on the heap.
+
+No SPARK unit changed. `tests/check_stack_usage.py` (`make stack-check`, also
+run by `make check`) builds `smb.gpr` with `-fcallgraph-info=su` and sums the
+largest static frame chain below each public `SMB.Client` subprogram; GNAT
+runtime frames and the indirect entropy callback are not counted. It enforces
+896 KiB per call (a 1 MiB thread stack with 128 KiB left over) and rejects
+runtime-sized frames in `SMB.Client` and `SMB.Transport` except those sized by
+host, path, name or exception-message strings. Current maxima: `Authenticate`
+775,424 bytes, `List_Directory` 534,320, `Connect` 529,520, `Read` 425,552,
+`Write` 425,376. Run against the unchanged `main`, the check fails on exactly
+`Read`, `Write`, `Send_Frame`, `Receive_Frame` and `Read_Exact`.
+
+Most of the static stack below the `Engine` calls is runtime postcondition
+checking: building with `Assertion_Policy (Post => Ignore, Contract_Cases =>
+Ignore)` as a configuration pragma measured `Connect` at 55,024 bytes and
+`Read` at 88,096; `Authenticate` stays at 773,392 because of `Core_Auth` work
+buffers. Postconditions stay enabled, as stated
+in the assurance document. Remaining known runtime-sized stack use is in the
+SPARK core: `Core_Wire.Verify_Signature` copies each signed response and
+`Crypto.HMAC_SHA256` concatenates the key block with it, about 2N bytes for an
+N-byte response, before the signature is known to be valid.
+
+On Windows: `transport_integration.py` now passes, including the 1-MiB
+`maximum-frame` echo; unit tests, forced strict builds of all three projects
+(`-f -gnatwe`), `check_sources.py` and `make stack-check` pass. The Samba
+integration test needs Linux and was not run. No proof was rerun because no
+unit in `proof.gpr` changed.

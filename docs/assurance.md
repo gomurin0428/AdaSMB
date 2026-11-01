@@ -233,6 +233,18 @@ does not make the above bodies formally verified.
 * GNAT/GNATprove, SMT solvers, Ada runtime, compiler translation, OS socket,
   clock and entropy behavior, available stack/heap, and adapter conformance are
   trusted. A finite resource bound does not guarantee allocation will succeed.
+* Stack usage is outside GNATprove's scope. `make stack-check` sums the largest
+  static frame chain below each public `SMB.Client` subprogram from GCC
+  call-graph data (GNAT runtime frames and the indirect entropy callback are not
+  counted) and enforces 896 KiB; the largest is `Authenticate` at about 757 KiB
+  with runtime contract checks enabled. It also rejects runtime-sized frames in
+  `SMB.Client` and `SMB.Transport` other than those sized by host, path, name or
+  exception-message strings: frame-, packet- and transfer-sized buffers there
+  are heap-allocated and sockets are read in 64-KiB chunks. Known exception:
+  `Core_Wire.Verify_Signature` copies each signed response and
+  `Crypto.HMAC_SHA256` concatenates the key block with it on the stack, so a
+  response of N bytes (up to 1 MiB, chosen by the peer before the signature is
+  checked) adds about 2N bytes.
 * An entire read/write API operation is capped at 1 MiB, each wire I/O chunk at
   64 KiB, encoded names at 65,534 bytes, open handles at 256, directory pages at
   4,096 and directory entries at 100,000. Exhaustion is reported, not wrapped.
