@@ -247,7 +247,10 @@ does not make the above bodies formally verified.
   sized by host, path, name or exception-message strings: frame-, packet-,
   transfer-, request- and directory-sized buffers there are heap-allocated, the
   directory listing result is built on the secondary stack, and sockets are
-  read in 16-KiB chunks. SHA-256 and
+  read in 16-KiB chunks. The secondary stack (unconstrained function results
+  such as received frames and directory listings) is not counted; on the
+  native GNAT 14.2 runtime it grows from the heap, and a 100,000-entry listing
+  (about 3.2 MB) returned this way succeeded in a task with a 256-KiB stack. SHA-256 and
   HMAC-SHA256 absorb input in 64-byte blocks, and `Core_Wire.Verify_Signature`
   feeds the response to an incremental HMAC in three pieces (before, zeroed,
   after the signature field) instead of copying it; the check also requires

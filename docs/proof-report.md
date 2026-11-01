@@ -4211,7 +4211,12 @@ success and failure. `List_Directory` built its result array on the primary
 stack with one element per server-supplied entry (up to 100,000); it now uses
 an extended return, which GNAT places on the secondary stack, and its frame is
 no longer runtime-sized, so it was removed from the allowed list.
-`Read_Exact` reads 16-KiB chunks instead of 64 KiB.
+`Read_Exact` reads 16-KiB chunks instead of 64 KiB. The heap buffers are
+allocated after `begin`, not in declarations, so a failed later allocation
+reaches the exception handler that frees the earlier ones. On the GNAT 14.2
+Windows runtime, a task with a 256-KiB stack returned a 100,000-entry listing
+(about 3.2 MB) through the secondary stack, while the previous form, a local
+result array on the primary stack, raised an exception in the same task.
 
 Static stack per public call, before and after: `Read` 425,568 -> 45,712,
 `Write` 425,392 -> 45,552, `Open_File` 359,984 -> 45,712, `Close` 359,600 ->
