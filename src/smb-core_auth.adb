@@ -201,6 +201,9 @@ package body SMB.Core_Auth is
       end if;
    end Append_TLV;
 
+   function DER_Header_Size (Length : Natural) return Natural is
+     (if Length < 128 then 2 elsif Length <= 16#FF# then 3 else 4);
+
    procedure Process_Target_Info
      (Input : SMB.Bytes;
       Output : in out SMB.Bytes;
@@ -240,14 +243,14 @@ package body SMB.Core_Auth is
      and then Type2'Length >= 48
      and then Storage_Bounded (Target_Info, Maximum_Security_Token)
      and then Target_Info_Used <= Target_Info'Length
-     and then Storage_Bounded (Output, Maximum_Security_Token),
+     and then Storage_Bounded (Output, Maximum_Security_Token)
+     and then (for all Index in Output'Range => Output (Index) = 0),
      Post => Used <= Output'Length
        and then
          (if Status /= SMB.Ok then
             Used = 0 and Session_Key = (Session_Key'Range => 0))
        and then (for all Index in Output'Range =>
-          (if Index - Output'First >= Used then
-             Output (Index) = Output'Old (Index)));
+          (if Index - Output'First >= Used then Output (Index) = 0));
 
    procedure Process_Target_Info
      (Input : SMB.Bytes;
@@ -262,7 +265,6 @@ package body SMB.Core_Auth is
       Id : SMB.Word;
       Size_Word : SMB.Word;
       Value : SMB.DWord;
-      Name_Used : Natural;
       Name_Status : SMB.Core_Status;
       Has_Computer : Boolean := False;
       Has_Domain : Boolean := False;
@@ -401,30 +403,20 @@ package body SMB.Core_Auth is
                Status := SMB.Invalid_Encoding;
                return;
             end if;
-            declare
-               Name_UTF8 : String (1 .. 2 * Maximum_Security_Token);
-               Name_Bytes : constant SMB.Bytes :=
-                 (if Size_Word = 0 then SMB.Bytes'(1 .. 0 => 0)
-                  else Input
+            if Size_Word > 0 then
+               --  Valid UTF-16 excludes NUL code units.
+               SMB.Core_Text.Validate_UTF16
+                 (Input
                     (Input'First + Position + 4
                      .. Input'First
-                       + (Position + 4 + Natural (Size_Word) - 1)));
-            begin
-               SMB.Core_Text.UTF16_To_UTF8
-                 (Name_Bytes, Name_UTF8, Name_Used, Name_Status);
+                       + (Position + 4 + Natural (Size_Word) - 1)),
+                  Name_Status);
                if Name_Status /= SMB.Ok then
                   Used := 0;
                   Status := SMB.Invalid_Encoding;
                   return;
                end if;
-               for Index in 1 .. Name_Used loop
-                  if Name_UTF8 (Index) = Character'Val (0) then
-                     Used := 0;
-                     Status := SMB.Invalid_Encoding;
-                     return;
-                  end if;
-               end loop;
-            end;
+            end if;
             if Id = 1 then Has_Computer := True; end if;
             if Id = 2 then Has_Domain := True; end if;
             Append_Source (Position, 4 + Natural (Size_Word));
@@ -529,19 +521,6 @@ package body SMB.Core_Auth is
       Auth_Used : Natural;
       MIC : SMB.Crypto.Digest_128;
       Client_MIC : SMB.Crypto.Digest_128;
-      MIC_Octet : SMB.Bytes (0 .. 17) := (others => 0);
-      MIC_Octet_Used : Natural := 0;
-      Type3_Octet : SMB.Bytes (0 .. Maximum_Security_Token - 1) :=
-        (others => 0);
-      Type3_Octet_Used : Natural := 0;
-      Fields : SMB.Bytes (0 .. Maximum_Security_Token - 1) := (others => 0);
-      Fields_Used : Natural := 0;
-      Sequence : SMB.Bytes (0 .. Maximum_Security_Token - 1) :=
-        (others => 0);
-      Sequence_Used : Natural := 0;
-      Wrapped : SMB.Bytes (0 .. Maximum_Security_Token - 1) :=
-        (others => 0);
-      Wrapped_Used : Natural := 0;
       Local_Status : SMB.Core_Status;
       procedure Put_Buffer
         (Position : Natural; Field_Offset, Field_Length : Natural)
@@ -735,44 +714,67 @@ package body SMB.Core_Auth is
       Type3_Data (72 .. 87) := MIC;
       Client_MIC := SMB.Core_NTLM.Mechanism_List_MIC (Base_Key, False);
 
-      Append_TLV
-        (Type3_Octet, Type3_Octet_Used, 16#04#,
-         Type3_Data (0 .. Type3_Length - 1), Local_Status);
-      if Local_Status = SMB.Ok then
-         Append_TLV
-           (Fields, Fields_Used, 16#A2#,
-            Type3_Octet (0 .. Type3_Octet_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_TLV
-           (MIC_Octet, MIC_Octet_Used, 16#04#, Client_MIC, Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_TLV
-           (Fields, Fields_Used, 16#A3#,
-            MIC_Octet (0 .. MIC_Octet_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_TLV
-           (Sequence, Sequence_Used, 16#30#,
-            Fields (0 .. Fields_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_TLV
-           (Wrapped, Wrapped_Used, 16#A1#,
-            Sequence (0 .. Sequence_Used - 1), Local_Status);
-      end if;
-      if Local_Status /= SMB.Ok then
-         Status := Local_Status;
-         return;
-      end if;
-      if Wrapped_Used = 0 or else Wrapped_Used > Output'Length then
-         Status := SMB.Resource_Limit;
-         return;
-      end if;
-      Output (Output'First .. Output'First + (Wrapped_Used - 1)) :=
-        Wrapped (0 .. Wrapped_Used - 1);
-      Used := Wrapped_Used;
+      --  NegTokenResp [1] { SEQUENCE { [2] OCTET STRING Type3,
+      --  [3] OCTET STRING MIC } }, written straight into Output once the
+      --  total length is known to fit.
+      declare
+         Octet_Length : constant Natural :=
+           DER_Header_Size (Type3_Length) + Type3_Length;
+         Fields_Length : constant Natural :=
+           DER_Header_Size (Octet_Length) + Octet_Length + 20;
+         Sequence_Length : constant Natural :=
+           DER_Header_Size (Fields_Length) + Fields_Length;
+         Total : constant Natural :=
+           DER_Header_Size (Sequence_Length) + Sequence_Length;
+         Position : Natural := 0;
+
+         procedure Put_Header (Tag : SMB.Byte; Length : Natural)
+         with Pre => Length <= 16#FFFF#
+             and then Position <= Output'Length
+             and then Output'Length - Position >= DER_Header_Size (Length),
+           Post => Position = Position'Old + DER_Header_Size (Length);
+
+         procedure Put_Header (Tag : SMB.Byte; Length : Natural) is
+         begin
+            Output (Output'First + Position) := Tag;
+            if Length < 128 then
+               Output (Output'First + Position + 1) := SMB.Byte (Length);
+            elsif Length <= 16#FF# then
+               Output (Output'First + Position + 1) := 16#81#;
+               Output (Output'First + Position + 2) := SMB.Byte (Length);
+            else
+               Output (Output'First + Position + 1) := 16#82#;
+               Output (Output'First + Position + 2) :=
+                 SMB.Byte (Length / 256);
+               Output (Output'First + Position + 3) :=
+                 SMB.Byte (Length mod 256);
+            end if;
+            Position := Position + DER_Header_Size (Length);
+         end Put_Header;
+      begin
+         if Total > Output'Length then
+            Status := SMB.Resource_Limit;
+            return;
+         end if;
+         Put_Header (16#A1#, Sequence_Length);
+         Put_Header (16#30#, Fields_Length);
+         Put_Header (16#A2#, Octet_Length);
+         Put_Header (16#04#, Type3_Length);
+         Output (Output'First + Position
+                 .. Output'First + (Position + Type3_Length - 1)) :=
+           Type3_Data (0 .. Type3_Length - 1);
+         Position := Position + Type3_Length;
+         Put_Header (16#A3#, 18);
+         Put_Header (16#04#, 16);
+         Output (Output'First + Position .. Output'First + (Position + 15)) :=
+           Client_MIC;
+         Position := Position + 16;
+         pragma Assert (Position = Total);
+         if Total < Output'Length then
+            Output (Output'First + Total .. Output'Last) := (others => 0);
+         end if;
+         Used := Total;
+      end;
       Session_Key := Base_Key;
       Status := SMB.Ok;
    end Build_Type3;
@@ -912,7 +914,7 @@ package body SMB.Core_Auth is
          return;
       end if;
       declare
-         Type2 : constant SMB.Bytes :=
+         Type2 : SMB.Bytes renames
            Server_Token
              (Server_Token'First + Type2_Offset
               .. Server_Token'First + (Type2_Offset + Type2_Length - 1));
@@ -981,35 +983,29 @@ package body SMB.Core_Auth is
                return;
             end if;
             if Target_Name_Len > 0 then
-               declare
-                  Name_UTF8 : String
-                    (1 .. 2 * Maximum_Security_Token);
-                  Name_Used : Natural;
-               begin
-                  SMB.Core_Text.UTF16_To_UTF8
-                    (Type2
-                       (Type2'First + Name_Offset
-                        .. Type2'First
-                          + (Name_Offset + Natural (Target_Name_Len) - 1)),
-                     Name_UTF8, Name_Used, Read_Status);
-                  if Read_Status /= SMB.Ok then
-                     Status := SMB.Invalid_Encoding;
-                     return;
-                  end if;
-                  for Index in 1 .. Name_Used loop
-                     if Name_UTF8 (Index) = Character'Val (0) then
-                        Status := SMB.Invalid_Encoding;
-                        return;
-                     end if;
-                  end loop;
-               end;
+               --  Valid UTF-16 excludes NUL code units, so this is the same
+               --  acceptance as decoding to UTF-8 and rejecting NUL.
+               if Natural (Target_Name_Len) > 65_534 then
+                  Status := SMB.Invalid_Encoding;
+                  return;
+               end if;
+               SMB.Core_Text.Validate_UTF16
+                 (Type2
+                    (Type2'First + Name_Offset
+                     .. Type2'First
+                       + (Name_Offset + Natural (Target_Name_Len) - 1)),
+                  Read_Status);
+               if Read_Status /= SMB.Ok then
+                  Status := SMB.Invalid_Encoding;
+                  return;
+               end if;
             end if;
             if Target_Len = 0 then
                Status := SMB.Invalid_Encoding;
                return;
             end if;
             declare
-               Info : constant SMB.Bytes :=
+               Info : SMB.Bytes renames
                  Type2
                    (Type2'First + Info_Offset
                     .. Type2'First
