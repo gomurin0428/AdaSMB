@@ -466,7 +466,7 @@ is
        Used <= Output'Length
        and then
          (if not Preparation_Context_Matches
-                 (Snapshot_Of (Value)'Old, State'Old, Kind)
+                 (Snapshot_Of (Value), State, Kind)'Old
                or else Output'Length < Header_Length + Body_Buffer'Length
           then Status /= SMB.Ok
             and then Snapshot_Of (Value) = Snapshot_Of (Value)'Old

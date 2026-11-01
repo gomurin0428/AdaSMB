@@ -4170,3 +4170,62 @@ On Windows the forced strict builds, unit tests, `make stack-check`,
 conformance tests pass; the Samba integration test needs Linux and was not run.
 Full proof: 5,140 checks (746 flow, 4,394 prover), zero unproved, 0
 `pragma Assume`, 13 units analyzed.
+
+## Pre-state values without whole-state copies
+
+With runtime contract checks enabled, GNAT makes one copy of the prefix for
+every `'Old` occurrence. Postconditions wrote pre-state values as
+`F (State'Old)`, so each occurrence copied the whole `Engine_State` (about
+10 KB, mostly the 256-entry handle table): `Engine.Accept_Response` had 27
+such occurrences and a 284,272-byte frame.
+
+Postconditions in `SMB.Engine`, `SMB.Core_Connection` and `SMB.Core_Client`
+now write these values as `F (State)'Old` (164 single-argument getters such as
+`Current_Phase`, `Pending_Command` and `Next_Request_Id`, and 34 multi-argument
+calls whose other arguments are literals, `in` parameters or pre-state values,
+such as `Response_Receipt_Matches`, `Response_Header_Matches_Request`,
+`Valid_Handle` and the snapshot context predicates). The meaning is unchanged:
+the function is evaluated on the pre-state either way, but the runtime check
+keeps only its result. None of the hoisted functions has a precondition.
+`SMB.Engine` gains `pragma Unevaluated_Use_Of_Old (Allow)`, which
+`Core_Connection` and `Core_Client` already use. `State = State'Old`, two-state
+relations such as `Handle_Table_Equivalent (State'Old, State)`, and four calls
+whose other arguments are post-state values still copy the state.
+
+The first full proof left three checks unproved at level 2 (they proved at
+level 4 with a 300-second timeout): the lemma call and final MIC assertion in
+`Complete_Authenticate` (`smb-core_client.adb:635`, `:652`) and the name-length
+assertion in `Next_Directory_Entry` (`:1624`). Function-call `'Old` prefixes
+are evaluated at entry, which adds their definitions to every verification
+condition of the body. Keeping the original `State'Old` form for the
+`Pending_Request_Matches` prefix of `Complete_Authenticate` and the
+`Directory_Snapshot_Context_Matches` prefix of `Next_Directory_Entry` made all
+three prove with the project settings; neither procedure is on a worst-case
+stack path.
+
+In the facade, the authentication coordinator and request buffer, the
+directory enumeration and name buffer, the READ/WRITE request packet and the
+UTF-16 name buffer of `Encode_Name` moved to the heap; the authentication
+request buffer is zeroed before it is freed, and every buffer is freed on both
+success and failure. `List_Directory` built its result array on the primary
+stack with one element per server-supplied entry (up to 100,000); it now uses
+an extended return, which GNAT places on the secondary stack, and its frame is
+no longer runtime-sized, so it was removed from the allowed list.
+`Read_Exact` reads 16-KiB chunks instead of 64 KiB.
+
+Static stack per public call, before and after: `Read` 425,568 -> 45,712,
+`Write` 425,392 -> 45,552, `Open_File` 359,984 -> 45,712, `Close` 359,600 ->
+45,328, `List_Directory` 534,336 -> 57,904, `Connect` 529,536 -> 111,648,
+`Connect_Share` 529,312 -> 188,144, `Remove_File` 416,992 -> 146,304,
+`Rename` 417,504 -> 146,880, `Authenticate` 775,424 -> 644,256. The remaining
+`Authenticate` stack is mostly `Core_Auth.Build_Type3` (374,384 bytes), which
+copies the NTLM AUTHENTICATE message through several 64-KiB buffers while
+wrapping it in SPNEGO. `make stack-check` now enforces 256 KiB per call, with
+704 KiB allowed for `Authenticate` until those buffers are reduced; against the
+previous `main` it fails for every public call.
+
+On Windows the forced strict builds, unit tests, `make stack-check`,
+`transport_integration.py` and the unicode, NTLM, clock, crypto and signing
+conformance tests pass; the Samba integration test needs Linux and was not run.
+Full proof: 5,140 checks (746 flow, 4,394 prover), zero unproved, 0
+`pragma Assume`, 13 units analyzed.

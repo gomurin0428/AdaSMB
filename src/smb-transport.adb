@@ -14,7 +14,7 @@ package body SMB.Transport is
 
    --  Frame-sized buffers (up to 1 MiB) live on the heap and sockets are
    --  read in bounded chunks, so a frame does not have to fit on the stack.
-   Receive_Chunk_Size : constant := 65_536;
+   Receive_Chunk_Size : constant := 16_384;
    type Frame_Buffer is access Ada.Streams.Stream_Element_Array;
    procedure Free is new Ada.Unchecked_Deallocation
      (Ada.Streams.Stream_Element_Array, Frame_Buffer);

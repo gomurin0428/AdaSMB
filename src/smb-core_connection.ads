@@ -98,7 +98,7 @@ is
        Used <= Output'Length
        and then
          (if not Preparation_Context_Matches
-               (Snapshot_Of (Value)'Old, State'Old, Negotiate)
+               (Snapshot_Of (Value), State, Negotiate)'Old
              or else Output'Length < SMB.Core_Wire.Header_Size + 38
           then Status /= SMB.Ok
             and then Snapshot_Of (Value) = Snapshot_Of (Value)'Old
@@ -146,7 +146,7 @@ is
                or else Output'Length <
                  SMB.Core_Wire.Header_Size + 8 + Name'Length
                or else not Preparation_Context_Matches
-                 (Snapshot_Of (Value)'Old, State'Old, Tree_Connect)
+                 (Snapshot_Of (Value), State, Tree_Connect)'Old
           then Status /= SMB.Ok
             and then Snapshot_Of (Value) = Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -185,7 +185,7 @@ is
        and then
          (if Output'Length < SMB.Core_Wire.Header_Size + 4
                or else not Preparation_Context_Matches
-                 (Snapshot_Of (Value)'Old, State'Old, Tree_Disconnect)
+                 (Snapshot_Of (Value), State, Tree_Disconnect)'Old
           then Status /= SMB.Ok
             and then Snapshot_Of (Value) = Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -218,7 +218,7 @@ is
        and then
          (if Output'Length < SMB.Core_Wire.Header_Size + 4
                or else not Preparation_Context_Matches
-                 (Snapshot_Of (Value)'Old, State'Old, Logoff)
+                 (Snapshot_Of (Value), State, Logoff)'Old
           then Status /= SMB.Ok
             and then Snapshot_Of (Value) = Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -266,7 +266,7 @@ is
        Same_Identity (Snapshot_Of (Value)'Old, Snapshot_Of (Value))
        and then (if Stage_Of (Value)'Old /= Sent
              or else not Continuation_Context_Matches
-               (Snapshot_Of (Value)'Old, State'Old)
+               (Snapshot_Of (Value), State)'Old
         then Status = SMB.Invalid_State_Status
           and then Snapshot_Of (Value) = Snapshot_Of (Value)'Old
           and then State = State'Old
@@ -283,16 +283,16 @@ is
                else
                  (if Kind_Of (Value) /= Logoff then
                     SMB.Engine.Current_Owner_Id (State) =
-                      SMB.Engine.Current_Owner_Id (State'Old)
+                      SMB.Engine.Current_Owner_Id (State)'Old
                     and then SMB.Engine.Current_Epoch (State) =
-                      SMB.Engine.Current_Epoch (State'Old))
+                      SMB.Engine.Current_Epoch (State)'Old)
                  and then
                    (if Kind_Of (Value) in Negotiate | Tree_Connect then
                       SMB.Engine.Handle_Table_Equivalent (State'Old, State)
                       and then SMB.Engine.Current_Signing_Key (State) =
-                        SMB.Engine.Current_Signing_Key (State'Old)
+                        SMB.Engine.Current_Signing_Key (State)'Old
                       and then SMB.Engine.Has_Signing_Key (State) =
-                        SMB.Engine.Has_Signing_Key (State'Old))
+                        SMB.Engine.Has_Signing_Key (State)'Old)
                  and then
                    (case Kind_Of (Value) is
                       when Negotiate =>
@@ -321,24 +321,24 @@ is
                         and then SMB.Engine.Current_Tree_Id (State) =
                           SMB.Core_Wire.Encoded_U32 (Packet, 36)
                         and then SMB.Engine.Current_Session_Id (State) =
-                          SMB.Engine.Current_Session_Id (State'Old),
+                          SMB.Engine.Current_Session_Id (State)'Old,
                       when Tree_Disconnect =>
                         SMB.Engine.Current_Phase (State) =
                           SMB.Engine.Authenticated
                         and then SMB.Engine.Current_Tree_Id (State) = 0
                         and then not SMB.Engine.Has_Open_Handles (State)
                         and then SMB.Engine.Current_Session_Id (State) =
-                          SMB.Engine.Current_Session_Id (State'Old)
+                          SMB.Engine.Current_Session_Id (State)'Old
                         and then SMB.Engine.Current_Signing_Key (State) =
-                          SMB.Engine.Current_Signing_Key (State'Old)
+                          SMB.Engine.Current_Signing_Key (State)'Old
                         and then SMB.Engine.Has_Signing_Key (State) =
-                          SMB.Engine.Has_Signing_Key (State'Old),
+                          SMB.Engine.Has_Signing_Key (State)'Old,
                       when Logoff => Invalidated (State),
                       when No_Connection => False)))
        and then
          (if Stage_Of (Value)'Old = Sent
                and then Continuation_Context_Matches
-                 (Snapshot_Of (Value)'Old, State'Old)
+                 (Snapshot_Of (Value), State)'Old
                and then Status /= SMB.Ok
           then Stage_Of (Value) = Failed and then Invalidated (State));
 
@@ -350,14 +350,14 @@ is
      Same_Identity (Snapshot_Of (Value)'Old, Snapshot_Of (Value))
      and then (if Snapshot_Of (Value)'Old.Stage not in Prepared | Sent
            or else not Continuation_Context_Matches
-             (Snapshot_Of (Value)'Old, State'Old)
+             (Snapshot_Of (Value), State)'Old
       then Status = SMB.Invalid_State_Status
         and then Snapshot_Of (Value) = Snapshot_Of (Value)'Old
         and then State = State'Old)
      and then
        (if Snapshot_Of (Value)'Old.Stage in Prepared | Sent
              and then Continuation_Context_Matches
-               (Snapshot_Of (Value)'Old, State'Old)
+               (Snapshot_Of (Value), State)'Old
         then
           Stage_Of (Value) = Failed
           and then Invalidated (State));
