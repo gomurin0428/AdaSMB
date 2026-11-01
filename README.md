@@ -23,16 +23,16 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   epoch、open ticket を記録し、foreign/stale/closed handle はネットワーク
   I/O より前に拒否します。
 * フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
-  受信オフセット・長さ・加算の範囲を検査します。
-* スタック使用量は証明の対象外です。フレーム・転送サイズのバッファは
-  ヒープに置き、ソケットは 64 KiB 単位で読みます。`make stack-check` は
-  公開 API ごとの最悪スタック量（GNAT ランタイムを除く静的見積り）を
-  検査し、最大は `Authenticate` の約 760 KiB です。ただし署名付き応答の
-  検証では応答長の約 2 倍の一時領域をスタックに確保するため、相手が
-  1 MiB 近いフレームを送ると約 2 MiB 増えます（既知の制限）。4 MiB 以上の
-  スタックを持つスレッドやタスクから呼び出してください。SMB1、SMB3、
+  受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB3、
   encryption、compression、compound、Kerberos、guest/null fallback、
   large-MTU negotiation は実装していません。
+* スタック使用量は証明の対象外です。フレーム・転送サイズのバッファは
+  ヒープに置き、ソケットは 64 KiB 単位で読みます。応答の署名検証は
+  HMAC-SHA256 を 64 byte のブロック単位で逐次計算し、受信パケットを
+  スタックにコピーしません。`make stack-check` は公開 API ごとの最悪
+  スタック量（GNAT ランタイムを除く静的見積り）を検査し、最大は
+  `Authenticate` の約 760 KiB です。1 MiB 以上のスタックを持つスレッドや
+  タスクから呼び出してください。
 
 公開 API は同期型で、一度に 1 要求だけを送信します。認証後の
 LOGOFF、TREE_DISCONNECT、CREATE、CLOSE、READ、WRITE、QUERY_DIRECTORY、

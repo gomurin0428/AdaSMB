@@ -1262,6 +1262,32 @@ procedure Test_Suite is
             end case;
          end;
       end loop;
+      declare
+         Message : SMB.Bytes (0 .. 199);
+         Expected : SMB.Crypto.Digest_256;
+         Digest : SMB.Crypto.Digest_256;
+         Context : SMB.Crypto.HMAC_SHA256_Context;
+      begin
+         for I in Message'Range loop
+            Message (I) := SMB.Byte (I mod 251);
+         end loop;
+         Expected := SMB.Crypto.HMAC_SHA256 (Long_HMAC_Key, Message);
+         for Split in 0 .. Message'Length loop
+            SMB.Crypto.HMAC_SHA256_Start (Context, Long_HMAC_Key);
+            SMB.Crypto.HMAC_SHA256_Update (Context, Message (0 .. Split - 1));
+            SMB.Crypto.HMAC_SHA256_Update
+              (Context, Message (Split .. Message'Last));
+            SMB.Crypto.HMAC_SHA256_Finish (Context, Digest);
+            Assert_Equal
+              (Digest, Expected,
+               "incremental HMAC-SHA256 split" & Integer'Image (Split));
+            Assert
+              (not SMB.Crypto.HMAC_SHA256_Ready (Context),
+               "finished HMAC-SHA256 context is still ready");
+         end loop;
+      end;
+      Ada.Text_IO.Put_Line
+        ("incremental HMAC-SHA256: 201 two-part splits passed");
    end Test_Crypto;
 
    procedure Test_NTLM_Authenticate is
