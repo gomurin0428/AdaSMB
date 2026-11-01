@@ -240,11 +240,12 @@ does not make the above bodies formally verified.
   with runtime contract checks enabled. It also rejects runtime-sized frames in
   `SMB.Client` and `SMB.Transport` other than those sized by host, path, name or
   exception-message strings: frame-, packet- and transfer-sized buffers there
-  are heap-allocated and sockets are read in 64-KiB chunks. Known exception:
-  `Core_Wire.Verify_Signature` copies each signed response and
-  `Crypto.HMAC_SHA256` concatenates the key block with it on the stack, so a
-  response of N bytes (up to 1 MiB, chosen by the peer before the signature is
-  checked) adds about 2N bytes.
+  are heap-allocated and sockets are read in 64-KiB chunks. SHA-256 and
+  HMAC-SHA256 absorb input in 64-byte blocks, and `Core_Wire.Verify_Signature`
+  feeds the response to an incremental HMAC in three pieces (before, zeroed,
+  after the signature field) instead of copying it; the check also requires
+  those frames to stay fixed-size, because the peer chooses the response
+  length before the signature is known to be valid.
 * An entire read/write API operation is capped at 1 MiB, each wire I/O chunk at
   64 KiB, encoded names at 65,534 bytes, open handles at 256, directory pages at
   4,096 and directory entries at 100,000. Exhaustion is reported, not wrapped.

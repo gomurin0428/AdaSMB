@@ -4119,3 +4119,54 @@ On Windows: `transport_integration.py` now passes, including the 1-MiB
 (`-f -gnatwe`), `check_sources.py` and `make stack-check` pass. The Samba
 integration test needs Linux and was not run. No proof was rerun because no
 unit in `proof.gpr` changed.
+
+## Incremental HMAC-SHA256 and copy-free signature verification
+
+`SMB.Crypto.SHA256` padded a full copy of its input, `HMAC_SHA256` built
+`ipad || message` on the stack, and `Core_Wire.Verify_Signature` copied each
+response to zero its signature field. For an N-byte signed response this was
+about 2N bytes of stack (plus an N-byte secondary-stack copy), with N chosen by
+the peer before the signature is known to be valid.
+
+SHA-256 now runs a 64-byte block compression over a context
+(`SHA256_Start`/`Update`/`Finish` in the body); `SHA256` and `HMAC_SHA256`
+keep their signatures and preconditions. The new public
+`HMAC_SHA256_Start`/`Update`/`Finish` take the message in pieces. Their
+contracts state that a started context is ready with length zero, that each
+update adds exactly the piece length and requires the total to stay within
+`Maximum_Frame_Size`, and that finishing requires a ready context and leaves it
+not ready (the context, including the outer pad, is cleared).
+`Verify_Signature` feeds bytes 0..47, sixteen zero bytes and the bytes after the
+64-byte header to the incremental HMAC; no copy of the response is made. As
+before, the digest functions have no functional contract: equality with the
+standard algorithms is established by tests, not proof.
+
+Proof found one issue in the first version: slicing from `Data'First + 64` for a
+64-byte packet could overflow when `Data'Last = Natural'Last`; the trailing
+piece is now passed only when the packet is longer than the header.
+`SHA256_Compress` carries `Global => null` so that GNATprove analyzes it
+separately instead of inlining a non-scalar declaration ahead of the caller's
+loop invariant.
+
+`make stack-check` now also requires `Verify_Signature`, `SHA256`,
+`SHA256_Update`, `HMAC_SHA256` and `HMAC_SHA256_Update` to have fixed-size
+frames; against the previous `main` it reports `Verify_Signature` and
+`HMAC_SHA256` as packet-sized. The only runtime-sized frames reachable from
+`Engine.Accept_Response` are now `Signing_Key_Material`, `Padded` and
+`HMAC_MD5`, all used for the mechanism-list MIC over fixed short inputs.
+
+Tests: the existing RFC 4231 and padding-boundary vectors, `make crypto-test`
+(445 hash fixtures / 890 rebased cases, 1,832 HMAC fixtures / 7,328 rebased
+cases against Python and OpenSSL) and `make signing-test` (3,135
+signing/verification fixtures / 12,540 rebased cases) pass on the new code. A
+new unit loop splits a 200-byte message at all 201 positions and checks that
+the two-piece incremental HMAC equals `HMAC_SHA256` and that a finished context
+is not ready.
+
+Focused proofs: `smb-crypto.adb` 226 checks (55 flow, 171 prover) and
+`smb-core_wire.adb` 361 checks (35 flow, 326 prover), zero unproved.
+On Windows the forced strict builds, unit tests, `make stack-check`,
+`transport_integration.py` and the unicode, NTLM, clock, crypto and signing
+conformance tests pass; the Samba integration test needs Linux and was not run.
+Full proof: 5,140 checks (746 flow, 4,394 prover), zero unproved, 0
+`pragma Assume`, 13 units analyzed.

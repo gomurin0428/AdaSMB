@@ -32,6 +32,15 @@ DYNAMIC_ALLOWED = {
     ("smb-client.adb", "REQUIRE_TRANSFER_STATUS"),
     ("smb-client.adb", "VALIDATED_PATH"),
 }
+# Response signatures are verified before they are known to be valid, so these
+# frames must not grow with the peer-chosen packet length.
+STATIC_REQUIRED = {
+    ("smb-core_wire.adb", "VERIFY_SIGNATURE"),
+    ("smb-crypto.adb", "SHA256"),
+    ("smb-crypto.adb", "SHA256_UPDATE"),
+    ("smb-crypto.adb", "HMAC_SHA256"),
+    ("smb-crypto.adb", "HMAC_SHA256_UPDATE"),
+}
 
 NODE = re.compile(r'node: \{ title: "([^"]+)" label: "([^"]*)"')
 EDGE = re.compile(r'edge: \{ sourcename: "([^"]+)" targetname: "([^"]+)"')
@@ -88,11 +97,17 @@ for title in entries:
             f"{title} needs {total:,} bytes (budget {STATIC_BUDGET:,}): "
             + " -> ".join(frames[t]["name"] for t in chain))
 
+seen = set()
 for title, frame in sorted(frames.items()):
     key = (frame["file"], frame["name"])
+    seen.add(key)
     if frame["file"] in IO_UNITS and "dynamic" in frame["kind"] \
             and key not in DYNAMIC_ALLOWED:
         failures.append(f"runtime-sized stack frame in {key[0]}: {key[1]}")
+    if key in STATIC_REQUIRED and "dynamic" in frame["kind"]:
+        failures.append(f"packet-sized stack frame in {key[0]}: {key[1]}")
+for key in sorted(STATIC_REQUIRED - seen):
+    failures.append(f"expected subprogram not in call graph: {key[0]}: {key[1]}")
 
 if failures:
     raise SystemExit("stack usage check failed:\n  " + "\n  ".join(failures))

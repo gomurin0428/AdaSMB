@@ -1,5 +1,3 @@
-with Interfaces;
-
 package body SMB.Crypto is
    pragma SPARK_Mode (On);
    subtype U32 is Interfaces.Unsigned_32;
@@ -207,82 +205,137 @@ package body SMB.Crypto is
       return State;
    end MD5;
 
-   function SHA256 (Message : SMB.Bytes) return Digest_256 is
-      Input : constant SMB.Bytes := Padded (Message, False);
-      K : constant Round_Constants (0 .. 63) :=
-        (16#428A2F98#, 16#71374491#, 16#B5C0FBCF#, 16#E9B5DBA5#,
-         16#3956C25B#, 16#59F111F1#, 16#923F82A4#, 16#AB1C5ED5#,
-         16#D807AA98#, 16#12835B01#, 16#243185BE#, 16#550C7DC3#,
-         16#72BE5D74#, 16#80DEB1FE#, 16#9BDC06A7#, 16#C19BF174#,
-         16#E49B69C1#, 16#EFBE4786#, 16#0FC19DC6#, 16#240CA1CC#,
-         16#2DE92C6F#, 16#4A7484AA#, 16#5CB0A9DC#, 16#76F988DA#,
-         16#983E5152#, 16#A831C66D#, 16#B00327C8#, 16#BF597FC7#,
-         16#C6E00BF3#, 16#D5A79147#, 16#06CA6351#, 16#14292967#,
-         16#27B70A85#, 16#2E1B2138#, 16#4D2C6DFC#, 16#53380D13#,
-         16#650A7354#, 16#766A0ABB#, 16#81C2C92E#, 16#92722C85#,
-         16#A2BFE8A1#, 16#A81A664B#, 16#C24B8B70#, 16#C76C51A3#,
-         16#D192E819#, 16#D6990624#, 16#F40E3585#, 16#106AA070#,
-         16#19A4C116#, 16#1E376C08#, 16#2748774C#, 16#34B0BCB5#,
-         16#391C0CB3#, 16#4ED8AA4A#, 16#5B9CCA4F#, 16#682E6FF3#,
-         16#748F82EE#, 16#78A5636F#, 16#84C87814#, 16#8CC70208#,
-         16#90BEFFFA#, 16#A4506CEB#, 16#BEF9A3F7#, 16#C67178F2#);
-      H : Word_Array (0 .. 7) :=
-        (16#6A09E667#, 16#BB67AE85#, 16#3C6EF372#, 16#A54FF53A#,
-         16#510E527F#, 16#9B05688C#, 16#1F83D9AB#, 16#5BE0CD19#);
+   SHA256_K : constant Round_Constants (0 .. 63) :=
+     (16#428A2F98#, 16#71374491#, 16#B5C0FBCF#, 16#E9B5DBA5#,
+      16#3956C25B#, 16#59F111F1#, 16#923F82A4#, 16#AB1C5ED5#,
+      16#D807AA98#, 16#12835B01#, 16#243185BE#, 16#550C7DC3#,
+      16#72BE5D74#, 16#80DEB1FE#, 16#9BDC06A7#, 16#C19BF174#,
+      16#E49B69C1#, 16#EFBE4786#, 16#0FC19DC6#, 16#240CA1CC#,
+      16#2DE92C6F#, 16#4A7484AA#, 16#5CB0A9DC#, 16#76F988DA#,
+      16#983E5152#, 16#A831C66D#, 16#B00327C8#, 16#BF597FC7#,
+      16#C6E00BF3#, 16#D5A79147#, 16#06CA6351#, 16#14292967#,
+      16#27B70A85#, 16#2E1B2138#, 16#4D2C6DFC#, 16#53380D13#,
+      16#650A7354#, 16#766A0ABB#, 16#81C2C92E#, 16#92722C85#,
+      16#A2BFE8A1#, 16#A81A664B#, 16#C24B8B70#, 16#C76C51A3#,
+      16#D192E819#, 16#D6990624#, 16#F40E3585#, 16#106AA070#,
+      16#19A4C116#, 16#1E376C08#, 16#2748774C#, 16#34B0BCB5#,
+      16#391C0CB3#, 16#4ED8AA4A#, 16#5B9CCA4F#, 16#682E6FF3#,
+      16#748F82EE#, 16#78A5636F#, 16#84C87814#, 16#8CC70208#,
+      16#90BEFFFA#, 16#A4506CEB#, 16#BEF9A3F7#, 16#C67178F2#);
+   SHA256_IV : constant Hash_State :=
+     (16#6A09E667#, 16#BB67AE85#, 16#3C6EF372#, 16#A54FF53A#,
+      16#510E527F#, 16#9B05688C#, 16#1F83D9AB#, 16#5BE0CD19#);
+
+   subtype Block_Bytes is SMB.Bytes (0 .. 63);
+
+   procedure SHA256_Compress (H : in out Hash_State; Block : Block_Bytes)
+     with Global => null
+   is
       W : Word_Array (0 .. 63) := (others => 0);
-      State : Digest_256 := (others => 0);
    begin
-      for Block in 0 .. Input'Length / 64 - 1 loop
-         for I in 0 .. 15 loop
-            declare
-               O : constant Natural := Block * 64 + I * 4;
-            begin
-               W (I) := Interfaces.Shift_Left (U32 (Input (O)), 24)
-                 or Interfaces.Shift_Left (U32 (Input (O + 1)), 16)
-                 or Interfaces.Shift_Left (U32 (Input (O + 2)), 8)
-                 or U32 (Input (O + 3));
-            end;
-         end loop;
-         for I in 16 .. 63 loop
-            declare
-               S0 : constant U32 := Ror (W (I - 15), 7)
-                 xor Ror (W (I - 15), 18)
-                 xor Interfaces.Shift_Right (W (I - 15), 3);
-               S1 : constant U32 := Ror (W (I - 2), 17)
-                 xor Ror (W (I - 2), 19)
-                 xor Interfaces.Shift_Right (W (I - 2), 10);
-            begin
-               W (I) := W (I - 16) + S0 + W (I - 7) + S1;
-            end;
-         end loop;
+      for I in 0 .. 15 loop
+         W (I) := Interfaces.Shift_Left (U32 (Block (I * 4)), 24)
+           or Interfaces.Shift_Left (U32 (Block (I * 4 + 1)), 16)
+           or Interfaces.Shift_Left (U32 (Block (I * 4 + 2)), 8)
+           or U32 (Block (I * 4 + 3));
+      end loop;
+      for I in 16 .. 63 loop
          declare
-            A : U32 := H (0); B : U32 := H (1);
-            C : U32 := H (2); D : U32 := H (3);
-            E : U32 := H (4); F : U32 := H (5);
-            G : U32 := H (6); HH : U32 := H (7);
-            T1, T2 : U32;
+            S0 : constant U32 := Ror (W (I - 15), 7)
+              xor Ror (W (I - 15), 18)
+              xor Interfaces.Shift_Right (W (I - 15), 3);
+            S1 : constant U32 := Ror (W (I - 2), 17)
+              xor Ror (W (I - 2), 19)
+              xor Interfaces.Shift_Right (W (I - 2), 10);
          begin
-            for I in 0 .. 63 loop
-               T1 := HH + (Ror (E, 6) xor Ror (E, 11) xor Ror (E, 25))
-                 + ((E and F) xor ((not E) and G)) + K (I) + W (I);
-               T2 := (Ror (A, 2) xor Ror (A, 13) xor Ror (A, 22))
-                 + ((A and B) xor (A and C) xor (B and C));
-               HH := G; G := F; F := E; E := D + T1;
-               D := C; C := B; B := A; A := T1 + T2;
-            end loop;
-            H (0) := H (0) + A; H (1) := H (1) + B;
-            H (2) := H (2) + C; H (3) := H (3) + D;
-            H (4) := H (4) + E; H (5) := H (5) + F;
-            H (6) := H (6) + G; H (7) := H (7) + HH;
+            W (I) := W (I - 16) + S0 + W (I - 7) + S1;
          end;
       end loop;
+      declare
+         A : U32 := H (0); B : U32 := H (1);
+         C : U32 := H (2); D : U32 := H (3);
+         E : U32 := H (4); F : U32 := H (5);
+         G : U32 := H (6); HH : U32 := H (7);
+         T1, T2 : U32;
+      begin
+         for I in 0 .. 63 loop
+            T1 := HH + (Ror (E, 6) xor Ror (E, 11) xor Ror (E, 25))
+              + ((E and F) xor ((not E) and G)) + SHA256_K (I) + W (I);
+            T2 := (Ror (A, 2) xor Ror (A, 13) xor Ror (A, 22))
+              + ((A and B) xor (A and C) xor (B and C));
+            HH := G; G := F; F := E; E := D + T1;
+            D := C; C := B; B := A; A := T1 + T2;
+         end loop;
+         H (0) := H (0) + A; H (1) := H (1) + B;
+         H (2) := H (2) + C; H (3) := H (3) + D;
+         H (4) := H (4) + E; H (5) := H (5) + F;
+         H (6) := H (6) + G; H (7) := H (7) + HH;
+      end;
+   end SHA256_Compress;
+
+   procedure SHA256_Start (Context : out SHA256_Context)
+     with Post => Context.Total = 0
+   is
+   begin
+      Context :=
+        (H => SHA256_IV, Block => (others => 0), Used => 0, Total => 0);
+   end SHA256_Start;
+
+   procedure SHA256_Update (Context : in out SHA256_Context; Message : SMB.Bytes)
+     with Pre => Message'Length <= Maximum_Hash_Input
+       and then Context.Total <= Maximum_Hash_Input - Message'Length,
+       Post => Context.Total = Context.Total'Old + Message'Length
+   is
+   begin
+      for I in Message'Range loop
+         Context.Block (Context.Used) := Message (I);
+         if Context.Used = Block_Position'Last then
+            SHA256_Compress (Context.H, Context.Block);
+            Context.Used := 0;
+         else
+            Context.Used := Context.Used + 1;
+         end if;
+         pragma Loop_Invariant (Context.Total = Context.Total'Loop_Entry);
+      end loop;
+      Context.Total := Context.Total + Message'Length;
+   end SHA256_Update;
+
+   procedure SHA256_Finish
+     (Context : in out SHA256_Context; Digest : out Digest_256)
+     with Pre => Context.Total <= Maximum_Hash_Input
+   is
+      Bits : constant U64 := U64 (Context.Total) * 8;
+   begin
+      Context.Block (Context.Used) := 16#80#;
+      if Context.Used >= 56 then
+         Context.Block (Context.Used + 1 .. 63) := (others => 0);
+         SHA256_Compress (Context.H, Context.Block);
+         Context.Block := (others => 0);
+      else
+         Context.Block (Context.Used + 1 .. 55) := (others => 0);
+      end if;
+      for I in 0 .. 7 loop
+         Context.Block (56 + I) :=
+           SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#);
+      end loop;
+      SHA256_Compress (Context.H, Context.Block);
+      Digest := (others => 0);
       for I in 0 .. 7 loop
          for J in 0 .. 3 loop
-            State (I * 4 + J) :=
-              SMB.Byte (Interfaces.Shift_Right (H (I), (3 - J) * 8) and 16#FF#);
+            Digest (I * 4 + J) := SMB.Byte
+              (Interfaces.Shift_Right (Context.H (I), (3 - J) * 8) and 16#FF#);
          end loop;
       end loop;
-      return State;
+   end SHA256_Finish;
+
+   function SHA256 (Message : SMB.Bytes) return Digest_256 is
+      Context : SHA256_Context;
+      Digest : Digest_256;
+   begin
+      SHA256_Start (Context);
+      SHA256_Update (Context, Message);
+      SHA256_Finish (Context, Digest);
+      return Digest;
    end SHA256;
 
    function HMAC_MD5 (Key, Message : SMB.Bytes) return Digest_128 is
@@ -314,33 +367,64 @@ package body SMB.Crypto is
       return MD5 (Outer);
    end HMAC_MD5;
 
-   function HMAC_SHA256 (Key, Message : SMB.Bytes) return Digest_256 is
+   procedure HMAC_SHA256_Start
+     (Context : out HMAC_SHA256_Context;
+      Key : SMB.Bytes)
+   is
       K0 : SMB.Bytes (0 .. 63) := (others => 0);
-      Inner : SMB.Bytes (0 .. 63 + Message'Length) := (others => 0);
-      Outer : SMB.Bytes (0 .. 95) := (others => 0);
+      Inner_Pad : SMB.Bytes (0 .. 63) := (others => 0);
    begin
       if Key'Length > 64 then
-         declare
-            D : constant SMB.Bytes := SHA256 (Key);
-         begin
-            K0 (0 .. D'Length - 1) := D;
-         end;
+         K0 (0 .. 31) := SHA256 (Key);
       elsif Key'Length > 0 then
          K0 (0 .. Key'Length - 1) := Key;
       end if;
+      Context.Outer_Pad := (others => 0);
       for I in 0 .. 63 loop
-         Inner (I) := K0 (I) xor 16#36#;
-         Outer (I) := K0 (I) xor 16#5C#;
+         Inner_Pad (I) := K0 (I) xor 16#36#;
+         Context.Outer_Pad (I) := K0 (I) xor 16#5C#;
       end loop;
-      if Message'Length > 0 then
-         Inner (64 .. Inner'Last) := Message;
-      end if;
-      declare
-         ID : constant SMB.Bytes := SHA256 (Inner);
-      begin
-         Outer (64 .. 95) := ID;
-      end;
-      return SHA256 (Outer);
+      SHA256_Start (Context.Inner);
+      SHA256_Update (Context.Inner, Inner_Pad);
+      Context.Length := 0;
+   end HMAC_SHA256_Start;
+
+   procedure HMAC_SHA256_Update
+     (Context : in out HMAC_SHA256_Context;
+      Message : SMB.Bytes)
+   is
+   begin
+      SHA256_Update (Context.Inner, Message);
+      Context.Length := Context.Length + Message'Length;
+   end HMAC_SHA256_Update;
+
+   procedure HMAC_SHA256_Finish
+     (Context : in out HMAC_SHA256_Context;
+      Digest : out Digest_256)
+   is
+      Inner_Digest : Digest_256;
+      Outer : SHA256_Context;
+   begin
+      SHA256_Finish (Context.Inner, Inner_Digest);
+      SHA256_Start (Outer);
+      SHA256_Update (Outer, Context.Outer_Pad);
+      SHA256_Update (Outer, Inner_Digest);
+      SHA256_Finish (Outer, Digest);
+      Context :=
+        (Inner =>
+           (H => (others => 0), Block => (others => 0), Used => 0, Total => 0),
+         Outer_Pad => (others => 0),
+         Length => 0);
+   end HMAC_SHA256_Finish;
+
+   function HMAC_SHA256 (Key, Message : SMB.Bytes) return Digest_256 is
+      Context : HMAC_SHA256_Context;
+      Digest : Digest_256;
+   begin
+      HMAC_SHA256_Start (Context, Key);
+      HMAC_SHA256_Update (Context, Message);
+      HMAC_SHA256_Finish (Context, Digest);
+      return Digest;
    end HMAC_SHA256;
 
    function Constant_Time_Equal (Left, Right : SMB.Bytes) return Boolean is

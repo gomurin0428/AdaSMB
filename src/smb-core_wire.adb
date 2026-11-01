@@ -345,15 +345,23 @@ package body SMB.Core_Wire with SPARK_Mode is
          return;
       end if;
       declare
-         Copy : SMB.Bytes (Data'Range) := Data;
+         Zero_Signature : constant SMB.Bytes (0 .. 15) := (others => 0);
          Given : SMB.Bytes (0 .. 15);
-         Digest : SMB.Bytes (0 .. 31);
+         Digest : SMB.Crypto.Digest_256;
+         Context : SMB.Crypto.HMAC_SHA256_Context;
       begin
          for Index in 0 .. 15 loop
             Given (Index) := Data (Data'First + 48 + Index);
-            Copy (Copy'First + 48 + Index) := 0;
          end loop;
-         Digest := SMB.Crypto.HMAC_SHA256 (Key, Copy);
+         SMB.Crypto.HMAC_SHA256_Start (Context, Key);
+         SMB.Crypto.HMAC_SHA256_Update
+           (Context, Data (Data'First .. Data'First + 47));
+         SMB.Crypto.HMAC_SHA256_Update (Context, Zero_Signature);
+         if Data'Length > Header_Size then
+            SMB.Crypto.HMAC_SHA256_Update
+              (Context, Data (Data'First + Header_Size .. Data'Last));
+         end if;
+         SMB.Crypto.HMAC_SHA256_Finish (Context, Digest);
          Valid := SMB.Crypto.Constant_Time_Equal
            (Given, Digest (Digest'First .. Digest'First + 15));
       end;
