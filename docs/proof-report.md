@@ -4000,3 +4000,73 @@ inputs, so they are covered by proof; a unit test drives three reachable
 failures (output too short, invalid password encoding, invalid user encoding)
 with a pre-filled output buffer and checks the observable cleanup.
 Full proof: 5,096 checks (728 flow, 4,368 prover), zero unproved.
+
+## NEGOTIATE preparation and send acknowledgement outcomes
+
+`SMB.Core_Client.Prepare_Negotiate` and
+`SMB.Core_Client.Authentication_Send_Succeeded` now have total
+postconditions, so every procedure of the authentication coordinator states
+all of its outcomes.
+
+`Prepare_Negotiate` has exactly three outcomes. `Ok` proves that the call
+started from a ready coordinator and a negotiated engine with session ID 0,
+no pending or validated response and no signing key, and that it leaves the
+coordinator `Negotiate_Prepared` with the engine's owner and epoch, session
+ID 0 and challenge length 0, and the engine negotiated with the same owner
+and epoch, session ID 0, a pending request, no validated response and no
+signing key, in addition to the existing packet predicate.
+`Invalid_State_Status` caused by any of those starting conditions failing, or
+by an output that cannot hold a header, proves `Used = 0`, an all-zero output
+and an unchanged coordinator and engine (`State = State'Old`). Every other
+outcome proves `Used = 0`, an all-zero output, that the starting conditions
+held, stage `Authentication_Failed`, challenge length zero, every
+authentication buffer byte zero, the other coordinator fields unchanged, and
+an unchanged engine.
+
+Proving the zero output exposed the same gap as AUTHENTICATE preparation:
+when SESSION_SETUP body construction or request reservation failed, the
+partly or fully built SESSION_SETUP body was left in the caller's buffer. The
+NTLM NEGOTIATE token carries no secret, but the failure paths now clear the
+output and the authentication buffer through `Fail_Negotiate_Preparation`.
+Reverting only the reservation-failure path to its previous body (setting the
+stage without clearing) makes a focused proof of `Prepare_Negotiate` report
+`postcondition might fail, cannot prove Output (Index) = 0` for the failure
+outcome. The unchanged-engine result relies on `Prepare_Unsigned_Header` now stating
+its exact status (`Ok` exactly when the packet holds a header): the header
+failure after reservation, which invalidated the engine, is proved
+unreachable.
+
+`Authentication_Send_Succeeded` returns `Ok` exactly when the coordinator's
+owner and epoch match the engine, the engine's pending request matches the
+coordinator's expectation, and the stage is `Negotiate_Prepared` or
+`Authenticate_Prepared`. It then maps each prepared stage to its own sent
+stage, keeps every other coordinator field, and still matches the pending
+request. Otherwise it returns `Invalid_State_Status` with the coordinator
+unchanged; no other status is possible.
+
+GNAT 14.2 reports the body's `with SMB.Crypto;` as a redundant with clause
+since the final-MIC change added the same clause to the specification, so a
+forced strict build (`make check GPRBUILD="gprbuild -f"`) failed; the body
+clause is removed.
+
+New unit cases cover three `Invalid_State_Status` rejections (output shorter
+than a header, transport-only engine, repeated preparation while a NEGOTIATE
+is pending, which stays acknowledgeable), the reachable `Resource_Limit`
+failure for an output that holds a header but not the request (zero output,
+failed coordinator, engine unchanged and reusable by a fresh coordinator,
+failed coordinator not reusable), and four rejected send acknowledgements
+(nothing prepared, duplicate acknowledgement, foreign engine, stale epoch).
+Failures after reservation are covered by proof only.
+
+These checks ran natively on Windows 11 with Alire 2.1.1, `gnat_native`
+14.2.1, `gprbuild` 25.0.1 and `gnatprove` 14.1.1. GNATprove must be started
+from PowerShell or `cmd`; started from Git Bash (MSYS2), its prover
+processes fail silently and every prover check is reported unproved. On
+Windows, `make transport-test` fails on `main` as well, with
+`STORAGE_ERROR : EXCEPTION_STACK_OVERFLOW` in `transport_client` (1 MiB stack
+buffers against the 1 MB default Windows stack); the Samba integration test
+needs Linux and was not run.
+On this toolchain the unchanged `main` (#89) reproduces 5,096 checks (728
+flow, 4,368 prover), zero unproved.
+Full proof: 5,103 checks (729 flow, 4,374 prover), zero unproved, 0
+`pragma Assume`, 13 units analyzed.
