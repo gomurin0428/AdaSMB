@@ -197,7 +197,7 @@ key は
 上記の 2.1/NTLMv2 限定プロファイルを維持します。
 
 詳細な状態遷移、拒否する入力、制限事項は
-[`docs/protocol.ja.md`](docs/protocol.ja.md) を参照してください。
+[`docs/protocol.md`](docs/protocol.md) を参照してください。
 SPARK の対象範囲と未証明部分は
 [`docs/assurance.md`](docs/assurance.md) を参照してください。
 
