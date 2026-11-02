@@ -220,9 +220,10 @@ and the timestamp, zero LM response and MIC/AV flags follow
 These links do not widen the implemented scope; the SMB 2.1/NTLMv2-only
 profile above still applies.
 
-See [`docs/protocol.md`](docs/protocol.md) for the detailed state transitions,
-rejected inputs and limitations, and [`docs/assurance.md`](docs/assurance.md)
-for what SPARK covers and what is unproved.
+See [`docs/protocol.md`](docs/protocol.md) (in Japanese) for the detailed state
+transitions, rejected inputs and limitations, and
+[`docs/assurance.md`](docs/assurance.md) for what SPARK covers and what is
+unproved.
 
 An Ada project uses the client by referring to the library from its GPR
 project:
