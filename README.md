@@ -1,206 +1,231 @@
 # AdaSMB
 
-AdaSMB は、GNAT の通常の Ada ランタイムだけを使って実装した、SMB
-2.1 (dialect `0x0210`) の同期型クライアントライブラリです。これは
-SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証、署名済み
-セッション、ファイル I/O、ディレクトリ操作までを実装します。
+English | [日本語](README.ja.md)
 
-## 対応範囲
+AdaSMB is a synchronous SMB 2.1 (dialect `0x0210`) client library implemented
+with only GNAT's regular Ada runtime. It is not a sample that merely builds SMB
+packets: it implements NTLMv2 authentication, signed sessions, file I/O and
+directory operations.
 
-* Linux の TCP 445（ポートは API で変更可能）上の SMB 2.1 のみ。
-* SPNEGO 内の NTLMv2 のみ。Unicode ユーザー名の完全な Windows
-  大文字化表を持たないため、ユーザー名は ASCII に限定します。
-  パスワード、ドメイン、ファイル名は UTF-8 から厳密に UTF-16LE に
-  変換し、非 BMP 文字の surrogate pair も扱います。
-* 最終 Session Setup 応答と認証後の通信に SMB signing を必須とし、SMB 2.1 の
-  HMAC-SHA256 の先頭 16 byte を検証します。署名検証に失敗したフレーム
-  や不正な相関番号は接続を破棄します。
-  署名は改ざん検知であり、ファイル内容を暗号化するものではありません。
-* 1 接続につき 1 share、未完了の操作は 1 つだけです。接続・ハンドル
-  はスレッドセーフではありません。異なる接続の `Connect` 呼び出しも、
-  owner ID の割当てを共有するため外部で直列化してください。
-  ハンドルには単調な整数 owner ID、
-  epoch、open ticket を記録し、foreign/stale/closed handle はネットワーク
-  I/O より前に拒否します。
-* フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
-  受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB3、
-  encryption、compression、compound、Kerberos、guest/null fallback、
-  large-MTU negotiation は実装していません。
-* スタック使用量は証明の対象外です。フレーム・転送・要求・ディレクトリ
-  一覧のバッファはヒープに置き、ソケットは 16 KiB 単位で読みます。応答の
-  署名検証と NTLM 認証は HMAC-SHA256 / HMAC-MD5 を 64 byte のブロック単位で
-  逐次計算し、相手が長さを決めるデータをスタックにコピーしません。
-  `make stack-check` は公開 API ごとの最悪スタック量（GNAT ランタイムを除く
-  静的見積り）が 256 KiB 以内であることを検査します（最大は `Authenticate`
-  の約 230 KiB）。1 MiB 以上のスタックを持つスレッドやタスクから呼び出して
-  ください。
+## Scope
 
-公開 API は同期型で、一度に 1 要求だけを送信します。認証後の
-LOGOFF、TREE_DISCONNECT、CREATE、CLOSE、READ、WRITE、QUERY_DIRECTORY、
-SET_INFO では SMB 2.1 の `STATUS_PENDING` interim と対応する async final
-response を扱います。interim は仕様に従って署名検証を行わず、要求との
-相関、非ゼロ AsyncId、ERROR 本文の必須フィールドだけを確認します。interim は成功、
-認証済みデータ、NTSTATUS として扱いません。最終応答は受信した元の
-バイト列に対して通常どおり署名検証します。
-公式仕様への参照と検証結果は
-[proof report](docs/proof-report.md#smb-21-asynchronous-interim-responses) に記載しています。
+* SMB 2.1 only, over TCP port 445 (the API can change the port).
+* NTLMv2 inside SPNEGO only. User names are limited to ASCII, because the
+  library does not carry the complete Windows upper-case table for Unicode
+  user names. Passwords, domains and file names are converted strictly from
+  UTF-8 to UTF-16LE, including surrogate pairs for non-BMP characters.
+* SMB signing is required for the final Session Setup response and for all
+  traffic after authentication, and the first 16 bytes of the SMB 2.1
+  HMAC-SHA256 are verified. A frame that fails signature verification or
+  carries a wrong correlation number tears the connection down.
+  Signing detects tampering; it does not encrypt file contents.
+* One share per connection and one outstanding operation. Connections and
+  handles are not thread-safe. Calls to `Connect` on different connections
+  must also be serialized by the caller, because they share the allocation of
+  owner IDs. Handles record a monotonic integer owner ID, an epoch and an open
+  ticket, and foreign, stale or closed handles are rejected before any network
+  I/O.
+* Frames are limited to 1 MiB and single read/write requests to 64 KiB, and
+  received offsets, lengths and their sums are range-checked. SMB1, SMB3,
+  encryption, compression, compound requests, Kerberos, guest/null fallback
+  and large-MTU negotiation are not implemented.
+* Stack usage is outside the proofs. Frame, transfer, request and directory
+  listing buffers live on the heap, and the socket is read 16 KiB at a time.
+  Response signature verification and NTLM authentication compute
+  HMAC-SHA256 / HMAC-MD5 incrementally in 64-byte blocks and copy no
+  peer-sized data onto the stack. `make stack-check` checks that the worst-case
+  stack use of each public API (a static estimate that excludes the GNAT
+  runtime) stays within 256 KiB (the largest is `Authenticate`, about
+  230 KiB). Call the library from a thread or task with a stack of at least
+  1 MiB.
 
-クレジット管理は既存の単一要求プロファイルのままです。最初の interim
-には正の CreditResponse が必要で、AsyncId を保持した後の interim は
-ゼロを許し、async final はゼロ、同期応答は正のクレジットを要求します。
-interim ごとに待機時間を延長せず、要求ごとに一度だけ設定した絶対受信
-deadline を適用します。NEGOTIATE、SESSION_SETUP、TREE_CONNECT の async
-応答、SMB3、compound、cancel、並行要求、完全な credit-window 管理は
-対応範囲外です。
+The public API is synchronous and sends one request at a time. After
+authentication, LOGOFF, TREE_DISCONNECT, CREATE, CLOSE, READ, WRITE,
+QUERY_DIRECTORY and SET_INFO handle SMB 2.1 `STATUS_PENDING` interim responses
+and the matching async final responses. As the specification says, interim
+responses are not signature-checked; only their correlation with the request,
+a non-zero AsyncId and the mandatory fields of the ERROR body are checked. An
+interim response is never taken as success, authenticated data or an NTSTATUS.
+The final response is signature-checked as usual over the original bytes
+received. References to the official specification and the verification
+results are in the
+[proof report](docs/proof-report.md#smb-21-asynchronous-interim-responses).
 
-「Pure Ada」は、実装が Ada であり C の暗号ライブラリや
-`libsmbclient` をリンクしない、という意味です。`pragma Pure` という
-Ada パッケージ属性を意味しません。GNAT.Sockets、Ada Stream_IO、
-GNAT の通常ランタイムに依存します。既定のエントロピー源は Unix の
-`/dev/urandom`、Windows の `BCryptGenRandom` (OS標準CSPRNG) です。
-Windows版だけがOS乱数取得のために `bcrypt` をリンクし、AdaのOSアダプターで
-直接呼び出します。ハッシュ・HMAC・NTLM・SMB署名は引き続きPure Adaです。
-`Connect` の既存entropy callbackも利用できます。CSPRNG失敗時は代替せず
-fail closedします。プロジェクトは実験的な段階です。
+Credit handling keeps the existing single-request profile. The first interim
+response must grant a positive CreditResponse, interim responses after the
+AsyncId has been recorded may grant zero, the async final response must grant
+zero and a synchronous response a positive credit. Interim responses do not
+extend the wait: each request gets one absolute receive deadline, set once.
+Async responses to NEGOTIATE, SESSION_SETUP and TREE_CONNECT, SMB3, compound
+requests, cancel, concurrent requests and full credit-window management are
+out of scope.
 
-Windowsでは `OS=Windows_NT` からアダプターを自動選択します。
-クロスビルドではコンパイラのtarget指定に加え `-XADASMB_OS=Windows_NT` または
-`-XADASMB_OS=Unix` を明示してください。
+"Pure Ada" means that the implementation is written in Ada and links no C
+crypto library or `libsmbclient`; it does not refer to the Ada package
+property `pragma Pure`. The library depends on GNAT.Sockets, Ada Stream_IO and
+GNAT's regular runtime. The default entropy source is `/dev/urandom` on Unix
+and `BCryptGenRandom` (the OS standard CSPRNG) on Windows. Only the Windows
+build links `bcrypt`, to obtain OS random numbers, and calls it directly from
+an Ada OS adapter. Hashes, HMAC, NTLM and SMB signing remain pure Ada. The
+existing entropy callback of `Connect` can still be used. When the CSPRNG
+fails, the library fails closed and does not fall back to another source. The
+project is experimental.
 
-未署名の最終認証失敗も拒否・切断しますが、要求対応と構造が正しいエラーは
-`Last_Unverified_Authentication_Status` と例外メッセージで診断できます。
-これは**未認証の相手による主張**です。`Last_NT_Status`には混ぜず、認証成功や
-自動再試行の判断に使いません。値0は診断なし、Connect/Disconnectで消去します。
+On Windows the adapter is selected automatically from `OS=Windows_NT`. For
+cross builds, pass `-XADASMB_OS=Windows_NT` or `-XADASMB_OS=Unix` explicitly in
+addition to the compiler's target.
 
-## SPARK による保証範囲
+An unsigned final authentication failure is also rejected and the connection
+closed, but an error that matches the request and is well formed can be
+diagnosed through `Last_Unverified_Authentication_Status` and the exception
+message. This is a **claim by an unauthenticated peer**. It is kept apart from
+`Last_NT_Status` and is never used to decide that authentication succeeded or
+to retry automatically. The value 0 means no diagnosis; `Connect` and
+`Disconnect` clear it.
 
-公開 API が実際に使う暗号計算、UTF 変換、NTLMv2/SPNEGO 認証、SMB
-ヘッダー・操作本文・フレームの解析／生成、転送の進捗計算、状態・ハンドル
-管理を SPARK コアに置いています。別途作ったモデルだけの証明ではありません。
-証明対象は実行時エラー不在と明記した境界・状態契約です。
+## What SPARK covers
 
-CREATE/CLOSE と READ/WRITE の実際の `SMB.Client` 経路は、
-`SMB.Core_Client` の型付きコーディネータを通ります。コアが Engine の
-要求期待値から完全なパケットを構築・署名し、送信確認後だけ応答を受け付けます。
-転送状態は最大 1 MiB を保持し、各 READ/WRITE 要求は最大 64 KiB です。
-WRITE は開始時に入力を private snapshot へ一度だけコピーし、部分書込みは
-検証済み count だけ進めます。READ は検証済みデータを状態内へ蓄積し、
-最終結果もコアの境界付きコピーで抽出します。不確かな送受信や不正応答では
-再試行せず Engine を無効化し、ファサードが Channel を閉じます。ソケット I/O、
-返却スライスの転送、割当て、例外処理、コンテナ寿命は信頼境界です。
-認証、ディレクトリ列挙、DISPOSITION／RENAME も型付きコアを通り、
-接続・共有接続・切断は `SMB.Core_Connection` が要求と応答に基づく
-状態更新を管理します。
+The crypto computations, UTF conversions, NTLMv2/SPNEGO authentication,
+parsing and building of SMB headers, operation bodies and frames, transfer
+progress, and state and handle management that the public API actually uses
+are in the SPARK core. The proofs are not about a separate model. What is
+proved is the absence of run-time errors and the stated boundary and state
+contracts.
 
-ソケット経路は `SMB.Core_Transport` を使い、実際に送るネイティブ配列の
-フレーム全バイト、部分受信のコピーと既存データの保持、部分送信の
-残りスライスと進捗を証明対象にしています。OS が返すバイト数の意味、
-ソケットループ、待機期限、割当て・初期化・例外処理は未証明です。
+The real `SMB.Client` paths for CREATE/CLOSE and READ/WRITE go through the
+typed coordinator in `SMB.Core_Client`. The core builds and signs complete
+packets from the Engine's request expectations and accepts a response only
+after the send has been confirmed. The transfer state holds up to 1 MiB, and
+each READ/WRITE request is at most 64 KiB. WRITE copies its input once into a
+private snapshot at the start, and a partial write advances only by the
+verified count. READ accumulates verified data in the state and extracts the
+final result with a bounded copy in the core. On an uncertain send or receive
+or an invalid response, the Engine is invalidated without a retry and the
+facade closes the Channel. Socket I/O, transfer of the returned slices,
+allocation, exception handling and container lifetime are trust boundaries.
+Authentication, directory enumeration and DISPOSITION/RENAME also go through
+typed cores, and `SMB.Core_Connection` manages the state updates of connect,
+share connect and disconnect from requests and responses.
 
-認証に渡す FILETIME の暦計算と 100ns 単位への切捨ては
-`SMB.Core_Clock` で証明します。OS 時刻の取得・UTC 分解は信頼境界です。
+The socket path uses `SMB.Core_Transport`, which proves the bytes of the whole
+frame in the native array actually sent, the copy of partial receives that
+keeps the data already received, and the remaining slice and progress of
+partial sends. The meaning of the byte counts returned by the OS, the socket
+loops, the deadlines, and allocation, initialization and exception handling
+are not proved.
 
-相対パスと共有名は、文字列上の拒否規則・成功時の正確な区切り文字変換・
-失敗時の出力消去も契約化しています。サーバー側のリンク解決や Unicode
-正規化によるパスの意味まで証明するものではありません。
+The calendar calculation of the FILETIME passed to authentication and its
+truncation to 100 ns units are proved in `SMB.Core_Clock`. Reading the OS clock
+and splitting UTC time are trust boundaries.
 
-ただし公開 `SMB.Client` の呼び出し順序・バッファ割当て・例外処理、
-ソケット、OS 乱数・時計、ランタイム、メモリ確保は信頼境界に残ります。
-**公開 API 全体の無条件な安全性、暗号学的安全性、完全な SMB 準拠を証明した
-という意味ではありません。** 証明結果・再現コマンドは
-[`docs/proof-report.md`](docs/proof-report.md)、全ての非 SPARK 部分と前提は
-[`docs/assurance.md`](docs/assurance.md) に記載します。
+For relative paths and share names, the string-level rejection rules, the
+exact separator conversion on success and the clearing of the output on
+failure are also under contract. This does not prove what a path means on the
+server, such as link resolution or Unicode normalization.
 
-## API とビルド
+The call order, buffer allocation and exception handling of the public
+`SMB.Client`, the sockets, OS random numbers and clock, the runtime and memory
+allocation remain trust boundaries. **This does not mean that unconditional
+safety of the whole public API, cryptographic security or full SMB conformance
+has been proved.** Proof results and commands to reproduce them are in
+[`docs/proof-report.md`](docs/proof-report.md), and every non-SPARK part and
+assumption is listed in [`docs/assurance.md`](docs/assurance.md).
 
-主要 API は `SMB.Client` の `Connect`、`Authenticate`、
-`Connect_Share`、`Open_File`、`Read`、`Write`、`Close`、
-`List_Directory`、`Make_Directory`、`Remove_File`、
-`Remove_Directory`、`Rename`、`Disconnect` です。パスは share 相対で、
-絶対パス・`..` の脱出・組み込み NUL は拒否されます。
+## API and build
 
-必要なものは GNAT、GPRbuild、GNU Make です。時刻変換は GNAT の
-1ns 刻みの `Duration` を要求し、異なる精度のランタイムはコンパイル時に拒否します。
+The main API of `SMB.Client` is `Connect`, `Authenticate`, `Connect_Share`,
+`Open_File`, `Read`, `Write`, `Close`, `List_Directory`, `Make_Directory`,
+`Remove_File`, `Remove_Directory`, `Rename` and `Disconnect`. Paths are
+relative to the share; absolute paths, `..` escapes and embedded NULs are
+rejected.
+
+You need GNAT, GPRbuild and GNU Make. Time conversion requires GNAT's
+`Duration` with a 1 ns step, and a runtime with a different precision is
+rejected at compile time.
 
 ```sh
-make build                  # 静的ライブラリ build/lib/libsmb.a
-make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテスト
-make unicode-test           # Python 標準 codec との Unicode 全スカラー差分試験
-make ntlm-test              # NTLM challenge と認証出力の差分試験
-make crypto-test            # OpenSSL / Python と hash・HMAC の差分試験
-make signing-test           # SMB 署名の組立て・改ざん拒否を Python と照合
-make clock-test             # FILETIME の全暦日・秒・100ns 端数を Python と照合
-make check                  # warnings-as-errors と依存関係検査（stack-check を含む）
-make stack-check            # 公開 API ごとの最悪スタック使用量を GCC の呼び出しグラフで検査
+make build                  # static library build/lib/libsmb.a
+make test                   # crypto, wire, UTF-8/UTF-16 and SPNEGO tests
+make unicode-test           # all Unicode scalars against Python's standard codecs
+make ntlm-test              # NTLM challenge handling and authentication output
+make crypto-test            # hashes and HMAC against OpenSSL / Python
+make signing-test           # SMB signing and tamper rejection against Python
+make clock-test             # FILETIME for every day, second and 100 ns fraction
+make check                  # warnings as errors and dependency checks (with stack-check)
+make stack-check            # worst-case stack use per public API from GCC call graphs
 make example                # build/bin/smb_example
-make prove                  # GNATprove + cvc5/z3 が必要。未証明があれば失敗
-make transport-test         # TCP 断片化、送受信 timeout、途中切断・復旧試験
-make integration            # 明示的にローカル Samba を起動する opt-in テスト
+make prove                  # needs GNATprove + cvc5/z3; fails on any unproved check
+make transport-test         # TCP fragmentation, send/receive timeouts, disconnects, recovery
+make integration            # opt-in test that explicitly starts a local Samba
 ```
 
-`make unicode-test` は Python 3 の標準 codec を独立した比較対象として、
-NUL を除く全 1,112,063 Unicode スカラー、短いバイト列の全組合せ、
-複合文字列・固定 seed の入力を検査します。NUL は SMB の方針で拒否します。
-この差分試験は Unicode の意味的な形式証明ではありません。Python は
-試験専用であり、ライブラリの実行時依存には追加されません。
+`make unicode-test` uses Python 3's standard codecs as an independent
+reference and checks all 1,112,063 Unicode scalars except NUL, every
+combination of short byte sequences, and composite strings and fixed-seed
+inputs. NUL is rejected by SMB policy. This differential test is not a formal
+proof of Unicode semantics. Python is used only for testing and is not a
+run-time dependency of the library.
 
-`make crypto-test` は Python 3 と OpenSSL 3 の legacy provider が必要です。
-MD4 は OpenSSL、MD5/SHA-256 と HMAC は Python の `hashlib`/`hmac` と比較し、
-ブロック境界・長い鍵・最大入力長・配列下限の違いを検査します。これらは
-試験専用の依存です。暗号学的強度や定時間性の証明ではなく、MD4/MD5 を
-NTLM 互換用途以外の新しい設計に推奨するものでもありません。
+`make crypto-test` needs Python 3 and the legacy provider of OpenSSL 3. MD4 is
+compared with OpenSSL, and MD5/SHA-256 and HMAC with Python's
+`hashlib`/`hmac`, covering block boundaries, long keys, the maximum input
+length and differing array lower bounds. These are test-only dependencies. The
+test does not prove cryptographic strength or constant-time behavior, and
+MD4/MD5 are not recommended for new designs beyond NTLM compatibility.
 
-example はホスト、share、パスを引数に取れますが、パスワードを引数に
-取りません。`SMB_USER`、`SMB_DOMAIN`、`SMB_PASSWORD` 環境変数を使います。
-環境変数はプロセス環境から参照可能な場合があるため、共有ホスト上で
-使う場合は注意してください。
+The example takes the host, share and path as arguments, but not the
+password. It reads the `SMB_USER`, `SMB_DOMAIN` and `SMB_PASSWORD` environment
+variables. Environment variables may be readable through the process
+environment, so take care on shared hosts.
 
 ```sh
 SMB_USER=alice SMB_PASSWORD='...' SMB_DOMAIN=WORKGROUP \
   build/bin/smb_example 127.0.0.1 public README.txt
 ```
 
-`make integration` は root 権限があるローカル Linux でだけ実行して
-ください。専用の一時 Samba 設定、共有、`ada_smb_test_only` ユーザー
-（テスト専用の既知のパスワード）を作り、終了時に削除します。リモート
-ホストへ接続するテストではありません。
-`smbd`、`smbpasswd`、Python 3 が必要です。
+Run `make integration` only on a local Linux machine with root privileges. It
+creates a dedicated temporary Samba configuration, a share and an
+`ada_smb_test_only` user (with a known, test-only password), and removes them
+at the end. It does not connect to remote hosts. It needs `smbd`, `smbpasswd`
+and Python 3.
 
 ## CI
 
-GitHub Actions（`.github/workflows`）で次を実行します。ツールチェーンは
-Alire 2.1.1 で GNAT 14.2.1・gprbuild 25.0.1・gnatprove 14.1.1 を導入します
-（`alr` はリリースの SHA-256 を照合し、導入結果はキャッシュします）。
+GitHub Actions (`.github/workflows`) runs the following. The toolchain (GNAT
+14.2.1, gprbuild 25.0.1 and gnatprove 14.1.1) is installed with Alire 2.1.1
+(`alr` is checked against the release's SHA-256, and the installation is
+cached).
 
-* `ci.yml`（main への push、pull request、手動実行。文書だけの変更では
-  動きません）
-  * Linux: `make check`（`stack-check` を含む）、`make test`、各照合試験、
-    `make transport-test`、使い捨ての VM 上での Samba 統合試験
-  * Windows: 警告をエラー扱いにしたビルド、ソース・スタック検査、単体試験、
-    各照合試験、TCP 転送試験
-  * macOS（ARM64）: 警告をエラー扱いにしたビルド
-* `proof.yml`（毎週月曜 03:00 JST と手動実行）: `make prove` による全体証明。
-  GitHub は、60 日間活動のないリポジトリでは定期実行を止めます。
+* `ci.yml` (pushes to main, pull requests and manual runs; not run for
+  documentation-only changes)
+  * Linux: `make check` (including `stack-check`), `make test`, the comparison
+    tests, `make transport-test` and the Samba integration test on the
+    disposable VM
+  * Windows: build with warnings as errors, source and stack checks, unit
+    tests, the comparison tests and the TCP transport test
+  * macOS (ARM64): build with warnings as errors
+* `proof.yml` (every Sunday 18:00 UTC, which is Monday 03:00 JST, and manual
+  runs): the full proof with `make prove`. GitHub stops scheduled runs in
+  repositories without activity for 60 days.
 
-## プロトコル根拠
+## Protocol references
 
-署名計算は [MS-SMB2 signing](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/a3e9ea1e-53c8-4cff-94bd-d98fb20417c0)
-に従い、ゼロ化した signature field を含む SMB2 message 全体に
-HMAC-SHA256 を適用します。NTLMv2 の NTOWFv2、response、session base
-key は
-[MS-NLMP NTOWFv2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/5e550938-91d4-459f-b67d-75d70009e3f3)
-を、timestamp、zero LM response、MIC/AV flags は
-[MS-NLMP timestamp and MIC](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/c0250a97-2940-40c7-82fb-20d208c71e96)
-を参照しています。各リンクは実装可能な対応範囲を広げるものではなく、
-上記の 2.1/NTLMv2 限定プロファイルを維持します。
+Signing follows
+[MS-SMB2 signing](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/a3e9ea1e-53c8-4cff-94bd-d98fb20417c0):
+HMAC-SHA256 over the whole SMB2 message with the signature field zeroed. The
+NTLMv2 NTOWFv2, response and session base key follow
+[MS-NLMP NTOWFv2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/5e550938-91d4-459f-b67d-75d70009e3f3),
+and the timestamp, zero LM response and MIC/AV flags follow
+[MS-NLMP timestamp and MIC](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/c0250a97-2940-40c7-82fb-20d208c71e96).
+These links do not widen the implemented scope; the SMB 2.1/NTLMv2-only
+profile above still applies.
 
-詳細な状態遷移、拒否する入力、制限事項は
-[`docs/protocol.md`](docs/protocol.md) を参照してください。
-SPARK の対象範囲と未証明部分は
-[`docs/assurance.md`](docs/assurance.md) を参照してください。
+See [`docs/protocol.md`](docs/protocol.md) for the detailed state transitions,
+rejected inputs and limitations, and [`docs/assurance.md`](docs/assurance.md)
+for what SPARK covers and what is unproved.
 
-Ada クライアントを使うプロジェクトは、GPR project からライブラリを
-参照します。
+An Ada project uses the client by referring to the library from its GPR
+project:
 
 ```gpr
 with "/path/to/AdaSMB/smb.gpr";
@@ -212,19 +237,19 @@ end Example;
 
 ## Alire
 
-Alire のクレート名は `smb` です（[`alire.toml`](alire.toml)）。コミュニティ
-インデックスに登録された後は、次のように依存関係へ追加できます。
+The Alire crate is named `smb` ([`alire.toml`](alire.toml)). Once it is in the
+community index, add it as a dependency with:
 
 ```sh
 alr with smb
 ```
 
-Alire 経由のビルドでは GNAT 14 以上を要求し、`ADASMB_OS` を OS に応じて
-`Windows_NT` または `Unix` に設定します。Alire のクレート設定ファイル
-（`config/`）は生成しません。
+Builds through Alire require GNAT 14 or later and set `ADASMB_OS` to
+`Windows_NT` or `Unix` according to the OS. No Alire crate configuration files
+(`config/`) are generated.
 
-## ライセンス
+## License
 
-`MIT OR Apache-2.0` のデュアルライセンスです。利用者はどちらか一方を選んで
-利用できます。本文は [`LICENSE-MIT`](LICENSE-MIT) と
-[`LICENSE-APACHE`](LICENSE-APACHE) を参照してください。
+Dual-licensed under `MIT OR Apache-2.0`; you may use it under either license.
+See [`LICENSE-MIT`](LICENSE-MIT) and [`LICENSE-APACHE`](LICENSE-APACHE) for the
+texts.
