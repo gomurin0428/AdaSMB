@@ -203,6 +203,7 @@ remain trusted.
 | Package | Subprograms | Trusted responsibility |
 | --- | --- | --- |
 | `SMB.Transport` | `Wait_For`, `Read_Exact`, `Write_Exact`, `Connect`, `Send_Frame`, `Receive_Frame`, `Close`, `Is_Open` | GNAT sockets/selectors, nonblocking I/O, deadlines, allocation/initialization, slice dispatch, retry and exception cleanup. Native frame copying and progress use `Core_Transport`; frame type/length use `Core_Framing`. DNS resolution is outside the deadline. |
+| `SMB.Heap_Owner` | `Release`, `Finalize` | Frees the heap buffers and coordinators of `SMB.Client` and `SMB.Transport` when their subprogram is left, also by an exception, and erases authentication requests first. Ada finalization and deallocation are trusted. |
 | `SMB.Clock` | `Current_Filetime` | OS calendar retrieval/UTC splitting, core dispatch and exception translation; date/seconds/subseconds arithmetic uses `Core_Clock` |
 | `SMB.NTLM` | `Negotiate_Token`, `Authenticate` | Allocation, `Core_Auth` dispatch and exceptions |
 | `SMB.Text` | `Check`, `Output_Capacity`, `To_UTF16LE`, `From_UTF16LE`, `NTLM_Username` | Public input-limit checks before multiplication/allocation, allocation/exception adapters to `Core_Text` |
@@ -247,7 +248,8 @@ does not make the above bodies formally verified.
   relations and `State = State'Old` copy it. The check also rejects
   runtime-sized frames in `SMB.Client` and `SMB.Transport` other than those
   sized by host, path, name or exception-message strings: frame-, packet-,
-  transfer-, request- and directory-sized buffers there are heap-allocated, the
+  transfer-, request- and directory-sized buffers there are heap-allocated and
+  held by `SMB.Heap_Owner` owners, which free them on every exit path, the
   directory listing result is built on the secondary stack, and sockets are
   read in 16-KiB chunks. The secondary stack (unconstrained function results
   such as received frames and directory listings) is not counted; on the

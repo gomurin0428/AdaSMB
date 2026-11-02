@@ -26,6 +26,7 @@ with Security_Buffer_Tests;
 with Spnego_Mutation_Tests;
 with Challenge_Mutation_Tests;
 with Async_Engine_Tests;
+with SMB.Heap_Owner_Tests;
 
 procedure Test_Suite is
    use type SMB.Core_Status;
@@ -7762,6 +7763,7 @@ begin
    Test_Engine_Malformed_Close;
    Test_Engine_Receipts;
    Async_Engine_Tests.Run;
+   SMB.Heap_Owner_Tests.Run;
    Test_Text_And_Wire;
    Ada.Text_IO.Put_Line ("AdaSMB unit tests passed");
 end Test_Suite;

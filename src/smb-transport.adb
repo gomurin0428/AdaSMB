@@ -1,8 +1,8 @@
 with Ada.Exceptions;
 with Ada.Streams;
-with Ada.Unchecked_Deallocation;
 with SMB.Core_Framing;
 with SMB.Core_Transport;
+with SMB.Heap_Owner;
 
 package body SMB.Transport is
    use type Ada.Exceptions.Exception_Id;
@@ -16,11 +16,10 @@ package body SMB.Transport is
    --  read in bounded chunks, so a frame does not have to fit on the stack.
    Receive_Chunk_Size : constant := 16_384;
    type Frame_Buffer is access Ada.Streams.Stream_Element_Array;
-   procedure Free is new Ada.Unchecked_Deallocation
+   package Frame_Owners is new SMB.Heap_Owner
      (Ada.Streams.Stream_Element_Array, Frame_Buffer);
    type Packet_Buffer is access SMB.Bytes;
-   procedure Free is new Ada.Unchecked_Deallocation
-     (SMB.Bytes, Packet_Buffer);
+   package Packet_Owners is new SMB.Heap_Owner (SMB.Bytes, Packet_Buffer);
 
    procedure Wait_For
      (Channel : Connection; Writing : Boolean; Deadline : Ada.Real_Time.Time) is
@@ -239,7 +238,7 @@ package body SMB.Transport is
       Status : SMB.Core_Status;
       Deadline : constant Ada.Real_Time.Time :=
         Ada.Real_Time.Clock + Ada.Real_Time.To_Time_Span (Channel.Timeout);
-      Frame : Frame_Buffer;
+      Frame : Frame_Owners.Owner;
    begin
       if not Channel.Open then
          raise SMB.Invalid_State with "SMB transport is not connected";
@@ -247,17 +246,15 @@ package body SMB.Transport is
       if Packet'Length not in 64 .. SMB.Maximum_Frame_Size then
          raise SMB.Protocol_Error with "SMB packet length is outside the frame limit";
       end if;
-      Frame := new Ada.Streams.Stream_Element_Array
+      Frame.Item := new Ada.Streams.Stream_Element_Array
         (1 .. Ada.Streams.Stream_Element_Offset (Packet'Length + 4));
-      SMB.Core_Transport.Build_Frame (Packet, Frame.all, Status);
+      SMB.Core_Transport.Build_Frame (Packet, Frame.Item.all, Status);
       if Status /= SMB.Ok then
          raise SMB.Protocol_Error with "SMB frame construction failed";
       end if;
-      Write_Exact (Channel, Frame.all, Deadline);
-      Free (Frame);
+      Write_Exact (Channel, Frame.Item.all, Deadline);
    exception
       when E : others =>
-         Free (Frame);
          Close (Channel);
          if Ada.Exceptions.Exception_Identity (E) = SMB.Transport_Error'Identity
            or else Ada.Exceptions.Exception_Identity (E) = SMB.Protocol_Error'Identity
@@ -292,16 +289,11 @@ package body SMB.Transport is
          raise SMB.Protocol_Error with "SMB response frame length is outside the limit";
       end if;
       declare
-         Packet : Packet_Buffer := new SMB.Bytes (0 .. Length - 1);
+         Packet : Packet_Owners.Owner;
       begin
-         Read_Exact (Channel, Packet.all, Deadline);
-         return Result : constant SMB.Bytes := Packet.all do
-            Free (Packet);
-         end return;
-      exception
-         when others =>
-            Free (Packet);
-            raise;
+         Packet.Item := new SMB.Bytes (0 .. Length - 1);
+         Read_Exact (Channel, Packet.Item.all, Deadline);
+         return Packet.Item.all;
       end;
    exception
       when E : others =>
