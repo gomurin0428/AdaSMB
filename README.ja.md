@@ -175,7 +175,7 @@ NUL を除く全 1,112,063 Unicode スカラー、短いバイト列の全組合
 試験専用であり、ライブラリの実行時依存には追加されません。
 
 `make crypto-test` は Python 3 と OpenSSL 3 の legacy provider が必要です。
-MD4 は OpenSSL、MD5/SHA-256 と HMAC は Python の `hashlib`/`hmac` と比較し、
+MD4 は OpenSSL、MD5/SHA-256/SHA-512 と HMAC は Python の `hashlib`/`hmac` と比較し、
 ブロック境界・長い鍵・最大入力長・配列下限の違いを検査します。これらは
 試験専用の依存です。暗号学的強度や定時間性の証明ではなく、MD4/MD5 を
 NTLM 互換用途以外の新しい設計に推奨するものでもありません。

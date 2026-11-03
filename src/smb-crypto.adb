@@ -278,6 +278,157 @@ package body SMB.Crypto is
       return Digest;
    end SHA256;
 
+   type Word64_Array is array (Natural range <>) of U64;
+   subtype Shift_Count_64 is Natural range 1 .. 63;
+
+   function Ror64 (Value : U64; Amount : Shift_Count_64) return U64 is
+     (Interfaces.Shift_Right (Value, Amount)
+      or Interfaces.Shift_Left (Value, 64 - Amount));
+
+   SHA512_K : constant Word64_Array (0 .. 79) :=
+     (16#428A2F98D728AE22#, 16#7137449123EF65CD#, 16#B5C0FBCFEC4D3B2F#,
+      16#E9B5DBA58189DBBC#, 16#3956C25BF348B538#, 16#59F111F1B605D019#,
+      16#923F82A4AF194F9B#, 16#AB1C5ED5DA6D8118#, 16#D807AA98A3030242#,
+      16#12835B0145706FBE#, 16#243185BE4EE4B28C#, 16#550C7DC3D5FFB4E2#,
+      16#72BE5D74F27B896F#, 16#80DEB1FE3B1696B1#, 16#9BDC06A725C71235#,
+      16#C19BF174CF692694#, 16#E49B69C19EF14AD2#, 16#EFBE4786384F25E3#,
+      16#0FC19DC68B8CD5B5#, 16#240CA1CC77AC9C65#, 16#2DE92C6F592B0275#,
+      16#4A7484AA6EA6E483#, 16#5CB0A9DCBD41FBD4#, 16#76F988DA831153B5#,
+      16#983E5152EE66DFAB#, 16#A831C66D2DB43210#, 16#B00327C898FB213F#,
+      16#BF597FC7BEEF0EE4#, 16#C6E00BF33DA88FC2#, 16#D5A79147930AA725#,
+      16#06CA6351E003826F#, 16#142929670A0E6E70#, 16#27B70A8546D22FFC#,
+      16#2E1B21385C26C926#, 16#4D2C6DFC5AC42AED#, 16#53380D139D95B3DF#,
+      16#650A73548BAF63DE#, 16#766A0ABB3C77B2A8#, 16#81C2C92E47EDAEE6#,
+      16#92722C851482353B#, 16#A2BFE8A14CF10364#, 16#A81A664BBC423001#,
+      16#C24B8B70D0F89791#, 16#C76C51A30654BE30#, 16#D192E819D6EF5218#,
+      16#D69906245565A910#, 16#F40E35855771202A#, 16#106AA07032BBD1B8#,
+      16#19A4C116B8D2D0C8#, 16#1E376C085141AB53#, 16#2748774CDF8EEB99#,
+      16#34B0BCB5E19B48A8#, 16#391C0CB3C5C95A63#, 16#4ED8AA4AE3418ACB#,
+      16#5B9CCA4F7763E373#, 16#682E6FF3D6B2B8A3#, 16#748F82EE5DEFB2FC#,
+      16#78A5636F43172F60#, 16#84C87814A1F0AB72#, 16#8CC702081A6439EC#,
+      16#90BEFFFA23631E28#, 16#A4506CEBDE82BDE9#, 16#BEF9A3F7B2C67915#,
+      16#C67178F2E372532B#, 16#CA273ECEEA26619C#, 16#D186B8C721C0C207#,
+      16#EADA7DD6CDE0EB1E#, 16#F57D4F7FEE6ED178#, 16#06F067AA72176FBA#,
+      16#0A637DC5A2C898A6#, 16#113F9804BEF90DAE#, 16#1B710B35131C471B#,
+      16#28DB77F523047D84#, 16#32CAAB7B40C72493#, 16#3C9EBE0A15C9BEBC#,
+      16#431D67C49C100D4C#, 16#4CC5D4BECB3E42B6#, 16#597F299CFC657E2A#,
+      16#5FCB6FAB3AD6FAEC#, 16#6C44198C4A475817#);
+   SHA512_IV : constant Hash_State_64 :=
+     (16#6A09E667F3BCC908#, 16#BB67AE8584CAA73B#, 16#3C6EF372FE94F82B#,
+      16#A54FF53A5F1D36F1#, 16#510E527FADE682D1#, 16#9B05688C2B3E6C1F#,
+      16#1F83D9ABFB41BD6B#, 16#5BE0CD19137E2179#);
+
+   subtype Block_Bytes_128 is SMB.Bytes (0 .. 127);
+
+   procedure SHA512_Compress (H : in out Hash_State_64; Block : Block_Bytes_128)
+     with Global => null
+   is
+      W : Word64_Array (0 .. 79) := (others => 0);
+   begin
+      for I in 0 .. 15 loop
+         for J in 0 .. 7 loop
+            W (I) := Interfaces.Shift_Left (W (I), 8) or U64 (Block (I * 8 + J));
+         end loop;
+      end loop;
+      for I in 16 .. 79 loop
+         declare
+            S0 : constant U64 := Ror64 (W (I - 15), 1)
+              xor Ror64 (W (I - 15), 8)
+              xor Interfaces.Shift_Right (W (I - 15), 7);
+            S1 : constant U64 := Ror64 (W (I - 2), 19)
+              xor Ror64 (W (I - 2), 61)
+              xor Interfaces.Shift_Right (W (I - 2), 6);
+         begin
+            W (I) := W (I - 16) + S0 + W (I - 7) + S1;
+         end;
+      end loop;
+      declare
+         A : U64 := H (0); B : U64 := H (1);
+         C : U64 := H (2); D : U64 := H (3);
+         E : U64 := H (4); F : U64 := H (5);
+         G : U64 := H (6); HH : U64 := H (7);
+         T1, T2 : U64;
+      begin
+         for I in 0 .. 79 loop
+            T1 := HH + (Ror64 (E, 14) xor Ror64 (E, 18) xor Ror64 (E, 41))
+              + ((E and F) xor ((not E) and G)) + SHA512_K (I) + W (I);
+            T2 := (Ror64 (A, 28) xor Ror64 (A, 34) xor Ror64 (A, 39))
+              + ((A and B) xor (A and C) xor (B and C));
+            HH := G; G := F; F := E; E := D + T1;
+            D := C; C := B; B := A; A := T1 + T2;
+         end loop;
+         H (0) := H (0) + A; H (1) := H (1) + B;
+         H (2) := H (2) + C; H (3) := H (3) + D;
+         H (4) := H (4) + E; H (5) := H (5) + F;
+         H (6) := H (6) + G; H (7) := H (7) + HH;
+      end;
+   end SHA512_Compress;
+
+   procedure SHA512_Start (Context : out SHA512_Context) is
+   begin
+      Context :=
+        (H => SHA512_IV, Block => (others => 0), Used => 0, Total => 0,
+         Active => True);
+   end SHA512_Start;
+
+   procedure SHA512_Update
+     (Context : in out SHA512_Context;
+      Message : SMB.Bytes)
+   is
+   begin
+      for I in Message'Range loop
+         Context.Block (Context.Used) := Message (I);
+         if Context.Used = Block_Position_128'Last then
+            SHA512_Compress (Context.H, Context.Block);
+            Context.Used := 0;
+         else
+            Context.Used := Context.Used + 1;
+         end if;
+         pragma Loop_Invariant (Context.Total = Context.Total'Loop_Entry);
+         pragma Loop_Invariant (Context.Active);
+      end loop;
+      Context.Total := Context.Total + Message'Length;
+   end SHA512_Update;
+
+   procedure SHA512_Finish
+     (Context : in out SHA512_Context;
+      Digest : out Digest_512)
+   is
+      Bits : constant U64 := U64 (Context.Total) * 8;
+   begin
+      Context.Block (Context.Used) := 16#80#;
+      Context.Block (Context.Used + 1 .. 127) := (others => 0);
+      if Context.Used >= 112 then
+         SHA512_Compress (Context.H, Context.Block);
+         Context.Block := (others => 0);
+      end if;
+      --  The length field is the last 16 bytes. Its upper half stays zero
+      --  for every input this package accepts.
+      for I in 0 .. 7 loop
+         Context.Block (120 + I) :=
+           SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#);
+      end loop;
+      SHA512_Compress (Context.H, Context.Block);
+      Digest := (others => 0);
+      for I in 0 .. 7 loop
+         for J in 0 .. 7 loop
+            Digest (I * 8 + J) := SMB.Byte
+              (Interfaces.Shift_Right (Context.H (I), (7 - J) * 8) and 16#FF#);
+         end loop;
+      end loop;
+      Context.Active := False;
+   end SHA512_Finish;
+
+   function SHA512 (Message : SMB.Bytes) return Digest_512 is
+      Context : SHA512_Context;
+      Digest : Digest_512;
+   begin
+      SHA512_Start (Context);
+      SHA512_Update (Context, Message);
+      SHA512_Finish (Context, Digest);
+      return Digest;
+   end SHA512;
+
    MD5_K : constant Round_Constants (0 .. 63) :=
      (16#D76AA478#, 16#E8C7B756#, 16#242070DB#, 16#C1BDCEEE#,
       16#F57C0FAF#, 16#4787C62A#, 16#A8304613#, 16#FD469501#,

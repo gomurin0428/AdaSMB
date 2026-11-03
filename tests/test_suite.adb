@@ -3,6 +3,7 @@ with Ada.Text_IO;
 with Ada.Streams;
 with Ada.Command_Line;
 with Ada.Characters.Handling;
+with Ada.Unchecked_Deallocation;
 with SMB;
 with SMB.Core_Auth;
 with SMB.Clock;
@@ -1421,6 +1422,82 @@ procedure Test_Suite is
             "restarted HMAC-MD5 context");
       end;
    end Test_Crypto;
+
+   procedure Test_SHA512 is
+      --  FIPS 180-4 examples, the 1,000,000 "a" vector, and a digest of the
+      --  digests of every length from 0 to 300 bytes, which crosses the
+      --  111/112-byte padding boundary and the 128-byte block size twice.
+      --  The expected values come from Python's hashlib.
+      Two_Block : constant SMB.Bytes := ASCII
+        ("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmn"
+         & "hijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu");
+      type Bytes_Access is access SMB.Bytes;
+      procedure Free is new Ada.Unchecked_Deallocation
+        (SMB.Bytes, Bytes_Access);
+      Million : Bytes_Access :=
+        new SMB.Bytes'(0 .. 999_999 => SMB.Byte (Character'Pos ('a')));
+      Chain, Split_Chain : SMB.Crypto.SHA512_Context;
+      Digest, Split_Digest : SMB.Crypto.Digest_512;
+   begin
+      Assert_Equal
+        (SMB.Crypto.SHA512 (ASCII ("")),
+         Hex ("cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce"
+              & "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"),
+         "SHA-512 empty");
+      Assert_Equal
+        (SMB.Crypto.SHA512 (ASCII ("abc")),
+         Hex ("ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a"
+              & "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"),
+         "SHA-512 abc");
+      Assert_Equal
+        (SMB.Crypto.SHA512 (Two_Block),
+         Hex ("8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018"
+              & "501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909"),
+         "SHA-512 896-bit message");
+      Assert_Equal
+        (SMB.Crypto.SHA512 (Million.all),
+         Hex ("e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973eb"
+              & "de0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b"),
+         "SHA-512 one million a");
+      Free (Million);
+
+      SMB.Crypto.SHA512_Start (Chain);
+      SMB.Crypto.SHA512_Start (Split_Chain);
+      for Length in 0 .. 300 loop
+         declare
+            Message : SMB.Bytes (0 .. Length - 1);
+            Context : SMB.Crypto.SHA512_Context;
+            Split : constant Natural := Length / 3;
+         begin
+            for I in Message'Range loop
+               Message (I) := SMB.Byte ((I * 7 + Length) mod 256);
+            end loop;
+            Digest := SMB.Crypto.SHA512 (Message);
+            SMB.Crypto.SHA512_Update (Chain, Digest);
+            SMB.Crypto.SHA512_Start (Context);
+            SMB.Crypto.SHA512_Update (Context, Message (0 .. Split - 1));
+            SMB.Crypto.SHA512_Update (Context, Message (Split .. Length - 1));
+            Assert
+              (SMB.Crypto.SHA512_Length (Context) = Length,
+               "incremental SHA-512 length" & Integer'Image (Length));
+            SMB.Crypto.SHA512_Finish (Context, Split_Digest);
+            Assert
+              (not SMB.Crypto.SHA512_Ready (Context),
+               "finished SHA-512 context is still ready");
+            SMB.Crypto.SHA512_Update (Split_Chain, Split_Digest);
+         end;
+      end loop;
+      SMB.Crypto.SHA512_Finish (Chain, Digest);
+      SMB.Crypto.SHA512_Finish (Split_Chain, Split_Digest);
+      Assert_Equal
+        (Digest,
+         Hex ("e1f2f7d5d8fc48db06ec2a0eed639593f549caffa40245747258761214a3ec07"
+              & "134903fde52ace6cfae161a82097ba01f33a97d48dd6a80d4521d96d7401357e"),
+         "SHA-512 of the digests of lengths 0 to 300");
+      Assert_Equal
+        (Split_Digest, Digest, "incremental SHA-512 of lengths 0 to 300");
+      Ada.Text_IO.Put_Line ("SHA-512: known answers and 301 lengths passed");
+   end Test_SHA512;
 
    procedure Test_NTLM_Authenticate is
       Challenge : constant SMB.Bytes := Hex
@@ -8738,6 +8815,7 @@ begin
       SMB.Entropy.Generate (Buffer);
    end;
    Test_Crypto;
+   Test_SHA512;
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;
