@@ -214,8 +214,8 @@ end Example;
 
 ## Alire
 
-Alire のクレート名は `smb` です（[`alire.toml`](alire.toml)）。コミュニティ
-インデックスに登録された後は、次のように依存関係へ追加できます。
+Alire のクレート名は `smb` です（[`alire.toml`](alire.toml)）。Alire の
+コミュニティインデックスに登録済みで、次のように依存関係へ追加できます。
 
 ```sh
 alr with smb
