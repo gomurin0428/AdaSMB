@@ -238,8 +238,8 @@ end Example;
 
 ## Alire
 
-The Alire crate is named `smb` ([`alire.toml`](alire.toml)). Once it is in the
-community index, add it as a dependency with:
+The Alire crate is named `smb` ([`alire.toml`](alire.toml)) and is published
+in the Alire community index. Add it to a project as a dependency with:
 
 ```sh
 alr with smb
