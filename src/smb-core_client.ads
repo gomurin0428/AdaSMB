@@ -203,8 +203,8 @@ is
               Authentication_Expected_Of (Value)'Old)
             and then Authentication_Challenge_Length_Of (Value) = 0
             and then
-              (for all Index in Authentication_Buffer_Of (Value)'Range =>
-                 Authentication_Buffer_Of (Value) (Index) = 0)
+              (for all Element of Authentication_Buffer_Of (Value) =>
+                 Element = 0)
             and then State = State'Old);
 
    procedure Authentication_Send_Succeeded
@@ -368,8 +368,8 @@ is
           and then Authentication_Stage_Of (Value) = Authentication_Failed
           and then Authentication_Challenge_Length_Of (Value) = 0
           and then
-            (for all Index in Authentication_Buffer_Of (Value)'Range =>
-               Authentication_Buffer_Of (Value) (Index) = 0)
+            (for all Element of Authentication_Buffer_Of (Value) =>
+               Element = 0)
           and then SMB.Engine.Current_Phase (State) =
             SMB.Engine.Disconnected
           and then not SMB.Engine.Has_Pending_Request (State)
@@ -460,8 +460,8 @@ is
            and then Authentication_Stage_Of (Value) = Authentication_Failed
            and then Authentication_Challenge_Length_Of (Value) = 0
            and then
-             (for all Index in Authentication_Buffer_Of (Value)'Range =>
-                Authentication_Buffer_Of (Value) (Index) = 0)
+             (for all Element of Authentication_Buffer_Of (Value) =>
+                Element = 0)
            and then SMB.Engine.Current_Phase (State) =
              SMB.Engine.Disconnected
            and then not SMB.Engine.Has_Pending_Request (State)
@@ -523,8 +523,8 @@ is
           and then SMB.Engine.Signing_Key_Is_Zero (State)
           and then Authentication_Challenge_Length_Of (Value) = 0
           and then
-            (for all Index in Authentication_Buffer_Of (Value)'Range =>
-               Authentication_Buffer_Of (Value) (Index) = 0)
+            (for all Element of Authentication_Buffer_Of (Value) =>
+               Element = 0)
           and then (Nt_Status = 0 or else Status = SMB.Ok)
         else
           Authentication_Stage_Of (Value) =
@@ -583,8 +583,8 @@ is
           and then SMB.Engine.Signing_Key_Is_Zero (State)
           and then Authentication_Challenge_Length_Of (Value) = 0
           and then
-            (for all Index in Authentication_Buffer_Of (Value)'Range =>
-               Authentication_Buffer_Of (Value) (Index) = 0)
+            (for all Element of Authentication_Buffer_Of (Value) =>
+               Element = 0)
           and then SMB.Engine.Current_Owner_Id (State) =
             SMB.Engine.Current_Owner_Id (State)'Old
           and then SMB.Engine.Current_Epoch (State)'Old < SMB.QWord'Last
@@ -612,8 +612,8 @@ is
           and then SMB.Engine.Current_Session_Id (State) = 0
           and then Authentication_Challenge_Length_Of (Value) = 0
           and then
-            (for all Index in Authentication_Buffer_Of (Value)'Range =>
-               Authentication_Buffer_Of (Value) (Index) = 0)
+            (for all Element of Authentication_Buffer_Of (Value) =>
+               Element = 0)
         elsif Status = SMB.Invalid_State_Status
           and then
             (Authentication_Owner_Of (Value)'Old /=
