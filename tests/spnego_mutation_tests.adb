@@ -120,5 +120,68 @@ begin
          Expected_MIC => MIC (MIC'First .. MIC'First + Length - 1));
    end loop;
    Check (Wrap (State_Field), True, "MIC not required", Expected_MIC => Empty);
+   Check (Wrap (State_Field & Mechanism), True, "mechanism OID ending the token",
+          Expected_MIC => Empty);
+   --  Rejections with their status.
+   declare
+      procedure Reject
+        (Token : SMB.Bytes; Expected : SMB.Core_Status; Label : String)
+      is
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_NTLM.Validate_Final_Token (Token, Status, MIC);
+         Cases := Cases + 1;
+         if Status /= Expected then
+            raise Program_Error with Label & ": status " & Status'Image;
+         end if;
+      end Reject;
+
+      --  A1 and 30 headers with three-byte lengths around Content.
+      function Long_Wrap (Content : SMB.Bytes) return SMB.Bytes is
+         function Header (Tag : SMB.Byte; Length : Natural) return SMB.Bytes is
+           (Tag, 16#83#, SMB.Byte (Length / 65_536),
+            SMB.Byte (Length / 256 mod 256), SMB.Byte (Length mod 256));
+      begin
+         return Header (16#A1#, Content'Length + 5)
+           & Header (16#30#, Content'Length) & Content;
+      end Long_Wrap;
+
+      Wrong_Mechanism : SMB.Bytes := Mechanism;
+      Mechanism_Tag : SMB.Bytes := Mechanism;
+      --  A state field announcing negotiation state 1, which only an
+      --  unsupported exchange sends: parsing reaches it only once the
+      --  lengths around it were accepted.
+      Unsupported_State : constant SMB.Bytes := (16#A0#, 3, 16#0A#, 1, 1);
+   begin
+      Wrong_Mechanism (Wrong_Mechanism'Last) := 11;
+      Mechanism_Tag (Mechanism_Tag'First + 2) := 5;
+      Reject (Wrap (State_Field & Wrong_Mechanism & MIC_Field),
+              SMB.Unsupported_Feature, "other mechanism OID");
+      Reject (Wrap (State_Field & Mechanism_Tag & MIC_Field),
+              SMB.Unsupported_Feature, "mechanism that is not an OID");
+      Reject (Wrap (State_Field & SMB.Bytes'(16#A2#, 3, 4, 1, 0) & MIC_Field),
+              SMB.Invalid_Encoding, "nonempty response token");
+      Reject (Wrap (State_Field & SMB.Bytes'(16#A2#, 2, 5, 0) & MIC_Field),
+              SMB.Invalid_Encoding, "response token that is not an octet string");
+      Reject (Wrap (State_Field & MIC_Field & SMB.Bytes'(16#A4#, 2, 4, 0)),
+              SMB.Invalid_Encoding, "field tag A4");
+      Reject (Wrap (SMB.Bytes'(16#A0#, 16#81#, 3, 16#0A#, 1, 0) & MIC_Field),
+              SMB.Invalid_Encoding, "state field with a long-form length");
+      Reject (Wrap (Unsupported_State), SMB.Unsupported_Feature,
+              "unsupported state");
+      --  Three-byte DER lengths, the smallest one and one close to
+      --  Maximum_Frame_Size, are read in full.
+      declare
+         Smallest : SMB.Bytes (0 .. 65_535) := (others => 0);
+         Largest : SMB.Bytes (0 .. 1_048_400 - 1) := (others => 0);
+      begin
+         Smallest (0 .. 4) := Unsupported_State;
+         Largest (0 .. 4) := Unsupported_State;
+         Reject (Long_Wrap (Smallest), SMB.Unsupported_Feature,
+                 "three-byte length of 65,536");
+         Reject (Long_Wrap (Largest), SMB.Unsupported_Feature,
+                 "three-byte length near Maximum_Frame_Size");
+      end;
+   end;
    Ada.Text_IO.Put_Line ("final SPNEGO mutation cases:" & Cases'Image);
 end Spnego_Mutation_Tests;
