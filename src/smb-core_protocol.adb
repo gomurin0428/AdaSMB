@@ -50,8 +50,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Value : SMB.Byte;
       Status : in out SMB.Core_Status) is
    begin
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Begin_Build already rejected a buffer too small for the body
          if Position >= Output'Length then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := SMB.Resource_Limit;
          else
             Output (Output'First + Position) := Value;
@@ -109,12 +112,16 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Value : SMB.Bytes;
       Status : out SMB.Core_Status) is
    begin
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Begin_Build already rejected a buffer too small for the body
       if Position > Output'Length
+        --  adamutant:disable-next-line LogicalOperator, ArithmeticOperator: unreachable, as above
         or else Value'Length > Output'Length - Position
       then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: copying nothing changes nothing
       if Value'Length > 0 then
          Output (Output'First + Position
                    .. Output'Last - (Output'Length - Position - Value'Length))
@@ -207,6 +214,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             (if Status'Old /= SMB.Ok then Status = Status'Old)
    is
    begin
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          SMB.Core_Wire.Write_U64 (Output, Position, Value, Status);
       end if;
@@ -227,7 +235,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
    begin
       Status := SMB.Ok;
       Clear (Output);
+      --  adamutant:disable-next-line ConditionalExpression: the field write past the end, or Finish, reports the same Resource_Limit
       if Required > Output'Length then
+         --  adamutant:disable-next-line StatementDeletion: the field write past the end, or Finish, reports the same Resource_Limit
          Status := SMB.Resource_Limit;
       end if;
    end Begin_Build;
@@ -251,7 +261,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
       if Status = SMB.Ok and then Required <= Capacity then
          Used := Required;
       else
+         --  adamutant:disable-next-line ConditionalExpression: Begin_Build already set Resource_Limit for a body that does not fit
          if Status = SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := SMB.Resource_Limit;
          end if;
          Used := 0;
@@ -268,10 +280,13 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Put_U16 (Output, 0, 36, Status);
       Put_U16 (Output, 2, 1, Status);
       Put_U16 (Output, 4, 3, Status);
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: Begin_Build cleared the buffer
       Put_U32 (Output, 8, 0, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Copy (Output, 12, Guid, Status);
       end if;
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: Begin_Build cleared the buffer
       Put_U64 (Output, 28, 0, Status);
       Put_U16 (Output, 36, SMB.SMB2_Dialect_0210, Status);
       Finish (38, Output'Length, Used, Status);
@@ -286,15 +301,20 @@ package body SMB.Core_Protocol with SPARK_Mode is
    begin
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 25, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: Begin_Build cleared the buffer
          Put_Byte (Output, 2, 0, Status);
          Put_Byte (Output, 3, 3, Status);
       end if;
       Put_U16 (Output, 12, 88, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the precondition limits the token to SMB.Word'Last bytes
       if Token'Length > SMB.Word'Last then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
       else
          Put_U16 (Output, 14, SMB.Word (Token'Length), Status);
+         --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
          if Status = SMB.Ok then
             Copy (Output, 24, Token, Status);
          end if;
@@ -314,10 +334,13 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Put_U16 (Output, 4, 72, Status);
       if Name'Length mod 2 /= 0 then
          Status := SMB.Invalid_Length;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: the precondition limits the name to Maximum_Name_Bytes
       elsif Name'Length > SMB.Word'Last then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
       else
          Put_U16 (Output, 6, SMB.Word (Name'Length), Status);
+         --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
          if Status = SMB.Ok then
             Copy (Output, 8, Name, Status);
          end if;
@@ -338,19 +361,22 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 57, Status);
       Put_U32 (Output, 4, 2, Status);
-      Put_U32 (Output, 28, (if Directory then 16#10# else 0), Status);
       Put_U32 (Output, 32, 7, Status);
       Put_U16 (Output, 44, 120, Status);
       if Name'Length mod 2 /= 0 then
          Status := SMB.Invalid_Length;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: the precondition limits the name to Maximum_Name_Bytes
       elsif Name'Length > SMB.Word'Last then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
       else
+         --  adamutant:disable-next-line ConditionalExpression, LogicalOperator, EqualityOperator, NumericLiteral: an empty or odd name copies nothing that is used
          if Status = SMB.Ok and then Name'Length > 0 then
             Copy (Output, 56, Name, Status);
          end if;
       end if;
       Finish (Required, Output'Length, Used, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Output (Output'First + 24 .. Output'First + 31) :=
            (SMB.Core_Wire.U32_Byte (Access_Mask, 0),
@@ -360,10 +386,13 @@ package body SMB.Core_Protocol with SPARK_Mode is
             SMB.Core_Wire.U32_Byte
               ((if Directory then 16#10# else 0), 0),
             SMB.Core_Wire.U32_Byte
+              --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the attributes fit in the first byte
               ((if Directory then 16#10# else 0), 1),
             SMB.Core_Wire.U32_Byte
+              --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the attributes fit in the first byte
               ((if Directory then 16#10# else 0), 2),
             SMB.Core_Wire.U32_Byte
+              --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the attributes fit in the first byte
               ((if Directory then 16#10# else 0), 3));
          Output (Output'First + 36 .. Output'First + 39) :=
            (SMB.Core_Wire.U32_Byte (Disposition, 0),
@@ -374,10 +403,13 @@ package body SMB.Core_Protocol with SPARK_Mode is
            (SMB.Core_Wire.U32_Byte
               ((if Directory then 1 else 16#40#), 0),
             SMB.Core_Wire.U32_Byte
+              --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the options fit in the first byte
               ((if Directory then 1 else 16#40#), 1),
             SMB.Core_Wire.U32_Byte
+              --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the options fit in the first byte
               ((if Directory then 1 else 16#40#), 2),
             SMB.Core_Wire.U32_Byte
+              --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the options fit in the first byte
               ((if Directory then 1 else 16#40#), 3));
          Output (Output'First + 46 .. Output'First + 47) :=
            (SMB.Core_Wire.U16_Byte (SMB.Word (Name'Length), 0),
@@ -413,13 +445,16 @@ package body SMB.Core_Protocol with SPARK_Mode is
         (if Status = SMB.Ok then
            Output (Output'First + 6) =
              SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 2));
+      --  adamutant:disable-next-line StatementDeletion: Amount is at most 65,536, so its top byte is 0
       Put_Byte
+        --  adamutant:disable-next-line NumericLiteral: Amount is at most 65,536, so its top byte is 0
         (Output, 7, SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 3), Status);
       pragma Assert
         (if Status = SMB.Ok then
            Output (Output'First + 7) =
              SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 3));
       Put_U64 (Output, 8, Offset, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Output (Output'First + 16 .. Output'First + 31) := File_Id;
       end if;
@@ -428,7 +463,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
            (for all Index in 0 .. 15 =>
               Output (Output'First + 16 + Index) =
                 File_Id (File_Id'First + Index)));
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: Begin_Build cleared the buffer
       Put_U32 (Output, 32, 0, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Put_Byte (Output, 48, 1, Status);
       end if;
@@ -468,7 +505,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
         (if Status = SMB.Ok then
            Output (Output'First + 6) =
              SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 2));
+      --  adamutant:disable-next-line StatementDeletion: the data is at most 65,536 bytes, so the top byte of its length is 0
       Put_Byte
+        --  adamutant:disable-next-line NumericLiteral: the data is at most 65,536 bytes, so the top byte of its length is 0
         (Output, 7, SMB.Core_Wire.U32_Byte
            (SMB.DWord (Data'Length), 3), Status);
       pragma Assert
@@ -476,6 +515,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
            Output (Output'First + 7) =
              SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 3));
       Put_U64 (Output, 8, Offset, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Copy (Output, 16, File_Id, Status);
       end if;
@@ -484,7 +524,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
            (for all Index in 0 .. 15 =>
               Output (Output'First + 16 + Index) =
                 File_Id (File_Id'First + Index)));
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: Begin_Build cleared the buffer
       Put_U32 (Output, 44, 0, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Copy (Output, 48, Data, Status);
       end if;
@@ -497,6 +539,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Used : out Natural;
       Status : out SMB.Core_Status) is
    begin
+      --  adamutant:disable-next-line ConditionalExpression: Begin_Build and Finish reject a short buffer the same way
       if Output'Length < 24 then
          Clear (Output);
          Used := 0;
@@ -506,6 +549,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Begin_Build (Output, 24, Status);
       Put_U16 (Output, 0, 24, Status);
       Finish (24, Output'Length, Used, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Output (Output'First + 8 .. Output'First + 23) := File_Id;
       end if;
@@ -521,18 +565,22 @@ package body SMB.Core_Protocol with SPARK_Mode is
    begin
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 33, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Put_Byte (Output, 2, 37, Status);
          Put_Byte (Output, 3, (if Restart then 1 else 0), Status);
       end if;
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Output (Output'First + 8 .. Output'First + 23) := File_Id;
       end if;
       Put_U16 (Output, 24, 96, Status);
       Put_U16 (Output, 26, 2, Status);
       Put_U32 (Output, 28, Maximum_IO_Chunk, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Put_Byte (Output, 32, 16#2A#, Status);
+         --  adamutant:disable-next-line StatementDeletion: Begin_Build cleared the buffer
          Put_Byte (Output, 33, 0, Status);
       end if;
       Finish (Required, Output'Length, Used, Status);
@@ -547,12 +595,14 @@ package body SMB.Core_Protocol with SPARK_Mode is
    begin
       Begin_Build (Output, 33, Status);
       Put_U16 (Output, 0, 33, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Put_Byte (Output, 2, 1, Status);
          Put_Byte (Output, 3, 13, Status);
       end if;
       Put_U32 (Output, 4, 1, Status);
       Put_U16 (Output, 8, 96, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Copy (Output, 16, File_Id, Status);
          Put_Byte
@@ -571,13 +621,16 @@ package body SMB.Core_Protocol with SPARK_Mode is
    begin
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 33, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Put_Byte (Output, 2, 1, Status);
          Put_Byte (Output, 3, 10, Status);
       end if;
       if Name'Length mod 2 /= 0 then
          Status := SMB.Invalid_Length;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, ArithmeticOperator, NumericLiteral: the precondition limits the name to Maximum_Name_Bytes
       elsif Name'Length > SMB.DWord'Last - 20 then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
       else
          Put_U32 (Output, 4, SMB.DWord (20 + Name'Length), Status);
@@ -620,7 +673,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
            else Value = 0)
    is
    begin
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: callers read the value only after a success
       Value := 0;
+      --  adamutant:disable-next-line ConditionalExpression: callers read the value only after a success
       if Status = SMB.Ok then
          SMB.Core_Wire.Read_U16 (Packet, Offset, Value, Status);
       end if;
@@ -637,11 +692,16 @@ package body SMB.Core_Protocol with SPARK_Mode is
              and then Value = SMB.Core_Wire.Encoded_U32 (Packet, Offset))
    is
    begin
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: callers read the value only after a success
       Value := 0;
+      --  adamutant:disable-next-line ConditionalExpression: callers read the value only after a success
       if Status = SMB.Ok then
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: callers check the packet length first
          if Offset > Packet'Length
+           --  adamutant:disable-next-line LogicalOperator, ArithmeticOperator: callers check the packet length first
            or else Packet'Length - Offset < 4
          then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := SMB.Invalid_Offset;
          else
             SMB.Core_Wire.Read_U32 (Packet, Offset, Value, Status);
@@ -660,7 +720,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
              and then Value = SMB.Core_Wire.Encoded_U64 (Packet, Offset))
    is
    begin
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: callers read the value only after a success
       Value := 0;
+      --  adamutant:disable-next-line ConditionalExpression: callers read the value only after a success
       if Status = SMB.Ok then
          SMB.Core_Wire.Read_U64 (Packet, Offset, Value, Status);
       end if;
@@ -680,10 +742,14 @@ package body SMB.Core_Protocol with SPARK_Mode is
      (Packet : SMB.Bytes;
       Info : out Response_Info;
       Status : out SMB.Core_Status) is
+      --  adamutant:disable-next-line NumericLiteral: written before it is read; the value is for flow analysis
       Count : SMB.Word := 0;
+      --  adamutant:disable-next-line NumericLiteral: written before it is read; the value is for flow analysis
       Byte_Count : SMB.DWord := 0;
+      --  adamutant:disable-next-line NumericLiteral: written before it is read; the value is for flow analysis
       Available : Natural := 0;
    begin
+      --  adamutant:disable-next-line StatementDeletion: every field read later is written first
       Info := (others => <>);
       Status := SMB.Ok;
       if Packet'Length < 72 then
@@ -714,8 +780,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Nt_Status : SMB.DWord;
       Info : out Response_Info;
       Status : out SMB.Core_Status) is
+      --  adamutant:disable-next-line NumericLiteral: written before it is read; the value is for flow analysis
       Structure : SMB.Word := 0;
+      --  adamutant:disable-next-line NumericLiteral: written before it is read; the value is for flow analysis
       Word_Value : SMB.Word := 0;
+      --  adamutant:disable-next-line NumericLiteral: written before it is read; the value is for flow analysis
       DWord_Value : SMB.DWord := 0;
       Offset : Natural;
       Length : Natural;
@@ -740,6 +809,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Parse_Error (Packet, Info, Status);
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, NumericLiteral: each command branch requires a longer packet
       if Packet'Length < 64 then
          Status := SMB.Invalid_Length;
          return;
@@ -787,12 +857,17 @@ package body SMB.Core_Protocol with SPARK_Mode is
            Natural (SMB.DWord'Min (Maximum_IO_Chunk, DWord_Value));
          Read_U16 (Packet, 120, Word_Value, Header_Status);
          Read_U16 (Packet, 122, Structure, Header_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the packet length was checked, so the reads succeed
          if Header_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := Header_Status;
             return;
          end if;
+         --  An offset past the end is wrong even for an empty token, which
+         --  the final bounds check never sees.
          if SMB.QWord (Word_Value) > SMB.QWord (Packet'Length)
            or else SMB.QWord (Structure) >
+             --  adamutant:disable-next-line ArithmeticOperator: a token past the end fails the final bounds check as well
              SMB.QWord (Packet'Length) - SMB.QWord (Word_Value)
          then
             Status := SMB.Invalid_Offset;
@@ -825,12 +900,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Offset := Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68));
          Length := Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70));
          if Length > 0 and then Offset < 72 then
-            Status := SMB.Invalid_Offset;
-            return;
-         end if;
-         if Offset > Packet'Length
-           or else Length > Packet'Length - Offset
-         then
             Status := SMB.Invalid_Offset;
             return;
          end if;
@@ -870,15 +939,19 @@ package body SMB.Core_Protocol with SPARK_Mode is
             Info.File_Id (I) := Packet (Packet'First + 128 + I);
          end loop;
          Read_U32 (Packet, 144, DWord_Value, Header_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the check below rejects the same offsets
          if not Fits (DWord_Value, Packet'Length) then
             Status := SMB.Invalid_Offset;
             return;
          end if;
          Offset := Natural (DWord_Value);
+         --  Fits above already bounds the offset; this check is for the prover.
+         --  adamutant:disable ConditionalExpression, EqualityOperator, StatementDeletion
          if Offset > Packet'Length then
             Status := SMB.Invalid_Offset;
             return;
          end if;
+         --  adamutant:enable ConditionalExpression, EqualityOperator, StatementDeletion
          Read_U32 (Packet, 148, DWord_Value, Header_Status);
          if not Fits (DWord_Value, Packet'Length - Offset) then
             Status := SMB.Invalid_Offset;
@@ -900,6 +973,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Offset := Natural (Packet (Packet'First + 66));
          Read_U32 (Packet, 68, DWord_Value, Header_Status);
          if DWord_Value > SMB.DWord (Maximum_IO_Chunk)
+           --  adamutant:disable-next-line LogicalOperator, NumericLiteral: the test before it reads the same field
            or else SMB.Core_Wire.Encoded_U32 (Packet, 68) >
              SMB.DWord (Maximum_IO_Chunk)
          then
@@ -907,9 +981,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Length := Natural (DWord_Value);
-         if Offset > Packet'Length
-           or else Length > Packet'Length - Offset
-           or else (Length > 0 and then Offset < 80)
+         if Length > 0 and then Offset < 80
          then
             Status := SMB.Invalid_Offset;
             return;
@@ -959,9 +1031,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          end if;
          Offset := Natural (Word_Value);
          Length := Natural (DWord_Value);
-         if Offset > Packet'Length
-           or else Length > Packet'Length - Offset
-           or else (Length > 0 and then Offset < 72)
+         if Length > 0 and then Offset < 72
          then
             Status := SMB.Invalid_Offset;
             return;
@@ -979,6 +1049,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          if Structure /= 2 then
             Status := SMB.Invalid_Protocol;
          end if;
+      --  adamutant:disable-next-line ConditionalExpression: the case at the start rejects every other command
       elsif Command = Tree_Disconnect_Command
         or else Command = Logoff_Command
       then
@@ -991,19 +1062,15 @@ package body SMB.Core_Protocol with SPARK_Mode is
             Status := SMB.Invalid_Protocol;
          end if;
       else
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Unsupported_Feature;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, LogicalOperator: the packet length was checked, so the reads succeed
       if Header_Status /= SMB.Ok and then Status = SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Header_Status;
       end if;
-      if Status = SMB.Ok and then Command = 14
-        and then Nt_Status = SMB.Success
-      then
-         Info.Data_Offset :=
-           Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66));
-         Info.Data_Length :=
-           Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68));
-      end if;
+      --  The one bounds check of the data that a branch above recorded.
       if Status = SMB.Ok
         and then
           (Info.Data_Offset > Packet'Length
@@ -1027,13 +1094,16 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Name_Length_Value : Natural;
       Text_Status : SMB.Core_Status;
    begin
+      --  adamutant:disable-next-line StatementDeletion: every field read later is written first
       Info := (others => <>);
       Status := SMB.Ok;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: fewer than 104 bytes fail the next check the same way
       if Cursor >= Buffer'Length then
          Status := SMB.Invalid_Length;
          return;
       end if;
       Remaining := Buffer'Length - Cursor;
+      --  adamutant:disable-next-line EqualityOperator, NumericLiteral: an entry of 104 bytes has no room for the name it needs
       if Remaining < 104 then
          Status := SMB.Invalid_Length;
          return;
@@ -1044,9 +1114,12 @@ package body SMB.Core_Protocol with SPARK_Mode is
         SMB.Core_Wire.Encoded_U32 (Buffer, Cursor + 56);
       Name_Length := SMB.Core_Wire.Encoded_U32 (Buffer, Cursor + 60);
       Short_Name_Length := Buffer (Buffer'First + Cursor + 68);
+      --  adamutant:disable-next-line ArithmeticOperator: a longer name fails the entry length check below the same way
       if not Fits (Name_Length, Remaining - 104)
+        --  adamutant:disable-next-line LogicalOperator: a longer name fails the entry length check below the same way
         or else not Fits (Name_Length, Maximum_Name_Bytes)
         or else Name_Length = 0
+        --  adamutant:disable-next-line NumericLiteral: an odd short name fails the next check the same way
         or else Short_Name_Length > 24
         or else Short_Name_Length mod 2 /= 0
       then
@@ -1060,7 +1133,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
       if Next_Offset = 0 then
          Entry_Length := Remaining;
          Info.Next_Cursor := Buffer'Length;
+      --  adamutant:disable-next-line EqualityOperator: the entry length check below rejects the same offsets
       elsif Next_Offset >= SMB.DWord (Remaining)
+        --  adamutant:disable-next-line EqualityOperator, NumericLiteral, LogicalOperator: an entry of 104 bytes has no room for the name it needs, and the entry length check rejects the rest
         or else Next_Offset < 104
         or else Next_Offset mod 8 /= 0
       then
@@ -1071,6 +1146,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Info.Next_Cursor := Cursor + Entry_Length;
       end if;
       if Entry_Length > Remaining
+        --  adamutant:disable-next-line LogicalOperator: the checks above already bound the entry length
         or else (Next_Offset /= 0 and then Entry_Length = Remaining)
         or else Natural (Name_Length) > Entry_Length - 104
       then
@@ -1079,16 +1155,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
       end if;
       Name_Offset_Value := Cursor + 104;
       Name_Length_Value := Natural (Name_Length);
-      if Name_Offset_Value > Buffer'Length
-        or else Name_Length_Value > Buffer'Length - Name_Offset_Value
-      then
-         Status := SMB.Invalid_Offset;
-         return;
-      end if;
-      if Name_Length_Value mod 2 /= 0 then
-         Status := SMB.Invalid_Offset;
-         return;
-      end if;
       SMB.Core_Text.Validate_UTF16
         (Buffer (Buffer'First + Name_Offset_Value
            .. Buffer'Last
@@ -1100,10 +1166,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
       end if;
       Info.Name_Offset := Name_Offset_Value;
       Info.Name_Length := Name_Length_Value;
-      if Info.Next_Cursor <= Cursor or else Info.Next_Cursor > Buffer'Length then
-         Status := SMB.Invalid_Offset;
-         return;
-      end if;
       Cursor := Info.Next_Cursor;
    end Parse_Directory_Entry;
 
