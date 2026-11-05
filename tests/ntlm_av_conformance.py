@@ -96,9 +96,9 @@ def fixtures() -> list[tuple[str, str]]:
         key, expected = expected_auth(raw, pairs, clock)
         cases.append((label, f"{token.hex()} {clock} {key.hex()} {expected.hex()}"))
 
-    def bad(label: str, info: bytes) -> None:
+    def bad(label: str, info: bytes, status: str = "-") -> None:
         token, _ = challenge_token(info)
-        cases.append((label, f"{token.hex()} 0 - -"))
+        cases.append((label, f"{token.hex()} 0 {status} -"))
 
     baseline = names + [(7, bytes.fromhex("0807060504030201")), (6, struct.pack("<I", 2))]
     good("known-answer", baseline)
@@ -115,29 +115,39 @@ def fixtures() -> list[tuple[str, str]]:
         good("optional Unicode name", names + [(kind, "名前😀".encode("utf-16le"))])
         good("empty optional name", names + [(kind, b"")])
     good("zero channel binding", names + [(10, b"\0" * 16)])
+    good("zero channel binding before the names", [(10, b"\0" * 16)] + names)
+    for kind, value in ((8, b"\x11" * 48), (11, b"ab"), (0xFFFF, b"")):
+        good("other AV passed through", names + [(kind, value)])
+    # AUTHENTICATE tokens whose DER lengths run through 255 and 256.
+    for computer in (COMPUTER, "Serv".encode("utf-16le")):
+        for size in range(32):
+            good("DER length boundaries", [(1, computer), (2, DOMAIN), (8, b"\x11" * size)])
     encoded_names = b"".join(av(k, v) for k, v in names)
     for kind in (1, 2, 3, 4, 5, 9):
         others = b"".join(av(k, v) for k, v in names if k != kind)
         for value in (b"x", b"\0\xd8", b"\0\xdc", b"\0\0", b"x\0\0\0"):
-            bad("invalid Unicode name", others + av(kind, value) + EOL)
+            bad("invalid Unicode name", others + av(kind, value) + EOL, "Invalid_Encoding")
         if kind in (1, 2):
-            bad("empty mandatory name", others + av(kind, b"") + EOL)
+            bad("empty mandatory name", others + av(kind, b"") + EOL, "Invalid_Encoding")
     for kind, width in ((6, 4), (7, 8), (10, 16)):
         for length in (0, 1, width - 1, width + 1, 32):
-            bad("fixed-width AV length", encoded_names + av(kind, b"\0" * length) + EOL)
+            bad("fixed-width AV length", encoded_names + av(kind, b"\0" * length) + EOL, "Invalid_Length")
     for position in range(16):
         value = bytearray(16)
         value[position] = 1
-        bad("unsupported nonzero channel binding", encoded_names + av(10, value) + EOL)
+        bad("unsupported nonzero channel binding", encoded_names + av(10, value) + EOL, "Invalid_Protocol")
     for kind, value in baseline + [(3, b"a\0"), (4, b"a\0"), (5, b"a\0"), (9, b"a\0"), (10, b"\0" * 16)]:
         others = b"".join(av(k, v) for k, v in names if k != kind)
-        bad("duplicate known AV", others + av(kind, value) * 2 + EOL)
-    bad("missing computer", av(2, DOMAIN) + EOL)
-    bad("missing domain", av(1, COMPUTER) + EOL)
-    bad("missing terminator", encoded_names)
-    bad("nonempty terminator", encoded_names + av(0, b"x"))
-    bad("bytes after terminator", encoded_names + EOL + EOL)
-    bad("entry exceeds remaining bytes", encoded_names + struct.pack("<HH", 7, 65535) + EOL)
+        bad("duplicate known AV", others + av(kind, value) * 2 + EOL, "Invalid_Encoding")
+    bad("missing computer", av(2, DOMAIN) + EOL, "Invalid_Encoding")
+    bad("missing domain", av(1, COMPUTER) + EOL, "Invalid_Encoding")
+    bad("missing terminator", encoded_names, "Invalid_Encoding")
+    bad("nonempty terminator", encoded_names + av(0, b"x"), "Invalid_Encoding")
+    bad("bytes after terminator", encoded_names + EOL + EOL, "Invalid_Encoding")
+    bad("entry exceeds remaining bytes", encoded_names + struct.pack("<HH", 7, 65535) + EOL, "Invalid_Length")
+    # A TargetInfo that fits the challenge but not the AUTHENTICATE message.
+    bad("AUTHENTICATE message over 65,535 bytes", encoded_names + av(8, b"\x11" * 65350) + EOL,
+        "Resource_Limit")
     valid_info = b"".join(av(k, v) for k, v in baseline) + EOL
     for cut in range(len(valid_info)):
         bad("truncated AV list", valid_info[:cut])
