@@ -88,12 +88,14 @@ is
       State : SMB.Engine.Engine_State) return Boolean is
      (case Kind is
         when Negotiate =>
-          --  adamutant:disable-next-line LogicalOperator: SMB.Engine.Begin_Request rejects the same states with the same status
+          --  SMB.Engine.Begin_Request rejects the same states with the same status.
+          --  adamutant:disable LogicalOperator
           SMB.Engine.Current_Phase (State) =
             SMB.Engine.Transport_Connected
           and then SMB.Engine.Current_Session_Id (State) = 0
           and then SMB.Engine.Current_Tree_Id (State) = 0
           and then not SMB.Engine.Has_Signing_Key (State),
+          --  adamutant:enable LogicalOperator
         when Tree_Connect =>
           SMB.Engine.Current_Phase (State) = SMB.Engine.Authenticated
           --  adamutant:disable-next-line LogicalOperator: SMB.Engine.Begin_Request rejects the same states with the same status
@@ -115,7 +117,8 @@ is
      (Snapshot : Connection_State_Snapshot;
       State : SMB.Engine.Engine_State;
       Kind : Connection_Kind) return Boolean is
-     --  adamutant:disable-next-line LogicalOperator: Prepare checks the stage first, and SMB.Engine.Begin_Request rejects the same states with the same status
+     --  Prepare checks the stage first, and SMB.Engine.Begin_Request rejects the same states with the same status.
+     --  adamutant:disable LogicalOperator
      (Snapshot.Stage = Idle
       and then Kind /= No_Connection
       and then Snapshot.Kind = No_Connection
@@ -123,6 +126,7 @@ is
       and then SMB.Engine.Current_Owner_Id (State) /= 0
       and then Phase_Matches (Kind, State)
       and then not SMB.Engine.Has_Pending_Request (State)
+      --  adamutant:enable LogicalOperator
       and then not SMB.Engine.Has_Validated_Response (State)
       and then
         (Kind = Negotiate or else SMB.Engine.Has_Signing_Key (State)));
@@ -130,10 +134,12 @@ is
    function Continuation_Context_Matches
      (Snapshot : Connection_State_Snapshot;
       State : SMB.Engine.Engine_State) return Boolean is
-     --  adamutant:disable-next-line LogicalOperator: every caller checks the stage first
+     --  Every caller checks the stage first.
+     --  adamutant:disable LogicalOperator
      (Snapshot.Stage in Prepared | Sent
       and then Snapshot.Kind /= No_Connection
       and then Phase_Matches (Snapshot.Kind, State)
+      --  adamutant:enable LogicalOperator
       and then Snapshot.Owner = SMB.Engine.Current_Owner_Id (State)
       and then Snapshot.Epoch = SMB.Engine.Current_Epoch (State)
       and then Snapshot.Starting_Phase =
@@ -300,7 +306,7 @@ is
       end if;
       if Expected.Request_Signed then
          SMB.Core_Wire.Write_U32 (Packet, 16, 8, Field_Status);
-         --  adamutant:disable-next-line ConditionalExpression: a header fits the packet, so the write succeeds
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: a header fits the packet, so the write succeeds
          if Field_Status /= SMB.Ok then
             --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := Field_Status;
