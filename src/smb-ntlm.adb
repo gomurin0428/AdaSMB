@@ -2,13 +2,16 @@ with SMB.Core_Auth;
 with SMB.Crypto;
 
 package body SMB.NTLM is
+   --  Build_Negotiate_Token and Authenticate write every byte of Buffer, so
+   --  it needs no initial value.
+
    function Negotiate_Token return SMB.Bytes is
-      Buffer : SMB.Bytes
-        (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
-      Used : Natural := 0;
+      Buffer : SMB.Bytes (0 .. SMB.Core_Auth.Maximum_Security_Token - 1);
+      Used : Natural;
       Status : SMB.Core_Status;
    begin
       SMB.Core_Auth.Build_Negotiate_Token (Buffer, Used, Status);
+      --  adamutant:disable-next-line ConditionalExpression, LogicalOperator, NumericLiteral: the token always fits the buffer and is longer than one byte
       if Status /= SMB.Ok or else Used = 0 then
          raise SMB.Authentication_Error with
            "SPNEGO negotiate token could not be constructed";
@@ -22,10 +25,9 @@ package body SMB.NTLM is
       Server_Token : SMB.Bytes;
       Current_Filetime : SMB.QWord := 0) return Authentication_Result
    is
-      Buffer : SMB.Bytes
-        (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
-      Used : Natural := 0;
-      Key : SMB.Crypto.Digest_128 := (others => 0);
+      Buffer : SMB.Bytes (0 .. SMB.Core_Auth.Maximum_Security_Token - 1);
+      Used : Natural;
+      Key : SMB.Crypto.Digest_128;
       Status : SMB.Core_Status;
    begin
       if User'Length > SMB.Core_Auth.Maximum_Credential_Bytes
@@ -43,6 +45,7 @@ package body SMB.NTLM is
       SMB.Core_Auth.Authenticate
         (User, Password, Domain, Nonce, Server_Token,
          Current_Filetime, Buffer, Used, Key, Status);
+      --  adamutant:disable-next-line LogicalOperator, NumericLiteral: a failure leaves Used at 0, and a token is longer than one byte
       if Status /= SMB.Ok or else Used = 0 then
          if Status = SMB.Resource_Limit
            or else Status = SMB.Unsupported_Feature

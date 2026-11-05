@@ -138,7 +138,9 @@ package body SMB.Core_Text is
       Remaining : Natural;
    begin
       Scalar := 0;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: the only caller loops while Position < Value'Length
       if Position >= Value'Length then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Encoding;
          return;
       end if;
@@ -357,6 +359,7 @@ package body SMB.Core_Text is
             pragma Assert (Byte_At (Target, Previous_Written) = Byte_Value);
          end Emit_Byte;
       begin
+         --  adamutant:disable-next-line StatementDeletion: Emit_Byte writes every character; the clear is for flow analysis
          Target := (others => Character'Val (0));
          if Value <= 16#7F# then
             Emit_Byte (Value);
@@ -516,6 +519,7 @@ package body SMB.Core_Text is
          Status := SMB.Invalid_Length;
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: for an empty Input the loop is empty too
       if Input'Length > 0 then
          for Offset in 0 .. Input'Length - 1 loop
             Character_Code := Character'Pos (Input (Input'First + Offset));
@@ -551,6 +555,7 @@ package body SMB.Core_Text is
          Status := SMB.Invalid_Value;
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: for an empty Input the loop is empty too
       if Input'Length > 0 then
          for Offset in 0 .. Input'Length - 1 loop
             Output (Output'First + Offset) :=

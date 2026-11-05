@@ -6,6 +6,7 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status : out SMB.Core_Status) is
    begin
       Value := 0;
+      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 2 then
          Status := SMB.Invalid_Offset;
          return;
@@ -22,6 +23,7 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status : out SMB.Core_Status) is
    begin
       Value := 0;
+      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 4 then
          Status := SMB.Invalid_Offset;
          return;
@@ -42,6 +44,7 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status : out SMB.Core_Status) is
    begin
       Value := 0;
+      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 8 then
          Status := SMB.Invalid_Offset;
          return;
@@ -69,6 +72,7 @@ package body SMB.Core_Wire with SPARK_Mode is
      (Data : in out SMB.Bytes; Offset : Natural; Value : SMB.Word;
       Status : out SMB.Core_Status) is
    begin
+      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 2 then
          Status := SMB.Invalid_Offset;
          return;
@@ -83,6 +87,7 @@ package body SMB.Core_Wire with SPARK_Mode is
      (Data : in out SMB.Bytes; Offset : Natural; Value : SMB.DWord;
       Status : out SMB.Core_Status) is
    begin
+      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 4 then
          Status := SMB.Invalid_Offset;
          return;
@@ -99,6 +104,7 @@ package body SMB.Core_Wire with SPARK_Mode is
      (Data : in out SMB.Bytes; Offset : Natural; Value : SMB.QWord;
       Status : out SMB.Core_Status) is
    begin
+      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 8 then
          Status := SMB.Invalid_Offset;
          return;
@@ -144,38 +150,20 @@ package body SMB.Core_Wire with SPARK_Mode is
         (others => 0);
       Data (Data'First .. Data'First + 3) :=
         (16#FE#, 16#53#, 16#4D#, 16#42#);
+      --  The buffer holds a whole header, so every field write succeeds.
       Write_U16 (Data, 4, Header_Size, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
+      pragma Assert (Field_Status = SMB.Ok);
       Write_U16 (Data, 6, 1, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
+      pragma Assert (Field_Status = SMB.Ok);
       Write_U16 (Data, 12, SMB.Word (Command), Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
+      pragma Assert (Field_Status = SMB.Ok);
       Write_U16 (Data, 14, Credit, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
+      pragma Assert (Field_Status = SMB.Ok);
       Write_U64 (Data, 24, Message_Id, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
+      pragma Assert (Field_Status = SMB.Ok);
       Write_U32 (Data, 36, Tree_Id, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
-      Write_U64 (Data, 40, Session_Id, Field_Status);
-      Status := Field_Status;
+      pragma Assert (Field_Status = SMB.Ok);
+      Write_U64 (Data, 40, Session_Id, Status);
    end Initialize_Header;
 
    procedure Validate_Header
@@ -186,15 +174,12 @@ package body SMB.Core_Wire with SPARK_Mode is
       Async_Id : SMB.QWord := 0;
       Interim : Boolean := False) is
       pragma Assertion_Policy (Loop_Invariant => Ignore);
-      Structure_Size : SMB.Word;
       Command : SMB.Word;
       Credit : SMB.Word;
       Flags : SMB.DWord;
-      Reserved : SMB.DWord;
       Message_Id : SMB.QWord;
       Tree_Id : SMB.DWord;
       Session_Id : SMB.QWord;
-      Field_Status : SMB.Core_Status;
       Signature_Zero : Boolean := True;
    begin
       Nt_Status := 0;
@@ -210,49 +195,28 @@ package body SMB.Core_Wire with SPARK_Mode is
          Status := SMB.Invalid_Protocol;
          return;
       end if;
-      Read_U16 (Data, 4, Structure_Size, Field_Status);
-      if Field_Status /= SMB.Ok or else Structure_Size /= Header_Size then
+      --  The header is at least Header_Size bytes long, so every field below
+      --  can be read without a status.
+      if Encoded_U16 (Data, 4) /= Header_Size then
          Status := SMB.Invalid_Protocol;
          return;
       end if;
-      Read_U16 (Data, 12, Command, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
-      Read_U16 (Data, 14, Credit, Field_Status);
-      if Field_Status /= SMB.Ok
-        or else (Async_Id = 0 and then Credit = 0)
+      Command := Encoded_U16 (Data, 12);
+      Credit := Encoded_U16 (Data, 14);
+      if (Async_Id = 0 and then Credit = 0)
         or else (Async_Id /= 0 and then not Interim and then Credit /= 0)
       then
          Status := SMB.Invalid_Protocol;
          return;
       end if;
-      Read_U32 (Data, 16, Flags, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
-      Read_U32 (Data, 20, Reserved, Field_Status);
-      if Field_Status /= SMB.Ok or else Reserved /= 0 then
+      Flags := Encoded_U32 (Data, 16);
+      if Encoded_U32 (Data, 20) /= 0 then
          Status := SMB.Invalid_Protocol;
          return;
       end if;
-      Read_U64 (Data, 24, Message_Id, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
-      Read_U32 (Data, 36, Tree_Id, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
-      Read_U64 (Data, 40, Session_Id, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
+      Message_Id := Encoded_U64 (Data, 24);
+      Tree_Id := Encoded_U32 (Data, 36);
+      Session_Id := Encoded_U64 (Data, 40);
       if (Flags and 1) = 0
         or else ((Flags and 2) /= 0) /= (Interim or Async_Id /= 0)
       then

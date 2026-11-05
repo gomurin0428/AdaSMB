@@ -16,6 +16,11 @@ LAST = dt.date(9999, 12, 31)
 TICKS = 10_000_000
 
 
+def filetime_now():
+    delta = dt.datetime.now(dt.timezone.utc) - dt.datetime(1601, 1, 1, tzinfo=dt.timezone.utc)
+    return delta // dt.timedelta(microseconds=1) * 10
+
+
 def time_case(year, month, day, seconds=0, ticks=0):
     result, value = "Invalid_Value", 0
     if 1601 <= year <= 9999 and 0 <= seconds <= 86400 and 0 <= ticks < TICKS:
@@ -87,17 +92,28 @@ def main():
         print(result.stdout + result.stderr, file=sys.stderr)
         raise RuntimeError("clock conformance failed")
 
+    # SMB.Clock reads the system clock in UTC. The bounds leave room for a
+    # slow start of the probe, but not for any time zone offset.
+    lower = filetime_now() - 5 * TICKS
+    current = subprocess.run([str(probe)], input=f"N {lower} {lower + 40 * TICKS}\n",
+                             text=True, capture_output=True, timeout=30)
+    if current.returncode != 0 or current.stdout.strip() != "PASS 1":
+        print(current.stdout + current.stderr, file=sys.stderr)
+        raise RuntimeError("current FILETIME differs from the system clock in UTC")
+
     for fixture, diagnostic in (
         ("T 1970 1 1 0 0 116444736000000001 Ok\n", "FILETIME mismatch"),
         ("T 1900 2 29 0 0 0 Ok\n", "FILETIME mismatch"),
         ("S 23 59 59 True 86399\n", "seconds mismatch"),
         ("F 0.000000099 1\n", "fraction mismatch"),
+        ("N 0 1\n", "current FILETIME out of bounds"),
     ):
         check = subprocess.run([str(probe)], input=fixture, text=True,
                                capture_output=True, timeout=30)
         if check.returncode == 0 or diagnostic not in check.stderr:
             raise RuntimeError("clock sensitivity check failed or could not execute")
-    print(f"PASS: {sum(counts.values())} clock cases; four sensitivity checks")
+    print(f"PASS: {sum(counts.values())} clock cases; the current time; "
+          "five sensitivity checks")
     for category, count in counts.items():
         print(f"  {category}: {count}")
 

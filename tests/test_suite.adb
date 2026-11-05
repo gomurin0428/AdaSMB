@@ -1,3 +1,4 @@
+with Ada.Exceptions;
 with Ada.Text_IO;
 with Ada.Streams;
 with Ada.Command_Line;
@@ -50,6 +51,27 @@ procedure Test_Suite is
          raise Program_Error with Message;
       end if;
    end Assert;
+
+   --  Fails unless Action raises the exception Error.
+   procedure Expect_Error
+     (Action : not null access procedure;
+      Error : Ada.Exceptions.Exception_Id;
+      Message : String)
+   is
+      use type Ada.Exceptions.Exception_Id;
+   begin
+      begin
+         Action.all;
+      exception
+         when Raised : others =>
+            if Ada.Exceptions.Exception_Identity (Raised) = Error then
+               return;
+            end if;
+            raise Program_Error with
+              Message & ": raised " & Ada.Exceptions.Exception_Name (Raised);
+      end;
+      raise Program_Error with Message;
+   end Expect_Error;
 
    procedure Test_Authentication_Preflight is
       procedure Check
@@ -463,6 +485,59 @@ procedure Test_Suite is
             when SMB.Protocol_Error => null;
          end;
       end;
+      declare
+         Limit : constant String (1 .. SMB.Maximum_Frame_Size) :=
+           (others => 'a');
+         UTF16 : constant SMB.Bytes := SMB.Text.To_UTF16LE (Limit);
+         User : constant String := SMB.Text.NTLM_Username (Limit);
+         Back : constant String := SMB.Text.From_UTF16LE
+           (UTF16 (UTF16'First .. UTF16'First + SMB.Maximum_Frame_Size - 1));
+      begin
+         Assert
+           (UTF16'Length = 2 * Limit'Length, "public UTF-8 input at the limit");
+         Assert
+           (User'Length = Limit'Length
+            and then (for all C of User => C = 'A'),
+            "public username at the limit");
+         Assert
+           (Back = Limit (1 .. SMB.Maximum_Frame_Size / 2),
+            "public UTF-16 input at the limit");
+      end;
+      --  Continuation bytes just above 16#BF# in each position of a
+      --  four-byte sequence; a low surrogate first; a high surrogate
+      --  followed by U+E000.
+      declare
+         C0 : constant Character := Character'Val (16#C0#);
+         F1 : constant Character := Character'Val (16#F1#);
+         X : constant Character := Character'Val (16#80#);
+         Output_16 : SMB.Bytes (1 .. 8);
+         Output_8 : String (1 .. 8);
+         Used : Natural;
+         Status : SMB.Core_Status;
+
+         procedure Reject_UTF8 (Input : String; Message : String) is
+         begin
+            SMB.Core_Text.UTF8_To_UTF16 (Input, Output_16, Used, Status);
+            Assert (Status = SMB.Invalid_Encoding, Message);
+         end Reject_UTF8;
+
+         procedure Reject_UTF16 (Input : SMB.Bytes; Message : String) is
+         begin
+            SMB.Core_Text.UTF16_To_UTF8 (Input, Output_8, Used, Status);
+            Assert (Status = SMB.Invalid_Encoding, Message);
+            SMB.Core_Text.Validate_UTF16 (Input, Status);
+            Assert (Status = SMB.Invalid_Encoding, Message & " (validation)");
+         end Reject_UTF16;
+      begin
+         SMB.Core_Text.UTF8_To_UTF16 (F1 & X & X & X, Output_16, Used, Status);
+         Assert (Status = SMB.Ok and then Used = 4, "U+40000 in UTF-8");
+         Reject_UTF8 (F1 & C0 & X & X, "second byte C0 of four");
+         Reject_UTF8 (F1 & X & C0 & X, "third byte C0 of four");
+         Reject_UTF8 (F1 & X & X & C0, "fourth byte C0 of four");
+         Reject_UTF16 ((16#00#, 16#DC#, 16#00#, 16#DC#), "leading low surrogate");
+         Reject_UTF16
+           ((16#00#, 16#D8#, 16#00#, 16#E0#), "high surrogate before U+E000");
+      end;
    end Test_UTF_Capacity;
 
    procedure Test_Path_Contracts is
@@ -734,8 +809,10 @@ procedure Test_Suite is
       SMB.Core_Transport.Advance_Write (Chunk, 8, Position, Status);
       Assert (Status = SMB.Invalid_Length and then Position = 2,
               "zero send does not advance");
+      SMB.Core_Transport.Advance_Write (Chunk, 9, Position, Status);
+      Assert (Status = SMB.Ok and then Position = 3, "one-element send");
       SMB.Core_Transport.Advance_Write (Chunk, 12, Position, Status);
-      Assert (Status = SMB.Invalid_Length and then Position = 2,
+      Assert (Status = SMB.Invalid_Length and then Position = 3,
               "send overcount does not advance");
       SMB.Core_Transport.Advance_Write (Chunk, 11, Position, Status);
       Assert (Status = SMB.Ok and then Position = 5, "complete partial send");
@@ -1041,6 +1118,28 @@ procedure Test_Suite is
         (SMB.Wire.U64 (Signed, 24) = 124
          and then (for all Index in 164 .. 179 => Signed (Index) = 0),
          "public header initialization must clear a reused packet body");
+      --  STATUS_PENDING belongs to interim responses only, and an interim
+      --  response must carry it.
+      declare
+         Header : SMB.Bytes (0 .. 63) := (others => 0);
+         Expected : constant SMB.Core_Wire.Expected_Header :=
+           (Command => 8, Message_Id => 7, Tree_Id => 0, Session_Id => 0,
+            Match_Tree => False, Match_Session => False, Signed => False);
+         Nt_Status : SMB.DWord;
+      begin
+         SMB.Core_Wire.Initialize_Header (Header, 8, 7, 0, 0, 1, Status);
+         SMB.Core_Wire.Write_U32 (Header, 16, 1, Status);
+         SMB.Core_Wire.Write_U32 (Header, 8, SMB.Status_Pending, Status);
+         SMB.Core_Wire.Validate_Header (Header, Expected, Nt_Status, Status);
+         Assert (Status = SMB.Invalid_Protocol,
+                 "STATUS_PENDING in a final response");
+         SMB.Core_Wire.Write_U32 (Header, 8, 0, Status);
+         SMB.Core_Wire.Write_U32 (Header, 16, 3, Status);
+         SMB.Core_Wire.Validate_Header
+           (Header, Expected, Nt_Status, Status, Interim => True);
+         Assert (Status = SMB.Invalid_Protocol,
+                 "interim response without STATUS_PENDING");
+      end;
    end Test_Core_Wire;
 
    function ASCII (Value : String) return SMB.Bytes is
@@ -1289,6 +1388,32 @@ procedure Test_Suite is
       end;
       Ada.Text_IO.Put_Line
         ("incremental HMAC-SHA256: 201 two-part splits passed");
+      --  Starting again discards what an unfinished context has taken in.
+      declare
+         Key : constant SMB.Bytes := (16#0B#, 16#0B#, 16#0B#, 16#0B#);
+         Message : constant SMB.Bytes := (16#61#, 16#62#, 16#63#);
+         SHA_Context : SMB.Crypto.HMAC_SHA256_Context;
+         SHA_Digest : SMB.Crypto.Digest_256;
+         MD5_Context : SMB.Crypto.HMAC_MD5_Context;
+         MD5_Digest : SMB.Crypto.Digest_128;
+      begin
+         SMB.Crypto.HMAC_SHA256_Start (SHA_Context, Key);
+         SMB.Crypto.HMAC_SHA256_Update (SHA_Context, Message);
+         SMB.Crypto.HMAC_SHA256_Start (SHA_Context, Key);
+         SMB.Crypto.HMAC_SHA256_Update (SHA_Context, Message);
+         SMB.Crypto.HMAC_SHA256_Finish (SHA_Context, SHA_Digest);
+         Assert_Equal
+           (SHA_Digest, SMB.Crypto.HMAC_SHA256 (Key, Message),
+            "restarted HMAC-SHA256 context");
+         SMB.Crypto.HMAC_MD5_Start (MD5_Context, Key);
+         SMB.Crypto.HMAC_MD5_Update (MD5_Context, Message);
+         SMB.Crypto.HMAC_MD5_Start (MD5_Context, Key);
+         SMB.Crypto.HMAC_MD5_Update (MD5_Context, Message);
+         SMB.Crypto.HMAC_MD5_Finish (MD5_Context, MD5_Digest);
+         Assert_Equal
+           (MD5_Digest, SMB.Crypto.HMAC_MD5 (Key, Message),
+            "restarted HMAC-MD5 context");
+      end;
    end Test_Crypto;
 
    procedure Test_NTLM_Authenticate is
@@ -1583,6 +1708,83 @@ procedure Test_Suite is
             and then Small_Auth_Used = 0
             and then Small_Auth_Key = (Small_Auth_Key'Range => 0),
             "short authentication output buffer was accepted");
+      end;
+      --  The public wrapper: its own bounds, and the exception it maps each
+      --  core status to.
+      declare
+         Nonce : constant SMB.Bytes := Hex ("ffffff0011223344");
+         Limit : constant String
+           (1 .. SMB.Core_Auth.Maximum_Credential_Bytes) := (others => 'u');
+         Excess : constant String
+           (1 .. SMB.Core_Auth.Maximum_Credential_Bytes + 1) :=
+           (others => 'u');
+         Limit_Token : constant SMB.Bytes
+           (1 .. SMB.Core_Auth.Maximum_Security_Token) := (others => 0);
+         Excess_Token : constant SMB.Bytes
+           (1 .. SMB.Core_Auth.Maximum_Security_Token + 1) := (others => 0);
+         Core_Negotiate : SMB.Bytes (0 .. 255);
+         Core_Used : Natural;
+         Core_Status : SMB.Core_Status;
+
+         procedure Expect
+           (User, Password, Domain : String; Nonce_Value, Token : SMB.Bytes;
+            Error : Ada.Exceptions.Exception_Id; Message : String)
+         is
+            procedure Run is
+               Ignored : constant SMB.NTLM.Authentication_Result :=
+                 SMB.NTLM.Authenticate
+                   (User, Password, Domain, Nonce_Value, Token);
+            begin
+               null;
+            end Run;
+         begin
+            Expect_Error (Run'Access, Error, Message);
+         end Expect;
+
+         procedure Accept_Limit (User, Password, Domain : String) is
+            Result : constant SMB.NTLM.Authentication_Result :=
+              SMB.NTLM.Authenticate (User, Password, Domain, Nonce, Challenge);
+         begin
+            Assert
+              (Result.Security_Token'Length > 0,
+               "credentials at the length limit");
+         end Accept_Limit;
+      begin
+         SMB.Core_Auth.Build_Negotiate_Token
+           (Core_Negotiate, Core_Used, Core_Status);
+         Assert
+           (Core_Status = SMB.Ok
+            and then SMB.NTLM.Negotiate_Token =
+              Core_Negotiate (0 .. Core_Used - 1),
+            "public negotiate token");
+         Accept_Limit (Limit, "Password", "Domain");
+         Accept_Limit ("User", Limit, "Domain");
+         Accept_Limit ("User", "Password", Limit);
+         Expect
+           (Excess, "Password", "Domain", Nonce, Challenge,
+            SMB.Authentication_Error'Identity, "user over the length limit");
+         Expect
+           ("User", Excess, "Domain", Nonce, Challenge,
+            SMB.Authentication_Error'Identity,
+            "password over the length limit");
+         Expect
+           ("User", "Password", Excess, Nonce, Challenge,
+            SMB.Authentication_Error'Identity, "domain over the length limit");
+         Expect
+           ("User", "Password", "Domain", Nonce (0 .. 6), Challenge,
+            SMB.Authentication_Error'Identity, "seven-byte nonce");
+         Expect
+           ("User", "Password", "Domain", Nonce, Excess_Token,
+            SMB.Authentication_Error'Identity,
+            "server token over the length limit");
+         Expect
+           ("User", "Password", "Domain", Nonce, Limit_Token,
+            SMB.Protocol_Error'Identity,
+            "malformed server token at the length limit");
+         Expect
+           ("", "Password", "Domain", Nonce, Challenge,
+            SMB.Authentication_Error'Identity,
+            "unsupported credentials must not read as a malformed challenge");
       end;
    end Test_NTLM_Authenticate;
 
@@ -7634,6 +7836,116 @@ procedure Test_Suite is
          end;
       end;
    end Test_Text_And_Wire;
+
+   procedure Expect_Protocol_Error
+     (Action : not null access procedure; Message : String) is
+   begin
+      Expect_Error (Action, SMB.Protocol_Error'Identity, Message);
+   end Expect_Protocol_Error;
+
+   procedure Test_Wire_Facade is
+      Packet : SMB.Bytes (0 .. 63) := (others => 0);
+      Short : SMB.Bytes (0 .. 62) := (others => 0);
+      Top : SMB.Bytes (Natural'Last - 63 .. Natural'Last) :=
+        (others => 16#FF#);
+      Key : constant SMB.Bytes (0 .. 15) := (others => 16#11#);
+
+      function Response
+        (Tree_Id : SMB.DWord; Session_Id : SMB.QWord) return SMB.Bytes
+      is
+         Result : SMB.Bytes (0 .. 63) := (others => 0);
+      begin
+         SMB.Wire.Initialize_Header
+           (Result, SMB.Wire.Read_Command, 7, Tree_Id, Session_Id);
+         SMB.Wire.Put_U16 (Result, 6, 1);
+         SMB.Wire.Put_U32 (Result, 16, 1);
+         return Result;
+      end Response;
+
+      function Validate
+        (Data : SMB.Bytes; Tree_Id : SMB.DWord; Session_Id : SMB.QWord)
+         return SMB.DWord
+      is (SMB.Wire.Validate_Header
+            (Data,
+             (Command => SMB.Wire.Read_Command, Message_Id => 7,
+              Tree_Id => Tree_Id, Session_Id => Session_Id,
+              Signed => False)));
+
+      procedure Read_U32 is
+         Ignored : constant SMB.DWord := SMB.Wire.U32 (Packet, 61);
+      begin
+         null;
+      end Read_U32;
+
+      procedure Read_U64 is
+         Ignored : constant SMB.QWord := SMB.Wire.U64 (Packet, 57);
+      begin
+         null;
+      end Read_U64;
+
+      procedure Write_U16 is
+      begin
+         SMB.Wire.Put_U16 (Packet, 63, 1);
+      end Write_U16;
+
+      procedure Write_U32 is
+      begin
+         SMB.Wire.Put_U32 (Packet, 61, 1);
+      end Write_U32;
+
+      procedure Write_U64 is
+      begin
+         SMB.Wire.Put_U64 (Packet, 57, 1);
+      end Write_U64;
+
+      procedure Initialize_Short is
+      begin
+         SMB.Wire.Initialize_Header (Short, SMB.Wire.Read_Command, 1);
+      end Initialize_Short;
+
+      procedure Other_Tree is
+         Ignored : constant SMB.DWord := Validate (Response (2, 0), 1, 0);
+      begin
+         null;
+      end Other_Tree;
+
+      procedure Other_Session is
+         Ignored : constant SMB.DWord := Validate (Response (0, 2), 0, 1);
+      begin
+         null;
+      end Other_Session;
+   begin
+      Expect_Protocol_Error (Read_U32'Access, "U32 past the end was read");
+      Expect_Protocol_Error (Read_U64'Access, "U64 past the end was read");
+      Expect_Protocol_Error (Write_U16'Access, "U16 past the end was written");
+      Expect_Protocol_Error (Write_U32'Access, "U32 past the end was written");
+      Expect_Protocol_Error (Write_U64'Access, "U64 past the end was written");
+      Expect_Protocol_Error
+        (Initialize_Short'Access, "header in a 63-byte buffer was accepted");
+      --  A header that fills the buffer up to Natural'Last has no body to
+      --  clear, and the body's first index would overflow.
+      SMB.Wire.Initialize_Header (Top, SMB.Wire.Read_Command, 9);
+      Assert (SMB.Wire.U64 (Top, 24) = 9, "header ending at Natural'Last");
+      Assert
+        (Validate (Response (5, 9), 0, 0) = 0,
+         "zero expected tree and session ids must not be compared");
+      Assert
+        (Validate (Response (5, 9), 5, 9) = 0,
+         "matching tree and session ids");
+      Expect_Protocol_Error (Other_Tree'Access, "wrong tree id was accepted");
+      Expect_Protocol_Error
+        (Other_Session'Access, "wrong session id was accepted");
+      declare
+         Failed : SMB.Bytes := Response (5, 9);
+      begin
+         SMB.Wire.Put_U32 (Failed, 8, 16#C0AB_CD22#);
+         Assert (Validate (Failed, 5, 9) = 16#C0AB_CD22#,
+                 "every byte of the NT status");
+      end;
+      SMB.Wire.Sign (Top, Key);
+      Assert (SMB.Wire.Verify_Signature (Top, Key),
+              "signature of a header ending at Natural'Last");
+   end Test_Wire_Facade;
 begin
    if Ada.Command_Line.Argument_Count > 0 then
       if Ada.Command_Line.Argument_Count /= 1
@@ -7765,5 +8077,6 @@ begin
    Async_Engine_Tests.Run;
    SMB.Heap_Owner_Tests.Run;
    Test_Text_And_Wire;
+   Test_Wire_Facade;
    Ada.Text_IO.Put_Line ("AdaSMB unit tests passed");
 end Test_Suite;

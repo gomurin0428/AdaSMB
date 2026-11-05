@@ -142,6 +142,11 @@ make mutation               # src/*.adb 全体に対する試験のミューテ�
 make mutation-diff          # 同じことを origin/main から変わった行だけに行う
 ```
 
+試験プログラムは、ライブラリも含めて `pragma Initialize_Scalars` と妥当性検査
+（`-gnatVa`）付きでビルドします。出力を設定し忘れたサブプログラムは、古い値が
+たまたま期待値と一致して通ることがなく、どのプラットフォームでも試験に失敗
+します。
+
 `make mutation` は [AdaMutant](https://github.com/gomurin0428/AdaMutant) で
 試験そのものを検査します。AdaMutant は `PATH` に置くか `ADAMUTANT=` で
 指定します。ライブラリのソースに一度に一つだけ小さな変更（演算子、
@@ -159,7 +164,8 @@ pragma・ghost コードは GNATprove が検査するので変更しません。
 `.adamutant/reports` に出ます。
 [`tests/mutation_survivors.py`](tests/mutation_survivors.py) はどの試験も
 検出しなかったミュータントを一覧にし、`make mutation-diff` はそれが一つでも
-あると失敗します。振る舞いを変えようのないミュータントは、理由を書いた
+あると失敗します。振る舞いを変えようのないミュータントや、どの入力でも
+到達しない防御的な分岐にあるミュータントは、理由を書いた
 `adamutant:disable-next-line` コメントでソース上で無効化します。
 
 `make unicode-test` は Python 3 の標準 codec を独立した比較対象として、

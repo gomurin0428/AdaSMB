@@ -161,6 +161,11 @@ make mutation               # mutation testing of the tests over all of src/*.ad
 make mutation-diff          # the same, only for lines changed since origin/main
 ```
 
+The test programs, and the library with them, are built with
+`pragma Initialize_Scalars` and validity checks (`-gnatVa`). A subprogram that
+leaves an output unset then fails the tests on every platform, instead of
+passing whenever a stale value happens to be the expected one.
+
 `make mutation` checks the tests themselves with
 [AdaMutant](https://github.com/gomurin0428/AdaMutant), which must be on `PATH`
 (or named with `ADAMUTANT=`). It makes one small change at a time to the
@@ -177,7 +182,8 @@ exercise them, and those are too slow to run once per mutant. The settings are
 in [`adamutant.toml`](adamutant.toml), and the HTML and JSON reports go to
 `.adamutant/reports`. [`tests/mutation_survivors.py`](tests/mutation_survivors.py)
 lists the mutants no test detected; `make mutation-diff` fails if there is one.
-A mutant that cannot change behavior is disabled in the source with an
+A mutant that cannot change behavior, or that sits in a defensive branch no
+input can reach, is disabled in the source with an
 `adamutant:disable-next-line` comment that says why.
 
 `make unicode-test` uses Python 3's standard codecs as an independent

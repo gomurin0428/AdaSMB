@@ -106,7 +106,7 @@ package body SMB.Core_Transport with SPARK_Mode is
          Status := SMB.Invalid_Length;
          return;
       end if;
+      --  Status is still Ok from Prepare_Write.
       Position := Natural (Last - Data'First) + 1;
-      Status := SMB.Ok;
    end Advance_Write;
 end SMB.Core_Transport;
