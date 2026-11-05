@@ -12,6 +12,15 @@ project SMB_Tests is
       "crypto_probe.adb", "clock_probe.adb", "entropy_failure_client.adb");
    for Languages use ("Ada");
 
+   --  Every scalar the code leaves unset starts invalid, and every use is
+   --  checked: an output that a subprogram forgets to set then fails the
+   --  tests on every platform, rather than passing whenever a stale value
+   --  happens to be the expected one.
+   package Builder is
+      for Global_Configuration_Pragmas use "tests/initialize_scalars.adc";
+      for Global_Compilation_Switches ("Ada") use ("-gnatVa");
+   end Builder;
+
    package Compiler is
       for Default_Switches ("Ada") use
         ("-gnat2012", "-gnatW8", "-gnata", "-gnatwa");

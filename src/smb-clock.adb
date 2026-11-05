@@ -26,6 +26,7 @@ package body SMB.Clock is
          Sub_Second => Fraction,
          Leap_Second => Leap_Second,
          Time_Zone => 0);
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Split returns a Sub_Second below 1.0
       if Fraction >= 1.0 then
          raise SMB.Authentication_Error with
            "system clock returned an invalid sub-second value";
@@ -39,6 +40,7 @@ package body SMB.Clock is
          Ticks => SMB.Core_Clock.Fraction_Ticks (Fraction),
          Value => Value,
          Status => Status);
+      --  adamutant:disable-next-line ConditionalExpression: Ada.Calendar years (1901 .. 2399) are all in FILETIME range
       if Status /= SMB.Ok then
          raise SMB.Authentication_Error with
            "system clock is outside FILETIME range";

@@ -1,4 +1,5 @@
 with Ada.Text_IO;
+with SMB.Clock;
 with SMB.Core_Clock;
 
 procedure Clock_Probe is
@@ -62,6 +63,12 @@ begin
               /= Natural'Value (Field (3))
             then
                raise Program_Error with "fraction mismatch";
+            end if;
+         elsif Field (1) = "N" and then Space_Count = 2 then
+            if SMB.Clock.Current_Filetime not in
+              SMB.QWord'Value (Field (2)) .. SMB.QWord'Value (Field (3))
+            then
+               raise Program_Error with "current FILETIME out of bounds";
             end if;
          else
             raise Program_Error with "invalid clock fixture operation";
