@@ -252,6 +252,7 @@ package body SMB.Crypto is
          SHA256_Compress (Context.H, Context.Block);
          Context.Block := (others => 0);
       end if;
+      --  adamutant:disable-next-line NumericLiteral: byte 56, the top byte of the bit count, is 0 for every input up to Maximum_Hash_Input and is already cleared
       for I in 0 .. 7 loop
          Context.Block (56 + I) :=
            SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#);

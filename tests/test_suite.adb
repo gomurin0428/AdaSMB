@@ -1139,6 +1139,11 @@ procedure Test_Suite is
            (Header, Expected, Nt_Status, Status, Interim => True);
          Assert (Status = SMB.Invalid_Protocol,
                  "interim response without STATUS_PENDING");
+         SMB.Core_Wire.Write_U32 (Header, 16, 1, Status);
+         SMB.Core_Wire.Write_U16 (Header, 14, 0, Status);
+         SMB.Core_Wire.Validate_Header (Header, Expected, Nt_Status, Status);
+         Assert (Status = SMB.Invalid_Protocol,
+                 "final response that grants no credits");
       end;
    end Test_Core_Wire;
 
