@@ -24,13 +24,13 @@ def fixtures() -> list[tuple[str, str]]:
     clock = 0x1122334455667788
 
     def add(label: str, raw: bytes | bytearray, accept: bool,
-            expected_flags: int = FLAGS) -> None:
+            expected_flags: int = FLAGS, status: str = "-") -> None:
         token = wrap_challenge(raw)
         if accept:
             key, result = expected_auth(raw, pairs, clock, expected_flags)
             cases.append((label, f"{token.hex()} {clock} {key.hex()} {result.hex()}"))
         else:
-            cases.append((label, f"{token.hex()} {clock} - -"))
+            cases.append((label, f"{token.hex()} {clock} {status} -"))
 
     add("original active target name", original, True)
     ignored = bytearray(original)
@@ -56,22 +56,22 @@ def fixtures() -> list[tuple[str, str]]:
     for offset in (0, 47, len(original), len(original) + 1, 0x80000000, 0xFFFFFFFF):
         raw = bytearray(original)
         struct.pack_into("<I", raw, 16, offset)
-        add("active target name offset rejected", raw, False)
+        add("active target name offset rejected", raw, False, status="Invalid_Offset")
     for size in (1, len(original), 65535):
         raw = bytearray(original)
         struct.pack_into("<H", raw, 12, size)
-        add("active target name length rejected", raw, False)
+        add("active target name length rejected", raw, False, status="Invalid_Encoding" if size == 1 else "Invalid_Offset")
     raw = bytearray(original)
     raw[48:50] = b"\0\xdc"
-    add("active target name encoding rejected", raw, False)
+    add("active target name encoding rejected", raw, False, status="Invalid_Encoding")
     for bit in (0, 4, 9, 15, 19, 23):
         raw = ignored.copy()
         struct.pack_into("<I", raw, 20, (FLAGS & ~4) & ~(1 << bit))
-        add("remaining required flag rejected", raw, False)
+        add("remaining required flag rejected", raw, False, status="Invalid_Protocol")
     for offset in (0, 47, len(original), 0xFFFFFFFF):
         raw = ignored.copy()
         struct.pack_into("<I", raw, 44, offset)
-        add("TargetInfo offset remains validated", raw, False)
+        add("TargetInfo offset remains validated", raw, False, status="Invalid_Offset")
 
     info = b"".join(av(k, v) for k, v in pairs) + EOL
 
@@ -103,19 +103,19 @@ def fixtures() -> list[tuple[str, str]]:
             for offset in range(header):
                 raw = base.copy()
                 struct.pack_into("<I", raw, field + 4, offset)
-                add("nonempty field points into fixed header", raw, False)
+                add("nonempty field points into fixed header", raw, False, status="Invalid_Offset")
             for offset in (len(base), len(base) + 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF):
                 raw = base.copy()
                 struct.pack_into("<I", raw, field + 4, offset)
-                add("nonempty field points beyond storage", raw, False)
+                add("nonempty field points beyond storage", raw, False, status="Invalid_Offset")
             raw = base.copy()
             struct.pack_into("<H", raw, field, 65535)
-            add("field length exceeds storage", raw, False)
+            add("field length exceeds storage", raw, False, status="Invalid_Offset")
         raw = base.copy()
         struct.pack_into("<H", raw, 40, 0)
-        add("TargetInfo remains required", raw, False)
+        add("TargetInfo remains required", raw, False, status="Invalid_Encoding")
         for size in ((0, 8, 12, 20, 40, 47) if version is None else range(48, 56)):
-            add("fixed header truncated", base[:size], False)
+            add("fixed header truncated", base[:size], False, status="Invalid_Encoding")
         for value in (1, 128, 255):
             raw = base.copy()
             raw[32:40] = bytes((value,)) * 8
@@ -128,6 +128,28 @@ def fixtures() -> list[tuple[str, str]]:
         info_offset = struct.unpack_from("<I", raw, 44)[0]
         struct.pack_into("<I", raw, 16, info_offset + len(av(1, COMPUTER)) + 4)
         add("bounded name alias inside domain AV", raw, True, flags)
+
+    # Placement boundaries, each status naming the check that fires: the
+    # Version flag needs a 56-byte header, a nonempty field starts after it,
+    # and an empty TargetInfo is TargetInfo's own encoding error.
+    def fields(raw: bytearray, name: tuple[int, int], target: tuple[int, int]) -> bytearray:
+        struct.pack_into("<HHI", raw, 12, name[0], name[0], name[1])
+        struct.pack_into("<HHI", raw, 40, target[0], target[0], target[1])
+        return raw
+
+    add("Version header ends the message", fields(layout(b"\0" * 8)[:56], (0, 0), (1, 56)),
+        False, status="Invalid_Offset")
+    add("short message without Version", fields(layout(None)[:52], (0, 0), (5, 48)),
+        False, status="Invalid_Offset")
+    base = layout(None)
+    add("empty TargetInfo at the message end", fields(base.copy(), (0, 0), (0, len(base))),
+        False, status="Invalid_Encoding")
+    add("empty TargetInfo inside the header", fields(base.copy(), (0, 0), (0, 10)),
+        False, status="Invalid_Encoding")
+    add("one-byte TargetInfo inside the header", fields(base.copy(), (0, 0), (1, 10)),
+        False, status="Invalid_Offset")
+    add("one-byte name inside the header", fields(base.copy(), (1, 10), (len(info), 60)),
+        False, status="Invalid_Offset")
 
     required_bits = (0, 4, 9, 15, 19, 23)
     complete = (1 << len(required_bits)) - 1
@@ -145,7 +167,8 @@ def fixtures() -> list[tuple[str, str]]:
             flags = required | optional
             raw = base.copy()
             struct.pack_into("<I", raw, 20, flags)
-            add("required-profile negotiation matrix", raw, enabled == complete, flags)
+            add("required-profile negotiation matrix", raw, enabled == complete, flags,
+                "Invalid_Protocol")
     return cases
 
 

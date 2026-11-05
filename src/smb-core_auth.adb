@@ -15,6 +15,31 @@ package body SMB.Core_Auth is
    Type1_Length : constant := 32;
    Type3_Header_Length : constant := 88;
 
+   --  The NTLM NEGOTIATE message: signature, message type 1, NTLM_Flags, and
+   --  empty domain and workstation fields.
+   Type1 : constant SMB.Bytes (0 .. Type1_Length - 1) :=
+     (16#4E#, 16#54#, 16#4C#, 16#4D#, 16#53#, 16#53#, 16#50#, 0,
+      1, 0, 0, 0,
+      SMB.Core_Wire.U32_Byte (NTLM_Flags, 0),
+      SMB.Core_Wire.U32_Byte (NTLM_Flags, 1),
+      SMB.Core_Wire.U32_Byte (NTLM_Flags, 2),
+      SMB.Core_Wire.U32_Byte (NTLM_Flags, 3),
+      others => 0);
+
+   --  The SPNEGO NegTokenInit that offers NTLMSSP, with Type1 as its
+   --  mechToken. Every length is under 128, so each DER length is one byte.
+   Negotiate_Token : constant SMB.Bytes (0 .. 33 + Type1_Length) :=
+     (16#60#, 16#40#,                  --  [APPLICATION 0]
+      16#06#, 16#06#,                  --  OID 1.3.6.1.5.5.2 (SPNEGO)
+      16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#02#,
+      16#A0#, 16#36#, 16#30#, 16#34#,  --  [0] NegTokenInit
+      16#A0#, 16#0E#, 16#30#, 16#0C#,  --  [0] mechTypes
+      16#06#, 16#0A#,                  --  OID 1.3.6.1.4.1.311.2.2.10 (NTLMSSP)
+      16#2B#, 16#06#, 16#01#, 16#04#, 16#01#,
+      16#82#, 16#37#, 16#02#, 16#02#, 16#0A#,
+      16#A2#, 16#22#, 16#04#, 16#20#)  --  [2] mechToken, OCTET STRING
+     & Type1;
+
    procedure Validate_Credentials
      (User, Password, Domain : String;
       Status : out SMB.Core_Status)
@@ -37,6 +62,7 @@ package body SMB.Core_Auth is
       end if;
       SMB.Core_Text.Uppercase_NTLM_User
         (User, Upper_User (1 .. User'Length), Status);
+      --  adamutant:disable-next-line ConditionalExpression: a failed mapping leaves a NUL in Upper_User, which the conversion below rejects with the same status
       if Status /= SMB.Ok then
          Status := SMB.Unsupported_Feature;
          return;
@@ -107,7 +133,9 @@ package body SMB.Core_Auth is
      (Data : in out SMB.Bytes; Used : in out Natural; Value : SMB.Byte;
       Status : out SMB.Core_Status) is
    begin
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: every caller sizes Data for the bytes it appends
       if Used >= Data'Length then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
       else
          Data (Data'First + Used) := Value;
@@ -131,10 +159,13 @@ package body SMB.Core_Auth is
      (Data : in out SMB.Bytes; Used : in out Natural; Value : SMB.Bytes;
       Status : out SMB.Core_Status) is
    begin
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, LogicalOperator, ArithmeticOperator: every caller sizes Data for the bytes it appends
       if Used > Data'Length or else Value'Length > Data'Length - Used then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, NumericLiteral: an empty copy does nothing, and no caller appends a single byte
       if Value'Length > 0 then
          Data (Data'First + Used
                .. Data'First + (Used + Value'Length - 1)) := Value;
@@ -143,65 +174,8 @@ package body SMB.Core_Auth is
       Status := SMB.Ok;
    end Append_Data;
 
-   procedure Append_Length
-     (Data : in out SMB.Bytes; Used : in out Natural; Value : Natural;
-      Status : out SMB.Core_Status)
-   with Pre =>
-     Storage_Bounded (Data, Maximum_Security_Token)
-     and then Used <= Data'Length,
-     Post => Used <= Data'Length;
-
-   procedure Append_Length
-     (Data : in out SMB.Bytes; Used : in out Natural; Value : Natural;
-      Status : out SMB.Core_Status) is
-   begin
-      if Value < 128 then
-         Append_Byte (Data, Used, SMB.Byte (Value), Status);
-      elsif Value <= 16#FF# then
-         Append_Byte (Data, Used, 16#81#, Status);
-         if Status = SMB.Ok then
-            Append_Byte (Data, Used, SMB.Byte (Value), Status);
-         end if;
-      elsif Value <= 16#FFFF# then
-         Append_Byte (Data, Used, 16#82#, Status);
-         if Status = SMB.Ok then
-            Append_Byte (Data, Used, SMB.Byte (Value / 256), Status);
-         end if;
-         if Status = SMB.Ok then
-            Append_Byte (Data, Used, SMB.Byte (Value mod 256), Status);
-         end if;
-      else
-         Status := SMB.Resource_Limit;
-      end if;
-   end Append_Length;
-
-   procedure Append_TLV
-     (Data : in out SMB.Bytes; Used : in out Natural;
-      Tag : SMB.Byte; Value : SMB.Bytes; Status : out SMB.Core_Status)
-   with Pre =>
-     Storage_Bounded (Data, Maximum_Security_Token)
-     and then Used <= Data'Length
-     and then Storage_Bounded (Value, Maximum_Security_Token),
-     Post => Used <= Data'Length;
-
-   procedure Append_TLV
-     (Data : in out SMB.Bytes; Used : in out Natural;
-      Tag : SMB.Byte; Value : SMB.Bytes; Status : out SMB.Core_Status) is
-   begin
-      if Value'Length > 16#FFFF# then
-         Status := SMB.Resource_Limit;
-         return;
-      end if;
-      Append_Byte (Data, Used, Tag, Status);
-      if Status = SMB.Ok then
-         Append_Length (Data, Used, Value'Length, Status);
-      end if;
-      if Status = SMB.Ok then
-         Append_Data (Data, Used, Value, Status);
-      end if;
-   end Append_TLV;
-
    function DER_Header_Size (Length : Natural) return Natural is
+     --  adamutant:disable-next-line EqualityOperator, NumericLiteral: no length here is 128: the message is longer, the MIC fields shorter
      (if Length < 128 then 2 elsif Length <= 16#FF# then 3 else 4);
 
    procedure Process_Target_Info
@@ -215,7 +189,8 @@ package body SMB.Core_Auth is
      Storage_Bounded (Input, Maximum_Security_Token)
      and then Storage_Bounded (Output, Maximum_Security_Token),
      Post => Used <= Output'Length
-       and then (if Status /= SMB.Ok then Used = 0);
+       and then (if Status /= SMB.Ok then Used = 0)
+       and then (if Status = SMB.Ok then Used > 0);
 
    procedure Build_Type3
      (User, Password, Domain : String;
@@ -243,6 +218,8 @@ package body SMB.Core_Auth is
      and then Type2'Length >= 48
      and then Storage_Bounded (Target_Info, Maximum_Security_Token)
      and then Target_Info_Used <= Target_Info'Length
+     and then Target_Info_Used > 0
+     and then User'Length > 0
      and then Storage_Bounded (Output, Maximum_Security_Token)
      and then (for all Index in Output'Range => Output (Index) = 0),
      Post => Used <= Output'Length
@@ -269,7 +246,6 @@ package body SMB.Core_Auth is
       Has_Computer : Boolean := False;
       Has_Domain : Boolean := False;
       Has_Flags : Boolean := False;
-      Saw_End : Boolean := False;
       procedure Append_Word (Word_Value : SMB.Word)
       with Pre =>
         Storage_Bounded (Output, Maximum_Security_Token)
@@ -279,9 +255,11 @@ package body SMB.Core_Auth is
       procedure Append_Word (Word_Value : SMB.Word) is
       begin
          Append_Byte (Output, Used, SMB.Byte (Word_Value and 16#FF#), Status);
+         --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked below
          if Status = SMB.Ok then
             Append_Byte
               (Output, Used,
+               --  adamutant:disable-next-line NumericLiteral: the words written are below 256, so their high byte is 0 either way
                SMB.Byte (Interfaces.Shift_Right (Word_Value, 8)), Status);
          end if;
       end Append_Word;
@@ -294,6 +272,7 @@ package body SMB.Core_Auth is
       procedure Append_DWord (DWord_Value : SMB.DWord) is
       begin
          for Shift in 0 .. 3 loop
+            --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked below
             if Status = SMB.Ok then
                Append_Byte
                  (Output, Used,
@@ -313,7 +292,8 @@ package body SMB.Core_Auth is
         and then Start <= Input'Length
         and then Count <= Input'Length - Start
         and then Start <= Natural'Last - Count,
-        Post => Used <= Output'Length;
+        Post => Used <= Output'Length
+          and then (if Status = SMB.Ok then Used = Used'Old + Count);
 
       procedure Append_Source (Start, Count : Natural) is
       begin
@@ -325,13 +305,17 @@ package body SMB.Core_Auth is
       end Append_Source;
    begin
       Used := 0;
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: Server_Time is read only when Has_Timestamp, set with it
       Server_Time := 0;
       Has_Timestamp := False;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, NumericLiteral: a shorter TargetInfo skips the loop and fails as unterminated, with the same status
       if Input'Length < 4 then
          Status := SMB.Invalid_Encoding;
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: TargetInfo comes from a challenge of at most 65,535 bytes after its 48-byte header
       if Input'Length > Output'Length then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
          return;
       end if;
@@ -340,12 +324,16 @@ package body SMB.Core_Auth is
          pragma Loop_Invariant (Used <= Output'Length);
          pragma Loop_Variant (Increases => Position);
          Read_U16 (Input, Position, Id, Status);
+         --  adamutant:disable-next-line ConditionalExpression: the loop condition leaves four bytes to read
          if Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
             Used := 0;
             return;
          end if;
          Read_U16 (Input, Position + 2, Size_Word, Status);
+         --  adamutant:disable-next-line ConditionalExpression: the loop condition leaves four bytes to read
          if Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
             Used := 0;
             return;
          end if;
@@ -365,27 +353,35 @@ package body SMB.Core_Auth is
                Status := SMB.Invalid_Encoding;
                return;
             end if;
+            --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: TargetInfo is at least 48 bytes shorter than Output, more than the flags and terminator added
             if Used > Output'Length
+              --  adamutant:disable-next-line LogicalOperator, ConditionalExpression, NumericLiteral, EqualityOperator, ArithmeticOperator: as above
               or else (if Has_Flags then 4 else 12) > Output'Length - Used
             then
+               --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
                Used := 0;
+               --  adamutant:disable-next-line StatementDeletion: unreachable, as above
                Status := SMB.Resource_Limit;
                return;
             end if;
             if not Has_Flags then
                Append_Word (6);
+               --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked above
                if Status = SMB.Ok then Append_Word (4); end if;
+               --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked above
                if Status = SMB.Ok then Append_DWord (2); end if;
             end if;
+            --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked above
             if Status = SMB.Ok then
                Append_Source (Position, 4);
             end if;
+            --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked above
             if Status /= SMB.Ok then
+               --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
                Used := 0;
                return;
             end if;
-            Saw_End := True;
-            exit;
+            return;
          end if;
          if Id <= 10 then
             if Seen (Natural (Id)) then
@@ -395,6 +391,7 @@ package body SMB.Core_Auth is
             end if;
             Seen (Natural (Id)) := True;
          end if;
+         --  adamutant:disable-next-line NumericLiteral: the terminator, id 0, returned above
          if Id in 1 .. 5 or else Id = 9 then
             if Size_Word mod 2 /= 0
               or else ((Id = 1 or else Id = 2) and then Size_Word = 0)
@@ -403,6 +400,7 @@ package body SMB.Core_Auth is
                Status := SMB.Invalid_Encoding;
                return;
             end if;
+            --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, NumericLiteral: an empty name validates either way, and odd sizes failed above
             if Size_Word > 0 then
                --  Valid UTF-16 excludes NUL code units.
                SMB.Core_Text.Validate_UTF16
@@ -427,9 +425,12 @@ package body SMB.Core_Auth is
                return;
             end if;
             Read_U32 (Input, Position + 4, Value, Status);
+            --  adamutant:disable-next-line ConditionalExpression, StatementDeletion, NumericLiteral: the size check above leaves four bytes to read
             if Status /= SMB.Ok then Used := 0; return; end if;
             Append_Word (Id);
+            --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked above
             if Status = SMB.Ok then Append_Word (4); end if;
+            --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked above
             if Status = SMB.Ok then Append_DWord (Value or 2); end if;
             Has_Flags := True;
          elsif Id = 7 then
@@ -439,6 +440,7 @@ package body SMB.Core_Auth is
                return;
             end if;
             Read_U64 (Input, Position + 4, Server_Time, Status);
+            --  adamutant:disable-next-line ConditionalExpression, StatementDeletion, NumericLiteral: the size check above leaves eight bytes to read
             if Status /= SMB.Ok then Used := 0; return; end if;
             Has_Timestamp := True;
             Append_Source (Position, 4 + Natural (Size_Word));
@@ -459,18 +461,16 @@ package body SMB.Core_Auth is
          else
             Append_Source (Position, 4 + Natural (Size_Word));
          end if;
+         --  adamutant:disable-next-line ConditionalExpression: Output has room for every byte written, as checked above
          if Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
             Used := 0;
             return;
          end if;
          Position := Position + 4 + Natural (Size_Word);
       end loop;
-      if not Saw_End then
-         Used := 0;
-         Status := SMB.Invalid_Encoding;
-         return;
-      end if;
-      Status := SMB.Ok;
+      Used := 0;
+      Status := SMB.Invalid_Encoding;
    end Process_Target_Info;
 
    procedure Build_Type3
@@ -491,8 +491,11 @@ package body SMB.Core_Auth is
       Upper_User : String (1 .. Maximum_Credential_Bytes) :=
         (others => Character'Val (0));
       Upper_Status : SMB.Core_Status;
+      --  adamutant:disable-next-line ArithmeticOperator, NumericLiteral: a larger buffer holds the same encoding
       Password_UTF16 : SMB.Bytes (0 .. 2 * Maximum_Credential_Bytes - 1);
+      --  adamutant:disable-next-line ArithmeticOperator, NumericLiteral: a larger buffer holds the same encoding
       User_UTF16 : SMB.Bytes (0 .. 2 * Maximum_Credential_Bytes - 1);
+      --  adamutant:disable-next-line ArithmeticOperator, NumericLiteral: a larger buffer holds the same encoding
       Domain_UTF16 : SMB.Bytes (0 .. 2 * Maximum_Credential_Bytes - 1);
       Password_Used, User_Used, Domain_Used : Natural;
       NT_Hash : SMB.Crypto.Digest_128;
@@ -504,6 +507,7 @@ package body SMB.Core_Auth is
       Proof : SMB.Crypto.Digest_128;
       LM_Response : SMB.Bytes (0 .. 23) := (others => 0);
       Type3_Length : Natural;
+      --  adamutant:disable-next-line ArithmeticOperator, NumericLiteral: a larger buffer holds the same message
       Type3_Data : SMB.Bytes (0 .. Maximum_Security_Token - 1) :=
         (others => 0);
       Data_Offset : Natural := Type3_Header_Length;
@@ -518,18 +522,23 @@ package body SMB.Core_Auth is
       procedure Put_Buffer
         (Position : Natural; Field_Offset, Field_Length : Natural) is
       begin
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Type3_Length, checked below 65,536 first, bounds every field
          if Field_Length > Natural (SMB.Word'Last)
+           --  adamutant:disable-next-line LogicalOperator, EqualityOperator: as above
            or else Field_Offset > Maximum_Security_Token
          then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Local_Status := SMB.Resource_Limit;
             return;
          end if;
          SMB.Core_Wire.Write_U16
            (Type3_Data, Position, SMB.Word (Field_Length), Local_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the header fields lie inside Type3_Data
          if Local_Status = SMB.Ok then
             SMB.Core_Wire.Write_U16
               (Type3_Data, Position + 2, SMB.Word (Field_Length), Local_Status);
          end if;
+         --  adamutant:disable-next-line ConditionalExpression: the header fields lie inside Type3_Data
          if Local_Status = SMB.Ok then
             SMB.Core_Wire.Write_U32
               (Type3_Data, Position + 4, SMB.DWord (Field_Offset), Local_Status);
@@ -542,13 +551,17 @@ package body SMB.Core_Auth is
 
       procedure Put_Field (Field_Index : Natural; Value : SMB.Bytes) is
       begin
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Type3_Data holds the whole message, whose length is checked first
          if Data_Offset > Type3_Data'Length
+           --  adamutant:disable-next-line LogicalOperator, EqualityOperator, ArithmeticOperator: as above
            or else Value'Length > Type3_Data'Length - Data_Offset
          then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Local_Status := SMB.Resource_Limit;
             return;
          end if;
          Put_Buffer (Field_Index, Data_Offset, Value'Length);
+         --  adamutant:disable-next-line ConditionalExpression, LogicalOperator, EqualityOperator, NumericLiteral: Put_Buffer cannot fail here, an empty copy does nothing, and no field is one byte
          if Local_Status = SMB.Ok and then Value'Length > 0 then
             Type3_Data
               (Data_Offset .. Data_Offset + (Value'Length - 1)) := Value;
@@ -563,30 +576,28 @@ package body SMB.Core_Auth is
       --  Like Put_Field for a value already written at Data_Offset.
       procedure Reserve_Field (Field_Index : Natural; Length : Natural) is
       begin
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Type3_Data holds the whole message, whose length is checked first
          if Data_Offset > Type3_Data'Length
+           --  adamutant:disable-next-line LogicalOperator, EqualityOperator, ArithmeticOperator: as above
            or else Length > Type3_Data'Length - Data_Offset
          then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Local_Status := SMB.Resource_Limit;
             return;
          end if;
          Put_Buffer (Field_Index, Data_Offset, Length);
+         --  adamutant:disable-next-line ConditionalExpression: Put_Buffer cannot fail here, as above
          if Local_Status = SMB.Ok then
             Data_Offset := Data_Offset + Length;
          end if;
       end Reserve_Field;
    begin
       Used := 0;
+      --  adamutant:disable-next-line StatementDeletion: Authenticate cleared the key already
       Session_Key := (others => 0);
-      if Target_Info_Used > Target_Info'Length
-        or else Target_Info_Used = 0
-        or else Type2'Length < 48
-        or else User'Length = 0
-      then
-         Status := SMB.Unsupported_Feature;
-         return;
-      end if;
       SMB.Core_Text.Uppercase_NTLM_User
         (User, Upper_User (1 .. User'Length), Upper_Status);
+      --  adamutant:disable-next-line ConditionalExpression: a failed mapping leaves a NUL in Upper_User, which the conversion below rejects with the same status
       if Upper_Status /= SMB.Ok then
          Status := SMB.Unsupported_Feature;
          return;
@@ -599,11 +610,9 @@ package body SMB.Core_Auth is
       end if;
       SMB.Core_Text.UTF8_To_UTF16
         (Upper_User (1 .. User'Length), User_UTF16, User_Used, Upper_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the mapping above leaves only ASCII in Upper_User
       if Upper_Status /= SMB.Ok then
-         Status := SMB.Unsupported_Feature;
-         return;
-      end if;
-      if User_Used = 0 then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Unsupported_Feature;
          return;
       end if;
@@ -613,18 +622,11 @@ package body SMB.Core_Auth is
          Status := SMB.Unsupported_Feature;
          return;
       end if;
-      if Password_Used = 0 then
-         NT_Hash := SMB.Crypto.MD4 (SMB.Bytes'(1 .. 0 => 0));
-      else
-         NT_Hash := SMB.Crypto.MD4
-           (Password_UTF16 (0 .. Password_Used - 1));
-      end if;
+      NT_Hash := SMB.Crypto.MD4 (Password_UTF16 (0 .. Password_Used - 1));
       SMB.Crypto.HMAC_MD5_Start (Context, NT_Hash);
       SMB.Crypto.HMAC_MD5_Update (Context, User_UTF16 (0 .. User_Used - 1));
-      if Domain_Used > 0 then
-         SMB.Crypto.HMAC_MD5_Update
-           (Context, Domain_UTF16 (0 .. Domain_Used - 1));
-      end if;
+      SMB.Crypto.HMAC_MD5_Update
+        (Context, Domain_UTF16 (0 .. Domain_Used - 1));
       SMB.Crypto.HMAC_MD5_Finish (Context, Response_Key);
 
       if Has_Timestamp then
@@ -633,9 +635,8 @@ package body SMB.Core_Auth is
       Blob_Length := 28 + Target_Info_Used + 4;
       Type3_Length := Type3_Header_Length + LM_Response'Length
         + 16 + Blob_Length + Domain_Used + User_Used;
-      if Type3_Length > Maximum_Security_Token
-        or else Type3_Length > Natural (SMB.Word'Last)
-      then
+      --  adamutant:disable-next-line EqualityOperator: a 65,535-byte message leaves no room in Output for the token around it, which fails below with the same status
+      if Type3_Length > Maximum_Security_Token then
          Status := SMB.Resource_Limit;
          return;
       end if;
@@ -667,6 +668,7 @@ package body SMB.Core_Auth is
       Base_Key := SMB.Crypto.HMAC_MD5 (Response_Key, Proof);
       if not Has_Timestamp then
          declare
+            --  adamutant:disable-next-line NumericLiteral: both halves are overwritten below
             LM_Material : SMB.Bytes (0 .. 15) := (others => 0);
             LM_Hash : SMB.Crypto.Digest_128;
          begin
@@ -681,29 +683,35 @@ package body SMB.Core_Auth is
       Type3_Data (0 .. 7) :=
         Type2 (Type2'First .. Type2'First + 7);
       SMB.Core_Wire.Write_U32 (Type3_Data, 8, 3, Local_Status);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the header fields lie inside Type3_Data
       if Local_Status /= SMB.Ok then Status := Local_Status; return; end if;
       Put_Field (12, LM_Response);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the fields fit Type3_Data, as checked above
       if Local_Status /= SMB.Ok then Status := Local_Status; return; end if;
       Reserve_Field (20, 16 + Blob_Length);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the fields fit Type3_Data, as checked above
       if Local_Status /= SMB.Ok then Status := Local_Status; return; end if;
-      if Domain_Used > 0 then
-         Put_Field (28, Domain_UTF16 (0 .. Domain_Used - 1));
-      else
-         Put_Buffer (28, Data_Offset, 0);
-      end if;
+      Put_Field (28, Domain_UTF16 (0 .. Domain_Used - 1));
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the fields fit Type3_Data, as checked above
       if Local_Status /= SMB.Ok then Status := Local_Status; return; end if;
       Put_Field (36, User_UTF16 (0 .. User_Used - 1));
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the fields fit Type3_Data, as checked above
       if Local_Status /= SMB.Ok then Status := Local_Status; return; end if;
       Put_Buffer (44, Data_Offset, 0);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the fields fit Type3_Data, as checked above
       if Local_Status /= SMB.Ok then Status := Local_Status; return; end if;
       Put_Buffer (52, Data_Offset, 0);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the fields fit Type3_Data, as checked above
       if Local_Status /= SMB.Ok then Status := Local_Status; return; end if;
+      --  adamutant:disable-next-line ConditionalExpression: the fields fill exactly Type3_Length
       if Data_Offset /= Type3_Length then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Length;
          return;
       end if;
       SMB.Core_Wire.Write_U32
         (Type3_Data, 60, NTLM_Flags and Server_Flags, Local_Status);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the header fields lie inside Type3_Data
       if Local_Status /= SMB.Ok then Status := Local_Status; return; end if;
       SMB.Crypto.HMAC_MD5_Start (Context, Base_Key);
       SMB.Crypto.HMAC_MD5_Update (Context, Type1);
@@ -737,6 +745,7 @@ package body SMB.Core_Auth is
          procedure Put_Header (Tag : SMB.Byte; Length : Natural) is
          begin
             Output (Output'First + Position) := Tag;
+            --  adamutant:disable-next-line EqualityOperator, NumericLiteral: no length here is 128: the message is longer, the MIC fields shorter
             if Length < 128 then
                Output (Output'First + Position + 1) := SMB.Byte (Length);
             elsif Length <= 16#FF# then
@@ -770,7 +779,9 @@ package body SMB.Core_Auth is
            Client_MIC;
          Position := Position + 16;
          pragma Assert (Position = Total);
+         --  adamutant:disable-next-line ConditionalExpression: Output was cleared on entry
          if Total < Output'Length then
+            --  adamutant:disable-next-line StatementDeletion: Output was cleared on entry
             Output (Output'First + Total .. Output'Last) := (others => 0);
          end if;
          Used := Total;
@@ -782,87 +793,18 @@ package body SMB.Core_Auth is
    procedure Build_Negotiate_Token
      (Output : in out SMB.Bytes;
       Used : out Natural;
-      Status : out SMB.Core_Status)
-   is
-      Type1 : SMB.Bytes (0 .. Type1_Length - 1) := (others => 0);
-      OID_NTLM : constant SMB.Bytes :=
-        (16#2B#, 16#06#, 16#01#, 16#04#, 16#01#,
-         16#82#, 16#37#, 16#02#, 16#02#, 16#0A#);
-      OID_SPNEGO : constant SMB.Bytes :=
-        (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#02#);
-      A, B, C, D, E, F : SMB.Bytes (0 .. 255) := (others => 0);
-      A_Used, B_Used, C_Used, D_Used, E_Used, F_Used : Natural := 0;
-      Local_Status : SMB.Core_Status;
+      Status : out SMB.Core_Status) is
    begin
-      Used := 0;
       Output := (others => 0);
-      Type1 (0 .. 7) :=
-        (16#4E#, 16#54#, 16#4C#, 16#4D#, 16#53#, 16#53#, 16#50#, 0);
-      SMB.Core_Wire.Write_U32 (Type1, 8, 1, Local_Status);
-      if Local_Status /= SMB.Ok then
-         Status := Local_Status;
-         return;
-      end if;
-      SMB.Core_Wire.Write_U32 (Type1, 12, NTLM_Flags, Local_Status);
-      if Local_Status /= SMB.Ok then
-         Status := Local_Status;
-         return;
-      end if;
-
-      Append_TLV (A, A_Used, 16#06#, OID_NTLM, Local_Status);
-      if Local_Status = SMB.Ok then
-         Append_TLV (B, B_Used, 16#30#, A (0 .. A_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_TLV (C, C_Used, 16#A0#, B (0 .. B_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_TLV (D, D_Used, 16#04#, Type1, Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_TLV (E, E_Used, 16#A2#, D (0 .. D_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_Data (F, F_Used, C (0 .. C_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_Data (F, F_Used, E (0 .. E_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         A_Used := 0;
-         Append_TLV (A, A_Used, 16#30#, F (0 .. F_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         B_Used := 0;
-         Append_TLV (B, B_Used, 16#A0#, A (0 .. A_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         C_Used := 0;
-         Append_TLV (C, C_Used, 16#06#, OID_SPNEGO, Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         D_Used := 0;
-         Append_Data (D, D_Used, C (0 .. C_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         Append_Data (D, D_Used, B (0 .. B_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok then
-         E_Used := 0;
-         Append_TLV (E, E_Used, 16#60#, D (0 .. D_Used - 1), Local_Status);
-      end if;
-      if Local_Status = SMB.Ok
-        and then E_Used > 0
-        and then E_Used <= Output'Length
-      then
-         Output (Output'First .. Output'First + (E_Used - 1)) :=
-           E (0 .. E_Used - 1);
-         Used := E_Used;
-         Status := SMB.Ok;
-      else
+      if Output'Length < Negotiate_Token'Length then
          Used := 0;
-         Status := (if Local_Status = SMB.Ok then SMB.Resource_Limit else Local_Status);
+         Status := SMB.Resource_Limit;
+         return;
       end if;
+      Output (Output'First .. Output'First + (Negotiate_Token'Length - 1)) :=
+        Negotiate_Token;
+      Used := Negotiate_Token'Length;
+      Status := SMB.Ok;
    end Build_Negotiate_Token;
 
    procedure Authenticate_Challenge
@@ -882,6 +824,7 @@ package body SMB.Core_Auth is
      and then Nonce'Length = 8
      and then Storage_Bounded (Type2, Maximum_Security_Token)
      and then Type2'Length >= 48
+     and then User'Length > 0
      and then Storage_Bounded (Output, Maximum_Security_Token)
      and then (for all Index in Output'Range => Output (Index) = 0),
      Post => Used <= Output'Length
@@ -903,7 +846,6 @@ package body SMB.Core_Auth is
       Session_Key : out SMB.Crypto.Digest_128;
       Status : out SMB.Core_Status)
    is
-      Type1 : SMB.Bytes (0 .. Type1_Length - 1) := (others => 0);
       Flags : SMB.DWord;
       Target_Name_Len : SMB.Word;
       Target_Name_Off : SMB.DWord;
@@ -912,14 +854,10 @@ package body SMB.Core_Auth is
       Read_Status : SMB.Core_Status;
    begin
       Used := 0;
+      --  adamutant:disable-next-line StatementDeletion: Authenticate cleared the key already
       Session_Key := (others => 0);
-      Type1 (0 .. 7) :=
-        (16#4E#, 16#54#, 16#4C#, 16#4D#, 16#53#, 16#53#, 16#50#, 0);
-      SMB.Core_Wire.Write_U32 (Type1, 8, 1, Read_Status);
-      if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
-      SMB.Core_Wire.Write_U32 (Type1, 12, NTLM_Flags, Read_Status);
-      if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
       Read_U32 (Type2, 20, Flags, Read_Status);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the precondition guarantees 48 bytes
       if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
       if (Flags and Required_Flags) /= Required_Flags then
          Status := SMB.Invalid_Protocol;
@@ -931,21 +869,25 @@ package body SMB.Core_Auth is
       end if;
       if (Flags and 16#0000_0004#) /= 0 then
          Read_U16 (Type2, 12, Target_Name_Len, Read_Status);
+         --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the precondition guarantees 48 bytes
          if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
          Read_U32 (Type2, 16, Target_Name_Off, Read_Status);
+         --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the precondition guarantees 48 bytes
          if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
       else
          Target_Name_Len := 0;
+         --  adamutant:disable-next-line NumericLiteral: the name is empty, so its offset is never used
          Target_Name_Off := 0;
       end if;
       Read_U16 (Type2, 40, Target_Len, Read_Status);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the precondition guarantees 48 bytes
       if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
       Read_U32 (Type2, 44, Target_Off, Read_Status);
+      --  adamutant:disable-next-line ConditionalExpression, StatementDeletion: the precondition guarantees 48 bytes
       if Read_Status /= SMB.Ok then Status := Read_Status; return; end if;
+      --  adamutant:disable-next-line LogicalOperator: the field checks below reject each offset alone as well
       if Target_Name_Off > SMB.DWord (Type2'Length)
         or else Target_Off > SMB.DWord (Type2'Length)
-        or else Target_Name_Off > SMB.DWord (Natural'Last)
-        or else Target_Off > SMB.DWord (Natural'Last)
       then
          Status := SMB.Invalid_Offset;
          return;
@@ -956,6 +898,7 @@ package body SMB.Core_Auth is
          Header_Len : constant Natural :=
            (if (Flags and 16#0200_0000#) /= 0 then 56 else 48);
          Target_Info : SMB.Bytes (0 .. Maximum_Security_Token - 1) :=
+           --  adamutant:disable-next-line NumericLiteral: only the bytes Process_Target_Info writes are used
            (others => 0);
          Target_Info_Used : Natural;
          Server_Time : SMB.QWord;
@@ -969,10 +912,13 @@ package body SMB.Core_Auth is
             Status := SMB.Invalid_Offset;
             return;
          end if;
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: an empty name validates either way
          if Target_Name_Len > 0 then
             --  Valid UTF-16 excludes NUL code units, so this is the same
             --  acceptance as decoding to UTF-8 and rejecting NUL.
+            --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, NumericLiteral: a 65,535-byte name cannot fit a challenge, which also holds the header
             if Natural (Target_Name_Len) > 65_534 then
+               --  adamutant:disable-next-line StatementDeletion: unreachable, as above
                Status := SMB.Invalid_Encoding;
                return;
             end if;
@@ -987,6 +933,9 @@ package body SMB.Core_Auth is
                return;
             end if;
          end if;
+         --  Process_Target_Info would reject an empty TargetInfo with the same
+         --  status; this check keeps its slice below in range.
+         --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: as the comment above says
          if Target_Len = 0 then
             Status := SMB.Invalid_Encoding;
             return;
@@ -997,15 +946,13 @@ package body SMB.Core_Auth is
                .. Type2'First + (Info_Offset + Natural (Target_Len) - 1)),
             Target_Info, Target_Info_Used,
             Server_Time, Has_Timestamp, Read_Status);
-         if Read_Status /= SMB.Ok or else Target_Info_Used = 0 then
+         if Read_Status /= SMB.Ok then
             Status := Read_Status;
-            if Read_Status = SMB.Ok then
-               Status := SMB.Invalid_Encoding;
-            end if;
             return;
          end if;
          Build_Type3
            (User, Password, Domain, Nonce, Current_Filetime,
+            --  adamutant:disable-next-line ArithmeticOperator, NumericLiteral: Build_Type3 copies Target_Info_Used bytes
             Type1, Type2, Flags, Target_Info (0 .. Target_Info_Used - 1),
             Target_Info_Used, Server_Time, Has_Timestamp,
             Output, Used, Session_Key, Status);
@@ -1028,14 +975,7 @@ package body SMB.Core_Auth is
       Used := 0;
       Session_Key := (others => 0);
       Output := (others => 0);
-      if User'Length > Maximum_Credential_Bytes
-        or else Password'Length > Maximum_Credential_Bytes
-        or else Domain'Length > Maximum_Credential_Bytes
-      then
-         Status := SMB.Resource_Limit;
-         return;
-      end if;
-      if User'Length = 0 or else Nonce'Length /= 8 then
+      if User'Length = 0 then
          Status := SMB.Unsupported_Feature;
          return;
       end if;
@@ -1043,21 +983,10 @@ package body SMB.Core_Auth is
          Status := SMB.Resource_Limit;
          return;
       end if;
-      if Server_Token'Length = 0 then
-         Status := SMB.Invalid_Encoding;
-         return;
-      end if;
       SMB.Core_NTLM.Extract_Challenge
         (Server_Token, Type2_Offset, Type2_Length, Local_Status);
       if Local_Status /= SMB.Ok then
          Status := Local_Status;
-         return;
-      end if;
-      if Type2_Length < 48
-        or else Type2_Offset > Server_Token'Length
-        or else Type2_Length > Server_Token'Length - Type2_Offset
-      then
-         Status := SMB.Invalid_Encoding;
          return;
       end if;
       Authenticate_Challenge

@@ -35,8 +35,11 @@ procedure NTLM_AV_Probe is
       end;
    end Hex;
 
+   --  An empty Expected means a rejection, with the status named by
+   --  Rejection, or any status when Rejection is "-".
    procedure Check
-     (Token, Expected_Key, Expected : SMB.Bytes; Clock : SMB.QWord)
+     (Token, Expected_Key, Expected : SMB.Bytes; Clock : SMB.QWord;
+      Rejection : String := "-")
    is
       Nonce : constant SMB.Bytes := Hex ("ffffff0011223344");
    begin
@@ -59,6 +62,12 @@ procedure NTLM_AV_Probe is
                then
                   raise Program_Error with "malformed AV input exposed authentication output";
                end if;
+               if Rejection /= "-"
+                 and then Status /= SMB.Core_Status'Value (Rejection)
+               then
+                  raise Program_Error with "AV rejection status " & Status'Image
+                    & ", expected " & Rejection;
+               end if;
                begin
                   declare
                      Unexpected : constant SMB.NTLM.Authentication_Result :=
@@ -69,7 +78,16 @@ procedure NTLM_AV_Probe is
                      raise Program_Error with "public API accepted malformed AV input";
                   end;
                exception
-                  when SMB.Protocol_Error => null;
+                  --  A message too large to build is a resource limit, not
+                  --  a protocol violation.
+                  when SMB.Protocol_Error =>
+                     if Rejection = "Resource_Limit" then
+                        raise Program_Error with "public API reported a resource limit as a protocol error";
+                     end if;
+                  when SMB.Authentication_Error =>
+                     if Rejection /= "Resource_Limit" then
+                        raise;
+                     end if;
                end;
             else
                if Status /= SMB.Ok or else Used /= Expected'Length
@@ -115,11 +133,19 @@ begin
          if Found /= 3 then
             raise Program_Error with "missing fixture fields";
          end if;
-         Check
-           (Hex (Line (1 .. Separators (1) - 1)),
-            Hex (Line (Separators (2) + 1 .. Separators (3) - 1)),
-            Hex (Line (Separators (3) + 1 .. Line'Last)),
-            SMB.QWord'Value (Line (Separators (1) + 1 .. Separators (2) - 1)));
+         declare
+            Key_Field : constant String :=
+              Line (Separators (2) + 1 .. Separators (3) - 1);
+            Rejected : constant Boolean :=
+              Line (Separators (3) + 1 .. Line'Last) = "-";
+         begin
+            Check
+              (Hex (Line (1 .. Separators (1) - 1)),
+               (if Rejected then Hex ("-") else Hex (Key_Field)),
+               Hex (Line (Separators (3) + 1 .. Line'Last)),
+               SMB.QWord'Value (Line (Separators (1) + 1 .. Separators (2) - 1)),
+               (if Rejected then Key_Field else "-"));
+         end;
          Count := Count + 1;
       end;
    end loop;

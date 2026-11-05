@@ -1713,6 +1713,45 @@ procedure Test_Suite is
             and then Small_Auth_Used = 0
             and then Small_Auth_Key = (Small_Auth_Key'Range => 0),
             "short authentication output buffer was accepted");
+         --  The user and output checks come before the token's.
+         declare
+            Output : SMB.Bytes (0 .. 1023) := (others => 0);
+            Empty_Output : SMB.Bytes (1 .. 0);
+            One_Byte : SMB.Bytes (1 .. 1) := (others => 0);
+            No_Token : constant SMB.Bytes (1 .. 0) := (others => 0);
+            Used : Natural;
+            Key : SMB.Crypto.Digest_128;
+            Status : SMB.Core_Status;
+
+            procedure Expect
+              (User, Password, Domain : String;
+               Nonce_Value, Token : SMB.Bytes;
+               Buffer : in out SMB.Bytes;
+               Wanted : SMB.Core_Status;
+               Label : String) is
+            begin
+               Key := (others => 16#EE#);
+               SMB.Core_Auth.Authenticate
+                 (User, Password, Domain, Nonce_Value, Token, 0,
+                  Buffer, Used, Key, Status);
+               Assert
+                 (Status = Wanted
+                  and then (if Wanted /= SMB.Ok
+                            then Used = 0 and then Key = (Key'Range => 0)
+                            else Used > 0),
+                  Label & ": " & SMB.Core_Status'Image (Status));
+            end Expect;
+         begin
+            Expect ("", "Password", "Domain", Nonce, Challenge, Output,
+                    SMB.Unsupported_Feature, "core empty user");
+            Expect ("U", "Password", "Domain", Nonce, Challenge, Output,
+                    SMB.Ok, "core one-character user");
+            Expect ("User", "Password", "Domain", Nonce, No_Token,
+                    Empty_Output, SMB.Resource_Limit,
+                    "core empty output, checked before the token");
+            Expect ("User", "Password", "Domain", Nonce, No_Token, One_Byte,
+                    SMB.Invalid_Encoding, "core empty token");
+         end;
       end;
       --  The public wrapper: its own bounds, and the exception it maps each
       --  core status to.
