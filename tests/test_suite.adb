@@ -3411,6 +3411,288 @@ procedure Test_Suite is
          "zero transfer limit accepted");
    end Test_Core_Protocol;
 
+   --  Every request body byte for byte, with values whose bytes all differ,
+   --  and the rejected arguments of each builder.
+   procedure Test_Protocol_Builders is
+      File_Id : constant SMB.Bytes :=
+        Hex ("000102030405060708090a0b0c0d0e0f");
+      Offset : constant SMB.QWord := 16#1122_3344_5566_7788#;
+      Output : SMB.Bytes (0 .. 255);
+      Used : Natural;
+      Status : SMB.Core_Status;
+
+      procedure Expect (Expected : SMB.Bytes; Label : String) is
+      begin
+         Assert
+           (Status = SMB.Ok and then Used = Expected'Length
+            and then Output (0 .. Used - 1) = Expected, Label);
+      end Expect;
+
+      procedure Expect_Failure (Failure : SMB.Core_Status; Label : String) is
+      begin
+         Assert (Status = Failure and then Used = 0, Label);
+      end Expect_Failure;
+   begin
+      SMB.Core_Protocol.Build_Session_Setup
+        (Hex ("010203"), Output, Used, Status);
+      Expect
+        (Hex ("1900" & "00" & "03" & "00000000" & "00000000" & "5800" & "0300"
+              & "0000000000000000" & "010203"),
+         "SESSION_SETUP request");
+      declare
+         Token : constant SMB.Bytes (1 .. 65_535) := (others => 16#5A#);
+         Large : SMB.Bytes (0 .. 24 + 65_534);
+      begin
+         SMB.Core_Protocol.Build_Session_Setup (Token, Large, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = Large'Length
+            and then Large (14) = 16#FF# and then Large (15) = 16#FF#,
+            "SESSION_SETUP with the largest token");
+      end;
+
+      SMB.Core_Protocol.Build_Tree_Connect
+        (Hex ("41004200"), Output, Used, Status);
+      Expect
+        (Hex ("0900" & "0000" & "4800" & "0400" & "41004200"),
+         "TREE_CONNECT request");
+      SMB.Core_Protocol.Build_Tree_Connect
+        (SMB.Bytes'(0 => 16#41#), Output, Used, Status);
+      Expect_Failure (SMB.Invalid_Length, "odd TREE_CONNECT path");
+
+      for Directory in Boolean loop
+         SMB.Core_Protocol.Build_Create
+           (Hex ("6100"), 16#8112_3489#, 16#0403_0201#, Directory,
+            Output, Used, Status);
+         Expect
+           (Hex ("3900" & "00" & "00" & "02000000" & "0000000000000000"
+                 & "0000000000000000" & "89341281"
+                 & (if Directory then "10000000" else "00000000")
+                 & "07000000" & "01020304"
+                 & (if Directory then "01000000" else "40000000")
+                 & "7800" & "0200" & "00000000" & "00000000" & "6100"),
+            "CREATE request");
+      end loop;
+      SMB.Core_Protocol.Build_Create
+        (SMB.Bytes'(0 => 16#61#), 0, 1, False, Output, Used, Status);
+      Expect_Failure (SMB.Invalid_Length, "odd CREATE name");
+
+      SMB.Core_Protocol.Build_Read
+        (File_Id, Offset, 65_536, Output, Used, Status);
+      Expect
+        (Hex ("3100" & "00" & "00" & "00000100" & "8877665544332211")
+         & File_Id
+         & Hex ("00000000" & "00000000" & "00000000" & "0000" & "0000" & "01"),
+         "READ request");
+
+      SMB.Core_Protocol.Build_Write
+        (File_Id, Offset, Hex ("aabbcc"), Output, Used, Status);
+      Expect
+        (Hex ("3100" & "7000" & "03000000" & "8877665544332211") & File_Id
+         & Hex ("00000000" & "00000000" & "0000" & "0000" & "00000000"
+                & "aabbcc"),
+         "WRITE request");
+      declare
+         Data : constant SMB.Bytes (1 .. 65_536) := (others => 16#5A#);
+         Large : SMB.Bytes (0 .. 48 + 65_535);
+      begin
+         SMB.Core_Protocol.Build_Write (File_Id, Offset, Data, Large, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = Large'Length
+            and then Large (4 .. 7) = Hex ("00000100"),
+            "WRITE of the largest chunk");
+         SMB.Core_Protocol.Build_Write
+           (File_Id, Offset, Data (1 .. 258), Large, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = 48 + 258
+            and then Large (4 .. 7) = Hex ("02010000"),
+            "WRITE length with a second byte");
+      end;
+
+      SMB.Core_Protocol.Build_Close (File_Id, Output (0 .. 23), Used, Status);
+      Expect (Hex ("1800" & "0000" & "00000000") & File_Id, "CLOSE request");
+      Output := (others => 16#EE#);
+      SMB.Core_Protocol.Build_Close (File_Id, Output (0 .. 22), Used, Status);
+      Assert
+        (Status = SMB.Resource_Limit and then Used = 0
+         and then (for all Index in 0 .. 22 => Output (Index) = 0),
+         "CLOSE request one byte short");
+
+      for Restart in Boolean loop
+         SMB.Core_Protocol.Build_Query_Directory
+           (File_Id, Restart, Output, Used, Status);
+         Expect
+           (Hex ("2100" & "25" & (if Restart then "01" else "00") & "00000000")
+            & File_Id & Hex ("6000" & "0200" & "00000100" & "2a00"),
+            "QUERY_DIRECTORY request");
+      end loop;
+
+      for Delete_File in Boolean loop
+         SMB.Core_Protocol.Build_Disposition
+           (File_Id, Delete_File, Output, Used, Status);
+         Expect
+           (Hex ("2100" & "01" & "0d" & "01000000" & "6000" & "0000" & "00000000")
+            & File_Id & Hex (if Delete_File then "01" else "00"),
+            "SET_INFO disposition request");
+      end loop;
+
+      SMB.Core_Protocol.Build_Rename
+        (File_Id, Hex ("62006300"), Output, Used, Status);
+      Expect
+        (Hex ("2100" & "01" & "0a" & "18000000" & "6000" & "0000" & "00000000")
+         & File_Id & Hex ("00000000000000000000000000000000" & "04000000"
+                          & "62006300"),
+         "SET_INFO rename request");
+      SMB.Core_Protocol.Build_Rename
+        (File_Id, SMB.Bytes'(0 => 16#62#), Output, Used, Status);
+      Expect_Failure (SMB.Invalid_Length, "odd rename target");
+   end Test_Protocol_Builders;
+
+   --  Response fields each parser must check, with the status it reports.
+   procedure Test_Protocol_Parsers is
+      Info : SMB.Core_Protocol.Response_Info;
+      Status : SMB.Core_Status;
+
+      procedure Parse
+        (Packet : SMB.Bytes; Command : Natural;
+         Expected : SMB.Core_Status; Label : String) is
+      begin
+         SMB.Core_Protocol.Parse_Response
+           (Packet, SMB.Core_Wire.Command_Code (Command), SMB.Success,
+            Info, Status);
+         Assert (Status = Expected, Label & ": " & Status'Image);
+      end Parse;
+
+      function Negotiate return SMB.Bytes is
+         Packet : SMB.Bytes (0 .. 127) := (others => 0);
+      begin
+         Packet (64) := 65;
+         Packet (66) := 1;
+         Packet (68) := 16#10#;
+         Packet (69) := 2;
+         Packet (98) := 1;
+         Packet (102) := 1;
+         return Packet;
+      end Negotiate;
+
+      Packet : SMB.Bytes (0 .. 127);
+      Session : SMB.Bytes (0 .. 71) := (others => 0);
+      Tree : SMB.Bytes (0 .. 79) := (others => 0);
+      Create : SMB.Bytes (0 .. 159) := (others => 0);
+      Read : SMB.Bytes (0 .. 79) := (others => 0);
+      Query : SMB.Bytes (0 .. 71) := (others => 0);
+   begin
+      Parse (Negotiate, 0, SMB.Ok, "NEGOTIATE reply");
+      Packet := Negotiate;
+      Packet (40) := 1;
+      Parse (Packet, 0, SMB.Invalid_Protocol, "NEGOTIATE reply with a session");
+      Packet := Negotiate;
+      Packet (36) := 1;
+      Parse (Packet, 0, SMB.Invalid_Protocol, "NEGOTIATE reply with a tree");
+      Packet := Negotiate;
+      Packet (88) := 16#08#;
+      Parse (Packet, 0, SMB.Invalid_Protocol, "NEGOTIATE reply with a 3.x capability");
+      Packet (88) := 16#01#;
+      Parse (Packet, 0, SMB.Ok, "NEGOTIATE reply with the DFS capability");
+      Packet := Negotiate;
+      Packet (98) := 0;
+      Parse (Packet, 0, SMB.Invalid_Value, "NEGOTIATE reply without a read size");
+      Packet := Negotiate;
+      Packet (102) := 0;
+      Parse (Packet, 0, SMB.Invalid_Value, "NEGOTIATE reply without a write size");
+      Packet := Negotiate;
+      Packet (120) := 128;
+      Packet (122) := 1;
+      Parse (Packet, 0, SMB.Invalid_Offset, "NEGOTIATE token past the end");
+
+      Session (64) := 9;
+      Session (40) := 1;
+      Parse (Session, 1, SMB.Ok, "SESSION_SETUP reply");
+      Session (66) := 1;
+      Parse (Session, 1, SMB.Invalid_Protocol, "SESSION_SETUP reply with flags");
+      Session (66) := 0;
+      Session (68) := 72;
+      Session (70) := 1;
+      Parse (Session, 1, SMB.Invalid_Offset, "SESSION_SETUP token past the end");
+      Session (68) := 80;
+      Session (70) := 0;
+      Parse (Session, 1, SMB.Invalid_Offset, "SESSION_SETUP offset past the end");
+
+      Tree (64) := 16;
+      Tree (66) := 1;
+      Tree (36) := 7;
+      Tree (68) := 1;
+      Parse (Tree, 3, SMB.Ok, "TREE_CONNECT reply with share flag 1");
+
+      Create (64) := 89;
+      Parse (Create (0 .. 151), 5, SMB.Ok, "CREATE reply");
+      Create (66) := 1;
+      Parse (Create (0 .. 151), 5, SMB.Unsupported_Feature, "CREATE oplock");
+      Create (66) := 0;
+      Create (67) := 1;
+      Parse (Create (0 .. 151), 5, SMB.Unsupported_Feature, "CREATE flags");
+      Create (67) := 0;
+      Create (144) := 153;
+      Parse (Create (0 .. 151), 5, SMB.Invalid_Offset, "CREATE contexts past the end");
+      Create (144) := 152;
+      Create (148) := 1;
+      Parse (Create (0 .. 151), 5, SMB.Invalid_Offset, "CREATE contexts too long");
+      Create (148) := 8;
+      Parse (Create, 5, SMB.Unsupported_Feature, "CREATE contexts");
+
+      Read (64) := 17;
+      Read (66) := 80;
+      Read (68) := 1;
+      Parse (Read, 8, SMB.Invalid_Offset, "READ data past the end");
+
+      Query (64) := 9;
+      Query (66) := 72;
+      Query (68) := 1;
+      Parse (Query, 14, SMB.Invalid_Offset, "QUERY_DIRECTORY data past the end");
+
+      Parse (Query (0 .. 63), 17, SMB.Invalid_Length, "SET_INFO reply without a body");
+      Parse (Query, 99, SMB.Unsupported_Feature, "reply to an unknown command");
+
+      --  Directory entries: name and short name lengths, and the next entry.
+      declare
+         function Entry_Of
+           (Next : SMB.Byte; Name_Length : SMB.Byte;
+            Short_Length : SMB.Byte := 0; Reserved : SMB.Byte := 0;
+            Last : Natural := 111) return SMB.Bytes
+         is
+            Result : SMB.Bytes (0 .. Last) := (others => 0);
+         begin
+            Result (0) := Next;
+            Result (60) := Name_Length;
+            Result (68) := Short_Length;
+            Result (69) := Reserved;
+            for Index in 104 .. Last loop
+               Result (Index) := (if Index mod 2 = 0 then 16#61# else 0);
+            end loop;
+            return Result;
+         end Entry_Of;
+
+         procedure Directory
+           (Buffer : SMB.Bytes; Expected : SMB.Core_Status; Label : String)
+         is
+            Cursor : Natural := 0;
+            Directory_Info : SMB.Core_Protocol.Directory_Info;
+         begin
+            SMB.Core_Protocol.Parse_Directory_Entry
+              (Buffer, Cursor, Directory_Info, Status);
+            Assert (Status = Expected, Label & ": " & Status'Image);
+         end Directory;
+      begin
+         Directory (Entry_Of (0, 2, 24, 1), SMB.Ok, "short name of 24 bytes");
+         Directory (Entry_Of (0, 2, 2), SMB.Ok, "short name of 2 bytes");
+         Directory (Entry_Of (0, 2, 26), SMB.Invalid_Offset, "short name of 26 bytes");
+         Directory (Entry_Of (0, 3), SMB.Invalid_Offset, "odd name length");
+         Directory (Entry_Of (0, 10), SMB.Invalid_Offset, "name past the entry");
+         Directory
+           (Entry_Of (8, 2, Last => 223), SMB.Invalid_Offset,
+            "next entry inside this one");
+      end;
+   end Test_Protocol_Parsers;
+
    procedure Test_Directory_Counters is
       Count : Natural;
       Status : SMB.Core_Status;
@@ -8148,6 +8430,8 @@ begin
    Spnego_Mutation_Tests;
    Challenge_Mutation_Tests;
    Test_Core_Protocol;
+   Test_Protocol_Builders;
+   Test_Protocol_Parsers;
    Test_Transfer_Progress;
    Test_Directory_Counters;
    Response_Mutation_Tests;
