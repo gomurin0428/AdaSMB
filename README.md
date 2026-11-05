@@ -157,7 +157,28 @@ make example                # build/bin/smb_example
 make prove                  # needs GNATprove + cvc5/z3; fails on any unproved check
 make transport-test         # TCP fragmentation, send/receive timeouts, disconnects, recovery
 make integration            # opt-in test that explicitly starts a local Samba
+make mutation               # mutation testing of the tests over all of src/*.adb (needs AdaMutant)
+make mutation-diff          # the same, only for lines changed since origin/main
 ```
+
+`make mutation` checks the tests themselves with
+[AdaMutant](https://github.com/gomurin0428/AdaMutant), which must be on `PATH`
+(or named with `ADAMUTANT=`). It makes one small change at a time to the
+library source (an operator, a literal, a condition, or a whole assignment or
+call replaced by `null`), rebuilds `test_suite` and runs it. A change the tests
+do not notice is a surviving mutant. When `test_suite` misses a mutant of a
+unit that a comparison test covers (NTLM, hashes and signing, UTF conversion,
+the clock), [`tests/mutant_tests.py`](tests/mutant_tests.py) also runs that
+comparison test, so only the mutants that every applicable test misses
+survive. Contracts, pragmas and ghost code are not mutated, because GNATprove
+checks them. `src/smb-client.adb` and `src/smb-transport.adb` are left out:
+they need a live server, so only the Samba integration and transport tests
+exercise them, and those are too slow to run once per mutant. The settings are
+in [`adamutant.toml`](adamutant.toml), and the HTML and JSON reports go to
+`.adamutant/reports`. [`tests/mutation_survivors.py`](tests/mutation_survivors.py)
+lists the mutants no test detected; `make mutation-diff` fails if there is one.
+A mutant that cannot change behavior is disabled in the source with an
+`adamutant:disable-next-line` comment that says why.
 
 `make unicode-test` uses Python 3's standard codecs as an independent
 reference and checks all 1,112,063 Unicode scalars except NUL, every
@@ -204,6 +225,12 @@ cached).
   * Windows: build with warnings as errors, source and stack checks, unit
     tests, the comparison tests and the TCP transport test
   * macOS (ARM64): build with warnings as errors
+  * Pull requests only: mutation testing of the `src/*.adb` lines the pull
+    request changes (`make mutation-diff`); a mutant no test detects fails
+    the job
+* `mutation.yml` (every Saturday 18:00 UTC, which is Sunday 03:00 JST, and
+  manual runs): mutation testing of all of `src/*.adb`, split over eight jobs
+  of about the same number of mutants. The reports are kept as artifacts.
 * `proof.yml` (every Sunday 18:00 UTC, which is Monday 03:00 JST, and manual
   runs): the full proof with `make prove`. GitHub stops scheduled runs in
   repositories without activity for 60 days.

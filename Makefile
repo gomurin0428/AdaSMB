@@ -1,7 +1,10 @@
 GPRBUILD ?= gprbuild
 PYTHON ?= python3
+ADAMUTANT ?= adamutant
 
-.PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test signing-test clock-test check stack-check clean example prove
+MUTATION_BASE ?= origin/main
+
+.PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test signing-test clock-test check stack-check clean example prove mutation mutation-diff
 
 all: build
 
@@ -53,6 +56,14 @@ check: stack-check
 stack-check:
 	$(GPRBUILD) -p -P smb.gpr --subdirs=stack-usage -cargs:Ada -fcallgraph-info=su
 	$(PYTHON) tests/check_stack_usage.py
+
+mutation:
+	$(ADAMUTANT) run
+	$(PYTHON) tests/mutation_survivors.py
+
+mutation-diff:
+	$(ADAMUTANT) run --since $(MUTATION_BASE)
+	$(PYTHON) tests/mutation_survivors.py --fail
 
 prove:
 	@command -v gnatprove >/dev/null 2>&1 || { echo "gnatprove is required"; exit 127; }

@@ -283,6 +283,13 @@ does not make the above bodies formally verified.
   conformance and transport tests (Linux and Windows) and the Samba
   integration test (Linux) on pushes to `main` and pull requests, and the full
   proof weekly and on demand; see `.github/workflows`.
+* Mutation testing (AdaMutant, configured in `adamutant.toml`) measures how
+  much of the executable library code the unit and conformance tests
+  constrain. It mutates only executable code, not contracts or ghost code, and
+  runs `test_suite` and the conformance tests of the mutated unit, so a mutant
+  that only the Samba integration test would catch is reported as surviving.
+  The socket facade (`SMB.Client`, `SMB.Transport`) is left out for that
+  reason. It says nothing about the proofs.
 
 ## Unverified authentication diagnostics
 
