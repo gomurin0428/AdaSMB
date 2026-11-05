@@ -27,6 +27,7 @@ with Security_Buffer_Tests;
 with Spnego_Mutation_Tests;
 with Challenge_Mutation_Tests;
 with Async_Engine_Tests;
+with Core_Client_Tests;
 with SMB.Heap_Owner_Tests;
 
 procedure Test_Suite is
@@ -1855,14 +1856,21 @@ procedure Test_Suite is
         (16#FF#, 16#FF#, 16#FF#, 0, 16#11#, 16#22#, 16#33#, 16#44#);
       Session_Id : constant SMB.QWord := 16#1234#;
 
-      procedure Prepare_Negotiated (State : in out SMB.Engine.Engine_State) is
+      --  Reconnect keeps the engine's owner, so its epoch moves past zero.
+      procedure Prepare_Negotiated
+        (State : in out SMB.Engine.Engine_State;
+         Reconnect : Boolean := False) is
          Status : SMB.Core_Status;
          Nt_Status : SMB.DWord;
          Message_Id : SMB.QWord;
          Expected : SMB.Engine.Request_Expectation;
          Response : SMB.Bytes (0 .. 127) := (others => 0);
       begin
-         SMB.Engine.Initialize (State, Status);
+         if Reconnect then
+            SMB.Engine.Invalidate (State, Status);
+         else
+            SMB.Engine.Initialize (State, Status);
+         end if;
          Assert (Status = SMB.Ok, "authentication engine initialize");
          SMB.Engine.Mark_Connected (State, Status);
          Assert (Status = SMB.Ok, "authentication transport connect");
@@ -1974,6 +1982,17 @@ procedure Test_Suite is
            (Value, State, "User", "Password", "Domain", Nonce, 0,
             Output, Used, Status);
          Assert (Status = SMB.Ok, "prepare coordinator authenticate");
+         declare
+            Unsent_Failure : SMB.Bytes := Final_Response
+              (SMB.Wire.U64 (Output, 24), 16#C000_006D#, False, False);
+         begin
+            SMB.Wire.Put_U32 (Unsent_Failure, 16, 1);
+            Unsent_Failure (48 .. 63) := (others => 0);
+            Assert
+              (SMB.Core_Client.Unverified_Authentication_Status
+                 (Value, State, Unsent_Failure) = 0,
+               "diagnostic hint before the authenticate was sent");
+         end;
          SMB.Core_Client.Authentication_Send_Succeeded (Value, State, Status);
          Assert (Status = SMB.Ok, "acknowledge coordinator authenticate");
       end Prepare_Final_Request;
@@ -2380,7 +2399,8 @@ procedure Test_Suite is
          and then SMB.Engine.Current_Response_Info (State).Session_Id =
            SMB.Engine.Current_Session_Id (State)
          and then SMB.Engine.Current_Session_Id (State) =
-           SMB.Core_Client.Authentication_Session_Id_Of (Value),
+           SMB.Core_Client.Authentication_Session_Id_Of (Value)
+         and then SMB.Core_Client.Authentication_Challenge_Length_Of (Value) = 0,
          "coordinator completed signed authentication");
       declare
          Info : constant SMB.Core_Protocol.Response_Info :=
@@ -2686,7 +2706,7 @@ procedure Test_Suite is
             "malformed challenge was not distinguished and invalidated");
       end;
 
-      for Fault in 0 .. 8 loop
+      for Fault in 0 .. 10 loop
          declare
             Failed_State : SMB.Engine.Engine_State;
             Failed_Value : SMB.Core_Client.Authentication;
@@ -2716,13 +2736,15 @@ procedure Test_Suite is
                when 7 => SMB.Wire.Put_U32
                  (Failed_Response, 8, SMB.Status_More_Processing_Required);
                when 8 => SMB.Wire.Put_U32 (Failed_Response, 16, 9);
+               when 9 => Last := Failed_Response'First + 71;
+               when 10 => SMB.Wire.Put_U32 (Failed_Response, 36, 5);
                when others => null;
             end case;
             Hint := SMB.Core_Client.Unverified_Authentication_Status
               (Failed_Value, Failed_State,
                Failed_Response (Failed_Response'First .. Last));
             Assert
-              (Hint = (if Fault = 0 then 16#C000_006D# else 0),
+              (Hint = (if Fault in 0 | 9 then 16#C000_006D# else 0),
                "unsigned authentication hint bounds/correlation/trust fault"
                  & Natural'Image (Fault) & " hint" & SMB.DWord'Image (Hint));
             Assert
@@ -2841,6 +2863,266 @@ procedure Test_Suite is
                "final MIC byte mutation was accepted");
          end;
       end loop;
+
+      --  The coordinator's own checks, each at its boundary.
+      declare
+         Full : constant Natural :=
+           SMB.Core_Client.Authentication_Request_Size;
+
+         procedure Negotiate_Into
+           (Output : out SMB.Bytes;
+            Used : out Natural;
+            Result : out SMB.Core_Status)
+         is
+            Edge_State : SMB.Engine.Engine_State;
+            Edge_Value : SMB.Core_Client.Authentication;
+         begin
+            Prepare_Negotiated (Edge_State);
+            Output := (others => 16#EE#);
+            SMB.Core_Client.Prepare_Negotiate
+              (Edge_Value, Edge_State, Output, Used, Result);
+            if Result /= SMB.Ok then
+               Assert
+                 (Used = 0 and then (for all B of Output => B = 0)
+                  and then SMB.Core_Client.Authentication_Stage_Of
+                    (Edge_Value) = SMB.Core_Client.Authentication_Failed
+                  and then not SMB.Engine.Has_Pending_Request (Edge_State),
+                  "rejected negotiate output "
+                  & SMB.Core_Status'Image (Result));
+            end if;
+         end Negotiate_Into;
+
+         procedure Authenticate_Into
+           (User, Password, Domain : String;
+            Output : out SMB.Bytes;
+            Used : out Natural;
+            Result : out SMB.Core_Status;
+            Install_Key_First : Boolean := False)
+         is
+            Edge_State : SMB.Engine.Engine_State;
+            Edge_Value : SMB.Core_Client.Authentication;
+            Request : SMB.Bytes (0 .. Full - 1) := (others => 0);
+            Request_Used : Natural;
+            Edge_Nt : SMB.DWord;
+         begin
+            Prepare_Negotiated (Edge_State);
+            SMB.Core_Client.Prepare_Negotiate
+              (Edge_Value, Edge_State, Request, Request_Used, Result);
+            SMB.Core_Client.Authentication_Send_Succeeded
+              (Edge_Value, Edge_State, Result);
+            SMB.Core_Client.Complete_Challenge
+              (Edge_Value, Edge_State,
+               Challenge_Response
+                 (SMB.Wire.U64 (Request, 24),
+                  SMB.Status_More_Processing_Required, Challenge),
+               Edge_Nt, Result);
+            Assert (Result = SMB.Ok, "challenge before an edge authenticate");
+            if Install_Key_First then
+               SMB.Engine.Install_Session_Key
+                 (Edge_State, Session_Id, Session_Key, Result);
+               Assert (Result = SMB.Ok, "key installed before the coordinator");
+            end if;
+            Output := (others => 16#EE#);
+            SMB.Core_Client.Prepare_Authenticate
+              (Edge_Value, Edge_State, User, Password, Domain, Nonce, 0,
+               Output, Used, Result);
+            if Result /= SMB.Ok then
+               Assert
+                 (Used = 0 and then (for all B of Output => B = 0)
+                  and then SMB.Core_Client.Authentication_Stage_Of
+                    (Edge_Value) = SMB.Core_Client.Authentication_Failed
+                  and then SMB.Core_Client.Authentication_Challenge_Length_Of
+                    (Edge_Value) = 0
+                  and then SMB.Engine.Current_Phase (Edge_State) =
+                    SMB.Engine.Disconnected,
+                  "rejected authenticate output "
+                  & SMB.Core_Status'Image (Result));
+            end if;
+         end Authenticate_Into;
+
+         Probe : SMB.Bytes (0 .. Full - 1);
+         Size, Edge_Used : Natural;
+         Limit : constant String
+           (1 .. SMB.Core_Auth.Maximum_Credential_Bytes) := (others => 'u');
+         Over : constant String
+           (1 .. SMB.Core_Auth.Maximum_Credential_Bytes + 1) :=
+             (others => 'u');
+      begin
+         Negotiate_Into (Probe, Size, Status);
+         Assert
+           (Status = SMB.Ok and then SMB.Wire.U16 (Probe, 6) = 1
+            and then SMB.Wire.U16 (Probe, 14) = 1
+            and then SMB.Wire.U32 (Probe, 16) = 0,
+            "negotiate header credits and flags");
+         declare
+            Exact : SMB.Bytes (0 .. Size - 1);
+            Short : SMB.Bytes (0 .. Size - 2);
+            Header_Only : SMB.Bytes (0 .. 63);
+            High : SMB.Bytes (Natural'Last - 64 .. Natural'Last);
+         begin
+            Negotiate_Into (Exact, Edge_Used, Status);
+            Assert (Status = SMB.Ok and then Edge_Used = Size,
+                    "negotiate into an exact output");
+            Negotiate_Into (Short, Edge_Used, Status);
+            Assert (Status = SMB.Resource_Limit, "negotiate one byte short");
+            Negotiate_Into (Header_Only, Edge_Used, Status);
+            Assert (Status = SMB.Resource_Limit,
+                    "negotiate into a header-sized output");
+            Negotiate_Into (High, Edge_Used, Status);
+            Assert (Status = SMB.Resource_Limit,
+                    "negotiate output at the top of Natural");
+         end;
+
+         Authenticate_Into ("User", "Password", "Domain", Probe, Size, Status);
+         Assert
+           (Status = SMB.Ok and then SMB.Wire.U16 (Probe, 6) = 1
+            and then SMB.Wire.U16 (Probe, 14) = 1
+            and then SMB.Wire.U32 (Probe, 16) = 0,
+            "authenticate header credits and flags");
+         declare
+            Exact : SMB.Bytes (0 .. Size - 1);
+            Short : SMB.Bytes (0 .. Size - 2);
+            Tiny : SMB.Bytes (0 .. 62);
+         begin
+            Authenticate_Into
+              ("User", "Password", "Domain", Exact, Edge_Used, Status);
+            Assert (Status = SMB.Ok and then Edge_Used = Size,
+                    "authenticate into an exact output");
+            Authenticate_Into
+              ("User", "Password", "Domain", Short, Edge_Used, Status);
+            Assert (Status = SMB.Resource_Limit,
+                    "authenticate one byte short");
+            Authenticate_Into
+              ("User", "Password", "Domain", Tiny, Edge_Used, Status);
+            Assert (Status = SMB.Resource_Limit,
+                    "authenticate into less than a header");
+         end;
+         Authenticate_Into (Limit, "Password", "Domain", Probe, Edge_Used, Status);
+         Assert (Status = SMB.Ok, "user at the length limit");
+         Authenticate_Into ("User", Limit, "Domain", Probe, Edge_Used, Status);
+         Assert (Status = SMB.Ok, "password at the length limit");
+         Authenticate_Into ("User", "Password", Limit, Probe, Edge_Used, Status);
+         Assert (Status = SMB.Ok, "domain at the length limit");
+         Authenticate_Into (Over, "Password", "Domain", Probe, Edge_Used, Status);
+         Assert (Status = SMB.Resource_Limit, "user over the length limit");
+         Authenticate_Into ("User", Over, "Domain", Probe, Edge_Used, Status);
+         Assert (Status = SMB.Resource_Limit, "password over the length limit");
+         Authenticate_Into ("User", "Password", Over, Probe, Edge_Used, Status);
+         Assert (Status = SMB.Resource_Limit, "domain over the length limit");
+         Authenticate_Into
+           ("User", "Password", "Domain", Probe, Edge_Used, Status,
+            Install_Key_First => True);
+         Assert (Status /= SMB.Ok, "authenticate over an installed key");
+      end;
+
+      --  Challenges: before the negotiate is sent, the largest token, and an
+      --  empty token at the end of the response.
+      declare
+         Edge_State, Other_State, Empty_State : SMB.Engine.Engine_State;
+         Edge_Value, Other_Value, Empty_Value : SMB.Core_Client.Authentication;
+         Request, Other_Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
+         Request_Used : Natural;
+         Edge_Nt : SMB.DWord := 16#EEEE#;
+         Largest : constant SMB.Bytes
+           (1 .. SMB.Core_Auth.Maximum_Security_Token) := (others => 16#5A#);
+         No_Token : constant SMB.Bytes (1 .. 0) := (others => 0);
+      begin
+         Prepare_Negotiated (Edge_State);
+         SMB.Core_Client.Complete_Challenge
+           (Edge_Value, Edge_State,
+            Challenge_Response (0, SMB.Status_More_Processing_Required, Challenge),
+            Edge_Nt, Status);
+         Assert (Status = SMB.Invalid_State_Status and then Edge_Nt = 0,
+                 "challenge before the negotiate");
+         SMB.Core_Client.Prepare_Negotiate
+           (Edge_Value, Edge_State, Request, Request_Used, Status);
+         Prepare_Negotiated (Other_State);
+         SMB.Core_Client.Prepare_Negotiate
+           (Other_Value, Other_State, Other_Request, Request_Used, Status);
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Edge_Value, Other_State, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status
+            and then SMB.Core_Client.Authentication_Stage_Of (Edge_Value) =
+              SMB.Core_Client.Negotiate_Prepared,
+            "negotiate acknowledged on another engine");
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Edge_Value, Edge_State, Status);
+         SMB.Core_Client.Complete_Challenge
+           (Edge_Value, Edge_State,
+            Challenge_Response
+              (SMB.Wire.U64 (Request, 24),
+               SMB.Status_More_Processing_Required, Largest),
+            Edge_Nt, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Authentication_Challenge_Length_Of
+              (Edge_Value) = Largest'Length,
+            "largest challenge token");
+         SMB.Core_Client.Prepare_Authenticate
+           (Edge_Value, Edge_State, "User", "Password", "Domain", Nonce, 0,
+            Request, Request_Used, Status);
+         Assert
+           (Status = SMB.Invalid_Encoding,
+            "authenticate over the largest challenge token "
+            & SMB.Core_Status'Image (Status));
+
+         Prepare_Negotiated (Empty_State);
+         SMB.Core_Client.Prepare_Negotiate
+           (Empty_Value, Empty_State, Request, Request_Used, Status);
+         SMB.Core_Client.Authentication_Send_Succeeded
+           (Empty_Value, Empty_State, Status);
+         SMB.Core_Client.Complete_Challenge
+           (Empty_Value, Empty_State,
+            Challenge_Response
+              (SMB.Wire.U64 (Request, 24),
+               SMB.Status_More_Processing_Required, No_Token),
+            Edge_Nt, Status);
+         Assert
+           (Status = SMB.Ok
+            and then SMB.Core_Client.Authentication_Challenge_Length_Of
+              (Empty_Value) = 0,
+            "empty challenge token at the end of the response "
+            & SMB.Core_Status'Image (Status));
+         SMB.Core_Client.Prepare_Authenticate
+           (Empty_Value, Empty_State, "User", "Password", "Domain", Nonce, 0,
+            Request, Request_Used, Status);
+         Assert
+           (Status = SMB.Invalid_Encoding and then Request_Used = 0
+            and then SMB.Engine.Current_Phase (Empty_State) =
+              SMB.Engine.Disconnected,
+            "authenticate over an empty challenge "
+            & SMB.Core_Status'Image (Status));
+      end;
+
+      --  A whole authentication on an engine past epoch 0.
+      declare
+         Epoch_State : SMB.Engine.Engine_State;
+         Epoch_Value : SMB.Core_Client.Authentication;
+         Request : SMB.Bytes
+           (0 .. SMB.Core_Client.Authentication_Request_Size - 1) :=
+             (others => 0);
+         Request_Used : Natural;
+      begin
+         Prepare_Negotiated (Epoch_State);
+         Prepare_Negotiated (Epoch_State, Reconnect => True);
+         Assert (SMB.Engine.Current_Epoch (Epoch_State) > 0,
+                 "reconnected authentication epoch");
+         Prepare_Final_Request
+           (Epoch_State, Epoch_Value, Request, Request_Used);
+         SMB.Core_Client.Complete_Authenticate
+           (Epoch_Value, Epoch_State,
+            Final_Response
+              (SMB.Wire.U64 (Request, 24), SMB.Success, False, False),
+            Nt_Status, Status);
+         Assert
+           (Status = SMB.Ok and then Nt_Status = SMB.Success
+            and then SMB.Engine.Current_Phase (Epoch_State) =
+              SMB.Engine.Authenticated,
+            "authentication after a reconnect");
+      end;
    end Test_Core_Client_Authentication;
 
    procedure Test_Final_Spnego is
@@ -8378,7 +8660,8 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "ntlm-maxlen"
                  and then Ada.Command_Line.Argument (1) /= "final-spnego"
                  and then Ada.Command_Line.Argument (1) /= "challenge-mutations"
-                 and then Ada.Command_Line.Argument (1) /= "async-responses")
+                 and then Ada.Command_Line.Argument (1) /= "async-responses"
+                 and then Ada.Command_Line.Argument (1) /= "core-client")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
@@ -8388,6 +8671,8 @@ begin
          Test_Directory_Counters;
       elsif Ada.Command_Line.Argument (1) = "transfer-progress" then
          Test_Transfer_Progress;
+      elsif Ada.Command_Line.Argument (1) = "core-client" then
+         Core_Client_Tests.Run;
       elsif Ada.Command_Line.Argument (1) = "async-responses" then
          Async_Engine_Tests.Run;
          Ada.Text_IO.Put_Line ("AdaSMB async response tests passed");
@@ -8484,6 +8769,7 @@ begin
    Test_Engine_Malformed_Close;
    Test_Engine_Receipts;
    Async_Engine_Tests.Run;
+   Core_Client_Tests.Run;
    SMB.Heap_Owner_Tests.Run;
    Test_Text_And_Wire;
    Test_Wire_Facade;
