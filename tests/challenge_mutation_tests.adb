@@ -20,8 +20,12 @@ procedure Challenge_Mutation_Tests is
          return SMB.Bytes'(Tag, SMB.Byte (Content'Length)) & Content;
       elsif Content'Length < 256 then
          return SMB.Bytes'(Tag, 16#81#, SMB.Byte (Content'Length)) & Content;
-      else
+      elsif Content'Length < 65_536 then
          return SMB.Bytes'(Tag, 16#82#, SMB.Byte (Content'Length / 256),
+                           SMB.Byte (Content'Length mod 256)) & Content;
+      else
+         return SMB.Bytes'(Tag, 16#83#, SMB.Byte (Content'Length / 65_536),
+                           SMB.Byte (Content'Length / 256 mod 256),
                            SMB.Byte (Content'Length mod 256)) & Content;
       end if;
    end TLV;
@@ -66,6 +70,20 @@ procedure Challenge_Mutation_Tests is
          raise Program_Error with "failed challenge extraction published a partial slice";
       end if;
    end Check;
+
+   --  A rejected token must fail with this status, and publish no slice.
+   procedure Reject
+     (Token : SMB.Bytes; Expected : SMB.Core_Status; Label : String)
+   is
+      Offset, Length : Natural := Natural'Last;
+      Status : SMB.Core_Status;
+   begin
+      SMB.Core_NTLM.Extract_Challenge (Token, Offset, Length, Status);
+      Cases := Cases + 1;
+      if Status /= Expected or else Offset /= 0 or else Length /= 0 then
+         raise Program_Error with Label & ": status " & Status'Image;
+      end if;
+   end Reject;
 
    Lengths : constant array (Positive range <>) of Natural :=
      (48, 127, 128, 255, 256, 4096, 65_500);
@@ -127,5 +145,55 @@ begin
          end loop;
       end;
    end loop;
+   declare
+      Fields : constant SMB.Bytes :=
+        State_Field & Mechanism & Response_Field (48);
+      Content : constant SMB.Bytes := TLV (16#30#, Fields);
+      Long_Mechanism : constant SMB.Bytes :=
+        SMB.Bytes'(16#A1#, 13, 6, 11)
+        & Mechanism (Mechanism'First + 4 .. Mechanism'Last) & SMB.Bytes'(0 => 0);
+   begin
+      --  Structure: every field present, in order, nothing after the token.
+      Reject (SMB.Bytes'(16#A1#, 0), SMB.Invalid_Encoding, "empty response");
+      Reject (TLV (16#60#, SPNEGO_OID), SMB.Invalid_Encoding,
+              "GSS wrapper without a response");
+      Reject (Wrap (Fields, True) & SMB.Bytes'(0 => 0), SMB.Invalid_Encoding,
+              "data after the GSS wrapper");
+      Reject (Wrap (Mechanism & State_Field & Response_Field (48), False),
+              SMB.Invalid_Encoding, "mechanism before state");
+      Reject (Wrap (Response_Field (48), False), SMB.Invalid_Protocol,
+              "response without state and mechanism");
+      Reject (Wrap (Mechanism & Response_Field (48), False), SMB.Invalid_Protocol,
+              "response without state");
+      Reject (Wrap (State_Field & Mechanism, False), SMB.Invalid_Encoding,
+              "no response");
+      Reject (Wrap (Fields & SMB.Bytes'(16#A4#, 2, 4, 0), False),
+              SMB.Invalid_Encoding, "field tag A4");
+      Reject (Wrap (State_Field & Long_Mechanism & Response_Field (48), False),
+              SMB.Invalid_Protocol, "mechanism OID with an extra byte");
+      --  DER lengths: only the shortest form is accepted.
+      Reject (SMB.Bytes'(16#A1#, 16#81#, SMB.Byte (Content'Length)) & Content,
+              SMB.Invalid_Encoding, "long form for a short length");
+      Reject (SMB.Bytes'(16#A1#, 16#80#), SMB.Invalid_Encoding,
+              "indefinite length ending the token");
+      Reject (SMB.Bytes'(16#A1#, 16#82#, 1), SMB.Invalid_Encoding,
+              "truncated length bytes");
+      Reject (SMB.Bytes'(16#A1#, 16#84#, 1, 0, 0, 0) & Content,
+              SMB.Invalid_Encoding, "four length bytes");
+      --  The indefinite form 16#80# is not a length of 128.
+      for Size in 48 .. 200 loop
+         declare
+            Sequence : constant SMB.Bytes :=
+              TLV (16#30#, State_Field & Mechanism & Response_Field (Size));
+         begin
+            if Sequence'Length = 128 then
+               Check (SMB.Bytes'(16#A1#, 16#81#, 128) & Sequence, True,
+                      "128-byte response", Size);
+               Reject (SMB.Bytes'(16#A1#, 16#80#) & Sequence,
+                       SMB.Invalid_Encoding, "indefinite length");
+            end if;
+         end;
+      end loop;
+   end;
    Ada.Text_IO.Put_Line ("challenge extraction cases:" & Cases'Image);
 end Challenge_Mutation_Tests;
