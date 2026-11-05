@@ -1452,11 +1452,14 @@ is
         --  adamutant:disable-next-line BooleanLiteral: Start_Directory checked read access, which a handle keeps
         (State, Value.Token, True, False, File_Id, Access_Mode,
          Is_Directory, Validate_Status);
+      --  A failed lookup clears its outputs and a token's handle does not change, so every pairing of these fails the same way.
+      --  adamutant:disable LogicalOperator
       --  adamutant:disable-next-line ConditionalExpression: Directory_Context_Valid made this lookup above
       if Validate_Status /= SMB.Ok
         or else not Is_Directory
         or else File_Id /= Value.File_Id
         or else Access_Mode /= Value.Access_Mode
+      --  adamutant:enable LogicalOperator
       then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_State_Status;
@@ -1642,10 +1645,12 @@ is
          return;
       end if;
       Info := SMB.Engine.Current_Response_Info (State);
-      --  adamutant:disable-next-line LogicalOperator: an error response carries no data, so it ends the listing either way
+      --  An error response carries no data, so it ends the listing whichever of these holds.
+      --  adamutant:disable LogicalOperator
       if Nt_Status /= SMB.Success
         or else Nt_Status = SMB.Status_No_More_Files
         or else Info.Data_Length = 0
+      --  adamutant:enable LogicalOperator
       then
          Value.Page_Length := 0;
          Value.Cursor := 0;
