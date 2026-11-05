@@ -18,6 +18,7 @@ concurrency:
 env:
   ADA_TOOLCHAIN: gnat_native=14.2.1 gprbuild=25.0.1
   TOOLCHAIN_KEY: alr2.1.1-gnat14.2.1-gprbuild25.0.1-v1
+  ADAMUTANT_COMMIT: 52d348a81ecc96e462fdad08e5fac489fe76249b
 
 jobs:
   linux:
@@ -47,6 +48,35 @@ jobs:
       - name: Samba integration
         # Creates a test-only account and a private smbd on 127.0.0.1:1445.
         run: sudo env "PATH=$PATH" python3 tests/samba_integration.py
+
+  mutation:
+    name: Mutation testing (changed lines)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/ada-toolchain
+          key: ada-${{ runner.os }}-${{ runner.arch }}-${{ env.TOOLCHAIN_KEY }}
+      - name: Install Ada toolchain
+        run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
+      - name: Build AdaMutant
+        run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
+      - name: Mutate the lines this pull request changes
+        run: adamutant run --since "origin/$GITHUB_BASE_REF" --concurrency 4
+      - name: Fail on undetected mutants
+        run: python3 tests/mutation_survivors.py --fail
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-report
+          path: .adamutant/reports/
+          if-no-files-found: ignore
 
   windows:
     name: Windows (tests)

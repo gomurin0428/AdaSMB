@@ -138,7 +138,29 @@ make example                # build/bin/smb_example
 make prove                  # GNATprove + cvc5/z3 が必要。未証明があれば失敗
 make transport-test         # TCP 断片化、送受信 timeout、途中切断・復旧試験
 make integration            # 明示的にローカル Samba を起動する opt-in テスト
+make mutation               # src/*.adb 全体に対する試験のミューテーションテスト（AdaMutant が必要）
+make mutation-diff          # 同じことを origin/main から変わった行だけに行う
 ```
+
+`make mutation` は [AdaMutant](https://github.com/gomurin0428/AdaMutant) で
+試験そのものを検査します。AdaMutant は `PATH` に置くか `ADAMUTANT=` で
+指定します。ライブラリのソースに一度に一つだけ小さな変更（演算子、
+リテラル、条件、代入や呼び出し一つを `null` に置換）を加え、`test_suite` を
+作り直して実行します。試験が気づかなかった変更が生き残ったミュータント
+です。照合試験が対象にしている単位（NTLM、ハッシュと署名、UTF 変換、
+時刻）のミュータントを `test_suite` が見逃したときは、
+[`tests/mutant_tests.py`](tests/mutant_tests.py) がその照合試験も実行するので、
+該当するすべての試験が見逃したミュータントだけが生き残ります。契約・
+pragma・ghost コードは GNATprove が検査するので変更しません。
+`src/smb-client.adb` と `src/smb-transport.adb` は対象外です。動作中の
+サーバーが必要で、Samba 統合試験と転送試験でしか動かせず、それらを
+ミュータントごとに実行するには時間がかかりすぎるためです。設定は
+[`adamutant.toml`](adamutant.toml) にあり、HTML と JSON のレポートは
+`.adamutant/reports` に出ます。
+[`tests/mutation_survivors.py`](tests/mutation_survivors.py) はどの試験も
+検出しなかったミュータントを一覧にし、`make mutation-diff` はそれが一つでも
+あると失敗します。振る舞いを変えようのないミュータントは、理由を書いた
+`adamutant:disable-next-line` コメントでソース上で無効化します。
 
 `make unicode-test` は Python 3 の標準 codec を独立した比較対象として、
 NUL を除く全 1,112,063 Unicode スカラー、短いバイト列の全組合せ、
@@ -181,6 +203,12 @@ Alire 2.1.1 で GNAT 14.2.1・gprbuild 25.0.1・gnatprove 14.1.1 を導入しま
   * Windows: 警告をエラー扱いにしたビルド、ソース・スタック検査、単体試験、
     各照合試験、TCP 転送試験
   * macOS（ARM64）: 警告をエラー扱いにしたビルド
+  * pull request のみ: その pull request が変えた `src/*.adb` の行に対する
+    ミューテーションテスト（`make mutation-diff`）。どの試験も検出しなかった
+    ミュータントがあると失敗します。
+* `mutation.yml`（毎週日曜 03:00 JST と手動実行）: `src/*.adb` 全体の
+  ミューテーションテスト。ミュータント数がほぼ等しい 8 つのジョブに分けて
+  実行し、レポートを成果物として残します。
 * `proof.yml`（毎週月曜 03:00 JST と手動実行）: `make prove` による全体証明。
   GitHub は、60 日間活動のないリポジトリでは定期実行を止めます。
 

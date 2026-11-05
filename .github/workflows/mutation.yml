@@ -1,0 +1,52 @@
+name: Mutation
+
+on:
+  schedule:
+    - cron: '0 18 * * 6' # Saturday 18:00 UTC (Sunday 03:00 JST)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ADA_TOOLCHAIN: gnat_native=14.2.1 gprbuild=25.0.1
+  TOOLCHAIN_KEY: alr2.1.1-gnat14.2.1-gprbuild25.0.1-v1
+  ADAMUTANT_COMMIT: 52d348a81ecc96e462fdad08e5fac489fe76249b
+
+jobs:
+  mutate:
+    name: Mutation testing (shard ${{ matrix.shard }}/8)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/ada-toolchain
+          key: ada-${{ runner.os }}-${{ runner.arch }}-${{ env.TOOLCHAIN_KEY }}
+      - name: Install Ada toolchain
+        run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
+      - name: Build AdaMutant
+        run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
+      - name: Mutate the files of this shard
+        run: |
+          files=$(python3 tests/mutation_shards.py ${{ matrix.shard }}/8)
+          adamutant run --concurrency 4 $files
+      - name: Report
+        if: always()
+        run: python3 tests/mutation_survivors.py
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-report-${{ matrix.shard }}
+          path: .adamutant/reports/
+          if-no-files-found: ignore

@@ -1,0 +1,23 @@
+# Mutation testing with AdaMutant (https://github.com/gomurin0428/AdaMutant).
+# "make mutation" runs every mutant, "make mutation-diff" only the mutants on
+# lines changed since origin/main.
+
+# Bodies only. src/platform holds the operating system entropy calls, which no
+# unit test can check.
+mutate = ["src/*.adb"]
+# The socket facade and transport need a live SMB server or peer: only the
+# Samba integration and transport tests exercise them, and those are too slow
+# to run once per mutant.
+exclude = ["src/smb-client.adb", "src/smb-transport.adb"]
+build = "gprbuild -q -p -P smb_tests.gpr test_suite.adb"
+# test_suite, then the comparison tests of the mutated unit.
+test = "python tests/mutant_tests.py"
+# A mutant of a length or a loop bound can allocate without limit. The largest
+# test process, the signing comparison, peaks at about 350 MB.
+test_memory_limit_mb = 2048
+sandbox_exclude = [".git", "build", "alire", "config"]
+
+[thresholds]
+high = 80
+low = 60
+break = 0
