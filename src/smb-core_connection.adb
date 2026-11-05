@@ -12,6 +12,7 @@ is
         when Tree_Connect => 3,
         when Tree_Disconnect => 4,
         when Logoff => 2,
+        --  adamutant:disable-next-line NumericLiteral: no caller asks for No_Connection
         when No_Connection => 0);
 
    function Body_Length
@@ -34,6 +35,7 @@ is
            when Negotiate => 38,
            when Tree_Connect => 8 + Path_Length,
            when Tree_Disconnect | Logoff => 4,
+           --  adamutant:disable-next-line NumericLiteral: no caller asks for No_Connection
            when No_Connection => 0);
    end Body_Length;
 
@@ -86,6 +88,7 @@ is
       State : SMB.Engine.Engine_State) return Boolean is
      (case Kind is
         when Negotiate =>
+          --  adamutant:disable-next-line LogicalOperator: SMB.Engine.Begin_Request rejects the same states with the same status
           SMB.Engine.Current_Phase (State) =
             SMB.Engine.Transport_Connected
           and then SMB.Engine.Current_Session_Id (State) = 0
@@ -93,25 +96,30 @@ is
           and then not SMB.Engine.Has_Signing_Key (State),
         when Tree_Connect =>
           SMB.Engine.Current_Phase (State) = SMB.Engine.Authenticated
+          --  adamutant:disable-next-line LogicalOperator: SMB.Engine.Begin_Request rejects the same states with the same status
           and then SMB.Engine.Current_Tree_Id (State) = 0,
         when Tree_Disconnect =>
           SMB.Engine.Current_Phase (State) =
             SMB.Engine.Share_Connected
+          --  adamutant:disable-next-line LogicalOperator: SMB.Engine.Begin_Request rejects the same states with the same status
           and then SMB.Engine.Current_Tree_Id (State) /= 0,
         when Logoff =>
           SMB.Engine.Current_Phase (State) =
             SMB.Engine.Authenticated
           or else SMB.Engine.Current_Phase (State) =
             SMB.Engine.Share_Connected,
+        --  adamutant:disable-next-line BooleanLiteral: every caller rules out No_Connection first
         when No_Connection => False);
 
    function Preparation_Context_Matches
      (Snapshot : Connection_State_Snapshot;
       State : SMB.Engine.Engine_State;
       Kind : Connection_Kind) return Boolean is
+     --  adamutant:disable-next-line LogicalOperator: Prepare checks the stage first, and SMB.Engine.Begin_Request rejects the same states with the same status
      (Snapshot.Stage = Idle
       and then Kind /= No_Connection
       and then Snapshot.Kind = No_Connection
+      --  adamutant:disable-next-line NumericLiteral: owner 1 belongs to the first engine of a process, which no test can pick
       and then SMB.Engine.Current_Owner_Id (State) /= 0
       and then Phase_Matches (Kind, State)
       and then not SMB.Engine.Has_Pending_Request (State)
@@ -122,6 +130,7 @@ is
    function Continuation_Context_Matches
      (Snapshot : Connection_State_Snapshot;
       State : SMB.Engine.Engine_State) return Boolean is
+     --  adamutant:disable-next-line LogicalOperator: every caller checks the stage first
      (Snapshot.Stage in Prepared | Sent
       and then Snapshot.Kind /= No_Connection
       and then Phase_Matches (Snapshot.Kind, State)
@@ -138,6 +147,7 @@ is
         Signed_Kind (Snapshot.Kind)
       and then Snapshot.Expected.Signed = Signed_Kind (Snapshot.Kind)
       and then
+        --  adamutant:disable-next-line ConditionalExpression: Begin_Request leaves the tree id of a LOGOFF expectation at 0
         (if Snapshot.Kind = Logoff then
            Snapshot.Expected.Tree_Id = 0
          else True)
@@ -273,20 +283,26 @@ is
    is
       Field_Status : SMB.Core_Status;
    begin
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Prepare checks the output length first
       if Packet'Length < Header_Length then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Length;
          return;
       end if;
       SMB.Core_Wire.Initialize_Header
         (Packet, Expected.Command, Expected.Message_Id,
          Expected.Tree_Id, Expected.Session_Id, 1, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: a header fits the packet, so the write succeeds
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Field_Status;
          return;
       end if;
       if Expected.Request_Signed then
          SMB.Core_Wire.Write_U32 (Packet, 16, 8, Field_Status);
+         --  adamutant:disable-next-line ConditionalExpression: a header fits the packet, so the write succeeds
          if Field_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := Field_Status;
             return;
          end if;
@@ -333,7 +349,9 @@ is
         else Packet = Packet'Old)
    is
    begin
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, LogicalOperator: the precondition already bounds Used
       if Used < Header_Length or else Used > Packet'Length then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Length;
          return;
       end if;
@@ -362,10 +380,14 @@ is
    is
       Invalidate_Status : SMB.Core_Status;
    begin
+      --  Only the defensive branches above call this, and no input reaches
+      --  them.
+      --  adamutant:disable all
       SMB.Engine.Invalidate (State, Invalidate_Status);
       Value.Stage := Failed;
       Status :=
         (if Invalidate_Status = SMB.Ok then Failure else Invalidate_Status);
+      --  adamutant:enable all
    end Fail_Connection;
 
    procedure Lemma_Body_Copy (Source, Packet : SMB.Bytes)
@@ -520,15 +542,20 @@ is
       if Value.Stage /= Idle
         or else not Preparation_Context_Matches (Snapshot, State, Kind)
         or else Output'Length < Need
+        --  adamutant:disable-next-line NumericLiteral: Prepare_Tree_Connect rejects empty and odd names first
         or else (Kind = Tree_Connect and then Path_Length = 0)
+        --  adamutant:disable-next-line EqualityOperator: Prepare_Tree_Connect rejects empty and odd names first
         or else (Kind = Tree_Connect and then Path_Length mod 2 /= 0)
       then
          Status := (if Value.Stage /= Idle
            or else not Preparation_Context_Matches (Snapshot, State, Kind)
            then SMB.Invalid_State_Status else SMB.Resource_Limit);
+         --  adamutant:disable-next-line ConditionalExpression: Prepare_Tree_Connect rejects empty and odd names first
          if Kind = Tree_Connect
+           --  adamutant:disable-next-line all: unreachable, as above
            and then (Path_Length = 0 or else Path_Length mod 2 /= 0)
          then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := SMB.Invalid_Length;
          end if;
          pragma Assert (State = State_At_Entry);
@@ -542,16 +569,22 @@ is
       SMB.Engine.Begin_Request
         (State, Command_Of (Kind), Signed_Kind (Kind), Signed_Kind (Kind),
          Message, Expected, Begin_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Begin_Request fails only on a pending request, rejected above, or after 2**64 requests
       if Begin_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Begin_Status;
          pragma Assert (State = State_At_Entry);
          pragma Assert (Snapshot_Of (Value) = Snapshot);
          return;
       end if;
       pragma Assert (Message = Expected.Message_Id);
+      --  adamutant:disable-next-line ConditionalExpression: Begin_Request guarantees it, as asserted above
       if Message /= Expected.Message_Id then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Value.Expected := Expected;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Value.Kind := Kind;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Connection
            (Value, State, SMB.Invalid_State_Status, Status);
          return;
@@ -564,10 +597,12 @@ is
       Value.Starting_Tree_Id := SMB.Engine.Current_Tree_Id (State);
       Value.Expected := Expected;
       Value.Path_Length := Path_Length;
+      --  adamutant:disable-next-line ConditionalExpression: both branches capture the same GUID
       if Kind = Negotiate then
          Capture_Guid (Body_Buffer (12 .. 27), Value.Guid);
          Lemma_Copies_Compose (Guid, Body_Buffer, Value.Guid, 12, 0);
       else
+         --  adamutant:disable-next-line StatementDeletion: an Idle operation already holds the zero GUID passed here
          Capture_Guid (Guid, Value.Guid);
       end if;
       pragma Assert (Value.Guid = Guid);
@@ -586,12 +621,14 @@ is
         (SMB.Engine.Connection_Context_Equivalent (State_At_Entry, State));
       Prepare_Header (Output, Expected, Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
+      --  adamutant:disable-next-line ConditionalExpression: Prepare_Header succeeds, as asserted above
       if Field_Status = SMB.Ok then
          Output (Output'First + Header_Length ..
                  Output'First + (Need - 1)) :=
            Body_Buffer;
          Used := Need;
          Lemma_Body_Copy (Body_Buffer, Output);
+         --  adamutant:disable-next-line ConditionalExpression: the branch holds only a lemma
          if Kind = Negotiate then
             Lemma_Copies_Compose (Value.Guid, Body_Buffer, Output, 12, 76);
             pragma Assert (Packet_Guid_Matches (Output, Value.Guid));
@@ -619,11 +656,15 @@ is
          end if;
       end if;
       pragma Assert (Field_Status = SMB.Ok);
+      --  adamutant:disable-next-line ConditionalExpression: signing succeeds, as asserted above
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Connection (Value, State, Field_Status, Status);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
          return;
       end if;
+      --  adamutant:disable-next-line StatementDeletion: Used is already Need
       Used := Need;
       Status := SMB.Ok;
       pragma Assert (Value.Kind = Kind);
@@ -670,9 +711,13 @@ is
    begin
       SMB.Core_Protocol.Build_Negotiate
         (Guid, Body_Buffer, Body_Used, Build_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the body buffer always fits a NEGOTIATE body
       if Build_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Build_Status;
          return;
       end if;
@@ -680,6 +725,7 @@ is
         (Value, State, Negotiate, Guid, 0,
          Body_Buffer (0 .. Body_Used - 1),
                Output, Used, Status);
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: the branch holds only a lemma
       if Status = SMB.Ok then
          Lemma_Copies_Compose (Guid, Body_Buffer, Output, 12, 76);
       end if;
@@ -708,13 +754,18 @@ is
       end if;
       SMB.Core_Protocol.Build_Tree_Connect
         (Name, Body_Buffer, Body_Used, Build_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the name was checked and the body buffer fits it
       if Build_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Build_Status;
          return;
       end if;
       Prepare
+        --  adamutant:disable-next-line NumericLiteral: only NEGOTIATE uses the GUID
         (Value, State, Tree_Connect, SMB.Bytes'(0 .. 15 => 0),
          Name'Length, Body_Buffer (0 .. Body_Used - 1), Output, Used,
          Status);
@@ -783,13 +834,18 @@ is
    begin
       SMB.Core_Protocol.Build_Simple
         (Body_Buffer, Body_Used, Build_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the body buffer always fits a four-byte body
       if Build_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Build_Status;
          return;
       end if;
       Prepare
+        --  adamutant:disable-next-line NumericLiteral: only NEGOTIATE uses the GUID
         (Value, State, Tree_Disconnect, SMB.Bytes'(0 .. 15 => 0), 0,
          Body_Buffer (0 .. Body_Used - 1), Output, Used, Status);
    end Prepare_Tree_Disconnect;
@@ -806,13 +862,18 @@ is
    begin
       SMB.Core_Protocol.Build_Simple
         (Body_Buffer, Body_Used, Build_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the body buffer always fits a four-byte body
       if Build_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Build_Status;
          return;
       end if;
       Prepare
+        --  adamutant:disable-next-line NumericLiteral: only NEGOTIATE uses the GUID
         (Value, State, Logoff, SMB.Bytes'(0 .. 15 => 0), 0,
          Body_Buffer (0 .. Body_Used - 1), Output, Used, Status);
    end Prepare_Logoff;
@@ -877,10 +938,13 @@ is
               with Ghost;
          begin
             SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+            --  adamutant:disable-next-line ConditionalExpression: the response accepted above is still held
             if Receipt_Status /= SMB.Ok then
+               --  adamutant:disable-next-line StatementDeletion: unreachable, as above
                Fail_Connection (Value, State, Receipt_Status, Status);
                return;
             end if;
+            --  adamutant:disable-next-line StatementDeletion: a ghost lemma
             SMB.Engine.Lemma_Connection_Context_Transitive
               (State_At_Entry, Before_Discard, State);
          end;
@@ -894,7 +958,9 @@ is
          Info := SMB.Engine.Current_Response_Info (State);
          SMB.Engine.Mark_Negotiated
            (State, Info.Max_Read, Info.Max_Write, Mark_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the phase and limits were checked when the response was accepted
          if Mark_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Connection (Value, State, Mark_Status, Status);
             return;
          end if;
@@ -903,7 +969,9 @@ is
          Info := SMB.Engine.Current_Response_Info (State);
          SMB.Engine.Mark_Share_Connected
            (State, Info.Tree_Id, Mark_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the phase and tree id were checked when the response was accepted
          if Mark_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Connection (Value, State, Mark_Status, Status);
             return;
          end if;
@@ -911,7 +979,9 @@ is
       else
          pragma Assert (not SMB.Engine.Has_Validated_Response (State));
       end if;
+      --  adamutant:disable-next-line ConditionalExpression: the branch holds only a lemma
       if Value.Kind in Negotiate | Tree_Connect then
+         --  adamutant:disable-next-line StatementDeletion: a ghost lemma
          SMB.Engine.Lemma_Handle_Table_Transitive
            (State_At_Entry, Before_Mark, State);
       end if;

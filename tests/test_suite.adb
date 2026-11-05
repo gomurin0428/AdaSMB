@@ -5783,6 +5783,86 @@ procedure Test_Suite is
          SMB.Engine.Invalidate (State, Status);
       end Test_Connection_Coordinator;
 
+      procedure Test_Connection_Edges is
+         Guid : constant SMB.Bytes (0 .. 15) := (others => 16#5A#);
+         Name : constant SMB.Bytes (0 .. 3) := (16#41#, 0, 16#42#, 0);
+         Negotiate, Second_Negotiate, Tree_One, Disconnect :
+           SMB.Core_Connection.Connection_Operation;
+         Request : SMB.Bytes (0 .. 101);
+         Response : SMB.Bytes (0 .. 127);
+         Used : Natural;
+         Response_Status : SMB.Core_Status;
+      begin
+         SMB.Engine.Initialize (State, Status);
+         SMB.Engine.Mark_Connected (State, Status);
+         Request := (others => 16#EE#);
+         SMB.Core_Connection.Prepare_Negotiate
+           (Negotiate, State, Guid, Request, Used, Status);
+         Assert
+           (Status = SMB.Ok and then Used = 102
+            and then (for all Index in 48 .. 63 => Request (Index) = 0),
+            "unsigned NEGOTIATE carries no signature");
+         SMB.Core_Connection.Send_Succeeded (Negotiate, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response, SMB.Core_Wire.Command_Code (0),
+            SMB.Wire.U64 (Request, 24), 0, 0, False);
+         Response (64) := 65;
+         Response (66) := 1;
+         SMB.Wire.Put_U16 (Response, 68, SMB.SMB2_Dialect_0210);
+         SMB.Wire.Put_U32 (Response, 96, 65_536);
+         SMB.Wire.Put_U32 (Response, 100, 65_536);
+         SMB.Core_Connection.Complete
+           (Negotiate, State, Response, Nt_Status, Response_Status);
+         Assert (Response_Status = SMB.Ok, "edge NEGOTIATE completes");
+         --  A connection negotiates once, and a rejected preparation leaves
+         --  nothing of the caller's buffer behind.
+         Request := (others => 16#EE#);
+         SMB.Core_Connection.Prepare_Negotiate
+           (Second_Negotiate, State, Guid, Request, Used, Status);
+         Assert
+           (Status = SMB.Invalid_State_Status and then Used = 0
+            and then (for all Byte of Request => Byte = 0),
+            "second NEGOTIATE is rejected and clears the output");
+         SMB.Engine.Invalidate (State, Status);
+
+         --  Tree id 1 is a tree id like any other.
+         Reconnect_Share (State, Connect_Share_State => False);
+         Request := (others => 16#EE#);
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Tree_One, State, SMB.Bytes'(0 => 1), Request, Used, Status);
+         Assert
+           (Status = SMB.Invalid_Length and then Used = 0
+            and then (for all Byte of Request => Byte = 0),
+            "odd TREE_CONNECT name clears the output");
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Tree_One, State, Name, Request (0 .. 74), Used, Status);
+         Assert
+           (Status = SMB.Resource_Limit and then Used = 0,
+            "TREE_CONNECT output one byte short");
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Tree_One, State, Name, Request, Used, Status);
+         SMB.Core_Connection.Send_Succeeded (Tree_One, State, Status);
+         Response := (others => 0);
+         Prepare_Response
+           (Response (0 .. 79), SMB.Core_Wire.Command_Code (3),
+            SMB.Wire.U64 (Request, 24), 1, Session_Id, True);
+         Response (64) := 16;
+         Response (66) := 1;
+         SMB.Wire.Sign (Response (0 .. 79), Key);
+         SMB.Core_Connection.Complete
+           (Tree_One, State, Response (0 .. 79), Nt_Status, Response_Status);
+         Assert
+           (Response_Status = SMB.Ok
+            and then SMB.Engine.Current_Tree_Id (State) = 1,
+            "TREE_CONNECT to tree id 1");
+         SMB.Core_Connection.Prepare_Tree_Disconnect
+           (Disconnect, State, Request, Used, Status);
+         Assert (Status = SMB.Ok, "TREE_DISCONNECT of tree id 1");
+         SMB.Core_Connection.Abort_Connection (Disconnect, State, Status);
+         SMB.Engine.Invalidate (State, Status);
+      end Test_Connection_Edges;
+
       procedure Test_Directory_Coordinator is
          Directory_A, Directory_B :
            SMB.Core_Client.Directory_Enumeration;
@@ -7002,6 +7082,7 @@ procedure Test_Suite is
       end;
       Test_Directory_Coordinator;
       Test_Connection_Coordinator;
+      Test_Connection_Edges;
       Reconnect_Share;
       declare
          Metadata : SMB.Core_Client.Metadata_Operation;
