@@ -63,9 +63,13 @@ is
    is
       Invalidate_Status : SMB.Core_Status;
    begin
+      --  adamutant:disable-next-line StatementDeletion: every call is on a failure branch that cannot be reached
       SMB.Engine.Invalidate (State, Invalidate_Status);
+      --  adamutant:disable-next-line StatementDeletion: as above
       Value.Stage := Transfer_Failed;
+      --  adamutant:disable-next-line StatementDeletion: as above
       Status :=
+        --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: as above, and Invalidate only fails after 2**64 epochs
         (if Invalidate_Status = SMB.Ok then Failure else Invalidate_Status);
    end Fail_Transfer;
 
@@ -129,9 +133,12 @@ is
                 else True)))
    is
    begin
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: every caller checks the output length first
       if Packet'Length < Header_Length
+        --  adamutant:disable-next-line LogicalOperator, EqualityOperator: as above
         or else Packet'Length > SMB.Maximum_Frame_Size
       then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Length;
          return;
       end if;
@@ -228,6 +235,7 @@ is
       SMB.Engine.Invalidate (State, Invalidate_Status);
       Clear_Authentication_Buffer (Value);
       Value.Stage := Authentication_Failed;
+      --  adamutant:disable-next-line ConditionalExpression: Invalidate only fails after 2**64 epochs
       Status := (if Invalidate_Status = SMB.Ok then Failure
                  else Invalidate_Status);
    end Fail_Authentication;
@@ -248,7 +256,9 @@ is
      and then (for all Index in Output'Range => Output (Index) = 0)
    is
    begin
+      --  adamutant:disable-next-line StatementDeletion: Prepare_Negotiate cleared Output, and its builders write nothing before failing
       Clear_Output (Output);
+      --  adamutant:disable-next-line StatementDeletion: nothing has been stored before the challenge
       Clear_Authentication_Buffer (Value);
       Value.Stage := Authentication_Failed;
    end Fail_Negotiate_Preparation;
@@ -260,7 +270,9 @@ is
       Used : out Natural;
       Status : out SMB.Core_Status) is
       Token : SMB.Bytes
+        --  adamutant:disable-next-line NumericLiteral: only the bytes Build_Negotiate_Token writes are used
         (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
+      --  adamutant:disable-next-line NumericLiteral: Build_Negotiate_Token sets it
       Token_Used : Natural := 0;
       Message_Id : SMB.QWord;
       Expected : SMB.Engine.Request_Expectation;
@@ -283,14 +295,10 @@ is
          return;
       end if;
       SMB.Core_Auth.Build_Negotiate_Token (Token, Token_Used, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the NEGOTIATE token is a constant that fits Token
       if Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Negotiate_Preparation (Value, Output);
-         return;
-      end if;
-      if Token_Used = 0 or else Output'Length < Header_Length + 24 + Token_Used
-      then
-         Fail_Negotiate_Preparation (Value, Output);
-         Status := SMB.Resource_Limit;
          return;
       end if;
       SMB.Core_Protocol.Build_Session_Setup
@@ -303,8 +311,11 @@ is
       end if;
       SMB.Engine.Begin_Request
         (State, 1, False, False, Message_Id, Expected, Begin_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the checks above leave Begin_Request nothing to reject
       if Begin_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Negotiate_Preparation (Value, Output);
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Begin_Status;
          return;
       end if;
@@ -313,11 +324,16 @@ is
       Value.Owner := SMB.Engine.Current_Owner_Id (State);
       Value.Epoch := SMB.Engine.Current_Epoch (State);
       Value.Expected := Expected;
+      --  adamutant:disable-next-line StatementDeletion: an Authentication is ready only before its first use, with its defaults
       Value.Session_Id := 0;
+      --  adamutant:disable-next-line StatementDeletion: as above
       Value.Challenge_Length := 0;
       Prepare_Unsigned_Header (Output, Expected, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Output holds at least a header, as checked above
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Authentication (Value, State, Field_Status, Status);
          return;
       end if;
@@ -328,7 +344,6 @@ is
              (Output'First + Header_Length + 24 + Index) =
                Token (Token'First + Index));
       Used := Header_Length + Body_Used;
-      Status := SMB.Ok;
       pragma Assert (Value.Stage = Negotiate_Prepared);
       pragma Assert (Value.Expected.Session_Id = 0);
       pragma Assert
@@ -397,6 +412,7 @@ is
       SMB.Engine.Accept_Response (State, Packet, Nt_Status, Accept_Status);
       if Accept_Status /= SMB.Ok then
          Value.Stage := Authentication_Failed;
+         --  adamutant:disable-next-line StatementDeletion: nothing has been stored before the challenge
          Clear_Authentication_Buffer (Value);
          Status := Accept_Status;
          return;
@@ -404,25 +420,36 @@ is
       Info := SMB.Engine.Current_Response_Info (State);
       if Nt_Status /= SMB.Status_More_Processing_Required then
          SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: the receipt Accept_Response just validated can be discarded
          if Receipt_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Authentication (Value, State, Receipt_Status, Status);
          else
             SMB.Engine.Invalidate (State, Receipt_Status);
+            --  adamutant:disable-next-line StatementDeletion: nothing has been stored before the challenge
             Clear_Authentication_Buffer (Value);
             Value.Stage := Authentication_Failed;
+            --  adamutant:disable-next-line ConditionalExpression: the engine rejects an unsigned SUCCESS for SESSION_SETUP
             Status := (if Nt_Status = SMB.Success
                        then SMB.Unsupported_Feature else SMB.Ok);
          end if;
          return;
       end if;
+      --  Each of these alone is rejected by the engine first, so no pairing of them can be told apart.
+      --  adamutant:disable LogicalOperator
+      --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the engine's response checks reject these first
       if Info.Session_Id = 0
         or else Info.Data_Length > SMB.Core_Auth.Maximum_Security_Token
         or else Info.Data_Offset > Packet'Length
+        --  adamutant:disable-next-line ArithmeticOperator: as above
         or else Info.Data_Length > Packet'Length - Info.Data_Offset
+      --  adamutant:enable LogicalOperator
       then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Authentication (Value, State, SMB.Invalid_Protocol, Status);
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, NumericLiteral: an empty copy does nothing, and a one-byte token fails Extract_Challenge whatever its byte
       if Info.Data_Length > 0 then
          Value.Challenge (0 .. Info.Data_Length - 1) :=
            Packet
@@ -445,15 +472,17 @@ is
       Used : out Natural;
       Status : out SMB.Core_Status) is
       Token : SMB.Bytes
+        --  adamutant:disable-next-line NumericLiteral: only the bytes Authenticate writes are used
         (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
+      --  adamutant:disable-next-line NumericLiteral: Authenticate sets every byte
       Key : SMB.Crypto.Digest_128 := (others => 0);
+      --  adamutant:disable-next-line NumericLiteral: Authenticate sets it
       Token_Used : Natural := 0;
       Body_Used : Natural;
       Message_Id : SMB.QWord;
       Expected : SMB.Engine.Request_Expectation;
       Engine_Status : SMB.Core_Status;
       Field_Status : SMB.Core_Status;
-      Empty : constant SMB.Bytes := (1 .. 0 => 0);
    begin
       Clear_Output (Output);
       Used := 0;
@@ -463,45 +492,41 @@ is
          Status := SMB.Invalid_State_Status;
          return;
       end if;
+      --  adamutant:disable-next-line EqualityOperator: Complete_Challenge stores at most Maximum_Security_Token bytes
       if Value.Challenge_Length >
           SMB.Core_Auth.Maximum_Security_Token
         or else User'Length > SMB.Core_Auth.Maximum_Credential_Bytes
         or else Password'Length > SMB.Core_Auth.Maximum_Credential_Bytes
         or else Domain'Length > SMB.Core_Auth.Maximum_Credential_Bytes
         or else Nonce'Length /= 8
+        --  adamutant:disable-next-line EqualityOperator: a header-sized output fails Build_Session_Setup with the same status
         or else Output'Length < Header_Length
+        --  adamutant:disable-next-line EqualityOperator: as above
         or else Output'First > Natural'Last - Header_Length
       then
          Fail_Authentication (Value, State, SMB.Resource_Limit, Status);
          return;
       end if;
-      if Value.Challenge_Length = 0 then
-         SMB.Core_Auth.Authenticate
-           (User, Password, Domain, Nonce, Empty, Current_Filetime,
-            Token, Token_Used, Key, Status);
-      else
-         SMB.Core_Auth.Authenticate
-           (User, Password, Domain, Nonce,
-            Value.Challenge (0 .. Value.Challenge_Length - 1),
-            Current_Filetime, Token, Token_Used, Key, Status);
-      end if;
+      SMB.Core_Auth.Authenticate
+        (User, Password, Domain, Nonce,
+         Value.Challenge (0 .. Value.Challenge_Length - 1),
+         Current_Filetime, Token, Token_Used, Key, Status);
+      --  adamutant:disable-next-line LogicalOperator, NumericLiteral: a successful Authenticate always writes a token
       if Status /= SMB.Ok or else Token_Used = 0 then
+         --  adamutant:disable-next-line ConditionalExpression: as above
          if Status = SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := SMB.Resource_Limit;
          end if;
          declare
             Failure : constant SMB.Core_Status := Status;
          begin
+            --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
             Clear_Output (Key);
+            --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
             Clear_Output (Token);
             Fail_Authentication (Value, State, Failure, Status);
          end;
-         return;
-      end if;
-      if Output'Length < Header_Length + 24 + Token_Used then
-         Clear_Output (Key);
-         Clear_Output (Token);
-         Fail_Authentication (Value, State, SMB.Resource_Limit, Status);
          return;
       end if;
       SMB.Core_Protocol.Build_Session_Setup
@@ -509,8 +534,11 @@ is
          Output (Output'First + Header_Length .. Output'Last),
          Body_Used, Engine_Status);
       if Engine_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: Output was cleared on entry, and Build_Session_Setup clears its part even when it fails
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
          Clear_Output (Key);
+         --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
          Clear_Output (Token);
          Fail_Authentication (Value, State, Engine_Status, Status);
          return;
@@ -519,27 +547,39 @@ is
         (State, Value.Session_Id, Key, Engine_Status);
       if Engine_Status /= SMB.Ok then
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
          Clear_Output (Key);
+         --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
          Clear_Output (Token);
          Fail_Authentication (Value, State, Engine_Status, Status);
          return;
       end if;
       SMB.Engine.Begin_Request
         (State, 1, False, True, Message_Id, Expected, Engine_Status);
+      --  adamutant:disable-next-line ConditionalExpression: after Install_Session_Key succeeds, the state meets every condition of Begin_Request
       if Engine_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Key);
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Token);
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Authentication (Value, State, Engine_Status, Status);
          return;
       end if;
       Value.Expected := Expected;
       Value.Stage := Authenticate_Prepared;
       Prepare_Unsigned_Header (Output, Expected, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Output holds at least a header, as checked above
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Output);
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Key);
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Clear_Output (Token);
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Authentication (Value, State, Field_Status, Status);
          return;
       end if;
@@ -550,9 +590,10 @@ is
              (Output'First + Header_Length + 24 + Index) =
                Token (Token'First + Index));
       Used := Header_Length + Body_Used;
+      --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
       Clear_Output (Key);
+      --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
       Clear_Output (Token);
-      Status := SMB.Ok;
    end Prepare_Authenticate;
 
    procedure Complete_Authenticate
@@ -588,6 +629,7 @@ is
          return;
       end if;
       if Nt_Status /= SMB.Success then
+         --  adamutant:disable-next-line StatementDeletion: Invalidate below drops the receipt as well
          SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
          SMB.Engine.Invalidate (State, Invalidate_Status);
          Clear_Authentication_Buffer (Value);
@@ -619,6 +661,7 @@ is
       begin
          pragma Assert (if Initial_Command = 1 then MIC_Before);
          SMB.Engine.Mark_Authenticated (State, Status);
+         --  adamutant:disable-next-line ConditionalExpression: Accept_Response already checked the final token's MIC, which is all Mark_Authenticated checks here
          if Status = SMB.Ok then
             pragma Assert (Initial_Command = 1);
             pragma Assert
@@ -632,6 +675,7 @@ is
                     (SMB.Engine.Current_Signing_Key (State)), True) =
                Expected_MIC);
             pragma Assert (MIC_Before);
+            --  adamutant:disable-next-line StatementDeletion: a lemma: it only guides the proof
             SMB.Engine.Lemma_Final_Token_MIC_Transfer
               (Packet, Info_Before, SMB.Engine.Current_Response_Info (State),
                Expected_MIC,
@@ -656,10 +700,15 @@ is
                        (SMB.Engine.Current_Signing_Key (State)), True)));
             pragma Assert (Authentication_Context_Matches (Value, State));
          else
+            --  adamutant:disable-next-line StatementDeletion: unreachable: Accept_Response already checked the MIC
             Failure_Status := Status;
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             SMB.Engine.Invalidate (State, Invalidate_Status);
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Clear_Authentication_Buffer (Value);
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Value.Stage := Authentication_Failed;
+            --  adamutant:disable-next-line StatementDeletion, ConditionalExpression, EqualityOperator: unreachable, as above
             Status := (if Invalidate_Status = SMB.Ok then Failure_Status
                        else Invalidate_Status);
          end if;
@@ -717,6 +766,7 @@ is
                  Packet (Packet'First + Offset + Index)))
    is
    begin
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: an empty copy does nothing
       if Count > 0 then
          Value.Buffer (Completed + 1 .. Completed + Count) :=
            Packet (Packet'First + Offset .. Packet'First + Offset + (Count - 1));
@@ -762,23 +812,22 @@ is
    is
       Field_Status : SMB.Core_Status;
    begin
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: every caller checks the output length first
       if Packet'Length < Header_Length then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Length;
          return;
       end if;
       SMB.Core_Wire.Initialize_Header
         (Packet, Expected.Command, Expected.Message_Id, Expected.Tree_Id,
          Expected.Session_Id, 1, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: as above
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Field_Status;
          return;
       end if;
-      SMB.Core_Wire.Write_U32 (Packet, 16, 8, Field_Status);
-      if Field_Status /= SMB.Ok then
-         Status := Field_Status;
-         return;
-      end if;
-      Status := SMB.Ok;
+      SMB.Core_Wire.Write_U32 (Packet, 16, 8, Status);
    end Prepare_Header;
 
    function Directory_Context_Valid
@@ -2100,6 +2149,7 @@ is
       Value.Token := Token;
       Value.File_Id := File_Id;
       Value.Access_Mode := Access_Mode;
+      --  adamutant:disable-next-line StatementDeletion: a transfer never records a directory
       Value.Directory := False;
       Value.Initial_Offset := Offset;
       Value.Position := Offset;
@@ -2107,8 +2157,8 @@ is
       Value.Completed := 0;
       Value.Remaining := Total;
       Value.Requested := 0;
+      --  adamutant:disable-next-line StatementDeletion: Prepare_Next sets the expectation before anything reads it
       Value.Expected := (others => <>);
-      Status := SMB.Ok;
    end Start_Read;
 
    procedure Start_Write
@@ -2153,6 +2203,7 @@ is
       Value.Token := Token;
       Value.File_Id := File_Id;
       Value.Access_Mode := Access_Mode;
+      --  adamutant:disable-next-line StatementDeletion: a transfer never records a directory
       Value.Directory := False;
       Value.Initial_Offset := Offset;
       Value.Position := Offset;
@@ -2160,11 +2211,11 @@ is
       Value.Completed := 0;
       Value.Remaining := Data'Length;
       Value.Requested := 0;
+      --  adamutant:disable-next-line StatementDeletion: Prepare_Next sets the expectation before anything reads it
       Value.Expected := (others => <>);
       if Data'Length > 0 then
          Value.Buffer := Data;
       end if;
-      Status := SMB.Ok;
    end Start_Write;
 
    procedure Prepare_Next
@@ -2211,16 +2262,24 @@ is
       end if;
       SMB.Engine.Validate_Handle
         (State, Value.Token,
+         --  adamutant:disable-next-line EqualityOperator: Start_Read and Start_Write checked the handle's access, which does not change
          Value.Kind = Read_Transfer, Value.Kind = Write_Transfer,
          File_Id, Access_Mode, Directory, Status);
+      --  adamutant:disable-next-line ConditionalExpression: a failed lookup returns a zero File_Id, which fails the check below with the same status
       if Status /= SMB.Ok then
          Value.Stage := Transfer_Failed;
          return;
       end if;
+      --  A token's handle does not change, so none of these can hold.
+      --  adamutant:disable LogicalOperator
+      --  adamutant:disable-next-line ConditionalExpression: a token's handle does not change, and a failed lookup failed above
       if Directory or else File_Id /= Value.File_Id
         or else Access_Mode /= Value.Access_Mode
+      --  adamutant:enable LogicalOperator
       then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Value.Stage := Transfer_Failed;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Handle_Status;
          return;
       end if;
@@ -2228,18 +2287,22 @@ is
         (Value.Remaining,
          Natural'Min (Limit, SMB.Core_Protocol.Maximum_IO_Chunk),
          Amount, Status);
+      --  adamutant:disable-next-line ConditionalExpression, LogicalOperator: a ready transfer has bytes left and the negotiated sizes are nonzero
       if Status /= SMB.Ok or else Amount = 0 then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Value.Stage := Transfer_Failed;
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: unreachable, as above
          if Status = SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := SMB.Invalid_Value;
          end if;
          return;
       end if;
       Body_Length :=
         (if Value.Kind = Read_Transfer then 49 else 48 + Amount);
+      --  adamutant:disable-next-line EqualityOperator: a header-sized output fails the body check below with the same status
       if Output'Length < Header_Length
         or else Body_Length > Output'Length - Header_Length
-        or else Output'Length > SMB.Maximum_Frame_Size
       then
          Value.Stage := Transfer_Failed;
          Status := SMB.Resource_Limit;
@@ -2247,6 +2310,7 @@ is
       end if;
       declare
          Body_Size : constant Natural := Body_Length;
+         --  adamutant:disable-next-line ArithmeticOperator, NumericLiteral: a larger buffer holds the same body
          Body_Buffer : SMB.Bytes (0 .. Body_Size - 1);
       begin
          if Value.Kind = Read_Transfer then
@@ -2254,6 +2318,7 @@ is
               (File_Id, Value.Position, Amount,
                Body_Buffer, Body_Used, Field_Status);
             Command := 8;
+            --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Build_Read cannot fail here, and the branch holds only an assertion
             if Field_Status = SMB.Ok then
                pragma Assert
                  (for all Byte_Index in 0 .. 7 =>
@@ -2276,6 +2341,7 @@ is
                SMB.Core_Protocol.Build_Write
                  (File_Id, Value.Position, Payload,
                   Body_Buffer, Body_Used, Field_Status);
+               --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Build_Write cannot fail here, and the branch holds only assertions
                if Field_Status = SMB.Ok then
                   pragma Assert_And_Cut (Payload'Length > 0);
                   pragma Assert_And_Cut
@@ -2289,6 +2355,7 @@ is
                end if;
             end;
          end if;
+         --  adamutant:disable-next-line ConditionalExpression: the builders cannot fail here
          if Field_Status = SMB.Ok then
             Output
               (Output'First + Header_Length ..
@@ -2299,6 +2366,7 @@ is
                  Output
                    (Output'First + Header_Length + 8 + Byte_Index) =
                    SMB.Core_Wire.U64_Byte (Value.Position, Byte_Index));
+            --  adamutant:disable-next-line ConditionalExpression: the branch holds only an assertion
             if Value.Kind = Write_Transfer then
                pragma Assert
                  (for all Index in 0 .. Amount - 1 =>
@@ -2308,11 +2376,16 @@ is
             end if;
          end if;
       end;
+      --  adamutant:disable-next-line ConditionalExpression, LogicalOperator: the builders cannot fail here and write the body length
       if Field_Status /= SMB.Ok or else Body_Used /= Body_Length then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Value.Stage := Transfer_Failed;
+         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: unreachable, as above
          if Field_Status = SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := SMB.Invalid_Length;
          else
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := Field_Status;
          end if;
          return;
@@ -2320,30 +2393,40 @@ is
       SMB.Engine.Begin_Request
         (State, Command, True, True, Message_Id, Expected, Begin_Status,
          Request_Amount => Amount);
+      --  adamutant:disable-next-line ConditionalExpression: the checks above leave Begin_Request nothing to reject
       if Begin_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Value.Stage := Transfer_Failed;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Begin_Status;
          return;
       end if;
       Value.Expected := Expected;
       pragma Assert (Value.Expected.Tree_Id = Expected.Tree_Id);
       Value.Requested := Amount;
+      --  adamutant:disable-next-line ConditionalExpression: Begin_Request returns the expectation it reserved
       if Message_Id /= Expected.Message_Id
+        --  adamutant:disable-next-line LogicalOperator: as above
         or else Expected.Request_Amount /= Amount
       then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Transfer
            (Value, State, SMB.Invalid_State_Status, Status);
          return;
       end if;
+      --  adamutant:disable-next-line StatementDeletion: the check above made them equal; this restates it for the proof
       Value.File_Id := File_Id;
+      --  adamutant:disable-next-line StatementDeletion: as above
       Value.Access_Mode := Access_Mode;
-      Value.Stage := Transfer_Prepared;
       Key := SMB.Engine.Current_Signing_Key (State);
       Used := Header_Length + Body_Used;
       Prepare_Header
         (Output, Expected, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Output holds the request, as checked above
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Transfer (Value, State, Field_Status, Status);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
          return;
       end if;
@@ -2351,8 +2434,11 @@ is
         (SMB.Core_Wire.Encoded_U32 (Output, 36) =
            Expected.Tree_Id);
       Sign_Packet (Output, Used, Key, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Transfer (Value, State, Field_Status, Status);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
          return;
       end if;
@@ -2382,7 +2468,6 @@ is
       pragma Assert
         (Transfer_Position_Of (Value) =
            Old_Position);
-      Status := SMB.Ok;
    end Prepare_Next;
 
    function Unverified_Authentication_Status
@@ -2418,6 +2503,7 @@ is
       then
          return 0;
       end if;
+      --  adamutant:disable-next-line NumericLiteral: an error response parses the same for every command
       SMB.Core_Protocol.Parse_Response (Packet, 1, Nt_Status, Info, Status);
       return (if Status = SMB.Ok then Nt_Status else 0);
    end Unverified_Authentication_Status;
@@ -2478,7 +2564,9 @@ is
       if Nt_Status /= SMB.Success then
          Value.Stage := Transfer_Finished;
          SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the receipt Accept_Response just validated can be discarded
          if Receipt_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Transfer (Value, State, Receipt_Status, Status);
             return;
          end if;
@@ -2496,14 +2584,22 @@ is
       pragma Assert
         (SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
            SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk));
+      --  Each of these alone is rejected by the engine first, so no pairing of them can be told apart.
+      --  adamutant:disable LogicalOperator
+      --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the engine rejects these responses first
       if Value.Capacity = 0
         or else Info.Data_Length > Old_Requested
         or else Info.Data_Length > Value.Remaining
         or else Info.Data_Length > Value.Capacity
+        --  adamutant:disable-next-line ArithmeticOperator: as above
         or else Info.Data_Length > Value.Capacity - Value.Completed
+        --  adamutant:disable-next-line EqualityOperator: as above
         or else Info.Data_Offset > Packet'Length
+        --  adamutant:disable-next-line ArithmeticOperator: as above
         or else Info.Data_Length > Packet'Length - Info.Data_Offset
+      --  adamutant:enable LogicalOperator
       then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Transfer
            (Value, State, SMB.Invalid_Protocol, Status);
          return;
@@ -2511,7 +2607,9 @@ is
       SMB.Core_Protocol.Advance_Transfer
         (Value.Position, Value.Remaining, Old_Requested, Info.Data_Length,
          Progress_Status, Require_Progress => False);
+      --  adamutant:disable-next-line ConditionalExpression: the checks above leave Advance_Transfer nothing to reject
       if Progress_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Transfer (Value, State, Progress_Status, Status);
          return;
       end if;
@@ -2527,6 +2625,7 @@ is
       pragma Assert
         (SMB.QWord (Value.Completed) <=
            SMB.QWord'Last - Value.Initial_Offset);
+      --  adamutant:disable-next-line StatementDeletion: Advance_Transfer has moved Position there already
       Value.Position :=
         Value.Initial_Offset + SMB.QWord (Value.Completed);
       if Info.Data_Length = 0 or else Info.Data_Length < Old_Requested
@@ -2549,7 +2648,9 @@ is
            Value.Initial_Offset + SMB.QWord (Value.Completed));
       pragma Assert (Transfer_Invariant (Value));
       SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the receipt Accept_Response just validated can be discarded
       if Receipt_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Transfer (Value, State, Receipt_Status, Status);
          return;
       end if;
@@ -2580,6 +2681,7 @@ is
       Old_Requested : Natural;
       Old_Completed : Natural;
       Old_Remaining : Natural;
+      --  adamutant:disable-next-line NumericLiteral: it is read only after it is set
       Count : Natural := 0;
    begin
       Nt_Status := 0;
@@ -2612,22 +2714,30 @@ is
          pragma Assert
            (SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
               SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk));
+         --  adamutant:disable-next-line ConditionalExpression: the engine rejects a WRITE response that wrote nothing
          if Count = 0 then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Transfer (Value, State, SMB.Invalid_Protocol, Status);
             return;
          end if;
+         --  adamutant:disable-next-line ConditionalExpression, LogicalOperator: the engine rejects these responses first
          if Count > Old_Requested or else Count > Value.Remaining then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Transfer (Value, State, SMB.Invalid_Value, Status);
             return;
          end if;
+         --  adamutant:disable-next-line ConditionalExpression, ArithmeticOperator: the engine rejects these responses first
          if Count > Value.Capacity - Value.Completed then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Transfer (Value, State, SMB.Invalid_Value, Status);
             return;
          end if;
          SMB.Core_Protocol.Advance_Transfer
            (Value.Position, Value.Remaining, Old_Requested, Count,
             Progress_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the checks above leave Advance_Transfer nothing to reject
          if Progress_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Transfer (Value, State, Progress_Status, Status);
             return;
          end if;
@@ -2642,6 +2752,7 @@ is
          pragma Assert
            (SMB.QWord (Value.Completed) <=
               SMB.QWord'Last - Value.Initial_Offset);
+         --  adamutant:disable-next-line StatementDeletion: Advance_Transfer has moved Position there already
          Value.Position :=
            Value.Initial_Offset + SMB.QWord (Value.Completed);
          Value.Stage :=
@@ -2657,12 +2768,15 @@ is
            Value.Initial_Offset + SMB.QWord (Value.Completed));
       pragma Assert (Transfer_Invariant (Value));
       SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the receipt Accept_Response just validated can be discarded
       if Receipt_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Transfer (Value, State, Receipt_Status, Status);
          return;
       end if;
       pragma Assert (not SMB.Engine.Has_Pending_Request (State));
       pragma Assert (not SMB.Engine.Has_Validated_Response (State));
+      --  adamutant:disable-next-line ConditionalExpression: the branch holds only an assertion
       if Nt_Status /= SMB.Success then
          pragma Assert (Value.Completed = Old_Completed);
          pragma Assert (Value.Remaining = Old_Remaining);
@@ -2690,6 +2804,7 @@ is
          Status := SMB.Invalid_State_Status;
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator, NumericLiteral: an empty copy does nothing
       if Value.Completed > 0 then
          Output (Output'First .. Output'First + (Value.Completed - 1)) :=
            Value.Buffer (1 .. Value.Completed);

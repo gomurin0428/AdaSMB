@@ -116,7 +116,7 @@ is
       State : SMB.Engine.Engine_State;
       Packet : SMB.Bytes;
       Used : Natural) return Boolean
-   with Pre => Packet'Length <= SMB.Maximum_Frame_Size;
+   with Ghost, Pre => Packet'Length <= SMB.Maximum_Frame_Size;
 
    procedure Prepare_Negotiate
      (Value : in out Authentication;
