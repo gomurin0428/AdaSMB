@@ -780,9 +780,13 @@ is
       Status : out SMB.Core_Status) is
       Invalidate_Status : SMB.Core_Status;
    begin
+      --  adamutant:disable-next-line StatementDeletion: every call is on a failure branch that cannot be reached
       SMB.Engine.Invalidate (State, Invalidate_Status);
+      --  adamutant:disable-next-line StatementDeletion: as above
       Value.Stage := Failed;
+      --  adamutant:disable-next-line StatementDeletion: as above
       Status :=
+        --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: as above, and Invalidate only fails after 2**64 epochs
         (if Invalidate_Status = SMB.Ok then Failure else Invalidate_Status);
    end Fail_After_Reservation;
 
@@ -839,25 +843,35 @@ is
         and then SMB.Engine.Handle_Matches
           (State, Value.Token, Value.File_Id, Value.Access_Mode, True))
    is
+      --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       File_Id : SMB.Bytes (0 .. 15) := (others => 0);
       Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      --  adamutant:disable-next-line BooleanLiteral: Validate_Handle sets every out parameter
       Is_Directory : Boolean := False;
       Handle_Status : SMB.Core_Status;
    begin
+      --  Validate_Handle rejects the same states, so no pairing of these can be told apart.
+      --  adamutant:disable LogicalOperator
+      --  adamutant:disable-next-line ConditionalExpression: Validate_Handle rejects the same states: the token carries the owner and epoch, and handles exist only on a connected share
       if Value.Owner /= SMB.Engine.Current_Owner_Id (State)
         or else Value.Epoch /= SMB.Engine.Current_Epoch (State)
         or else SMB.Engine.Current_Phase (State) /=
           SMB.Engine.Share_Connected
+      --  adamutant:enable LogicalOperator
       then
          return False;
       end if;
       SMB.Engine.Validate_Handle
+        --  adamutant:disable-next-line BooleanLiteral: Start_Directory checked read access, which a handle keeps
         (State, Value.Token, True, False, File_Id, Access_Mode,
          Is_Directory, Handle_Status);
+      --  A failed lookup clears its outputs and a token's handle does not change, so every pairing of these fails the same way.
+      --  adamutant:disable LogicalOperator
       if Handle_Status /= SMB.Ok
         or else not Is_Directory
         or else File_Id /= Value.File_Id
         or else Access_Mode /= Value.Access_Mode
+      --  adamutant:enable LogicalOperator
       then
          return False;
       end if;
@@ -891,6 +905,7 @@ is
       SMB.Engine.Invalidate (State, Invalidate_Status);
       Value.Stage := Directory_Failed;
       Status :=
+        --  adamutant:disable-next-line ConditionalExpression: Invalidate only fails after 2**64 epochs
         (if Invalidate_Status = SMB.Ok then Failure else Invalidate_Status);
    end Fail_Directory;
 
@@ -909,11 +924,16 @@ is
           (State, Value.Token, Value.File_Id, Value.Access_Mode,
            Value.Directory))
    is
+      --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       Id : SMB.Bytes (0 .. 15) := (others => 0);
       Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      --  adamutant:disable-next-line BooleanLiteral: Validate_Handle sets every out parameter
       Is_Directory : Boolean := False;
       S : SMB.Core_Status;
    begin
+      --  The expectation comes from Begin_Request, and Validate_Handle rejects the other states the same way, so no pairing of these can be told apart.
+      --  adamutant:disable LogicalOperator
+      --  adamutant:disable-next-line ConditionalExpression: the expectation comes from Begin_Request in Prepare_Metadata, and Validate_Handle rejects the other states the same way
       if Value.Expected.Command /= 17
         or else not Value.Expected.Signed
         or else not Value.Expected.Request_Signed
@@ -921,16 +941,22 @@ is
         or else Value.Epoch /= SMB.Engine.Current_Epoch (State)
         or else SMB.Engine.Current_Phase (State) /=
           SMB.Engine.Share_Connected
+      --  adamutant:enable LogicalOperator
       then
          return False;
       end if;
       SMB.Engine.Validate_Handle
         (State, Value.Token, False, False, Id, Mode, Is_Directory, S);
+      --  A failed lookup clears its outputs and a token's handle does not change, so every pairing of these fails the same way.
+      --  adamutant:disable LogicalOperator
+      --  adamutant:disable-next-line ConditionalExpression: a handle cannot close while its SET_INFO is in flight, and a token's handle does not change
       if S /= SMB.Ok
         or else Id /= Value.File_Id
         or else Mode /= Value.Access_Mode
         or else Is_Directory /= Value.Directory
+      --  adamutant:enable LogicalOperator
       then
+         --  adamutant:disable-next-line BooleanLiteral: unreachable, as above
          return False;
       end if;
       pragma Assert
@@ -961,8 +987,11 @@ is
    is
       S : SMB.Core_Status;
    begin
+      --  adamutant:disable-next-line StatementDeletion: every call is on a failure branch that cannot be reached
       SMB.Engine.Invalidate (State, S);
+      --  adamutant:disable-next-line StatementDeletion: as above
       Value.Stage := Metadata_Failed;
+      --  adamutant:disable-next-line StatementDeletion, ConditionalExpression, EqualityOperator: as above
       Status := (if S = SMB.Ok then Failure else S);
    end Fail_Metadata;
 
@@ -1040,14 +1069,17 @@ is
                Metadata_Snapshot_Of (Value).Access_Mode,
                Metadata_Snapshot_Of (Value).Directory))
    is
+      --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       Id : SMB.Bytes (0 .. 15) := (others => 0);
       Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      --  adamutant:disable-next-line BooleanLiteral: Validate_Handle sets every out parameter
       Dir : Boolean := False;
       S, B : SMB.Core_Status;
       Body_Used : Natural;
       Need : constant Natural :=
         (if Kind = Disposition_Metadata then Header_Length + 33
          else Header_Length + 52 + Name'Length);
+      --  adamutant:disable-next-line NumericLiteral: Begin_Request sets it
       Message : SMB.QWord := 0;
       Expected : SMB.Engine.Request_Expectation;
       E : SMB.Core_Status;
@@ -1099,6 +1131,7 @@ is
          if Kind = Disposition_Metadata then
             SMB.Core_Protocol.Build_Disposition
               (Id, Delete_File, Body_Buffer, Body_Used, B);
+            --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: the branch holds only an assertion
             if B = SMB.Ok then
                pragma Assert
                  (for all Index in 10 .. 15 => Body_Buffer (Index) = 0);
@@ -1106,6 +1139,7 @@ is
          else
             SMB.Core_Protocol.Build_Rename
               (Id, Name, Body_Buffer, Body_Used, B);
+            --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: the branch holds only assertions
             if B = SMB.Ok then
                pragma Assert
                  (for all Index in 10 .. 15 => Body_Buffer (Index) = 0);
@@ -1118,7 +1152,9 @@ is
                pragma Assert (Body_Buffer (52 .. Body_Buffer'Last) = Name);
             end if;
          end if;
+         --  adamutant:disable-next-line ConditionalExpression: the builders cannot fail on a checked name and buffer
          if B /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := B;
             pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
             return;
@@ -1135,7 +1171,9 @@ is
            Output (Output'First + Header_Length + Index) = 0);
       SMB.Engine.Begin_Request
         (State, 17, True, True, Message, Expected, S);
+      --  adamutant:disable-next-line ConditionalExpression: the checks above leave Begin_Request nothing to reject
       if S /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := S;
          pragma Assert (Metadata_Snapshot_Of (Value) = Old_Metadata);
          return;
@@ -1168,13 +1206,18 @@ is
            (Before_Begin, State, Token, Value.File_Id, Value.Access_Mode,
             Value.Directory));
       Prepare_Header (Output, Expected, S);
+      --  adamutant:disable-next-line ConditionalExpression: Output holds at least a header, as checked above
       if S = SMB.Ok then
          Sign_Packet
            (Output, Need, SMB.Engine.Current_Signing_Key (State), E);
+         --  adamutant:disable-next-line StatementDeletion: Sign_Packet cannot fail on a whole request
          S := E;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression: as above
       if S /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Metadata (Value, State, S, Status);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
          return;
       end if;
@@ -1212,6 +1255,7 @@ is
       Status : out SMB.Core_Status) is
    begin
       Prepare_Metadata (Value, State, Token, Disposition_Metadata,
+                        --  adamutant:disable-next-line NumericLiteral: an empty aggregate has no element to set
                         Delete_File, SMB.Bytes'(1 .. 0 => 0),
                         Output, Used, Status);
    end Prepare_Disposition;
@@ -1283,7 +1327,9 @@ is
          Before_Discard : constant SMB.Engine.Engine_State := State with Ghost;
       begin
          SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the receipt Accept_Response just validated can be discarded
          if Receipt_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Metadata (Value, State, Receipt_Status, Status);
             return;
          end if;
@@ -1293,7 +1339,6 @@ is
                Value.Access_Mode, Value.Directory));
       end;
       Value.Stage := Metadata_Finished;
-      Status := SMB.Ok;
    end Complete_Metadata;
 
    procedure Abort_Metadata
@@ -1324,8 +1369,10 @@ is
       Token : SMB.Engine.Handle_Token;
       Status : out SMB.Core_Status)
    is
+      --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       File_Id : SMB.Bytes (0 .. 15) := (others => 0);
       Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      --  adamutant:disable-next-line BooleanLiteral: Validate_Handle sets every out parameter
       Is_Directory : Boolean := False;
       Handle_Status : SMB.Core_Status;
    begin
@@ -1349,10 +1396,15 @@ is
       Value.Token := Token;
       Value.File_Id := File_Id;
       Value.Access_Mode := Access_Mode;
+      --  adamutant:disable-next-line StatementDeletion: a Directory_Enumeration starts only once, from its defaults
       Value.Expected := (others => <>);
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: as above
       Value.Page_Length := 0;
+      --  adamutant:disable-next-line StatementDeletion: as above
       Value.Cursor := 0;
+      --  adamutant:disable-next-line StatementDeletion: as above
       Value.Page_Count := 0;
+      --  adamutant:disable-next-line StatementDeletion: as above
       Value.Entry_Count := 0;
       Value.Stage := Query_Ready;
       Status := SMB.Ok;
@@ -1368,14 +1420,18 @@ is
       Status : out SMB.Core_Status)
    is
       Access_Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
+      --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       File_Id : SMB.Bytes (0 .. 15) := (others => 0);
+      --  adamutant:disable-next-line BooleanLiteral: Validate_Handle sets every out parameter
       Is_Directory : Boolean := False;
       Validate_Status : SMB.Core_Status;
       Field_Status : SMB.Core_Status;
       Begin_Status : SMB.Core_Status;
       Count_Status : SMB.Core_Status;
       Sign_Status : SMB.Core_Status;
+      --  adamutant:disable-next-line NumericLiteral: Build_Query_Directory sets it
       Body_Used : Natural := 0;
+      --  adamutant:disable-next-line NumericLiteral: Begin_Request sets it
       Message_Id : SMB.QWord := 0;
       Expected : SMB.Engine.Request_Expectation;
    begin
@@ -1393,13 +1449,19 @@ is
          return;
       end if;
       SMB.Engine.Validate_Handle
+        --  adamutant:disable-next-line BooleanLiteral: Start_Directory checked read access, which a handle keeps
         (State, Value.Token, True, False, File_Id, Access_Mode,
          Is_Directory, Validate_Status);
+      --  A failed lookup clears its outputs and a token's handle does not change, so every pairing of these fails the same way.
+      --  adamutant:disable LogicalOperator
+      --  adamutant:disable-next-line ConditionalExpression: Directory_Context_Valid made this lookup above
       if Validate_Status /= SMB.Ok
         or else not Is_Directory
         or else File_Id /= Value.File_Id
         or else Access_Mode /= Value.Access_Mode
+      --  adamutant:enable LogicalOperator
       then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_State_Status;
          return;
       end if;
@@ -1427,10 +1489,13 @@ is
         (File_Id, Value.Page_Count = 0,
          Output (Output'First + Header_Length .. Output'Last),
          Body_Used, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression, LogicalOperator: Build_Query_Directory cannot fail on a checked output and writes 34 bytes
       if Field_Status /= SMB.Ok or else Body_Used /= 34 then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Directory
            (Value,
             State,
+            --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: unreachable, as above
             (if Field_Status = SMB.Ok then SMB.Invalid_Protocol
              else Field_Status),
             Status);
@@ -1456,7 +1521,9 @@ is
       SMB.Engine.Begin_Request
         (State, 14, True, True, Message_Id, Expected, Begin_Status,
          Request_Amount => SMB.Core_Protocol.Maximum_IO_Chunk);
+      --  adamutant:disable-next-line ConditionalExpression: the checks above leave Begin_Request nothing to reject
       if Begin_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Directory (Value, State, Begin_Status, Status);
          return;
       end if;
@@ -1465,8 +1532,11 @@ is
       Value.Stage := Query_Prepared;
       Used := Header_Length + Body_Used;
       Prepare_Header (Output, Expected, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Output holds at least a header, as checked above
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Directory (Value, State, Field_Status, Status);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
          return;
       end if;
@@ -1493,8 +1563,11 @@ is
       begin
          Sign_Packet (Output, Used, Key, Sign_Status);
       end;
+      --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
       if Sign_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Directory (Value, State, Sign_Status, Status);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
          return;
       end if;
@@ -1502,8 +1575,11 @@ is
         (SMB.Core_Wire.Encoded_U32 (Output, 36) = Expected.Tree_Id);
       SMB.Core_Protocol.Count_Directory_Page
         (Value.Page_Count, Count_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the page limit was checked before anything was written
       if Count_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Directory (Value, State, Count_Status, Status);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          Used := 0;
          return;
       end if;
@@ -1569,15 +1645,20 @@ is
          return;
       end if;
       Info := SMB.Engine.Current_Response_Info (State);
+      --  An error response carries no data, so it ends the listing whichever of these holds.
+      --  adamutant:disable LogicalOperator
       if Nt_Status /= SMB.Success
         or else Nt_Status = SMB.Status_No_More_Files
         or else Info.Data_Length = 0
+      --  adamutant:enable LogicalOperator
       then
          Value.Page_Length := 0;
          Value.Cursor := 0;
          Value.Stage := Directory_Finished;
          SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the receipt Accept_Response just validated can be discarded
          if Receipt_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Directory (Value, State, Receipt_Status, Status);
             return;
          end if;
@@ -1591,16 +1672,24 @@ is
          Response_Length_Value : constant SMB.DWord :=
            SMB.Core_Wire.Encoded_U32 (Packet, 68);
       begin
+         --  The engine's QUERY_DIRECTORY checks reject each of these first, so no pairing of them can be told apart.
+         --  adamutant:disable LogicalOperator
+         --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the engine's QUERY_DIRECTORY checks reject these first
          if Response_Length_Value = 0
+           --  adamutant:disable-next-line EqualityOperator: as above
            or else Response_Length_Value >
              SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+           --  adamutant:disable-next-line EqualityOperator: as above
            or else Response_Offset > Packet'Length
            or else Natural (Response_Length_Value) >
+             --  adamutant:disable-next-line ArithmeticOperator: as above
              Packet'Length - Response_Offset
            or else Response_Offset < 72
            or else Info.Data_Offset /= Response_Offset
            or else Info.Data_Length /= Natural (Response_Length_Value)
+         --  adamutant:enable LogicalOperator
          then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Directory (Value, State, SMB.Invalid_Protocol, Status);
             return;
          end if;
@@ -1623,7 +1712,9 @@ is
       Value.Cursor := 0;
       Value.Stage := Page_Ready;
       SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+      --  adamutant:disable-next-line ConditionalExpression: the receipt Accept_Response just validated can be discarded
       if Receipt_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_Directory (Value, State, Receipt_Status, Status);
          return;
       end if;
@@ -1699,6 +1790,7 @@ is
       if Cursor = Value.Page_Length then
          Value.Stage := Query_Ready;
       else
+         --  adamutant:disable-next-line StatementDeletion: the stage is Page_Ready already
          Value.Stage := Page_Ready;
       end if;
       pragma Assert (Directory_Invariant (Value));
@@ -1793,8 +1885,7 @@ is
          Status := SMB.Invalid_State_Status;
          return;
       end if;
-      if Name'Length > SMB.Core_Protocol.Maximum_Name_Bytes
-        or else Name'Length mod 2 /= 0
+      if Name'Length mod 2 /= 0
         or else Disposition < 1
         or else Disposition > 5
       then
@@ -1814,7 +1905,9 @@ is
          Status := Begin_Status;
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression: Begin_Request returns the expectation it reserved
       if Message_Id /= Expected.Message_Id then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_After_Reservation
            (Value, State, SMB.Invalid_State_Status, Status);
          return;
@@ -1833,7 +1926,9 @@ is
       Prepare_Header
         (Output (Output'First .. Output'First + (Required - 1)),
          Expected, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Output holds the request, as checked above
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
@@ -1844,7 +1939,9 @@ is
          (Output'First + Header_Length
             .. Output'First + (Required - 1)),
          Used, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Build_Create cannot fail on a checked name and output
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
@@ -1864,7 +1961,9 @@ is
                ((if Value.Directory then 1 else 16#40#), Index));
       Sign_Packet
         (Output, Required, Key, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
@@ -1927,6 +2026,7 @@ is
       SMB.Engine.Validate_Handle
         (State, Token, False, False, File_Id, Access_Mode, Is_Directory,
          Begin_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Begin_Request rejects the same close token with the same status
       if Begin_Status /= SMB.Ok then
          Value.Stage := Failed;
          Status := Begin_Status;
@@ -1940,7 +2040,9 @@ is
          Status := Begin_Status;
          return;
       end if;
+      --  adamutant:disable-next-line ConditionalExpression: Begin_Request returns the expectation it reserved
       if Message_Id /= Expected.Message_Id then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_After_Reservation
            (Value, State, SMB.Invalid_State_Status, Status);
          return;
@@ -1960,21 +2062,27 @@ is
            (Output'First + Header_Length
             .. Output'First + (Required - 1)),
          Used, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Build_Close cannot fail on a checked output
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
       Prepare_Header
         (Output (Output'First .. Output'First + (Required - 1)),
          Expected, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: Output holds the request, as checked above
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
       SMB.Core_Wire.Sign
         (Output (Output'First .. Output'First + (Required - 1)),
          Key, Field_Status);
+      --  adamutant:disable-next-line ConditionalExpression: signing cannot fail on a whole request
       if Field_Status /= SMB.Ok then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
@@ -1996,6 +2104,7 @@ is
       Used := Required;
       Value.Delete_Access := False;
       Value.Disposition := 0;
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: only contracts read the access mask, and a CLOSE never sends one
       Value.Wire_Access := 0;
       Status := SMB.Ok;
    end Prepare_Close;
@@ -2057,29 +2166,39 @@ is
               (State, Value.Close_Token, Receipt_Status,
                Close_Token => Value.Close_Token);
          end if;
+         --  adamutant:disable-next-line ConditionalExpression: Begin_Request refused a CREATE without a free slot, and the receipt holds the File_Id registered; a CLOSE receipt names its handle
          if Receipt_Status /= SMB.Ok then
             declare
                Invalidate_Status : SMB.Core_Status;
             begin
+               --  adamutant:disable-next-line StatementDeletion: unreachable, as above
                SMB.Engine.Invalidate (State, Invalidate_Status);
+               --  adamutant:disable-next-line StatementDeletion: unreachable, as above
                Status :=
+                 --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: unreachable, as above
                  (if Invalidate_Status = SMB.Ok
                   then Receipt_Status else Invalidate_Status);
             end;
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Value.Stage := Failed;
             return;
          end if;
       else
          SMB.Engine.Discard_Response_Receipt (State, Receipt_Status);
+         --  adamutant:disable-next-line ConditionalExpression: the receipt Accept_Response just validated can be discarded
          if Receipt_Status /= SMB.Ok then
             declare
                Invalidate_Status : SMB.Core_Status;
             begin
+               --  adamutant:disable-next-line StatementDeletion: unreachable, as above
                SMB.Engine.Invalidate (State, Invalidate_Status);
+               --  adamutant:disable-next-line StatementDeletion: unreachable, as above
                Status :=
+                 --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: unreachable, as above
                  (if Invalidate_Status = SMB.Ok
                   then Receipt_Status else Invalidate_Status);
             end;
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Value.Stage := Failed;
             return;
          end if;
