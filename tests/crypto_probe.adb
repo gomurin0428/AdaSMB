@@ -1,6 +1,8 @@
 with Ada.Unchecked_Deallocation;
 with Ada.Text_IO;
+with Interfaces;
 with SMB.AES;
+with SMB.AES.CCM;
 with SMB.AES.CMAC;
 with SMB.Crypto;
 with SMB.KDF;
@@ -9,6 +11,7 @@ with SMB.Core_Wire;
 with SMB.Wire;
 
 procedure Crypto_Probe is
+   use type Interfaces.Unsigned_8;
    use type SMB.Bytes;
    use type SMB.Core_Status;
 
@@ -259,6 +262,94 @@ procedure Crypto_Probe is
       end loop;
    end Check_CMAC;
 
+   --  Seals and opens Plain with Data at the four lower bounds Check_CMAC
+   --  uses, and the associated data at its own bounds (1 ..) at the even
+   --  ones and ending at Natural'Last at the odd ones. Open must then reject
+   --  a changed tag and, when there is data, a changed last ciphertext byte,
+   --  and leave only zeros; past 4,096 bytes only at the first bound.
+   --  Key_Nonce is the key and then the nonce, Sealed the ciphertext and
+   --  then the tag.
+   procedure Check_CCM (Key_Nonce, AAD, Plain, Sealed : SMB.Bytes) is
+      Length : constant Natural := Plain'Length;
+      Key : SMB.AES.Key_128;
+      Nonce : SMB.AES.CCM.Nonce_88;
+      Expected : SMB.AES.CCM.Tag_128;
+      Tag : SMB.AES.CCM.Tag_128;
+      Authentic : Boolean;
+      Data : Bytes_Access := null;
+      Header : Bytes_Access := null;
+
+      function All_Zero (Value : SMB.Bytes) return Boolean is
+        (for all Item of Value => Item = 0);
+
+      procedure Reject (Changed : SMB.AES.CCM.Tag_128; What : String) is
+      begin
+         SMB.AES.CCM.Open
+           (Key, Nonce, Header.all, Data.all, Changed, Authentic);
+         if Authentic or else not All_Zero (Data.all) then
+            raise Program_Error with "CCM accepted a changed " & What;
+         end if;
+      end Reject;
+   begin
+      if Key_Nonce'Length /= 27 or else Sealed'Length /= Length + 16 then
+         raise Program_Error with "invalid CCM fixture";
+      end if;
+      Key := Key_Nonce (Key_Nonce'First .. Key_Nonce'First + 15);
+      Nonce := Key_Nonce (Key_Nonce'First + 16 .. Key_Nonce'Last);
+      Expected := Sealed (Sealed'Last - 15 .. Sealed'Last);
+      for Base in 0 .. 3 loop
+         declare
+            First : constant Natural :=
+              (case Base is
+                  when 0 => 0,
+                  when 1 => 7,
+                  when 2 => Natural'Last - Length,
+                  when others =>
+                    (if Length = 0 then Natural'Last
+                     else Natural'Last - (Length - 1)));
+            Header_First : constant Natural :=
+              (if Base mod 2 = 0 then AAD'First
+               elsif AAD'Length = 0 then Natural'Last
+               else Natural'Last - (AAD'Length - 1));
+            Cipher : SMB.Bytes renames
+              Sealed (Sealed'First .. Sealed'Last - 16);
+         begin
+            Data := new SMB.Bytes (First .. First + (Length - 1));
+            Header := new SMB.Bytes
+              (Header_First .. Header_First + (AAD'Length - 1));
+            Data.all := Plain;
+            Header.all := AAD;
+            SMB.AES.CCM.Seal (Key, Nonce, Header.all, Data.all, Tag);
+            if Data.all /= Cipher or else Tag /= Expected then
+               raise Program_Error with "CCM seal mismatch";
+            end if;
+            SMB.AES.CCM.Open
+              (Key, Nonce, Header.all, Data.all, Expected, Authentic);
+            if not Authentic or else Data.all /= Plain then
+               raise Program_Error with "CCM open mismatch";
+            end if;
+            if Base = 0 or else Length <= 4096 then
+               Data.all := Cipher;
+               Tag := Expected;
+               Tag (Tag'Last) := Tag (Tag'Last) xor 16#01#;
+               Reject (Tag, "tag");
+               if Length > 0 then
+                  Data.all := Cipher;
+                  Data (Data'Last) := Data (Data'Last) xor 16#80#;
+                  Reject (Expected, "ciphertext");
+               end if;
+            end if;
+            Free_Bytes (Data);
+            Free_Bytes (Header);
+         exception
+            when others =>
+               Free_Bytes (Data);
+               Free_Bytes (Header);
+               raise;
+         end;
+      end loop;
+   end Check_CCM;
+
    --  The key and the hash arrive with the bounds Hex gives them (1 ..), so
    --  each call also slides them onto Derive's zero-based subtypes.
    procedure Check_KDF
@@ -440,6 +531,10 @@ begin
                   raise Program_Error with "invalid CMAC fixture";
                end if;
                Check_CMAC (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)));
+            elsif Field (1) = "E" then
+               Check_CCM
+                 (Hex (Field (2)), Hex (Field (3)),
+                  Hex (Field (4)), Hex (Field (5)));
             elsif Field (1) = "K" then
                Check_KDF
                  (Hex (Field (2)), SMB.KDF.Key_Purpose'Value (Field (3)),

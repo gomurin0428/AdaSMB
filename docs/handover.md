@@ -27,8 +27,8 @@ of date.
 | 2 | AES-128, encryption direction | merged (#113) |
 | 2 | AES-128-CMAC | merged (#114) |
 | 2 | SP 800-108 KDF (counter mode, HMAC-SHA256) | merged (#115) |
-| 2 | AES-128-CCM | next |
-| 2 | AES-128-GCM | not started |
+| 2 | AES-128-CCM | merged (#118) |
+| 2 | AES-128-GCM | next |
 | 3 | 3.1.1 negotiation, preauth integrity, CMAC signing | not started |
 | 4 | Encryption | not started |
 | 5 | Windows server interop, release 0.2.0 | not started |
@@ -107,15 +107,38 @@ final preauth hash. The tests use Microsoft's twelve published 3.1.1 keys;
 the same posts also give 3.0 and ApplicationKey vectors, which this API
 deliberately cannot produce.
 
+## AES-128-CCM (#118)
+
+`SMB.AES.CCM` (`src/smb-aes-ccm.ads`, `src/smb-aes-ccm.adb`) has
+`Seal (Key, Nonce, AAD, Data, Tag)` and `Open (Key, Nonce, AAD, Data, Tag,
+Authentic)` with SMB's parameters fixed by the types: an 11-byte nonce
+(`Nonce_88`), so a four-byte length field, and a 16-byte tag. Both work on
+`Data` in place. `Open` decrypts, recomputes the tag and compares it with
+`SMB.Crypto.Constant_Time_Equal`; on a mismatch it zeroes `Data`, which its
+postcondition states. Associated data may be up to 65,279 bytes (the
+two-byte length encoding) and data up to `Maximum_Frame_Size`. It proves
+with 70 checks in about 10 seconds.
+
+Decisions worth keeping for phase 4:
+
+* The caller passes the transform header's 32 bytes from the Nonce field on
+  as the associated data and the first 11 bytes of the Nonce field as the
+  nonce, and the tag is the header's Signature field. The tests take all
+  three from Microsoft's four A.2 messages.
+* Each call expands the key, as `SMB.AES.CMAC.MAC` does. A message costs one
+  key expansion and two AES blocks per 16 bytes, about twice CMAC's time.
+* `Open` returns `Authentic`, not a status. Phase 4 maps a rejected message
+  to its own error and must not use `Data` then.
+
 ## Next steps
 
 Each primitive is its own pull request with no protocol behavior change,
 following the checklist below.
 
-1. **AES-128-CCM** (11-byte nonce, 16-byte tag) and **AES-128-GCM** (12-byte
-   nonce, 16-byte tag). The GHASH multiply must use masks, not tables.
-   Verifying a tag must be constant-time and must not release plaintext
-   on failure.
+1. **AES-128-GCM** (12-byte nonce, 16-byte tag). The GHASH multiply must use
+   masks, not tables. Verifying a tag must be constant-time and must not
+   release plaintext on failure; follow `SMB.AES.CCM`'s `Seal`/`Open`
+   shape.
 2. Then phase 3, which changes `SMB.Engine` contracts and is expected to
    carry most of the proof cost.
 
@@ -211,9 +234,10 @@ The AES pull request touches each of these. Its diff is the template.
   alt-ergo took 67 to 84 minutes on an M4 Mac mini, and the prover
   processes together peaked near 9.6 GB. On the GitHub runner it took 50
   minutes.
-* `make aes-test`, `make cmac-test`, `make kdf-test` and the mutation runs
-  need `cryptography` for the interpreter behind `python`; `python -m pip
-  install --user cryptography==50.0.2` matches the Windows CI pin.
+* `make aes-test`, `make cmac-test`, `make ccm-test`, `make kdf-test` and
+  the mutation runs need `cryptography` for the interpreter behind
+  `python`; `python -m pip install --user cryptography==50.0.2` matches the
+  Windows CI pin.
 * GNU make is available, so the Makefile targets work directly. A
   changed-line AdaMutant run of the AES unit took about three minutes with
   `--concurrency 8`.
@@ -246,8 +270,8 @@ The AES pull request touches each of these. Its diff is the template.
     makes that fail with "cannot copy".
   * A full run of `src/*.adb` takes about four hours on a fast machine.
     The weekly `mutation.yml` splits it into eight jobs.
-* `make aes-test`, `make cmac-test` and `make kdf-test` need `pip install
-  cryptography`. CI pins 50.0.2 on Windows.
+* `make aes-test`, `make cmac-test`, `make ccm-test` and `make kdf-test`
+  need `pip install cryptography`. CI pins 50.0.2 on Windows.
 
 ## Open items
 

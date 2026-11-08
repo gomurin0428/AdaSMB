@@ -17,6 +17,7 @@ with SMB.Core_Text;
 with SMB.Core_Transport;
 with SMB.Core_Wire;
 with SMB.AES;
+with SMB.AES.CCM;
 with SMB.AES.CMAC;
 with SMB.KDF;
 with SMB.Crypto;
@@ -1764,6 +1765,155 @@ procedure Test_Suite is
              "95C544AEF6072680DA1CE49A68A97FA6");
       Ada.Text_IO.Put_Line ("SMB 3.1.1 KDF: 12 published keys passed");
    end Test_KDF;
+
+   procedure Test_AES_CCM is
+      --  The four AES-128-CCM messages of Microsoft's SMB 3.1.1 encryption
+      --  blog, appendix A.2: a WRITE request and its response, then a READ
+      --  request and its response. Each transformed message is the
+      --  transform header (ProtocolId, Signature, then the 32 bytes of
+      --  associated data from the Nonce field on) and the encrypted
+      --  message; the nonce is the first 11 bytes of the Nonce field.
+      Count : Natural := 0;
+
+      procedure Check (Name, Key_Hex, Transformed_Hex, Plain_Hex : String) is
+         Transformed : constant SMB.Bytes := Hex (Transformed_Hex);
+         Plain : constant SMB.Bytes := Hex (Plain_Hex);
+         Key : constant SMB.AES.Key_128 := Hex (Key_Hex);
+         Signature : constant SMB.AES.CCM.Tag_128 := Transformed (4 .. 19);
+         AAD : constant SMB.Bytes := Transformed (20 .. 51);
+         Nonce : constant SMB.AES.CCM.Nonce_88 := Transformed (20 .. 30);
+         Cipher : constant SMB.Bytes := Transformed (52 .. Transformed'Last);
+         Tag : SMB.AES.CCM.Tag_128;
+         Authentic : Boolean;
+
+         function All_Zero (Data : SMB.Bytes) return Boolean is
+           (for all Value of Data => Value = 0);
+
+         --  Open must reject the message and return only zeros.
+         procedure Reject
+           (Label : String; Changed_AAD : SMB.Bytes;
+            Changed_Nonce : SMB.AES.CCM.Nonce_88;
+            Changed_Cipher : SMB.Bytes; Changed_Tag : SMB.AES.CCM.Tag_128)
+         is
+            Data : SMB.Bytes := Changed_Cipher;
+         begin
+            SMB.AES.CCM.Open
+              (Key, Changed_Nonce, Changed_AAD, Data, Changed_Tag, Authentic);
+            Assert (not Authentic, Name & " accepted with " & Label);
+            Assert (All_Zero (Data), Name & " kept data with " & Label);
+            Count := Count + 1;
+         end Reject;
+      begin
+         --  OriginalMessageSize, little-endian, below 2**16 here.
+         Assert (Natural (Transformed (36)) + 256 * Natural (Transformed (37))
+                 = Plain'Length
+                 and then Transformed (38) = 0 and then Transformed (39) = 0,
+                 Name & " size");
+         --  At the vector's bounds and at bounds that end at Natural'Last.
+         for Rebased in Boolean loop
+            declare
+               First : constant Natural :=
+                 (if Rebased then Natural'Last - Plain'Length + 1 else 0);
+               Data : SMB.Bytes (First .. First + (Plain'Length - 1)) :=
+                 Plain;
+            begin
+               SMB.AES.CCM.Seal (Key, Nonce, AAD, Data, Tag);
+               Assert_Equal (Data, Cipher, Name & " ciphertext");
+               Assert_Equal (Tag, Signature, Name & " signature");
+               SMB.AES.CCM.Open (Key, Nonce, AAD, Data, Signature, Authentic);
+               Assert (Authentic, Name & " rejected");
+               Assert_Equal (Data, Plain, Name & " plaintext");
+               Count := Count + 1;
+            end;
+         end loop;
+         for Position in Signature'Range loop
+            declare
+               Changed : SMB.AES.CCM.Tag_128 := Signature;
+            begin
+               Changed (Position) := Changed (Position) xor 16#01#;
+               Reject ("a changed signature", AAD, Nonce, Cipher, Changed);
+            end;
+         end loop;
+         for Position in Integer range 0 .. 2 loop
+            declare
+               Changed : SMB.Bytes := Cipher;
+               Index : constant Natural :=
+                 Cipher'First + Position * (Cipher'Length - 1) / 2;
+            begin
+               Changed (Index) := Changed (Index) xor 16#80#;
+               Reject ("a changed ciphertext", AAD, Nonce, Changed, Signature);
+            end;
+         end loop;
+         for Position in AAD'Range loop
+            declare
+               Changed : SMB.Bytes := AAD;
+            begin
+               Changed (Position) := Changed (Position) xor 16#01#;
+               Reject ("a changed header", Changed, Nonce, Cipher, Signature);
+            end;
+         end loop;
+         declare
+            Changed : SMB.AES.CCM.Nonce_88 := Nonce;
+         begin
+            Changed (10) := Changed (10) xor 16#01#;
+            Reject ("another nonce", AAD, Changed, Cipher, Signature);
+         end;
+         Reject ("a shorter message", AAD, Nonce,
+                 Cipher (Cipher'First .. Cipher'Last - 1), Signature);
+      end Check;
+   begin
+      Check
+        ("AES-CCM A.2 WRITE request", "DFAAA31AAE40A2485D47AC4DF09FDA1D",
+         "FD534D42E89551D666DAB8993488F5A97103116C9F6F1EAAD7E9F24AACD38F00"
+         & "0000000087000000000001002100000000100000"
+         & "56A74778199A9D2B6E9C3A376FD88D27680694FED253A313BEB07381AE8689F9"
+         & "73ACDB8D716E4477803BCE53A92E1B81FA3E965AD9AF2C89C08CE66A34466445"
+         & "3B8FC88118EDC9814CF58E92AA465E6EFB09958A9FDAD96FBD55B36A710C30D5"
+         & "E7C64AD7B9449F9F17EDD024FE8BA79154F340A82740D1D5180C69B0A2DE6A4B"
+         & "A893BD55D3210E",
+         "FE534D4240000100000000000900010008000000000000000500000000000000"
+         & "FFFE000001000000210000000010000000000000000000000000000000000000"
+         & "3100700017000000000000000000000005000000040000000100000004000000"
+         & "00000000000000007000000000000000536D623320656E637279707469"
+         & "6F6E2074657374696E67");
+      Check
+        ("AES-CCM A.2 WRITE response", "95C544AEF6072680DA1CE49A68A97FA6",
+         "FD534D42DD33EC41A927DD51476FE887C2D3C136D96831DD2E8EB7B400000000"
+         & "0000000050000000000001002100000000100000"
+         & "F783157E0F6F1C055D746753CA16D20C21088E2A67564E056C2F68A7F14F226C"
+         & "3BD809B7A2D52E5FE4ECF49821BC6001733430CF174E2764B3CCB213AAD8BB9F"
+         & "BAF6C15E13D9120965390E004A96A3F7",
+         "FE534D4240000100000000000900010001000000000000000500000000000000"
+         & "FFFE000001000000210000000010000000000000000000000000000000000000"
+         & "11000000170000000000000000000000");
+      Check
+        ("AES-CCM A.2 READ request", "DFAAA31AAE40A2485D47AC4DF09FDA1D",
+         "FD534D4235BF9600C841F0CDA9BD1BC3727B7E36A0F92E964EDC3049B86E1900"
+         & "0000000071000000000001002100000000100000"
+         & "C4CCD3EB483A0638E69C99E391E7F64BCC10D6BEE46FEEA258C4BCAF792CB5A6"
+         & "E69283924081806DAB64827E9D14A5345D5221AB6DAFCB0E89FC2606B63D9216"
+         & "3F4F6C93D1213D86ABF123B93EAD3AEF9A3471EFD68A423A00A6E0064D9AE3C8"
+         & "42EFFFAD236A3BF25D37F4CD054C97DE18",
+         "FE534D4240000100000000000800010008000000000000000600000000000000"
+         & "FFFE000001000000210000000010000000000000000000000000000000000000"
+         & "3100000017000000000000000000000005000000040000000100000004000000"
+         & "0000000000000000000000000000000000");
+      Check
+        ("AES-CCM A.2 READ response", "95C544AEF6072680DA1CE49A68A97FA6",
+         "FD534D42E241A13C7E1EE42ECF1FD69F3B8668C6DA6831DD2E8EB7B400000000"
+         & "0000000067000000000001002100000000100000"
+         & "15D67234FC8358D7BA1BF037ABC8EFD41A0A8F9BB04B16DEB1E85606BD8C2770"
+         & "823FE6239A286CB3E3D5762ABBD53FD8DE11ED491FE905E146A8FFCE09414AB7"
+         & "41103D637E28B19C6BA759B399DCC21FAE24CF2A455A13B215FC2857ABB51392"
+         & "7F9F271D1C208B",
+         "FE534D4240000100000000000800010001000000000000000600000000000000"
+         & "FFFE000001000000210000000010000000000000000000000000000000000000"
+         & "11005000170000000000000000000000536D623320656E637279707469"
+         & "6F6E2074657374696E67");
+      Ada.Text_IO.Put_Line
+        ("AES-CCM: 4 published messages," & Natural'Image (Count)
+         & " seal, open and rejection checks passed");
+   end Test_AES_CCM;
 
    procedure Test_NTLM_Authenticate is
       Challenge : constant SMB.Bytes := Hex
@@ -9085,6 +9235,7 @@ begin
    Test_AES;
    Test_AES_CMAC;
    Test_KDF;
+   Test_AES_CCM;
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;
