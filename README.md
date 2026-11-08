@@ -149,6 +149,7 @@ make test                   # crypto, wire, UTF-8/UTF-16 and SPNEGO tests
 make unicode-test           # all Unicode scalars against Python's standard codecs
 make ntlm-test              # NTLM challenge handling and authentication output
 make crypto-test            # hashes and HMAC against OpenSSL / Python
+make aes-test               # AES-128 against Python's cryptography package
 make signing-test           # SMB signing and tamper rejection against Python
 make clock-test             # FILETIME for every day, second and 100 ns fraction
 make check                  # warnings as errors and dependency checks (with stack-check)
@@ -199,6 +200,12 @@ compared with OpenSSL, and MD5/SHA-256/SHA-512 and HMAC with Python's
 length and differing array lower bounds. These are test-only dependencies. The
 test does not prove cryptographic strength or constant-time behavior, and
 MD4/MD5 are not recommended for new designs beyond NTLM compatibility.
+
+`make aes-test` needs Python's `cryptography` package, also test-only. It
+compares AES-128 encryption (for the SMB 3.1.1 work) on the FIPS 197 examples,
+every single-bit key and plaintext, every S-box input and seeded random
+blocks. The S-box is computed rather than looked up, so no table index depends
+on secret data; that is a coding rule, not a tested or proved property.
 
 The example takes the host, share and path as arguments, but not the
 password. It reads the `SMB_USER`, `SMB_DOMAIN` and `SMB_PASSWORD` environment

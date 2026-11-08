@@ -6,6 +6,8 @@ project Proof is
      ("smb.ads",
       "smb-crypto.ads",
       "smb-crypto.adb",
+      "smb-aes.ads",
+      "smb-aes.adb",
       "smb-core_wire.ads",
       "smb-core_wire.adb",
       "smb-core_text.ads",

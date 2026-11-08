@@ -130,6 +130,7 @@ make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテスト
 make unicode-test           # Python 標準 codec との Unicode 全スカラー差分試験
 make ntlm-test              # NTLM challenge と認証出力の差分試験
 make crypto-test            # OpenSSL / Python と hash・HMAC の差分試験
+make aes-test               # Python の cryptography と AES-128 の差分試験
 make signing-test           # SMB 署名の組立て・改ざん拒否を Python と照合
 make clock-test             # FILETIME の全暦日・秒・100ns 端数を Python と照合
 make check                  # warnings-as-errors と依存関係検査（stack-check を含む）
@@ -179,6 +180,12 @@ MD4 は OpenSSL、MD5/SHA-256/SHA-512 と HMAC は Python の `hashlib`/`hmac` �
 ブロック境界・長い鍵・最大入力長・配列下限の違いを検査します。これらは
 試験専用の依存です。暗号学的強度や定時間性の証明ではなく、MD4/MD5 を
 NTLM 互換用途以外の新しい設計に推奨するものでもありません。
+
+`make aes-test` は Python の `cryptography` パッケージ（これも試験専用）が
+必要です。SMB 3.1.1 対応のための AES-128 暗号化を、FIPS 197 の例、全 1 ビット
+鍵・平文、全 S-box 入力、シード固定の乱数ブロックで比較します。S-box は表引き
+ではなく計算で求め、秘密データに依存する表の添字を使いません。これは
+コーディング規則であり、試験や証明で確かめた性質ではありません。
 
 example はホスト、share、パスを引数に取れますが、パスワードを引数に
 取りません。`SMB_USER`、`SMB_DOMAIN`、`SMB_PASSWORD` 環境変数を使います。

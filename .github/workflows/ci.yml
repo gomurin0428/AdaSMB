@@ -33,16 +33,17 @@ jobs:
           key: ada-${{ runner.os }}-${{ runner.arch }}-${{ env.TOOLCHAIN_KEY }}
       - name: Install Ada toolchain
         run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
-      - name: Install Samba
+      - name: Install Samba and Python cryptography
+        # cryptography is the AES comparison tests' reference; test-only.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends samba
+          sudo apt-get install -y --no-install-recommends samba python3-cryptography
       - name: Strict build, source and stack checks
         run: make check
       - name: Unit tests
         run: make test
       - name: Conformance tests
-        run: make crypto-test signing-test ntlm-test unicode-test clock-test
+        run: make crypto-test aes-test signing-test ntlm-test unicode-test clock-test
       - name: Transport test
         run: make transport-test
       - name: Samba integration
@@ -66,6 +67,11 @@ jobs:
         run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
       - name: Build AdaMutant
         run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
+      - name: Install Python cryptography
+        # The AES comparison tests' reference; a test-only dependency.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-cryptography
       - name: Mutate the lines this pull request changes
         run: adamutant run --since "origin/$GITHUB_BASE_REF" --concurrency 4
       - name: Fail on undetected mutants
@@ -103,9 +109,13 @@ jobs:
           python tests/check_stack_usage.py
       - name: Unit tests
         run: ./build/bin/test_suite.exe
+      - name: Install Python cryptography
+        # The AES comparison tests' reference; a test-only dependency.
+        run: python -m pip install --disable-pip-version-check cryptography==50.0.2
       - name: Conformance tests
         run: |
           python tests/crypto_conformance.py
+          python tests/aes_conformance.py
           python tests/signing_conformance.py
           python tests/ntlm_av_conformance.py
           python tests/ntlm_challenge_fields.py

@@ -16,6 +16,7 @@ with SMB.Core_Protocol;
 with SMB.Core_Text;
 with SMB.Core_Transport;
 with SMB.Core_Wire;
+with SMB.AES;
 with SMB.Crypto;
 with SMB.Engine;
 with SMB.Entropy;
@@ -1498,6 +1499,37 @@ procedure Test_Suite is
         (Split_Digest, Digest, "incremental SHA-512 of lengths 0 to 300");
       Ada.Text_IO.Put_Line ("SHA-512: known answers and 301 lengths passed");
    end Test_SHA512;
+
+   procedure Test_AES is
+      --  FIPS 197 appendices B and C.1, then 1,000 encryptions where each
+      --  ciphertext becomes the next plaintext and is xor-ed into the key.
+      --  The chain's expected values come from Python's cryptography.
+      Schedule : SMB.AES.Key_Schedule;
+      Key : SMB.AES.Key_128 := (others => 0);
+      Text : SMB.AES.Block := (others => 0);
+   begin
+      SMB.AES.Expand_Key (Hex ("2b7e151628aed2a6abf7158809cf4f3c"), Schedule);
+      Assert_Equal
+        (SMB.AES.Encrypt (Schedule, Hex ("3243f6a8885a308d313198a2e0370734")),
+         Hex ("3925841d02dc09fbdc118597196a0b32"), "AES-128 FIPS 197 B");
+      SMB.AES.Expand_Key (Hex ("000102030405060708090a0b0c0d0e0f"), Schedule);
+      Assert_Equal
+        (SMB.AES.Encrypt (Schedule, Hex ("00112233445566778899aabbccddeeff")),
+         Hex ("69c4e0d86a7b0430d8cdb78070b4c55a"), "AES-128 FIPS 197 C.1");
+      for Round in 1 .. 1_000 loop
+         SMB.AES.Expand_Key (Key, Schedule);
+         Text := SMB.AES.Encrypt (Schedule, Text);
+         for I in Key'Range loop
+            Key (I) := Key (I) xor Text (I);
+         end loop;
+      end loop;
+      Assert_Equal
+        (Text, Hex ("c03b462451b8ec9fa674a2d1e9c0555e"),
+         "AES-128 chain ciphertext");
+      Assert_Equal
+        (Key, Hex ("4b92dc39ef6301485a9a5de71f9f622e"), "AES-128 chain key");
+      Ada.Text_IO.Put_Line ("AES-128: known answers and a 1,000-block chain passed");
+   end Test_AES;
 
    procedure Test_NTLM_Authenticate is
       Challenge : constant SMB.Bytes := Hex
@@ -8816,6 +8848,7 @@ begin
    end;
    Test_Crypto;
    Test_SHA512;
+   Test_AES;
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;
