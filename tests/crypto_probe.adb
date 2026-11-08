@@ -1,6 +1,7 @@
 with Ada.Unchecked_Deallocation;
 with Ada.Text_IO;
 with SMB.AES;
+with SMB.AES.CMAC;
 with SMB.Crypto;
 with SMB.Core_NTLM;
 with SMB.Core_Wire;
@@ -130,6 +131,125 @@ procedure Crypto_Probe is
          end if;
       end loop;
    end Check_AES;
+
+   --  One-shot at three lower bounds (the last one ends just below
+   --  Natural'Last) and incrementally: in the pieces Core_Wire signs (48
+   --  bytes, 16, the rest) and in thirds at each bound; at the first, in two
+   --  parts at every point (around each block boundary past 80 bytes), in
+   --  three parts at every pair of points up to 40 bytes, and byte by byte
+   --  up to 300. Past 4,096 bytes only the one-shot runs and the Core_Wire
+   --  pieces at the first bound remain. One context serves every run, so
+   --  each Start must reset a finished context, and the first one an
+   --  abandoned context under another key.
+   type Offsets is array (Positive range <>) of Natural;
+
+   procedure Check_CMAC (Key, Data, Expected : SMB.Bytes) is
+      Length : constant Natural := Data'Length;
+      Key_Block : SMB.AES.Key_128;
+      Context : SMB.AES.CMAC.MAC_Context;
+      Result : SMB.AES.CMAC.Tag_128;
+      Input : Bytes_Access := null;
+
+      --  Feeds Input in pieces that end at each cut, then the rest.
+      procedure Run (Cuts : Offsets) is
+         From : Natural := Input'First;
+      begin
+         SMB.AES.CMAC.Start (Context, Key_Block);
+         for Cut of Cuts loop
+            SMB.AES.CMAC.Update (Context, Input (From .. Input'First + Cut - 1));
+            if SMB.AES.CMAC.Length (Context) /= Cut then
+               raise Program_Error with "CMAC length mismatch";
+            end if;
+            From := Input'First + Cut;
+         end loop;
+         SMB.AES.CMAC.Update (Context, Input (From .. Input'Last));
+         if not SMB.AES.CMAC.Ready (Context)
+           or else SMB.AES.CMAC.Length (Context) /= Length
+         then
+            raise Program_Error with "CMAC length mismatch";
+         end if;
+         SMB.AES.CMAC.Finish (Context, Result);
+         if SMB.AES.CMAC.Ready (Context) then
+            raise Program_Error with "finished CMAC context is ready";
+         end if;
+         if Result /= Expected then
+            raise Program_Error with "incremental CMAC mismatch";
+         end if;
+      end Run;
+
+      procedure Run_Near_Boundaries is
+      begin
+         for Boundary in 0 .. 4 loop
+            for Offset in -1 .. 1 loop
+               if 16 * Boundary + Offset in 0 .. Length then
+                  Run ((1 => 16 * Boundary + Offset));
+               end if;
+               if Length - 16 * Boundary + Offset in 0 .. Length then
+                  Run ((1 => Length - 16 * Boundary + Offset));
+               end if;
+            end loop;
+         end loop;
+      end Run_Near_Boundaries;
+   begin
+      if Key'Length /= 16 or else Expected'Length /= 16 then
+         raise Program_Error with "invalid CMAC fixture";
+      end if;
+      Key_Block := Key;
+      SMB.AES.CMAC.Start (Context, (others => 16#A5#));
+      SMB.AES.CMAC.Update (Context, (1 .. 21 => 16#5A#));
+      for Base in 0 .. 2 loop
+         declare
+            First : constant Natural :=
+              (case Base is
+                  when 0 => 0,
+                  when 1 => 7,
+                  when others => Natural'Last - Length);
+         begin
+            Input := new SMB.Bytes (First .. First + (Length - 1));
+            Input.all := Data;
+            if SMB.AES.CMAC.MAC (Key_Block, Input.all) /= Expected then
+               raise Program_Error with "CMAC mismatch";
+            end if;
+            if Length >= 64 and then (Base = 0 or else Length <= 4096) then
+               Run ((48, 64));
+            end if;
+            if Length <= 4096 then
+               Run ((Length / 3, 2 * Length / 3));
+            end if;
+            if Base = 0 and then Length <= 4096 then
+               if Length <= 80 then
+                  for Cut in 0 .. Length loop
+                     Run ((1 => Cut));
+                  end loop;
+               else
+                  Run_Near_Boundaries;
+               end if;
+               if Length <= 40 then
+                  for Cut_1 in 0 .. Length loop
+                     for Cut_2 in Cut_1 .. Length loop
+                        Run ((Cut_1, Cut_2));
+                     end loop;
+                  end loop;
+               end if;
+               if Length <= 300 then
+                  declare
+                     Bytes : Offsets (1 .. Length - 1);
+                  begin
+                     for I in Bytes'Range loop
+                        Bytes (I) := I;
+                     end loop;
+                     Run (Bytes);
+                  end;
+               end if;
+            end if;
+            Free_Bytes (Input);
+         exception
+            when others =>
+               Free_Bytes (Input);
+               raise;
+         end;
+      end loop;
+   end Check_CMAC;
 
    procedure Check_HMAC (Key, Data, MD5, SHA256 : SMB.Bytes) is
    begin
@@ -290,6 +410,11 @@ begin
                   raise Program_Error with "invalid AES fixture";
                end if;
                Check_AES (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)));
+            elsif Field (1) = "C" then
+               if Field (5) /= "-" then
+                  raise Program_Error with "invalid CMAC fixture";
+               end if;
+               Check_CMAC (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)));
             elsif Field (1) = "H" then
               Check_HMAC
                 (Hex (Field (2)), Hex (Field (3)),

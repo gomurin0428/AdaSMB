@@ -4349,3 +4349,38 @@ C.1 and a 1,000-step chain; `aes_conformance.py` compares 1,287 cases with
 Python's `cryptography`, with three sensitivity checks. A changed-line
 AdaMutant run left no surviving mutant. Static stack use of the public calls
 is unchanged, since nothing calls the unit.
+
+## AES-128-CMAC (`SMB.AES.CMAC`)
+
+`SMB.AES.CMAC`, a child of `SMB.AES`, adds AES-128-CMAC (RFC 4493,
+SP 800-38B), the SMB 3.1.1 signing MAC: a one-shot `MAC` and an incremental
+`MAC_Context` with `Start`, `Update` and `Finish`, shaped like
+`SMB.Crypto`'s incremental HMAC-SHA256 so that a frame can be fed as its
+header, a zero signature and the rest without a copy. Nothing in the library
+calls it yet.
+
+`Ready` states the buffering rule as well as the expanded key and the length
+bound: `(Used = 0) = (Total = 0)`, so a nonempty message always leaves its
+last 1 to 16 bytes buffered and `Finish` applies K1 or the padding and K2 to
+the true last block. `Finish` ends with the context `Wiped` (every component
+at its default) and not `Ready`. The subkey doubling scales 16#87# by the
+carried bit instead of branching on it; that is a coding rule, not a proved
+property. Every local helper carries a contract, as in `SMB.AES`, and the
+unit sees `Expand_Key` and `Encrypt` only through their contracts.
+
+```sh
+gnatprove -P proof.gpr -u smb-aes-cmac.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+GNATprove 14.1.1 on macOS reported **44 checks** (16 flow, 28 prover), zero
+unproved or justified, zero warnings, zero `pragma Assume`, in about 5
+seconds. `test_suite` checks RFC 4493 examples 1 to 4, NIST's 20-byte
+example, L and K1, padding look-alikes, every split point of each example,
+restarted and reused contexts, and a chain over every length from 0 to 300.
+`cmac_conformance.py` compares 1,073 fixtures with Python's `cryptography`,
+each one-shot at three lower bounds (the last ending at `Natural'Last`) and in
+incremental pieces, with five sensitivity checks. Static stack: `MAC` 304
+bytes, `Update` 208, `Finish` 112, `Start` 96; `MAC` and `Update` must keep
+static frames in the stack check. A 64 KiB message takes about 58 ms in the
+default unoptimized build and 20 ms at `-O2`, bounded by the AES block
+function.
