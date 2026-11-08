@@ -17,6 +17,7 @@ with SMB.Core_Text;
 with SMB.Core_Transport;
 with SMB.Core_Wire;
 with SMB.AES;
+with SMB.AES.CMAC;
 with SMB.Crypto;
 with SMB.Engine;
 with SMB.Entropy;
@@ -1532,6 +1533,165 @@ procedure Test_Suite is
         (Key, Hex ("4b92dc39ef6301485a9a5de71f9f622e"), "AES-128 chain key");
       Ada.Text_IO.Put_Line ("AES-128: known answers and a 1,000-block chain passed");
    end Test_AES;
+
+   procedure Test_AES_CMAC is
+      --  RFC 4493 section 4 (the same key and messages as SP 800-38B D.1)
+      --  and the 20-byte example of NIST's CMAC examples, each one-shot, in
+      --  two parts at every split point, and byte by byte. Then a tag of the
+      --  tags of every length from 0 to 300 bytes, each computed under the
+      --  previous tag as key, one-shot and in two or three parts. The chain's
+      --  expected values come from Python's cryptography.
+      Key : constant SMB.AES.Key_128 :=
+        Hex ("2b7e151628aed2a6abf7158809cf4f3c");
+      Message : constant SMB.Bytes := Hex
+        ("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51"
+         & "30c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710");
+
+      procedure Check
+        (Key : SMB.AES.Key_128; Data, Expected : SMB.Bytes; Name : String)
+      is
+         Context : SMB.AES.CMAC.MAC_Context;
+         Result : SMB.AES.CMAC.Tag_128;
+      begin
+         Assert_Equal
+           (SMB.AES.CMAC.MAC (Key, Data), Expected, Name & " one-shot");
+         for Split in Data'First .. Data'Last + 1 loop
+            SMB.AES.CMAC.Start (Context, Key);
+            SMB.AES.CMAC.Update (Context, Data (Data'First .. Split - 1));
+            Assert
+              (SMB.AES.CMAC.Length (Context) = Split - Data'First,
+               Name & " first part length");
+            SMB.AES.CMAC.Update (Context, Data (Split .. Data'Last));
+            Assert
+              (SMB.AES.CMAC.Ready (Context)
+               and then SMB.AES.CMAC.Length (Context) = Data'Length,
+               Name & " length");
+            SMB.AES.CMAC.Finish (Context, Result);
+            Assert
+              (not SMB.AES.CMAC.Ready (Context)
+               and then SMB.AES.CMAC.Wiped (Context),
+               Name & " finished context is still ready or not wiped");
+            Assert_Equal
+              (Result, Expected, Name & " split at" & Integer'Image (Split));
+         end loop;
+         SMB.AES.CMAC.Start (Context, Key);
+         for I in Data'Range loop
+            SMB.AES.CMAC.Update (Context, Data (I .. I));
+         end loop;
+         SMB.AES.CMAC.Finish (Context, Result);
+         Assert_Equal (Result, Expected, Name & " byte by byte");
+      end Check;
+
+      Subkey_1 : constant SMB.Bytes := Hex ("fbeed618357133667c85e08f7236a8de");
+      Schedule : SMB.AES.Key_Schedule;
+      Context : SMB.AES.CMAC.MAC_Context;
+      Result : SMB.AES.CMAC.Tag_128;
+   begin
+      Assert
+        (not SMB.AES.CMAC.Ready (Context) and then SMB.AES.CMAC.Wiped (Context),
+         "AES-CMAC default context is ready or not wiped");
+      Check (Key, Message (0 .. -1), Hex ("bb1d6929e95937287fa37d129b756746"),
+             "AES-CMAC RFC 4493 example 1");
+      Check (Key, Message (0 .. 15), Hex ("070a16b46b4d4144f79bdd9dd04a287c"),
+             "AES-CMAC RFC 4493 example 2");
+      Check (Key, Message (0 .. 19), Hex ("7d85449ea6ea19c823a7bf78837dfade"),
+             "AES-CMAC NIST 160-bit example");
+      Check (Key, Message (0 .. 39), Hex ("dfa66747de9ae63030ca32611497c827"),
+             "AES-CMAC RFC 4493 example 3");
+      Check (Key, Message, Hex ("51f0bebf7e3b9d92fc49741779363cfe"),
+             "AES-CMAC RFC 4493 example 4");
+      --  The same 40 bytes at another lower bound.
+      declare
+         Shifted : constant SMB.Bytes (5 .. 44) := Message (0 .. 39);
+      begin
+         Check (Key, Shifted, Hex ("dfa66747de9ae63030ca32611497c827"),
+                "AES-CMAC RFC 4493 example 3 rebased");
+      end;
+
+      --  RFC 4493 section 4's K1: a one-block message equal to K1 cancels
+      --  it, so its tag is AES (K, 0), the L of the subkey generation.
+      SMB.AES.Expand_Key (Key, Schedule);
+      Assert_Equal
+        (SMB.AES.Encrypt (Schedule, (others => 0)),
+         Hex ("7df76b0c1ab899b33e42f047b91b546f"), "AES-CMAC L");
+      Assert_Equal
+        (SMB.AES.CMAC.MAC (Key, Subkey_1),
+         Hex ("7df76b0c1ab899b33e42f047b91b546f"), "AES-CMAC K1");
+
+      --  Padding with 16#80# must not make a partial block equal to the
+      --  complete one: K2 and K1 separate them.
+      Assert
+        (SMB.AES.CMAC.MAC (Key, Message (0 .. 14))
+         /= SMB.AES.CMAC.MAC (Key, Message (0 .. 14) & 16#80#),
+         "AES-CMAC padded block equals complete block");
+      Assert
+        (SMB.AES.CMAC.MAC (Key, Message (0 .. -1))
+         /= SMB.AES.CMAC.MAC (Key, SMB.Bytes'(0 => 16#80#, 1 .. 15 => 0)),
+         "AES-CMAC empty message equals one padding block");
+
+      --  A finished context, and one abandoned mid-message under another
+      --  key, both start afresh.
+      SMB.AES.CMAC.Start (Context, Subkey_1);
+      SMB.AES.CMAC.Update (Context, Message (0 .. 20));
+      SMB.AES.CMAC.Start (Context, Key);
+      SMB.AES.CMAC.Update (Context, Message (0 .. 39));
+      SMB.AES.CMAC.Finish (Context, Result);
+      Assert_Equal
+        (Result, Hex ("dfa66747de9ae63030ca32611497c827"),
+         "AES-CMAC restarted context");
+      SMB.AES.CMAC.Start (Context, Key);
+      SMB.AES.CMAC.Update (Context, Message);
+      SMB.AES.CMAC.Finish (Context, Result);
+      Assert_Equal
+        (Result, Hex ("51f0bebf7e3b9d92fc49741779363cfe"),
+         "AES-CMAC reused context");
+
+      declare
+         Chain : SMB.AES.CMAC.MAC_Context;
+         Chain_Key : SMB.AES.Key_128 := Key;
+      begin
+         SMB.AES.CMAC.Start (Chain, Key);
+         for Length in 0 .. 300 loop
+            declare
+               Data : SMB.Bytes (0 .. Length - 1);
+               Split : constant Natural := Length / 3;
+               Tag : SMB.AES.CMAC.Tag_128;
+            begin
+               for I in Data'Range loop
+                  Data (I) := SMB.Byte ((I * 7 + Length) mod 256);
+               end loop;
+               Tag := SMB.AES.CMAC.MAC (Chain_Key, Data);
+               SMB.AES.CMAC.Start (Context, Chain_Key);
+               SMB.AES.CMAC.Update (Context, Data (0 .. Split - 1));
+               SMB.AES.CMAC.Update (Context, Data (Split .. Length - 1));
+               SMB.AES.CMAC.Finish (Context, Result);
+               Assert_Equal
+                 (Result, Tag, "AES-CMAC in two parts" & Integer'Image (Length));
+               --  The pieces Core_Wire will sign: header, signature, rest.
+               if Length >= 64 then
+                  SMB.AES.CMAC.Start (Context, Chain_Key);
+                  SMB.AES.CMAC.Update (Context, Data (0 .. 47));
+                  SMB.AES.CMAC.Update (Context, Data (48 .. 63));
+                  SMB.AES.CMAC.Update (Context, Data (64 .. Length - 1));
+                  SMB.AES.CMAC.Finish (Context, Result);
+                  Assert_Equal
+                    (Result, Tag,
+                     "AES-CMAC in SMB pieces" & Integer'Image (Length));
+               end if;
+               SMB.AES.CMAC.Update (Chain, Tag);
+               Chain_Key := Tag;
+            end;
+         end loop;
+         SMB.AES.CMAC.Finish (Chain, Result);
+         Assert_Equal
+           (Result, Hex ("30e64c194d55d1d413ae40fe994fb4bb"), "AES-CMAC chain");
+         Assert_Equal
+           (Chain_Key, Hex ("58053a49382a80f55ea5e088b1ef3712"),
+            "AES-CMAC chain key");
+      end;
+      Ada.Text_IO.Put_Line
+        ("AES-CMAC: known answers, every split, and 301 chained lengths passed");
+   end Test_AES_CMAC;
 
    procedure Test_NTLM_Authenticate is
       Challenge : constant SMB.Bytes := Hex
@@ -8851,6 +9011,7 @@ begin
    Test_Crypto;
    Test_SHA512;
    Test_AES;
+   Test_AES_CMAC;
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;

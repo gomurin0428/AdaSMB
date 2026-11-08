@@ -1,6 +1,6 @@
 # Handover
 
-State of the SMB 3.1.1 work after #113, for whoever picks it up. Fold what
+State of the SMB 3.1.1 work after #114, for whoever picks it up. Fold what
 stays useful into the other documents, and delete this file, once it is out
 of date.
 
@@ -25,8 +25,8 @@ of date.
 | 1 | Design document | merged (#101) |
 | 2 | SHA-512 | merged (#112) |
 | 2 | AES-128, encryption direction | merged (#113) |
-| 2 | AES-128-CMAC | next |
-| 2 | SP 800-108 KDF (counter mode, HMAC-SHA256) | not started |
+| 2 | AES-128-CMAC | merged (#114) |
+| 2 | SP 800-108 KDF (counter mode, HMAC-SHA256) | next |
 | 2 | AES-128-CCM | not started |
 | 2 | AES-128-GCM | not started |
 | 3 | 3.1.1 negotiation, preauth integrity, CMAC signing | not started |
@@ -71,24 +71,44 @@ cipher backwards, so there is no decryption.
   The two `(others => 0)` initializers in `Expand_Key` stay marked as
   equivalent.
 
-## Next steps after AES
+## AES-128-CMAC (#114)
+
+`SMB.AES.CMAC` (`src/smb-aes-cmac.ads`, `src/smb-aes-cmac.adb`) is a child of
+`SMB.AES`, so its private part sees `Key_Schedule`'s default, and it uses only
+the public `Expand_Key`, `Encrypt` and `Ready`. It has a one-shot `MAC` and a
+`MAC_Context` with `Start (Context, Key)`, `Update` and `Finish (Context,
+Tag)`, whose `Ready`/`Length` contracts match `SMB.Crypto`'s incremental
+HMAC-SHA256. `Ready` also states the buffering rule `(Used = 0) = (Total =
+0)`, and `Finish` leaves the context `Wiped`. It proves with 43 checks in
+about 5 seconds.
+
+Decisions worth keeping for phase 3:
+
+* The engine keeps the raw 16-byte signing key, and each message calls
+  `Start` with it. No prepared key is cached: the per-message cost is two
+  AES blocks, and the engine's key contracts stay as they are.
+* `Core_Wire.Verify_Signature` can feed the header (48 bytes), a zero
+  signature and the rest, as it does for HMAC-SHA256; the `Update`
+  preconditions discharge the same way.
+* AES bounds the speed: a 64 KiB CMAC takes about 58 ms in the default
+  unoptimized build and 20 ms at `-O2`. Phases 3 and 4 will sign or encrypt
+  every 64 KiB chunk, so a faster constant-time AES (several blocks per
+  bit-sliced pass) or an optimized default build may be needed later.
+
+## Next steps
 
 Each primitive is its own pull request with no protocol behavior change,
 following the checklist below.
 
-1. **AES-128-CMAC** (RFC 4493, SP 800-38B), on top of `SMB.AES`. It is
-   needed for 3.1.1 signing. Use the RFC 4493 vectors, plus a comparison
-   with `cryptography`'s CMAC over random lengths, including 0, 16, and
-   lengths around the block boundaries.
-2. **SP 800-108 KDF** in counter mode with HMAC-SHA256. HMAC-SHA256
+1. **SP 800-108 KDF** in counter mode with HMAC-SHA256. HMAC-SHA256
    already exists in `SMB.Crypto`. Use the session and signing keys from
    Microsoft's worked examples (linked in the design document's Testing
    section) and `cryptography`'s `KBKDFHMAC`.
-3. **AES-128-CCM** (11-byte nonce, 16-byte tag) and **AES-128-GCM** (12-byte
+2. **AES-128-CCM** (11-byte nonce, 16-byte tag) and **AES-128-GCM** (12-byte
    nonce, 16-byte tag). The GHASH multiply must use masks, not tables.
    Verifying a tag must be constant-time and must not release plaintext
    on failure.
-4. Then phase 3, which changes `SMB.Engine` contracts and is expected to
+3. Then phase 3, which changes `SMB.Engine` contracts and is expected to
    carry most of the proof cost.
 
 ## Checklist for a new primitive
@@ -149,9 +169,9 @@ The AES pull request touches each of these. Its diff is the template.
   needs Homebrew's `gmp`, but the proofs use only cvc5 and z3.
 * With 16 GB of RAM, prove one unit at a time with `-j4` and watch
   `gnatwhy3`'s memory.
-* `make aes-test` and the mutation runs need `cryptography` for the
-  interpreter behind `python`; `python -m pip install --user
-  cryptography==50.0.2` matches the Windows CI pin.
+* `make aes-test`, `make cmac-test` and the mutation runs need
+  `cryptography` for the interpreter behind `python`; `python -m pip
+  install --user cryptography==50.0.2` matches the Windows CI pin.
 * GNU make is available, so the Makefile targets work directly. A
   changed-line AdaMutant run of the AES unit took about three minutes with
   `--concurrency 8`.
@@ -182,8 +202,8 @@ The AES pull request touches each of these. Its diff is the template.
     makes that fail with "cannot copy".
   * A full run of `src/*.adb` takes about four hours on a fast machine.
     The weekly `mutation.yml` splits it into eight jobs.
-* `make aes-test` needs `pip install cryptography`. CI pins 50.0.2 on
-  Windows.
+* `make aes-test` and `make cmac-test` need `pip install cryptography`. CI
+  pins 50.0.2 on Windows.
 
 ## Open items
 
