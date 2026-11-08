@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the given Alire crates (for example gnat_native=14.2.1) into PREFIX
+# Install the given Alire crates (for example gnat_native=16.1.0) into PREFIX
 # with alr 2.1.1 and add PREFIX/bin to the job's PATH.
 # Usage: install-ada.sh PREFIX CRATE=VERSION...
 # The alr archive is checked against the SHA-256 published with the release.

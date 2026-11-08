@@ -242,10 +242,11 @@ and Python 3.
 
 ## CI
 
-GitHub Actions (`.github/workflows`) runs the following. The toolchain (GNAT
-14.2.1, gprbuild 25.0.1 and gnatprove 14.1.1) is installed with Alire 2.1.1
-(`alr` is checked against the release's SHA-256, and the installation is
-cached).
+GitHub Actions (`.github/workflows`) runs the following. The toolchain is
+installed with Alire 2.1.1 (`alr` is checked against the release's SHA-256,
+and the installation is cached): GNAT 16.1.0 and gprbuild 26.0.1 for the
+builds, tests and mutation runs, and GNAT 14.2.1, gprbuild 25.0.1 and
+gnatprove 14.1.1 for the proof until it proves with gnatprove 16.1.0.
 
 * `ci.yml` (pushes to main, pull requests and manual runs; not run for
   documentation-only changes)
