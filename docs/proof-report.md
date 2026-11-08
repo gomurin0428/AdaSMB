@@ -4602,3 +4602,49 @@ list of static frames; their deepest static chains are 1,632 and 1,856
 bytes. Sealing 64 KiB takes about 56 ms in the default unoptimized build
 and 18 ms at `-O2`, half of CCM's time: one AES block per 16 bytes, plus a
 128-step multiplication.
+
+## SMB 3.1.1 negotiate contexts (`SMB.Core_Negotiate`)
+
+`SMB.Core_Negotiate` builds the SMB 3.1.1 NEGOTIATE request body with its
+preauth integrity context (SHA-512 and a 32-byte salt) and encryption
+context (AES-128-GCM, then AES-128-CCM), and checks the negotiate contexts
+of a response that selected 3.1.1 (MS-SMB2 2.2.3, 2.2.4 and 3.2.5.2, with
+the rules of `docs/smb3-design.md`). `Check_Response_Contexts`'s
+postcondition names the four statuses it returns and gives `No_Cipher`
+whenever the status is not `Ok`. `Request` is completed in the private
+part of the spec, so callers' proofs see every byte. Nothing in the library
+calls the package yet.
+
+```sh
+gnatprove -P proof.gpr -u smb-core_negotiate.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
+```
+
+GNATprove 16.1.0 on macOS reported **72 checks** (10 flow, 62 prover),
+zero unproved or justified, zero `pragma Assume`, in about 10 seconds.
+
+`test_suite` builds the request with the GUID and salt of the A.1 example
+in Microsoft's SMB 3.1.1 encryption blog, with and without 2.1, and checks
+every byte, and that the two contexts equal the A.1 request's. The A.1 and
+A.2 NEGOTIATE responses, which reproduce the blog's preauth integrity
+hashes, select GCM and CCM. Forty-one more, built from A.1's response,
+cover each rule. Contexts in either order, an empty salt, longer preauth
+data, ignored kinds, an empty last context, contexts right after the fixed
+body and A.1 at index 1,000 pass. Duplicate preauth and encryption
+contexts, a missing preauth context, hash counts of 0 and 2, another hash,
+an oversized salt, short contexts, cipher counts of 0 and 2, cipher 3, a
+compression, transport, RDMA or signing context, and no contexts fail as
+protocol errors. A short packet, a context or header past the end, a count
+above 2**8 and offsets that are misaligned, inside the fixed body, at or
+past the end, above 2**16 or above `Natural'Last` fail as length or offset
+errors.
+
+An AdaMutant run on `smb-core_negotiate.adb` detected all 132 mutants (one
+more did not compile) and marks none. AdaMutant mutates bodies only, so
+`Request`, in the spec, is covered by the byte-for-byte test instead. The
+first run, with `Request` still in the body, left twenty: the upper
+bytes of a four-byte encoder whose values are all below 2**16, a length
+check that only a 128-byte packet tells apart, and a bound the loop
+checked again. The request now writes those fields as two bytes and two
+zeros, bounds are additions, the loop checks only the positions it
+advances to, and the offset tests past the end use a packet whose length
+is a multiple of 8, so the alignment check does not reject them first.

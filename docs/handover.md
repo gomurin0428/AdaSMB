@@ -29,7 +29,9 @@ of date.
 | 2 | SP 800-108 KDF (counter mode, HMAC-SHA256) | merged (#115) |
 | 2 | AES-128-CCM | merged (#118) |
 | 2 | AES-128-GCM | merged (#119) |
-| 3 | 3.1.1 negotiation, preauth integrity, CMAC signing | next |
+| 3 | 3.1.1 negotiate contexts (`SMB.Core_Negotiate`) | merged (#120) |
+| 3 | Preauth integrity hash | next |
+| 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | not started |
 | 4 | Encryption | not started |
 | 5 | Windows server interop, release 0.2.0 | not started |
 
@@ -164,15 +166,51 @@ Decisions worth keeping for phase 4:
   association proves but does not build, so `To_Block` is a positional
   aggregate.
 
+## SMB 3.1.1 negotiate contexts (#120)
+
+`SMB.Core_Negotiate` (`src/smb-core_negotiate.ads`, `.adb`) is the first
+part of phase 3. Nothing calls it yet.
+
+* `Request (Guid, Salt, Allow_21)` returns the 102-byte NEGOTIATE request
+  body: SecurityMode 3 as today, Capabilities `0x40` (encryption) only,
+  dialect `0x0311` and, with `Allow_21`, `0x0210`, then the preauth
+  integrity context (SHA-512 and the 32-byte salt) and the encryption
+  context (GCM, then CCM). The contexts start at body offset 40 (104 from
+  the header) with one dialect or two, so the layout does not depend on
+  `Allow_21`. The contexts are byte for byte those of Microsoft's A.1
+  request, which the test checks. `Request` is completed in the spec's
+  private part, so the engine's proofs can see the bytes it sends.
+* `Check_Response_Contexts (Packet, Cipher, Status)` takes the whole
+  response, header included, because the offset fields count from the
+  header. It applies the design document's rules and returns the cipher,
+  or `No_Cipher` with any failure. A compression, transport, RDMA or
+  signing context fails it, since we offer none. It also requires the
+  first context at or after offset 128, the end of the fixed response body
+  (ours).
+* It does not check DialectRevision or call anything; the engine pull
+  request does that, takes the salt from the entropy source and hashes the
+  messages.
+* Mutation testing shaped the code: every four-byte field holds a value
+  below 2**16, so they are written as two bytes and two zeros; bounds are
+  written as additions (`Position + 8 > Packet'Length`) so that `>` and
+  `>=` differ in some test; and only positions the loop advances to are
+  checked inside it, since the first is checked before.
+
 ## Next steps
 
-Phase 2's primitives are all merged. Next is phase 3 of
-`docs/smb3-design.md`: SMB 3.1.1 negotiation with negotiate contexts,
-preauth integrity (SHA-512 over the NEGOTIATE and SESSION_SETUP exchanges)
-and AES-CMAC signing, without encryption. The Samba integration test gains
-a 3.1.1-only configuration with mandatory signing. Phase 3 changes
-`SMB.Engine` contracts and is expected to carry most of the proof cost. The
-checklist below still applies to any new unit.
+1. **Preauth integrity hash**: SHA-512 over the NEGOTIATE and
+   SESSION_SETUP messages, as a SPARK unit tested against the hash chains
+   that Microsoft's A.1 and A.2 examples publish for every message.
+2. **Engine integration**: the dialect, cipher, preauth and key state in
+   `SMB.Engine`; `Prepare_Negotiate` using `SMB.Core_Negotiate`; the
+   DialectRevision and downgrade checks; signing and cipher keys from
+   `SMB.KDF`; AES-CMAC signing and the signed final SESSION_SETUP
+   response; `Dialect_Policy` on `Connect`; and a 3.1.1-only Samba
+   configuration with mandatory signing. It changes `SMB.Engine` contracts
+   and is expected to carry most of the proof cost, so it may take more
+   than one pull request.
+
+The checklist below still applies to any new unit.
 
 ## Checklist for a new primitive
 

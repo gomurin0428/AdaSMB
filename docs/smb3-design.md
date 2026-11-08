@@ -33,7 +33,7 @@ or ambiguous, the choice is marked as ours.
 * Dialects: `0x0311`, plus `0x0210` only when 2.1 is allowed. The response's
   DialectRevision must be one of the offered dialects, or the connection is
   closed.
-* SecurityMode stays SIGNING_ENABLED, as today. Capabilities is
+* SecurityMode stays 3 (signing enabled and required), as today. Capabilities is
   SMB2_GLOBAL_CAP_ENCRYPTION (`0x40`) and nothing else. A server encrypts its
   responses only if the client set this bit (§3.3.4.1.4).
 * Negotiate contexts start at the first 8-byte-aligned offset after the
@@ -48,10 +48,10 @@ or ambiguous, the choice is marked as ours.
 * Response checks for 3.1.1, all failing the connection:
   * exactly one preauth context, with HashAlgorithmCount = 1, SHA-512, and a
     DataLength that covers the count and salt;
-  * at most one encryption, compression, RDMA, signing or transport context;
-  * an encryption context has CipherCount = 1 and a cipher that is 0 or was
-    offered;
-  * a signing context, which we never offer, is rejected (ours);
+  * at most one encryption context, with CipherCount = 1 and a cipher that
+    is 0 or was offered;
+  * a compression, transport, RDMA or signing context is rejected (ours):
+    a server sends one only in answer to the client's, and we offer none;
   * every context lies inside the message, and other context types are
     ignored.
 * A missing encryption context, or cipher 0, means no encryption.

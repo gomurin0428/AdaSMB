@@ -11,6 +11,7 @@ with SMB.Core_Clock;
 with SMB.Core_Client;
 with SMB.Core_Connection;
 with SMB.Core_Framing;
+with SMB.Core_Negotiate;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
@@ -2178,6 +2179,269 @@ procedure Test_Suite is
         ("AES-GCM: 4 published SMB messages and 5 other messages,"
          & Natural'Image (Count) & " seal, open and rejection checks passed");
    end Test_AES_GCM;
+
+   procedure Test_Negotiate_311 is
+      use type SMB.Core_Negotiate.Cipher_Id;
+      --  The NEGOTIATE exchanges of Microsoft's SMB 3.1.1 encryption blog:
+      --  appendix A.1, which selects AES-128-GCM, and A.2, which selects
+      --  AES-128-CCM. They reproduce the blog's preauth integrity hashes.
+      A1_Request : constant SMB.Bytes := Hex
+        ("FE534D4240000100000000000000010000000000000000000000000000000000"
+         & "FFFE000000000000000000000000000000000000000000000000000000000000"
+         & "2400050001000000660000004F0D7FA009F5B246B2EF62551D7D7C0970000000"
+         & "020000000202100200030203110300000100260000000000010020000100D170"
+         & "9D7196E1BD0B6EBF95213D76553435763514392649FD6F216ED8BF269CD80000"
+         & "0200060000000000020002000100");
+      A1_Response : constant SMB.Bytes := Hex
+        ("FE534D4240000100000000000000010001000000000000000000000000000000"
+         & "FFFE000000000000000000000000000000000000000000000000000000000000"
+         & "410001001103020039CBCAF329714942BDCE5D60F09AB3FB2700000000008000"
+         & "0000800000008000D1168E69CDAED00109094AB095AED00180004001C0010000"
+         & "6082013C06062B0601050502A08201303082012CA01A3018060A2B0601040182"
+         & "3702021E060A2B06010401823702020AA282010C048201084E45474F45585453"
+         & "01000000000000006000000070000000807CC0FD06D6362D02DDE1CF343BFE29"
+         & "C16AA4EA4741FB0EF645DC5C5D3C3E6A8DE5D0BAEF7A06DC070076174356EDA0"
+         & "0000000000000000600000000100000000000000000000005C33530DEAF90D4D"
+         & "B2EC4AE3786EC3084E45474F4558545303000000010000004000000098000000"
+         & "807CC0FD06D6362D02DDE1CF343BFE295C33530DEAF90D4DB2EC4AE3786EC308"
+         & "40000000580000003056A05430523027802530233121301F0603550403131854"
+         & "6F6B656E205369676E696E67205075626C6963204B6579302780253023312130"
+         & "1F06035504031318546F6B656E205369676E696E67205075626C6963204B6579"
+         & "0100260000000000010020000100B51C002C28941192737A08344B05CE90786E"
+         & "EC146D99CDB60AE44E5A86127D270000020004000000000001000200");
+      A2_Response : constant SMB.Bytes := Hex
+        ("FE534D4240000100000000000000010001000000000000000000000000000000"
+         & "FFFE000000000000000000000000000000000000000000000000000000000000"
+         & "410001001103020039CBCAF329714942BDCE5D60F09AB3FB2700000000008000"
+         & "0000800000008000D04C8443CCAED00109094AB095AED00180004001C0010000"
+         & "6082013C06062B0601050502A08201303082012CA01A3018060A2B0601040182"
+         & "3702021E060A2B06010401823702020AA282010C048201084E45474F45585453"
+         & "010000000000000060000000700000007F7CC0FD06D6362D02DDE1CF343BFE29"
+         & "73007DCF55CA793E082B7A257DEFE6E8E18291ABF112C0599108C772F55CBB2A"
+         & "0000000000000000600000000100000000000000000000005C33530DEAF90D4D"
+         & "B2EC4AE3786EC3084E45474F4558545303000000010000004000000098000000"
+         & "7F7CC0FD06D6362D02DDE1CF343BFE295C33530DEAF90D4DB2EC4AE3786EC308"
+         & "40000000580000003056A05430523027802530233121301F0603550403131854"
+         & "6F6B656E205369676E696E67205075626C6963204B6579302780253023312130"
+         & "1F06035504031318546F6B656E205369676E696E67205075626C6963204B6579"
+         & "010026000000000001002000010088AFA422ECC239CB16F30BA641AE4B6EE79F"
+         & "5A4AF74FE18A301E9790515D07F70000020004000000000001000100");
+      --  A.1's request offers five dialects, so its contexts start at body
+      --  offset 48 (packet offset 112), where ours start at 40.
+      Guid : constant SMB.Core_Negotiate.Guid_Bytes := A1_Request (76 .. 91);
+      Salt : constant SMB.Core_Negotiate.Salt_Bytes := A1_Request (126 .. 157);
+      Count : Natural := 0;
+
+      function U16 (Value : Natural) return SMB.Bytes is
+        ((SMB.Byte (Value mod 256), SMB.Byte (Value / 256)));
+
+      function Context (Kind : Natural; Data : SMB.Bytes) return SMB.Bytes is
+        (U16 (Kind) & U16 (Data'Length) & (0, 0, 0, 0) & Data);
+
+      function Padded (Item : SMB.Bytes) return SMB.Bytes is
+        (Item & (1 .. (8 - Item'Length mod 8) mod 8 => 0));
+
+      function Preauth_Data
+        (Hashes, Salt_Length, Algorithm, Salt_Bytes : Natural)
+         return SMB.Bytes is
+        (U16 (Hashes) & U16 (Salt_Length) & U16 (Algorithm)
+         & (1 .. Salt_Bytes => 16#AB#));
+
+      Preauth : constant SMB.Bytes :=
+        Context (1, Preauth_Data (1, 32, 1, 32));
+
+      function Cipher (Value : Natural) return SMB.Bytes is
+        (Context (2, U16 (1) & U16 (Value)));
+
+      --  A.1's response with its contexts replaced. Its first context
+      --  stays at offset 448, after the security buffer.
+      function Response (Contexts : Natural; Data : SMB.Bytes)
+         return SMB.Bytes
+      is
+         Result : SMB.Bytes := A1_Response (0 .. 447) & Data;
+      begin
+         Result (70 .. 71) := U16 (Contexts);
+         return Result;
+      end Response;
+
+      function With_Offset (Packet : SMB.Bytes; Offset : SMB.DWord)
+         return SMB.Bytes
+      is
+         Result : SMB.Bytes := Packet;
+      begin
+         for I in 0 .. 3 loop
+            Result (124 + I) := SMB.Byte (Offset / 2 ** (8 * I) mod 256);
+         end loop;
+         return Result;
+      end With_Offset;
+
+      procedure Expect
+        (Name : String;
+         Packet : SMB.Bytes;
+         Status : SMB.Core_Status;
+         Cipher : SMB.Core_Negotiate.Cipher_Id :=
+           SMB.Core_Negotiate.No_Cipher)
+      is
+         Got_Cipher : SMB.Core_Negotiate.Cipher_Id;
+         Got_Status : SMB.Core_Status;
+      begin
+         SMB.Core_Negotiate.Check_Response_Contexts
+           (Packet, Got_Cipher, Got_Status);
+         Assert (Got_Status = Status,
+                 "negotiate contexts " & Name & ": status "
+                 & SMB.Core_Status'Image (Got_Status));
+         Assert (Got_Cipher = Cipher,
+                 "negotiate contexts " & Name & ": cipher "
+                 & SMB.Core_Negotiate.Cipher_Id'Image (Got_Cipher));
+         Count := Count + 1;
+      end Expect;
+
+      Contexts : constant SMB.Bytes := Hex
+        ("0100260000000000010020000100D1709D7196E1BD0B6EBF95213D7655343576"
+         & "3514392649FD6F216ED8BF269CD800000200060000000000020002000100");
+   begin
+      Assert_Equal
+        (SMB.Core_Negotiate.Request (Guid, Salt, False),
+         Hex ("240001000300000040000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
+              & "680000000200000011030000") & Contexts,
+         "3.1.1 NEGOTIATE request");
+      Assert_Equal
+        (SMB.Core_Negotiate.Request (Guid, Salt, True),
+         Hex ("240002000300000040000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
+              & "680000000200000011031002") & Contexts,
+         "3.1.1 and 2.1 NEGOTIATE request");
+      Assert_Equal
+        (SMB.Core_Negotiate.Request (Guid, Salt, False) (40 .. 101),
+         A1_Request (112 .. 173), "3.1.1 NEGOTIATE contexts");
+
+      Expect ("A.1", A1_Response, SMB.Ok, SMB.Core_Negotiate.AES_128_GCM);
+      Expect ("A.2", A2_Response, SMB.Ok, SMB.Core_Negotiate.AES_128_CCM);
+      Expect ("preauth only", Response (1, Preauth), SMB.Ok);
+      Expect ("cipher 0", Response (2, Padded (Preauth) & Cipher (0)),
+              SMB.Ok);
+      Expect ("CCM", Response (2, Padded (Preauth) & Cipher (1)), SMB.Ok,
+              SMB.Core_Negotiate.AES_128_CCM);
+      Expect ("encryption first", Response (2, Padded (Cipher (2)) & Preauth),
+              SMB.Ok, SMB.Core_Negotiate.AES_128_GCM);
+      Expect ("empty salt",
+              Response (1, Context (1, Preauth_Data (1, 0, 1, 0))), SMB.Ok);
+      Expect ("longer preauth data",
+              Response (1, Context (1, Preauth_Data (1, 4, 1, 9))), SMB.Ok);
+      Expect ("ignored kinds",
+              Response (6, Padded (Context (5, (1 .. 3 => 0)))
+                        & Padded (Context (5, (1 .. 3 => 0)))
+                        & Padded (Context (9, (1 .. 0 => 0)))
+                        & Padded (Context (16#0100#, (1 .. 2 => 0)))
+                        & Padded (Context (16#0100#, (1 .. 2 => 0)))
+                        & Preauth), SMB.Ok);
+
+      Expect ("two preauth", Response (2, Padded (Preauth) & Preauth),
+              SMB.Invalid_Protocol);
+      Expect ("two encryption",
+              Response (3, Padded (Preauth) & Padded (Cipher (1)) & Cipher (2)),
+              SMB.Invalid_Protocol);
+      Expect ("no preauth", Response (1, Cipher (2)), SMB.Invalid_Protocol);
+      Expect ("no preauth among others",
+              Response (2, Padded (Context (5, (1 .. 3 => 0))) & Cipher (2)),
+              SMB.Invalid_Protocol);
+      Expect ("no hash", Response (1, Context (1, Preauth_Data (0, 32, 1, 32))),
+              SMB.Invalid_Protocol);
+      Expect ("two hashes",
+              Response (1, Context (1, Preauth_Data (2, 30, 1, 32))),
+              SMB.Invalid_Protocol);
+      Expect ("not SHA-512",
+              Response (1, Context (1, Preauth_Data (1, 32, 2, 32))),
+              SMB.Invalid_Protocol);
+      Expect ("salt too long",
+              Response (1, Context (1, Preauth_Data (1, 33, 1, 32))),
+              SMB.Invalid_Protocol);
+      Expect ("short preauth",
+              Response (1, Context (1, U16 (1) & U16 (0) & (1 => 1))),
+              SMB.Invalid_Protocol);
+      Expect ("no cipher count",
+              Response (2, Padded (Preauth) & Context (2, U16 (0) & U16 (2))),
+              SMB.Invalid_Protocol);
+      Expect ("two ciphers",
+              Response (2, Padded (Preauth)
+                        & Context (2, U16 (2) & U16 (2) & U16 (1))),
+              SMB.Invalid_Protocol);
+      Expect ("cipher 3", Response (2, Padded (Preauth) & Cipher (3)),
+              SMB.Invalid_Protocol);
+      Expect ("short encryption",
+              Response (2, Padded (Preauth) & Context (2, U16 (1) & (1 => 2))),
+              SMB.Invalid_Protocol);
+      --  Contexts we never offer: compression, transport, RDMA, signing.
+      Expect ("compression", Response (2, Padded (Preauth)
+                                       & Context (3, (1 .. 6 => 0))),
+              SMB.Invalid_Protocol);
+      Expect ("transport", Response (2, Padded (Context (6, (1 .. 4 => 0)))
+                                     & Preauth),
+              SMB.Invalid_Protocol);
+      Expect ("RDMA", Response (2, Padded (Preauth)
+                                & Context (7, (1 .. 6 => 0))),
+              SMB.Invalid_Protocol);
+      Expect ("signing", Response (2, Padded (Preauth)
+                                   & Context (8, U16 (1) & U16 (2))),
+              SMB.Invalid_Protocol);
+      Expect ("no contexts", Response (0, Preauth), SMB.Invalid_Protocol);
+
+      Expect ("empty last context",
+              Response (2, Padded (Preauth) & Context (5, (1 .. 0 => 0))),
+              SMB.Ok);
+      declare
+         Early : SMB.Bytes := A1_Response (0 .. 127) & Padded (Preauth);
+      begin
+         Early (70 .. 71) := U16 (1);
+         Expect ("contexts right after the fixed body",
+                 With_Offset (Early, 128), SMB.Ok);
+      end;
+      --  A context header that just fits is read, and a preauth context
+      --  without data fails as such.
+      Expect ("header at the very end",
+              With_Offset (Response (1, Context (1, (1 .. 0 => 0))), 448),
+              SMB.Invalid_Protocol);
+      Expect ("short packet", A1_Response (0 .. 126), SMB.Invalid_Length);
+      Expect ("fixed part only", A1_Response (0 .. 127), SMB.Invalid_Offset);
+      Expect ("more contexts than sent", Response (2, Padded (Preauth)),
+              SMB.Invalid_Offset);
+      Expect ("context header past the end",
+              Response (2, Padded (Preauth) & (0, 0, 0, 0, 0, 0, 0)),
+              SMB.Invalid_Offset);
+      Expect ("context data past the end",
+              Response (1, Preauth (0 .. Preauth'Last - 1)),
+              SMB.Invalid_Offset);
+      Expect ("misaligned offset",
+              With_Offset (Response (1, (0, 0, 0, 0) & Preauth), 452),
+              SMB.Invalid_Offset);
+      Expect ("offset inside the fixed body",
+              With_Offset (A1_Response, 120), SMB.Invalid_Offset);
+      --  A 496-byte packet, so that these offsets are aligned.
+      Expect ("offset past the end",
+              With_Offset (Response (1, Padded (Preauth)), 504),
+              SMB.Invalid_Offset);
+      Expect ("offset at the end",
+              With_Offset (Response (1, Padded (Preauth)), 496),
+              SMB.Invalid_Offset);
+      Expect ("offset beyond Natural", With_Offset (A1_Response, 16#FFFF_FFF8#),
+              SMB.Invalid_Offset);
+      --  Read as 16 bits, this offset would be A.1's own, 448.
+      Expect ("offset above 2**16", With_Offset (A1_Response, 16#0001_01C0#),
+              SMB.Invalid_Offset);
+      --  Read as one byte, this count would be A.1's own, 2.
+      Expect ("count above 2**8",
+              Response (16#0102#, Padded (Preauth) & Cipher (2)),
+              SMB.Invalid_Offset);
+      declare
+         Rebased : constant SMB.Bytes
+           (1_000 .. 1_000 + A1_Response'Length - 1) := A1_Response;
+      begin
+         Expect ("A.1 at index 1000", Rebased, SMB.Ok,
+                 SMB.Core_Negotiate.AES_128_GCM);
+      end;
+      Ada.Text_IO.Put_Line
+        ("SMB 3.1.1 negotiate contexts: 3 requests and"
+         & Natural'Image (Count) & " responses passed");
+   end Test_Negotiate_311;
 
    procedure Test_NTLM_Authenticate is
       Challenge : constant SMB.Bytes := Hex
@@ -9501,6 +9765,7 @@ begin
    Test_KDF;
    Test_AES_CCM;
    Test_AES_GCM;
+   Test_Negotiate_311;
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;
