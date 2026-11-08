@@ -1,5 +1,6 @@
 with Ada.Unchecked_Deallocation;
 with Ada.Text_IO;
+with SMB.AES;
 with SMB.Crypto;
 with SMB.Core_NTLM;
 with SMB.Core_Wire;
@@ -107,6 +108,28 @@ procedure Crypto_Probe is
          end;
       end loop;
    end Check_SHA512;
+
+   --  The schedule is used twice, to check that encrypting leaves it intact.
+   procedure Check_AES (Key, Plain, Cipher : SMB.Bytes) is
+      Schedule : SMB.AES.Key_Schedule;
+      Key_Block : SMB.AES.Key_128;
+      Plain_Block, Cipher_Block : SMB.AES.Block;
+   begin
+      if Key'Length /= 16 or else Plain'Length /= 16
+        or else Cipher'Length /= 16
+      then
+         raise Program_Error with "invalid AES fixture";
+      end if;
+      Key_Block := Key;
+      Plain_Block := Plain;
+      Cipher_Block := Cipher;
+      SMB.AES.Expand_Key (Key_Block, Schedule);
+      for Repeat in 1 .. 2 loop
+         if SMB.AES.Encrypt (Schedule, Plain_Block) /= Cipher_Block then
+            raise Program_Error with "AES mismatch";
+         end if;
+      end loop;
+   end Check_AES;
 
    procedure Check_HMAC (Key, Data, MD5, SHA256 : SMB.Bytes) is
    begin
@@ -262,6 +285,11 @@ begin
                   raise Program_Error with "invalid SHA-512 fixture";
                end if;
                Check_SHA512 (Hex (Field (2)), Hex (Field (3)));
+            elsif Field (1) = "A" then
+               if Field (5) /= "-" then
+                  raise Program_Error with "invalid AES fixture";
+               end if;
+               Check_AES (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)));
             elsif Field (1) = "H" then
               Check_HMAC
                 (Hex (Field (2)), Hex (Field (3)),

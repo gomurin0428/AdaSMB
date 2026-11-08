@@ -4322,3 +4322,30 @@ No SPARK unit changed, so the proof is unaffected. Static stack: `Authenticate`
 234,976 bytes (+32), `List_Directory` 57,920 (+16), `Write` 45,520 (+48), the
 rest unchanged. On Windows the strict builds, unit tests, `make stack-check`,
 `transport_integration.py` and the conformance tests pass.
+
+## AES-128 encryption (`SMB.AES`)
+
+`SMB.AES` adds AES-128 key expansion and the encryption direction (FIPS 197)
+for the SMB 3.1.1 work; nothing in the library calls it yet. The S-box is
+computed on bit planes rather than looked up. A `Key_Schedule` is `Ready` only
+after `Expand_Key`, and `Encrypt` requires it, so a schedule left at its zero
+default cannot be used.
+
+The first attempt at a proof did not finish: GNATprove inlined every local
+helper without a contract into its callers, and with the nested calls in the
+GF(2^8) inversion `gnatwhy3` grew to about 50 GB. Each helper now carries
+`Post => True`, so it is proved once on its own and its callers see only the
+contract. The proof target is the absence of run-time errors and the `Ready`
+contracts; functional correctness comes from the tests.
+
+```sh
+gnatprove -P proof.gpr -u smb-aes.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+GNATprove 14.1.1 on macOS reported **66 checks** (19 flow, 47 prover), zero
+unproved or justified, zero warnings, zero `pragma Assume`, in about 35
+seconds with a peak of 1.2 GB. `test_suite` checks FIPS 197 appendices B and
+C.1 and a 1,000-step chain; `aes_conformance.py` compares 1,287 cases with
+Python's `cryptography`, with three sensitivity checks. A changed-line
+AdaMutant run left no surviving mutant. Static stack use of the public calls
+is unchanged, since nothing calls the unit.

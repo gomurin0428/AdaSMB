@@ -36,6 +36,11 @@ jobs:
         run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
       - name: Build AdaMutant
         run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
+      - name: Install Python cryptography
+        # The AES comparison tests' reference; a test-only dependency.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-cryptography
       - name: Mutate the files of this shard
         run: |
           files=$(python3 tests/mutation_shards.py ${{ matrix.shard }}/8)

@@ -18,10 +18,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = ".exe" if os.name == "nt" else ""
-# Comparison tests against Python, OpenSSL and hashlib: (probe mains, scripts).
+# Comparison tests against Python, OpenSSL, hashlib and cryptography: (probe mains, scripts).
 CONFORMANCE = {
     "ntlm": (["ntlm_av_probe.adb"], ["ntlm_av_conformance.py", "ntlm_challenge_fields.py"]),
     "crypto": (["crypto_probe.adb"], ["crypto_conformance.py"]),
+    "aes": (["crypto_probe.adb"], ["aes_conformance.py"]),
     "signing": (["crypto_probe.adb"], ["signing_conformance.py"]),
     "unicode": (["unicode_probe.adb"], ["unicode_conformance.py"]),
     "clock": (["clock_probe.adb"], ["clock_conformance.py"]),
@@ -32,6 +33,7 @@ SECOND_STAGE = {
     "smb-core_ntlm.adb": ["ntlm"],
     "smb-ntlm.adb": ["ntlm"],
     "smb-crypto.adb": ["crypto", "signing"],
+    "smb-aes.adb": ["aes"],
     "smb-core_wire.adb": ["signing"],
     "smb-wire.adb": ["signing"],
     "smb-core_text.adb": ["unicode"],
