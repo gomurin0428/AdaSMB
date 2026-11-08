@@ -76,6 +76,10 @@ jobs:
         run: adamutant run --since "origin/$GITHUB_BASE_REF" --concurrency 4
       - name: Fail on undetected mutants
         run: python3 tests/mutation_survivors.py --fail
+      # AdaMutant names the baseline log but does not print it.
+      - name: Show the baseline test log
+        if: failure()
+        run: tail -n 200 .adamutant/logs/baseline-test.log || true
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
