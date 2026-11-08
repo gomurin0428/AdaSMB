@@ -152,6 +152,7 @@ make crypto-test            # hashes and HMAC against OpenSSL / Python
 make aes-test               # AES-128 against Python's cryptography package
 make cmac-test              # AES-128-CMAC against Python's cryptography package
 make ccm-test               # AES-128-CCM against Python's cryptography package
+make gcm-test               # AES-128-GCM against Python's cryptography package
 make kdf-test               # SMB 3.1.1 key derivation against Python's cryptography
 make signing-test           # SMB signing and tamper rejection against Python
 make clock-test             # FILETIME for every day, second and 100 ns fraction
@@ -176,8 +177,8 @@ passing whenever a stale value happens to be the expected one.
 library source (an operator, a literal, a condition, or a whole assignment or
 call replaced by `null`), rebuilds `test_suite` and runs it. A change the tests
 do not notice is a surviving mutant. When `test_suite` misses a mutant of a
-unit that a comparison test covers (NTLM, hashes, AES, AES-CMAC, AES-CCM, the
-key derivation and signing, UTF conversion, the clock),
+unit that a comparison test covers (NTLM, hashes, AES, AES-CMAC, AES-CCM,
+AES-GCM, the key derivation and signing, UTF conversion, the clock),
 [`tests/mutant_tests.py`](tests/mutant_tests.py) also runs that comparison test, so only the mutants that every applicable test
 misses survive. The unmutated baseline runs every comparison test, so
 `make mutation` and `make mutation-diff` need what those tests need, including
@@ -227,6 +228,16 @@ lengths where the counter and the length field carry, up to the frame limit;
 associated data from none to 65,279 bytes; and single-bit changes and seeded
 random messages. Each message is sealed and opened at several array bounds,
 and a changed tag or ciphertext must be rejected with the data zeroed.
+
+`make gcm-test` compares AES-128-GCM, the SMB 3.1.1 message cipher, with the
+same package's `AESGCM`, always with SMB's 12-byte nonce and 16-byte tag:
+the four messages of Microsoft's SMB 3.1.1 encryption examples; every data
+length up to five blocks and the lengths around larger block boundaries; the
+lengths where the counter carries, up to the frame limit; associated data
+of every length up to three blocks and some longer; and single-bit changes
+and seeded random messages. Each message is sealed and opened at several
+array bounds, and a changed tag or ciphertext must be rejected with the
+data zeroed.
 
 `make kdf-test` compares the SMB 3.1.1 key derivation (SP 800-108 in counter
 mode with HMAC-SHA256) with the same package's `KBKDFHMAC`: Microsoft's twelve

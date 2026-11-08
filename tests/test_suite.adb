@@ -19,6 +19,7 @@ with SMB.Core_Wire;
 with SMB.AES;
 with SMB.AES.CCM;
 with SMB.AES.CMAC;
+with SMB.AES.GCM;
 with SMB.KDF;
 with SMB.Crypto;
 with SMB.Engine;
@@ -1960,6 +1961,223 @@ procedure Test_Suite is
         ("AES-CCM: 4 published and 3 generated messages,"
          & Natural'Image (Count) & " seal, open and rejection checks passed");
    end Test_AES_CCM;
+
+   procedure Test_AES_GCM is
+      --  The four AES-128-GCM messages of Microsoft's SMB 3.1.1 encryption
+      --  blog, appendix A.1, laid out as in Test_AES_CCM; the nonce is the
+      --  first 12 bytes of the Nonce field.
+      Count : Natural := 0;
+
+      function All_Zero (Data : SMB.Bytes) return Boolean is
+        (for all Value of Data => Value = 0);
+
+      procedure Check (Name, Key_Hex, Transformed_Hex, Plain_Hex : String) is
+         Transformed : constant SMB.Bytes := Hex (Transformed_Hex);
+         Plain : constant SMB.Bytes := Hex (Plain_Hex);
+         Key : constant SMB.AES.Key_128 := Hex (Key_Hex);
+         Signature : constant SMB.AES.GCM.Tag_128 := Transformed (4 .. 19);
+         AAD : constant SMB.Bytes := Transformed (20 .. 51);
+         Nonce : constant SMB.AES.GCM.Nonce_96 := Transformed (20 .. 31);
+         Cipher : constant SMB.Bytes := Transformed (52 .. Transformed'Last);
+         Tag : SMB.AES.GCM.Tag_128;
+         Authentic : Boolean;
+
+         --  Open must reject the message and return only zeros.
+         procedure Reject
+           (Label : String; Changed_AAD : SMB.Bytes;
+            Changed_Nonce : SMB.AES.GCM.Nonce_96;
+            Changed_Cipher : SMB.Bytes; Changed_Tag : SMB.AES.GCM.Tag_128)
+         is
+            Data : SMB.Bytes := Changed_Cipher;
+         begin
+            SMB.AES.GCM.Open
+              (Key, Changed_Nonce, Changed_AAD, Data, Changed_Tag, Authentic);
+            Assert (not Authentic, Name & " accepted with " & Label);
+            Assert (All_Zero (Data), Name & " kept data with " & Label);
+            Count := Count + 1;
+         end Reject;
+      begin
+         --  OriginalMessageSize, little-endian, below 2**16 here.
+         Assert (Natural (Transformed (36)) + 256 * Natural (Transformed (37))
+                 = Plain'Length
+                 and then Transformed (38) = 0 and then Transformed (39) = 0,
+                 Name & " size");
+         --  At the vector's bounds and at bounds that end at Natural'Last.
+         for Rebased in Boolean loop
+            declare
+               First : constant Natural :=
+                 (if Rebased then Natural'Last - Plain'Length + 1 else 0);
+               Data : SMB.Bytes (First .. First + (Plain'Length - 1)) :=
+                 Plain;
+            begin
+               SMB.AES.GCM.Seal (Key, Nonce, AAD, Data, Tag);
+               Assert_Equal (Data, Cipher, Name & " ciphertext");
+               Assert_Equal (Tag, Signature, Name & " signature");
+               SMB.AES.GCM.Open (Key, Nonce, AAD, Data, Signature, Authentic);
+               Assert (Authentic, Name & " rejected");
+               Assert_Equal (Data, Plain, Name & " plaintext");
+               Count := Count + 1;
+            end;
+         end loop;
+         for Position in Signature'Range loop
+            declare
+               Changed : SMB.AES.GCM.Tag_128 := Signature;
+            begin
+               Changed (Position) := Changed (Position) xor 16#01#;
+               Reject ("a changed signature", AAD, Nonce, Cipher, Changed);
+            end;
+         end loop;
+         for Position in Integer range 0 .. 2 loop
+            declare
+               Changed : SMB.Bytes := Cipher;
+               Index : constant Natural :=
+                 Cipher'First + Position * (Cipher'Length - 1) / 2;
+            begin
+               Changed (Index) := Changed (Index) xor 16#80#;
+               Reject ("a changed ciphertext", AAD, Nonce, Changed, Signature);
+            end;
+         end loop;
+         for Position in AAD'Range loop
+            declare
+               Changed : SMB.Bytes := AAD;
+            begin
+               Changed (Position) := Changed (Position) xor 16#01#;
+               Reject ("a changed header", Changed, Nonce, Cipher, Signature);
+            end;
+         end loop;
+         declare
+            Changed : SMB.AES.GCM.Nonce_96 := Nonce;
+         begin
+            Changed (11) := Changed (11) xor 16#01#;
+            Reject ("another nonce", AAD, Changed, Cipher, Signature);
+         end;
+         Reject ("a shorter message", AAD, Nonce,
+                 Cipher (Cipher'First .. Cipher'Last - 1), Signature);
+      end Check;
+
+      --  SMB always has 32 bytes of associated data and a nonempty message,
+      --  so empty data, data without associated data and other lengths are
+      --  checked against test cases 1 to 4 of McGrew and Viega's GCM paper
+      --  and a value from Python's cryptography (AESGCM).
+      procedure Check_Other
+        (Name, Key_Hex, Nonce_Hex, AAD_Hex, Plain_Hex, Cipher_Hex,
+         Tag_Hex : String)
+      is
+         Key : constant SMB.AES.Key_128 := Hex (Key_Hex);
+         Nonce : constant SMB.AES.GCM.Nonce_96 := Hex (Nonce_Hex);
+         AAD : constant SMB.Bytes := Hex (AAD_Hex);
+         Plain : constant SMB.Bytes := Hex (Plain_Hex);
+         Expected : constant SMB.AES.GCM.Tag_128 := Hex (Tag_Hex);
+         Data : SMB.Bytes := Plain;
+         Tag : SMB.AES.GCM.Tag_128;
+         Authentic : Boolean;
+      begin
+         SMB.AES.GCM.Seal (Key, Nonce, AAD, Data, Tag);
+         Assert_Equal
+           (Data, Hex (Cipher_Hex), "AES-GCM " & Name & " ciphertext");
+         Assert_Equal (Tag, Expected, "AES-GCM " & Name & " tag");
+         SMB.AES.GCM.Open (Key, Nonce, AAD, Data, Expected, Authentic);
+         Assert (Authentic, "AES-GCM " & Name & " rejected");
+         Assert_Equal (Data, Plain, "AES-GCM " & Name & " plaintext");
+         Count := Count + 1;
+         Data := Hex (Cipher_Hex);
+         Tag := Expected;
+         Tag (15) := Tag (15) xor 16#80#;
+         SMB.AES.GCM.Open (Key, Nonce, AAD, Data, Tag, Authentic);
+         Assert (not Authentic and then All_Zero (Data),
+                 "AES-GCM " & Name & " accepted a changed tag");
+         Count := Count + 1;
+      end Check_Other;
+   begin
+      Check
+        ("AES-GCM A.1 WRITE request", "A2F5E80E5D59103034F32E52F698E5EC",
+         "FD534D42BD73D97D2BC9001BCAFAC0FDFF5FEEBCC7D6822D269CAF48904C664C"
+         & "00000000870000000000010025000000001000006ECDD2A7AFC7B47763057A04"
+         & "1B8FD4DAFFE990B70C9E09D36C084E02D14EF247F8BDE38ACF6256F8B1D3B56F"
+         & "77FBDEB312FEA5E92CBCC1ED8FB2EBBFAA75E49A4A394BB44576545567C24D4C"
+         & "014D47C9FBDFDAFD2C4F9B72F8D256452620A299F48E29E53D6B61D1C13A19E9"
+         & "1AF013F00D17E3ABC2FC3D36C8C1B6B93973253852DBD442E46EE8",
+         "FE534D4240000100000000000900010008000000000000000500000000000000"
+         & "FFFE000001000000250000000010000000000000000000000000000000000000"
+         & "3100700017000000000000000000000006000000040000000100000004000000"
+         & "00000000000000007000000000000000536D623320656E6372797074696F6E20"
+         & "74657374696E67");
+      Check
+        ("AES-GCM A.1 WRITE response", "748C50868C90F302962A5C35F5F9A8BF",
+         "FD534D42ACBE1CB7ED343ADF1725EF144D90D4B0E06831DD2E8EB7B400000000"
+         & "000000005000000000000100250000000010000026BBBF949983A6C1C796559D"
+         & "0F2C510CB651D1F7B6AC8DED32A2A0B8F2D793A815C6F6B848D69767A215841A"
+         & "42D400AE6DDB5F0B44173A014973321FDD7950DA6179159B82E03C9E18A050FF"
+         & "0EA1C967",
+         "FE534D4240000100000000000900010001000000000000000500000000000000"
+         & "FFFE000001000000250000000010000000000000000000000000000000000000"
+         & "11000000170000000000000000000000");
+      Check
+        ("AES-GCM A.1 READ request", "A2F5E80E5D59103034F32E52F698E5EC",
+         "FD534D426DAC0B6FD85A3ED42BB917DA38FE0386D7AA8C6D36859243B715E0A6"
+         & "000000007100000000000100250000000010000088A47BF09CA3C3141CDD7306"
+         & "BE9D9475AB24FCCB833D77461C041F8FB983D0C188F0729272B31D9D3D0DC6B6"
+         & "87C069EEE0CC8EACA2C536D019ACC9E185D1EB630E0FCB793EEECEB06D82A1D7"
+         & "7706E700DBEBFB4FEB54D7AD2D97E7288804F90757FE4D08D6A84A3FF433E745"
+         & "1E768E4699",
+         "FE534D4240000100000000000800010008000000000000000600000000000000"
+         & "FFFE000001000000250000000010000000000000000000000000000000000000"
+         & "3100000017000000000000000000000006000000040000000100000004000000"
+         & "0000000000000000000000000000000000");
+      Check
+        ("AES-GCM A.1 READ response", "748C50868C90F302962A5C35F5F9A8BF",
+         "FD534D427F714B3B9D8FA1198584E71C2BAA1CB6E16831DD2E8EB7B400000000"
+         & "0000000067000000000001002500000000100000FECEDF4D03BB11A6CC5D8A53"
+         & "BE33D6D8701986342B4197D306E16F9CBB218E92F7F8281F51CE68BB85A20D87"
+         & "DE90EBBF80538066D1C37513C0A58D70936D537B624F5500202A612B6CD30D44"
+         & "8A82791A0B2E049ED512AFAEFB06E98AB3D6F931D7D50DB2DBD36A",
+         "FE534D4240000100000000000800010001000000000000000600000000000000"
+         & "FFFE000001000000250000000010000000000000000000000000000000000000"
+         & "11005000170000000000000000000000536D623320656E6372797074696F6E20"
+         & "74657374696E67");
+      Check_Other
+        ("test case 1",
+         "00000000000000000000000000000000", "000000000000000000000000",
+         "",
+         "",
+         "",
+         "58E2FCCEFA7E3061367F1D57A4E7455A");
+      Check_Other
+        ("test case 2",
+         "00000000000000000000000000000000", "000000000000000000000000",
+         "",
+         "00000000000000000000000000000000",
+         "0388DACE60B6A392F328C2B971B2FE78",
+         "AB6E47D42CEC13BDF53A67B21257BDDF");
+      Check_Other
+        ("test case 3",
+         "FEFFE9928665731C6D6A8F9467308308", "CAFEBABEFACEDBADDECAF888",
+         "",
+         "D9313225F88406E5A55909C5AFF5269A86A7A9531534F7DA2E4C303D8A318A72"
+         & "1C3C0C95956809532FCF0E2449A6B525B16AEDF5AA0DE657BA637B391AAFD255",
+         "42831EC2217774244B7221B784D0D49CE3AA212F2C02A4E035C17E2329ACA12E"
+         & "21D514B25466931C7D8F6A5AAC84AA051BA30B396A0AAC973D58E091473F5985",
+         "4D5C2AF327CD64A62CF35ABD2BA6FAB4");
+      Check_Other
+        ("test case 4",
+         "FEFFE9928665731C6D6A8F9467308308", "CAFEBABEFACEDBADDECAF888",
+         "FEEDFACEDEADBEEFFEEDFACEDEADBEEFABADDAD2",
+         "D9313225F88406E5A55909C5AFF5269A86A7A9531534F7DA2E4C303D8A318A72"
+         & "1C3C0C95956809532FCF0E2449A6B525B16AEDF5AA0DE657BA637B39",
+         "42831EC2217774244B7221B784D0D49CE3AA212F2C02A4E035C17E2329ACA12E"
+         & "21D514B25466931C7D8F6A5AAC84AA051BA30B396A0AAC973D58E091",
+         "5BC94FBC3221A5DB94FAE95AE7121A47");
+      Check_Other
+        ("associated data only",
+         "404142434445464748494A4B4C4D4E4F", "101112131415161718191A1B",
+         "A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBF",
+         "",
+         "",
+         "AD3EB5686F56F210F66B3412106CC343");
+      Ada.Text_IO.Put_Line
+        ("AES-GCM: 4 published SMB messages and 5 other messages,"
+         & Natural'Image (Count) & " seal, open and rejection checks passed");
+   end Test_AES_GCM;
 
    procedure Test_NTLM_Authenticate is
       Challenge : constant SMB.Bytes := Hex
@@ -9282,6 +9500,7 @@ begin
    Test_AES_CMAC;
    Test_KDF;
    Test_AES_CCM;
+   Test_AES_GCM;
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;

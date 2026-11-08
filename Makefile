@@ -4,7 +4,7 @@ ADAMUTANT ?= adamutant
 
 MUTATION_BASE ?= origin/main
 
-.PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test aes-test cmac-test ccm-test kdf-test signing-test clock-test check stack-check clean example prove mutation mutation-diff
+.PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test aes-test cmac-test ccm-test gcm-test kdf-test signing-test clock-test check stack-check clean example prove mutation mutation-diff
 
 all: build
 
@@ -46,6 +46,10 @@ cmac-test:
 ccm-test:
 	$(GPRBUILD) -p -P smb_tests.gpr crypto_probe.adb
 	$(PYTHON) tests/ccm_conformance.py
+
+gcm-test:
+	$(GPRBUILD) -p -P smb_tests.gpr crypto_probe.adb
+	$(PYTHON) tests/gcm_conformance.py
 
 kdf-test:
 	$(GPRBUILD) -p -P smb_tests.gpr crypto_probe.adb

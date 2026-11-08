@@ -4,6 +4,7 @@ with Interfaces;
 with SMB.AES;
 with SMB.AES.CCM;
 with SMB.AES.CMAC;
+with SMB.AES.GCM;
 with SMB.Crypto;
 with SMB.KDF;
 with SMB.Core_NTLM;
@@ -268,13 +269,31 @@ procedure Crypto_Probe is
    --  a changed tag and, when there is data, a changed last ciphertext byte,
    --  and leave only zeros; past 4,096 bytes only at the first bound.
    --  Key_Nonce is the key and then the nonce, Sealed the ciphertext and
-   --  then the tag.
-   procedure Check_CCM (Key_Nonce, AAD, Plain, Sealed : SMB.Bytes) is
+   --  then the tag. Check_CCM and Check_GCM are its instances.
+   generic
+      Name : String;
+      Nonce_Length : Positive;
+      with procedure Seal
+        (Key : SMB.AES.Key_128;
+         Nonce : SMB.Bytes;
+         AAD : SMB.Bytes;
+         Data : in out SMB.Bytes;
+         Tag : out SMB.Bytes);
+      with procedure Open
+        (Key : SMB.AES.Key_128;
+         Nonce : SMB.Bytes;
+         AAD : SMB.Bytes;
+         Data : in out SMB.Bytes;
+         Tag : SMB.Bytes;
+         Authentic : out Boolean);
+   procedure Check_AEAD (Key_Nonce, AAD, Plain, Sealed : SMB.Bytes);
+
+   procedure Check_AEAD (Key_Nonce, AAD, Plain, Sealed : SMB.Bytes) is
       Length : constant Natural := Plain'Length;
       Key : SMB.AES.Key_128;
-      Nonce : SMB.AES.CCM.Nonce_88;
-      Expected : SMB.AES.CCM.Tag_128;
-      Tag : SMB.AES.CCM.Tag_128;
+      Nonce : SMB.Bytes (0 .. Nonce_Length - 1);
+      Expected : SMB.Bytes (0 .. 15);
+      Tag : SMB.Bytes (0 .. 15);
       Authentic : Boolean;
       Data : Bytes_Access := null;
       Header : Bytes_Access := null;
@@ -282,17 +301,18 @@ procedure Crypto_Probe is
       function All_Zero (Value : SMB.Bytes) return Boolean is
         (for all Item of Value => Item = 0);
 
-      procedure Reject (Changed : SMB.AES.CCM.Tag_128; What : String) is
+      procedure Reject (Changed : SMB.Bytes; What : String) is
       begin
-         SMB.AES.CCM.Open
-           (Key, Nonce, Header.all, Data.all, Changed, Authentic);
+         Open (Key, Nonce, Header.all, Data.all, Changed, Authentic);
          if Authentic or else not All_Zero (Data.all) then
-            raise Program_Error with "CCM accepted a changed " & What;
+            raise Program_Error with Name & " accepted a changed " & What;
          end if;
       end Reject;
    begin
-      if Key_Nonce'Length /= 27 or else Sealed'Length /= Length + 16 then
-         raise Program_Error with "invalid CCM fixture";
+      if Key_Nonce'Length /= 16 + Nonce_Length
+        or else Sealed'Length /= Length + 16
+      then
+         raise Program_Error with "invalid " & Name & " fixture";
       end if;
       Key := Key_Nonce (Key_Nonce'First .. Key_Nonce'First + 15);
       Nonce := Key_Nonce (Key_Nonce'First + 16 .. Key_Nonce'Last);
@@ -319,14 +339,13 @@ procedure Crypto_Probe is
               (Header_First .. Header_First + (AAD'Length - 1));
             Data.all := Plain;
             Header.all := AAD;
-            SMB.AES.CCM.Seal (Key, Nonce, Header.all, Data.all, Tag);
+            Seal (Key, Nonce, Header.all, Data.all, Tag);
             if Data.all /= Cipher or else Tag /= Expected then
-               raise Program_Error with "CCM seal mismatch";
+               raise Program_Error with Name & " seal mismatch";
             end if;
-            SMB.AES.CCM.Open
-              (Key, Nonce, Header.all, Data.all, Expected, Authentic);
+            Open (Key, Nonce, Header.all, Data.all, Expected, Authentic);
             if not Authentic or else Data.all /= Plain then
-               raise Program_Error with "CCM open mismatch";
+               raise Program_Error with Name & " open mismatch";
             end if;
             if Base = 0 or else Length <= 4096 then
                Data.all := Cipher;
@@ -348,7 +367,12 @@ procedure Crypto_Probe is
                raise;
          end;
       end loop;
-   end Check_CCM;
+   end Check_AEAD;
+
+   procedure Check_CCM is new Check_AEAD
+     ("CCM", 11, SMB.AES.CCM.Seal, SMB.AES.CCM.Open);
+   procedure Check_GCM is new Check_AEAD
+     ("GCM", 12, SMB.AES.GCM.Seal, SMB.AES.GCM.Open);
 
    --  The key and the hash arrive with the bounds Hex gives them (1 ..), so
    --  each call also slides them onto Derive's zero-based subtypes.
@@ -533,6 +557,10 @@ begin
                Check_CMAC (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)));
             elsif Field (1) = "E" then
                Check_CCM
+                 (Hex (Field (2)), Hex (Field (3)),
+                  Hex (Field (4)), Hex (Field (5)));
+            elsif Field (1) = "G" then
+               Check_GCM
                  (Hex (Field (2)), Hex (Field (3)),
                   Hex (Field (4)), Hex (Field (5)));
             elsif Field (1) = "K" then
