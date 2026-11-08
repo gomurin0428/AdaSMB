@@ -112,8 +112,8 @@ def main() -> None:
     if result.returncode != 0 or result.stdout.strip() != f"PASS {len(cases)}":
         print(result.stdout + result.stderr, file=sys.stderr)
         raise RuntimeError("SMB 3.1.1 KDF conformance failed")
-    # A corrupted key, hash or result must fail, and so must each published
-    # key checked under each of the other two labels.
+    # A corrupted key, hash or result must fail, and so must each of the
+    # twelve published keys checked under each of the other two labels.
     example = cases[0].split()
     variants = []
     for column in (1, 3, 4):
@@ -122,12 +122,11 @@ def main() -> None:
         corrupted[-1] ^= 0x80
         fields[column] = corrupted.hex()
         variants.append(fields)
-    for case in cases[:3]:
-        for purpose in LABELS:
-            fields = case.split()
-            if fields[2] != purpose:
-                fields[2] = purpose
-                variants.append(fields)
+    for key, context, published in PUBLISHED:
+        for purpose, result in published.items():
+            for other in LABELS:
+                if other != purpose:
+                    variants.append(["K", key, other, context, result])
     for fields in variants:
         check = subprocess.run([str(probe)], input=" ".join(fields) + "\n",
                                text=True, capture_output=True, timeout=30)

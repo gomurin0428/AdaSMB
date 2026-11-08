@@ -4413,5 +4413,6 @@ context is set by `HMAC_SHA256_Finish` (which wipes it) and not used after.
 examples (the anatomy, pre-authentication integrity and encryption blog
 posts). `kdf_conformance.py` compares 330 fixtures with Python's
 `cryptography` `KBKDFHMAC`, after checking that it reproduces the published
-keys, with nine sensitivity checks, including each published key under the
-other two labels.
+keys, with 27 sensitivity checks, including each of the twelve published keys
+under the other two labels. A changed-line AdaMutant run detected all 64
+mutants and marks none.
