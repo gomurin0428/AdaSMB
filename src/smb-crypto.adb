@@ -323,6 +323,7 @@ package body SMB.Crypto is
    procedure SHA512_Compress (H : in out Hash_State_64; Block : Block_Bytes_128)
      with Global => null
    is
+      --  adamutant:disable-next-line NumericLiteral: the loops below write every word first; the value is for flow analysis
       W : Word64_Array (0 .. 79) := (others => 0);
    begin
       for I in 0 .. 15 loop
@@ -351,8 +352,10 @@ package body SMB.Crypto is
       begin
          for I in 0 .. 79 loop
             T1 := HH + (Ror64 (E, 14) xor Ror64 (E, 18) xor Ror64 (E, 41))
+              --  adamutant:disable-next-line LogicalOperator: the two terms of Ch share no bit, so xor equals or
               + ((E and F) xor ((not E) and G)) + SHA512_K (I) + W (I);
             T2 := (Ror64 (A, 28) xor Ror64 (A, 34) xor Ror64 (A, 39))
+              --  adamutant:disable-next-line LogicalOperator: or-ing in B and C still gives the majority
               + ((A and B) xor (A and C) xor (B and C));
             HH := G; G := F; F := E; E := D + T1;
             D := C; C := B; B := A; A := T1 + T2;
@@ -367,7 +370,11 @@ package body SMB.Crypto is
    procedure SHA512_Start (Context : out SHA512_Context) is
    begin
       Context :=
-        (H => SHA512_IV, Block => (others => 0), Used => 0, Total => 0,
+        (H => SHA512_IV,
+         --  adamutant:disable-next-line NumericLiteral: Update and Finish write every byte before it is read
+         Block => (others => 0),
+         Used => 0,
+         Total => 0,
          Active => True);
    end SHA512_Start;
 
@@ -404,11 +411,13 @@ package body SMB.Crypto is
       end if;
       --  The length field is the last 16 bytes. Its upper half stays zero
       --  for every input this package accepts.
+      --  adamutant:disable-next-line NumericLiteral: byte 120, the top byte of the bit count, is 0 for every input up to Maximum_Hash_Input and is already cleared
       for I in 0 .. 7 loop
          Context.Block (120 + I) :=
            SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#);
       end loop;
       SHA512_Compress (Context.H, Context.Block);
+      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: every byte is written below; the clear is for flow analysis
       Digest := (others => 0);
       for I in 0 .. 7 loop
          for J in 0 .. 7 loop
