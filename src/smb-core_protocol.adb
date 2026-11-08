@@ -552,7 +552,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
                 (for all Index in 0 .. 15 =>
                    Output (Output'First + 16 + Index) =
                      File_Id (File_Id'First + Index))));
-      --  Bytes 44 to 47 (Channel) stay zero, as Begin_Build cleared them.
+      --  Bytes 44 to 47 (Flags) stay zero, as Begin_Build cleared them.
       --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Copy (Output, 48, Data, Status);

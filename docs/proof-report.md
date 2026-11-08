@@ -4434,7 +4434,7 @@ and no `pragma Assume` or justification is added:
   rebased indices and show that they decode to the emitted scalar.
 * `smb-core_protocol.adb`: `Build_Write` cuts the context with
   `pragma Assert_And_Cut` before the data copy. It no longer writes the zero
-  Channel field (bytes 44 to 47), which `Begin_Build` already cleared; that
+  Flags field (bytes 44 to 47), which `Begin_Build` already cleared; that
   write was annotated as an equivalent mutant. `Build_Rename` states the
   name slice's upper bound the way its postcondition counts it.
 * `smb-core_connection.adb`: `Prepare_Negotiate` keeps a ghost snapshot of
@@ -4444,13 +4444,23 @@ and no `pragma Assume` or justification is added:
   MIC suffix element by element, and `Final_Token_MIC_Matches` is marked
   `Inline_For_Proof`.
 * `smb-core_client.adb`: `Prepare_Metadata`'s postcondition joins the whole
-  Engine state with the packet bytes. The new `Seal_Request` does the header
-  preparation and signing behind a contract that names only the header
-  fields, the unchanged body and the name. A cut before it keeps only the
-  facts the rest needs, and `Lemma_Slice_Equals` turns the element-wise name
-  copy into the slice equality of the postcondition. A few of these checks
-  are proved only by alt-ergo, so `make prove` now runs
-  `--prover=cvc5,z3,altergo`.
+  Engine state with the packet bytes. The new `Seal_Request`, nested in
+  it, does the header preparation and signing behind a contract that names
+  only the header fields, the unchanged body and the name. A cut before it
+  keeps only the facts the rest needs, and `Lemma_Slice_Equals` turns the
+  element-wise name copy into the slice equality of the postcondition. z3
+  and cvc5 time out on a few of these checks and alt-ergo proves them, so
+  `make prove` now runs `--prover=cvc5,z3,altergo`.
+
+The library is built with `-gnata`, so ghost code runs. `Prepare_Negotiate`'s
+ghost copy of the Engine state on entry (about 10 KB, as in
+`Prepare_Tree_Connect`) raises the worst-case static stack of
+`SMB.Client.Connect` by about 11 KB to 122,400 bytes. That is still below
+`Connect_Share`'s 187,920 and the 262,144-byte budget. `Prepare_Metadata`
+ignores `Seal_Request`'s postcondition at run time
+(`pragma Assertion_Policy (Post => Ignore)`), so its `Output'Old` does not
+keep a second copy of the packet while `Prepare_Header` and `Sign_Packet`
+make theirs.
 
 ```sh
 make prove

@@ -172,9 +172,9 @@ The AES pull request touches each of these. Its diff is the template.
 ## Toolchain
 
 * CI builds, tests, mutates and proves with GNAT 16.1.0, gprbuild 26.0.1
-  and gnatprove 16.1.0. `make prove` runs cvc5, z3 and alt-ergo: a few
-  checks in `smb-core_client.adb`, whose context carries the whole Engine
-  state, are proved only by alt-ergo.
+  and gnatprove 16.1.0. `make prove` runs cvc5, z3 and alt-ergo: z3 and
+  cvc5 time out on a few checks in `smb-core_client.adb`, whose context
+  carries the whole Engine state, and alt-ergo proves them.
 * Moving the proof from gnatprove 14.1.1 to 16.1.0 left 12 checks
   unproved, which now have proof hints: byte-slice equalities and
   bit-vector reconstructions in `smb-core_text.adb` (UTF-8 to UTF-16
@@ -184,8 +184,8 @@ The AES pull request touches each of these. Its diff is the template.
   `smb-core_connection.adb` (`Prepare_Negotiate`'s client GUID). The hints
   are ghost lemmas, `pragma Assert_And_Cut`, and a `Seal_Request` helper
   that takes the signing step out of `Prepare_Metadata`'s context.
-  `Build_Write` no longer writes the zero Channel field, which
-  `Begin_Build` already cleared.
+  `Build_Write` no longer writes the zero Flags field (bytes 44 to 47),
+  which `Begin_Build` already cleared.
 * alr 2.1.1 installs every one of these versions. When GitHub's release
   downloads fail (HTTP 504), `gh release download` through the API still
   works; check the archive against the Alire index's SHA-256.
@@ -209,18 +209,19 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Windows environment notes
 
-* The toolchain comes from Alire 2.1.1. Before #116 it was gnat_native
-  14.2.1, gprbuild 25.0.1 and gnatprove 14.1.1; see "Toolchain" above for
-  what CI uses now.
+* The toolchain comes from Alire 2.1.1. Builds and tests used gnat_native
+  14.2.1 and gprbuild 25.0.1 before #116, and the proof used gnatprove
+  14.1.1 before #117; see "Toolchain" above for what CI uses now.
 * There is no GNU make on Windows, so run each Makefile recipe's commands
   directly.
 * Run GNATprove from PowerShell or cmd. Started from Git Bash (MSYS), it
   silently reports every prover check as unproved.
-* Prove one unit at a time. The large core units (`core_auth`,
-  `core_client`) take about four minutes each:
+* Prove one unit at a time. With gnatprove 14.1.1, the large core units
+  (`core_auth`, `core_client`) took about four minutes each; 16.1.0 has not
+  been timed on Windows. Use the provers `make prove` uses:
 
   ```powershell
-  gnatprove -P proof.gpr -u smb-aes.adb --subdirs=aes-check --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j8
+  gnatprove -P proof.gpr -u smb-aes.adb --subdirs=aes-check --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo --timeout=120 -j8
   ```
 
 * AdaMutant:

@@ -1020,65 +1020,6 @@ is
       null;
    end Lemma_Slice_Equals;
 
-   --  Writes the header of a request whose body is in place, then signs it.
-   --  A procedure of its own, with the name in the body in its contract, so
-   --  that GNATprove carries the name through both steps in a small context;
-   --  inside Prepare_Metadata, GNATprove 16 times out on it.
-   procedure Seal_Request
-     (Output : in out SMB.Bytes;
-      Need : Natural;
-      Expected : SMB.Engine.Request_Expectation;
-      Key : SMB.Bytes;
-      Name : SMB.Bytes;
-      Status : out SMB.Core_Status)
-   with
-     Pre =>
-       Output'Length <= SMB.Maximum_Frame_Size
-       and then Need >= Header_Length
-       and then Need <= Output'Length
-       and then Key'Length <= SMB.Maximum_Frame_Size
-       and then Name'Length <= SMB.Core_Protocol.Maximum_Name_Bytes
-       and then
-         (if Name'Length > 0 then
-            Header_Length + 52 + Name'Length <= Output'Length
-            and then
-              (for all Index in 0 .. Name'Length - 1 =>
-                 Output (Output'First + Header_Length + 52 + Index) =
-                   Name (Name'First + Index))),
-     Post =>
-       (if Status = SMB.Ok then
-          SMB.Core_Wire.Encoded_U16 (Output, 4) = 64
-          and then SMB.Core_Wire.Encoded_U16 (Output, 12) =
-            SMB.Word (Expected.Command)
-          and then SMB.Core_Wire.Encoded_U64 (Output, 24) =
-            Expected.Message_Id
-          and then SMB.Core_Wire.Encoded_U32 (Output, 36) =
-            Expected.Tree_Id
-          and then SMB.Core_Wire.Encoded_U64 (Output, 40) =
-            Expected.Session_Id
-          and then SMB.Core_Wire.Encoded_U32 (Output, 16) = 8
-          and then
-            (for all Index in Output'Range =>
-               (if Index - Output'First >= Header_Length
-                then Output (Index) = Output'Old (Index)))
-          and then
-            (if Name'Length > 0 then
-               (for all Index in 0 .. Name'Length - 1 =>
-                  Output (Output'First + Header_Length + 52 + Index) =
-                    Name (Name'First + Index))))
-   is
-      pragma Unreferenced (Name);
-      E : SMB.Core_Status;
-   begin
-      Prepare_Header (Output, Expected, Status);
-      --  adamutant:disable-next-line ConditionalExpression: the precondition leaves room for the header
-      if Status = SMB.Ok then
-         Sign_Packet (Output, Need, Key, E);
-         --  adamutant:disable-next-line StatementDeletion: Sign_Packet cannot fail on a whole request
-         Status := E;
-      end if;
-   end Seal_Request;
-
    procedure Prepare_Metadata
      (Value : in out Metadata_Operation;
       State : in out SMB.Engine.Engine_State;
@@ -1154,6 +1095,70 @@ is
                Metadata_Snapshot_Of (Value).Access_Mode,
                Metadata_Snapshot_Of (Value).Directory))
    is
+      --  Seal_Request's postcondition is proved. Checking it at run time
+      --  would keep a copy of the whole packet for Output'Old while
+      --  Prepare_Header and Sign_Packet make their own copies.
+      pragma Assertion_Policy (Post => Ignore);
+
+      --  Writes the header of a request whose body is in place, then signs
+      --  it. A procedure of its own, with the name in the body in its
+      --  contract, so that GNATprove carries the name through both steps in
+      --  a small context; inline, GNATprove 16 times out on it.
+      procedure Seal_Request
+        (Output : in out SMB.Bytes;
+         Need : Natural;
+         Expected : SMB.Engine.Request_Expectation;
+         Key : SMB.Bytes;
+         Name : SMB.Bytes;
+         Status : out SMB.Core_Status)
+      with
+        Pre =>
+          Output'Length <= SMB.Maximum_Frame_Size
+          and then Need >= Header_Length
+          and then Need <= Output'Length
+          and then Key'Length <= SMB.Maximum_Frame_Size
+          and then Name'Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+          and then
+            (if Name'Length > 0 then
+               Header_Length + 52 + Name'Length <= Output'Length
+               and then
+                 (for all Index in 0 .. Name'Length - 1 =>
+                    Output (Output'First + Header_Length + 52 + Index) =
+                      Name (Name'First + Index))),
+        Post =>
+          (if Status = SMB.Ok then
+             SMB.Core_Wire.Encoded_U16 (Output, 4) = 64
+             and then SMB.Core_Wire.Encoded_U16 (Output, 12) =
+               SMB.Word (Expected.Command)
+             and then SMB.Core_Wire.Encoded_U64 (Output, 24) =
+               Expected.Message_Id
+             and then SMB.Core_Wire.Encoded_U32 (Output, 36) =
+               Expected.Tree_Id
+             and then SMB.Core_Wire.Encoded_U64 (Output, 40) =
+               Expected.Session_Id
+             and then SMB.Core_Wire.Encoded_U32 (Output, 16) = 8
+             and then
+               (for all Index in Output'Range =>
+                  (if Index - Output'First >= Header_Length
+                   then Output (Index) = Output'Old (Index)))
+             and then
+               (if Name'Length > 0 then
+                  (for all Index in 0 .. Name'Length - 1 =>
+                     Output (Output'First + Header_Length + 52 + Index) =
+                       Name (Name'First + Index))))
+      is
+         pragma Unreferenced (Name);
+         E : SMB.Core_Status;
+      begin
+         Prepare_Header (Output, Expected, Status);
+         --  adamutant:disable-next-line ConditionalExpression: the precondition leaves room for the header
+         if Status = SMB.Ok then
+            Sign_Packet (Output, Need, Key, E);
+            --  adamutant:disable-next-line StatementDeletion: Sign_Packet cannot fail on a whole request
+            Status := E;
+         end if;
+      end Seal_Request;
+
       --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       Id : SMB.Bytes (0 .. 15) := (others => 0);
       Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
