@@ -1861,6 +1861,41 @@ procedure Test_Suite is
          Reject ("a shorter message", AAD, Nonce,
                  Cipher (Cipher'First .. Cipher'Last - 1), Signature);
       end Check;
+
+      --  SMB always has 32 bytes of associated data and a nonempty message,
+      --  so B0 without the Adata flag and empty data are checked against
+      --  values from Python's cryptography (AESCCM) under one key and nonce.
+      procedure Check_Generated
+        (Name, AAD_Hex, Plain_Hex, Cipher_Hex, Tag_Hex : String)
+      is
+         Key : constant SMB.AES.Key_128 :=
+           Hex ("404142434445464748494A4B4C4D4E4F");
+         Nonce : constant SMB.AES.CCM.Nonce_88 :=
+           Hex ("101112131415161718191A");
+         AAD : constant SMB.Bytes := Hex (AAD_Hex);
+         Plain : constant SMB.Bytes := Hex (Plain_Hex);
+         Expected : constant SMB.AES.CCM.Tag_128 := Hex (Tag_Hex);
+         Data : SMB.Bytes := Plain;
+         Tag : SMB.AES.CCM.Tag_128;
+         Authentic : Boolean;
+      begin
+         SMB.AES.CCM.Seal (Key, Nonce, AAD, Data, Tag);
+         Assert_Equal
+           (Data, Hex (Cipher_Hex), "AES-CCM " & Name & " ciphertext");
+         Assert_Equal (Tag, Expected, "AES-CCM " & Name & " tag");
+         SMB.AES.CCM.Open (Key, Nonce, AAD, Data, Expected, Authentic);
+         Assert (Authentic, "AES-CCM " & Name & " rejected");
+         Assert_Equal (Data, Plain, "AES-CCM " & Name & " plaintext");
+         Count := Count + 1;
+         Data := Hex (Cipher_Hex);
+         Tag := Expected;
+         Tag (0) := Tag (0) xor 16#01#;
+         SMB.AES.CCM.Open (Key, Nonce, AAD, Data, Tag, Authentic);
+         Assert (not Authentic
+                 and then (for all Value of Data => Value = 0),
+                 "AES-CCM " & Name & " accepted a changed tag");
+         Count := Count + 1;
+      end Check_Generated;
    begin
       Check
         ("AES-CCM A.2 WRITE request", "DFAAA31AAE40A2485D47AC4DF09FDA1D",
@@ -1910,9 +1945,20 @@ procedure Test_Suite is
          & "FFFE000001000000210000000010000000000000000000000000000000000000"
          & "11005000170000000000000000000000536D623320656E637279707469"
          & "6F6E2074657374696E67");
+      Check_Generated
+        ("without associated data", "",
+         "000102030405060708090A0B0C0D0E0F10111213",
+         "F6F2AB3B04987B6FDBC0B9A829FA960E1562AA1C",
+         "D4B4BB55B90031041D598C514E460463");
+      Check_Generated
+        ("without data",
+         "A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBF",
+         "", "", "14B18C670B8DD397EEDE7706C73ED26F");
+      Check_Generated
+        ("without either", "", "", "", "1E48FD18AC90A727B147C5E52697234A");
       Ada.Text_IO.Put_Line
-        ("AES-CCM: 4 published messages," & Natural'Image (Count)
-         & " seal, open and rejection checks passed");
+        ("AES-CCM: 4 published and 3 generated messages,"
+         & Natural'Image (Count) & " seal, open and rejection checks passed");
    end Test_AES_CCM;
 
    procedure Test_NTLM_Authenticate is

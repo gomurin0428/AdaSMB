@@ -4531,7 +4531,10 @@ Microsoft's SMB 3.1.1 encryption examples (appendix A.2), each also at
 bounds that end at `Natural'Last`, and checks that `Open` rejects a
 one-bit change in every byte of the tag and of the associated data, three
 changed ciphertext bytes, another nonce and a truncated message, leaving
-only zeros: 220 checks. `ccm_conformance.py` compares 487 fixtures with Python's
+only zeros. SMB always passes associated data and a nonempty message, so
+three messages generated with Python's `AESCCM` (no associated data, no
+data, neither) cover B0 without the Adata flag and empty data: 226 checks
+in all, 215 of them rejections. `ccm_conformance.py` compares 487 fixtures with Python's
 `cryptography` `AESCCM`, after checking that it reproduces the four
 published messages; `crypto_probe` seals and opens each at four lower
 bounds of the data, with the associated data at two, and checks the
@@ -4544,6 +4547,8 @@ first run left seven: the redundant top byte and `mod` of the four-byte
 encoding, the zero initializer that every byte then overwrote, and an
 Adata flag of `16#41#`, which `16#3B# or` absorbs. `Nonce_Block` is now one
 aggregate with a precondition that bounds the value, and B0's two flags
-bytes are separate constants. Sealing 64 KiB takes about 109 ms in the
-default unoptimized build and 37 ms at `-O2`, twice AES-CMAC's time: two
-AES blocks per 16 bytes.
+bytes are separate constants. `Seal` and `Open` are on the stack check's
+list of static frames; their deepest static chains are 1,840 and 2,064
+bytes, down through `Absorb_AAD` into AES's S-box. Sealing 64 KiB takes
+about 109 ms in the default unoptimized build and 37 ms at `-O2`, twice
+AES-CMAC's time: two AES blocks per 16 bytes.

@@ -129,6 +129,12 @@ Decisions worth keeping for phase 4:
   key expansion and two AES blocks per 16 bytes, about twice CMAC's time.
 * `Open` returns `Authentic`, not a status. Phase 4 maps a rejected message
   to its own error and must not use `Data` then.
+* Passing the nonce, the associated data, the tag and `Data` as slices of
+  one frame buffer proves without aliasing warnings only with literal
+  offsets on a 0-based buffer (`Frame (20 .. 51)`, `Frame (52 ..
+  Frame'Last)`). With offsets from `Frame'First`, GNATprove 16.1.0 reports
+  that the formals might be aliased; copy the 52-byte header into a local
+  then.
 
 ## Next steps
 

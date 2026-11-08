@@ -14,8 +14,10 @@ with Interfaces;
 --  depends on the key, the data or the tag. That is a coding rule, not a
 --  proved property: the proof covers run-time safety and the contract of
 --  Open, and the known-answer and differential tests cover the results.
---  Nothing is wiped: not the key schedule, the CBC-MAC chain or the key
---  stream that Seal and Open leave on the stack.
+--  Nothing is wiped except Data after a rejected tag. Seal and Open leave
+--  the key schedule, the CBC-MAC chain and the key stream on the stack,
+--  and a rejected Open also leaves there the last block of the plaintext
+--  it decrypted and the tag that the forged message would have needed.
 package SMB.AES.CCM is
    pragma SPARK_Mode (On);
 
