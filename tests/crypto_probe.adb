@@ -69,6 +69,45 @@ procedure Crypto_Probe is
       end loop;
    end Check_Hashes;
 
+   --  One-shot and in three incremental parts, at two array lower bounds.
+   procedure Check_SHA512 (Data, SHA512 : SMB.Bytes) is
+   begin
+      for Rebased in 0 .. 1 loop
+         declare
+            First : constant Natural := 7 * Rebased;
+            Input : Bytes_Access := null;
+            Context : SMB.Crypto.SHA512_Context;
+            Digest : SMB.Crypto.Digest_512;
+         begin
+            Input := new SMB.Bytes (First .. First + Data'Length - 1);
+            Input.all := Data;
+            if SMB.Crypto.SHA512 (Input.all) /= SHA512 then
+               raise Program_Error with "SHA512 mismatch";
+            end if;
+            declare
+               Third : constant Natural := Data'Length / 3;
+            begin
+               SMB.Crypto.SHA512_Start (Context);
+               SMB.Crypto.SHA512_Update
+                 (Context, Input (First .. First + Third - 1));
+               SMB.Crypto.SHA512_Update
+                 (Context, Input (First + Third .. First + 2 * Third - 1));
+               SMB.Crypto.SHA512_Update
+                 (Context, Input (First + 2 * Third .. Input'Last));
+               SMB.Crypto.SHA512_Finish (Context, Digest);
+            end;
+            if Digest /= SHA512 then
+               raise Program_Error with "incremental SHA512 mismatch";
+            end if;
+            Free_Bytes (Input);
+         exception
+            when others =>
+               Free_Bytes (Input);
+               raise;
+         end;
+      end loop;
+   end Check_SHA512;
+
    procedure Check_HMAC (Key, Data, MD5, SHA256 : SMB.Bytes) is
    begin
       for Key_Rebased in 0 .. 1 loop
@@ -218,6 +257,11 @@ begin
                Check_Hashes
                  (Hex (Field (2)), Hex (Field (3)),
                   Hex (Field (4)), Hex (Field (5)));
+            elsif Field (1) = "X" then
+               if Field (4) /= "-" or else Field (5) /= "-" then
+                  raise Program_Error with "invalid SHA-512 fixture";
+               end if;
+               Check_SHA512 (Hex (Field (2)), Hex (Field (3)));
             elsif Field (1) = "H" then
               Check_HMAC
                 (Hex (Field (2)), Hex (Field (3)),

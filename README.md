@@ -194,7 +194,7 @@ proof of Unicode semantics. Python is used only for testing and is not a
 run-time dependency of the library.
 
 `make crypto-test` needs Python 3 and the legacy provider of OpenSSL 3. MD4 is
-compared with OpenSSL, and MD5/SHA-256 and HMAC with Python's
+compared with OpenSSL, and MD5/SHA-256/SHA-512 and HMAC with Python's
 `hashlib`/`hmac`, covering block boundaries, long keys, the maximum input
 length and differing array lower bounds. These are test-only dependencies. The
 test does not prove cryptographic strength or constant-time behavior, and

@@ -2,7 +2,7 @@
 """Hash/HMAC differential tests; external crypto is a test dependency only.
 
 MD4 is checked by OpenSSL 3's legacy provider, not the Python MD4 used by
-the Samba proxy. MD5/SHA256 and their HMACs use Python hashlib/hmac.
+the Samba proxy. MD5/SHA256/SHA512 and the HMACs use Python hashlib/hmac.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ def fixtures() -> list[str]:
         if known_md4 is not None and expected != known_md4:
             raise AssertionError("OpenSSL MD4 differs from RFC 1320 test vector")
         cases.append(f"D {field(data)} {expected} {hashlib.md5(data).hexdigest()} {hashlib.sha256(data).hexdigest()}")
+        cases.append(f"X {field(data)} {hashlib.sha512(data).hexdigest()} - -")
 
     def mac(key: bytes, data: bytes, known_md5: str | None = None,
             known_sha256: str | None = None) -> None:
@@ -130,7 +131,7 @@ def main() -> None:
     for (key, direction), expected in known.items():
         if f"M {key} {direction} {expected} -" not in cases:
             raise AssertionError("mechanism-list MIC oracle differs from known vector")
-    for mode, columns in (("D", (2, 3, 4)), ("H", (3, 4)), ("M", (3,))):
+    for mode, columns in (("D", (2, 3, 4)), ("X", (2,)), ("H", (3, 4)), ("M", (3,))):
         original = next(case for case in cases if case.startswith(mode + " "))
         for column in columns:
             fields = original.split()
@@ -148,11 +149,13 @@ def main() -> None:
     if check.returncode == 0 or "raised PROGRAM_ERROR" not in check.stderr:
         raise RuntimeError("crypto probe MIC direction sensitivity check failed")
     hashes = sum(case.startswith("D ") for case in cases)
+    sha512 = sum(case.startswith("X ") for case in cases)
     mics = sum(case.startswith("M ") for case in cases)
-    macs = len(cases) - hashes - mics
+    macs = len(cases) - hashes - sha512 - mics
     print(f"PASS: {hashes} hash fixtures / {2 * hashes} rebased cases; "
+          f"{sha512} SHA-512 fixtures, each rebased, one-shot and in three parts; "
           f"{macs} HMAC fixtures / {4 * macs} rebased cases; "
-          f"{mics} mechanism-list MIC fixtures; seven sensitivity checks")
+          f"{mics} mechanism-list MIC fixtures; eight sensitivity checks")
 
 
 if __name__ == "__main__":

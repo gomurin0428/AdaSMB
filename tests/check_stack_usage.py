@@ -37,6 +37,8 @@ STATIC_REQUIRED = {
     ("smb-core_wire.adb", "VERIFY_SIGNATURE"),
     ("smb-crypto.adb", "SHA256"),
     ("smb-crypto.adb", "SHA256_UPDATE"),
+    ("smb-crypto.adb", "SHA512"),
+    ("smb-crypto.adb", "SHA512_UPDATE"),
     ("smb-crypto.adb", "HMAC_SHA256"),
     ("smb-crypto.adb", "HMAC_SHA256_UPDATE"),
     ("smb-crypto.adb", "MD5"),

@@ -19,6 +19,40 @@ package SMB.Crypto is
    function SHA256 (Message : SMB.Bytes) return Digest_256
    with Pre => Message'Length <= Maximum_Hash_Input;
 
+   subtype Digest_512 is SMB.Bytes (0 .. 63);
+
+   function SHA512 (Message : SMB.Bytes) return Digest_512
+   with Pre => Message'Length <= Maximum_Hash_Input;
+
+   --  Incremental SHA-512, for the SMB 3.1.1 preauth integrity hash: the
+   --  previous hash value and a whole message are hashed without first
+   --  being copied together.
+   type SHA512_Context is private;
+
+   function SHA512_Ready (Context : SHA512_Context) return Boolean;
+   function SHA512_Length (Context : SHA512_Context) return Natural;
+
+   procedure SHA512_Start (Context : out SHA512_Context)
+   with Post => SHA512_Ready (Context)
+       and then SHA512_Length (Context) = 0;
+
+   procedure SHA512_Update
+     (Context : in out SHA512_Context;
+      Message : SMB.Bytes)
+   with Pre => SHA512_Ready (Context)
+       and then Message'Length <= Maximum_Hash_Input
+       and then SHA512_Length (Context) <=
+         Maximum_Hash_Input - Message'Length,
+     Post => SHA512_Ready (Context)
+       and then SHA512_Length (Context) =
+         SHA512_Length (Context)'Old + Message'Length;
+
+   procedure SHA512_Finish
+     (Context : in out SHA512_Context;
+      Digest : out Digest_512)
+   with Pre => SHA512_Ready (Context),
+     Post => not SHA512_Ready (Context);
+
    function HMAC_MD5 (Key, Message : SMB.Bytes) return Digest_128
    with Pre =>
      Key'Length <= SMB.Maximum_Frame_Size
@@ -107,6 +141,24 @@ private
       Used : Block_Position := 0;
       Total : Natural := 0;
    end record;
+
+   type Hash_State_64 is
+     array (Natural range 0 .. 7) of Interfaces.Unsigned_64;
+   subtype Block_Position_128 is Natural range 0 .. 127;
+
+   type SHA512_Context is record
+      H : Hash_State_64 := (others => 0);
+      Block : SMB.Bytes (0 .. 127) := (others => 0);
+      Used : Block_Position_128 := 0;
+      Total : Natural := 0;
+      Active : Boolean := False;
+   end record;
+
+   function SHA512_Ready (Context : SHA512_Context) return Boolean is
+     (Context.Active and then Context.Total <= Maximum_Hash_Input);
+
+   function SHA512_Length (Context : SHA512_Context) return Natural is
+     (Context.Total);
 
    type HMAC_SHA256_Context is record
       Inner : SHA256_Context;

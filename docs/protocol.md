@@ -105,7 +105,7 @@ Type 2、zero-MIC Type 3 全体で MIC を計算します。channel binding が
 
 ## 暗号と入力制限
 
-MD4、MD5、SHA-256、HMAC-MD5、HMAC-SHA256 は Ada の整数演算だけで
+MD4、MD5、SHA-256、SHA-512、HMAC-MD5、HMAC-SHA256 は Ada の整数演算だけで
 実装しています。既定エントロピーはUnixで `/dev/urandom`、Windowsで
 `BCryptGenRandom(NULL, buffer, length, BCRYPT_USE_SYSTEM_PREFERRED_RNG)`です。
 短い読み取りやOS API失敗を成功扱いにせず、疑似乱数にフォールバックしません。UTF-8 の overlong、surrogate、範囲外 scalar、
