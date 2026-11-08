@@ -79,11 +79,10 @@ the public `Expand_Key`, `Encrypt` and `Ready`. It has a one-shot `MAC` and a
 `MAC_Context` with `Start (Context, Key)`, `Update` and `Finish (Context,
 Tag)`, whose `Ready`/`Length` contracts match `SMB.Crypto`'s incremental
 HMAC-SHA256. `Ready` also states the buffering rule `(Used = 0) = (Total =
-0)`, and `Finish` leaves the context `Wiped`. It proves with 44 checks in
+0)`, and `Finish` leaves the context `Wiped`. It proves with 43 checks in
 about 5 seconds.
 
-The design came from three independent designs (integration-, proof- and
-assurance-first) and two judges. Decisions worth keeping for phase 3:
+Decisions worth keeping for phase 3:
 
 * The engine keeps the raw 16-byte signing key, and each message calls
   `Start` with it. No prepared key is cached: the per-message cost is two
@@ -170,9 +169,9 @@ The AES pull request touches each of these. Its diff is the template.
   needs Homebrew's `gmp`, but the proofs use only cvc5 and z3.
 * With 16 GB of RAM, prove one unit at a time with `-j4` and watch
   `gnatwhy3`'s memory.
-* `make aes-test` and the mutation runs need `cryptography` for the
-  interpreter behind `python`; `python -m pip install --user
-  cryptography==50.0.2` matches the Windows CI pin.
+* `make aes-test`, `make cmac-test` and the mutation runs need
+  `cryptography` for the interpreter behind `python`; `python -m pip
+  install --user cryptography==50.0.2` matches the Windows CI pin.
 * GNU make is available, so the Makefile targets work directly. A
   changed-line AdaMutant run of the AES unit took about three minutes with
   `--concurrency 8`.
@@ -203,8 +202,8 @@ The AES pull request touches each of these. Its diff is the template.
     makes that fail with "cannot copy".
   * A full run of `src/*.adb` takes about four hours on a fast machine.
     The weekly `mutation.yml` splits it into eight jobs.
-* `make aes-test` needs `pip install cryptography`. CI pins 50.0.2 on
-  Windows.
+* `make aes-test` and `make cmac-test` need `pip install cryptography`. CI
+  pins 50.0.2 on Windows.
 
 ## Open items
 

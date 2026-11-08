@@ -13,9 +13,9 @@
 --  index depends on the key or the message bytes. That is a coding rule,
 --  not a proved property: the proof covers run-time safety and the
 --  contracts below, and the known-answer and differential tests cover the
---  results. Finish wipes the context. MAC does not wipe its own local
---  context, and copies that the compiler leaves on the stack are not wiped
---  either.
+--  results. Finish wipes the context. Nothing else is wiped: not MAC's
+--  local context, and not the copies that Expand_Key, the final block and
+--  the compiler leave on the stack.
 package SMB.AES.CMAC is
    pragma SPARK_Mode (On);
    pragma Unevaluated_Use_Of_Old (Allow);

@@ -132,15 +132,16 @@ procedure Crypto_Probe is
       end loop;
    end Check_AES;
 
-   --  One-shot at three lower bounds (the last one ends just below
-   --  Natural'Last) and incrementally: in the pieces Core_Wire signs (48
-   --  bytes, 16, the rest) and in thirds at each bound; at the first, in two
-   --  parts at every point (around each block boundary past 80 bytes), in
-   --  three parts at every pair of points up to 40 bytes, and byte by byte
-   --  up to 300. Past 4,096 bytes only the one-shot runs and the Core_Wire
-   --  pieces at the first bound remain. One context serves every run, so
-   --  each Start must reset a finished context, and the first one an
-   --  abandoned context under another key.
+   --  One-shot at four lower bounds: 0, 7, one that ends just below
+   --  Natural'Last and one that ends at it. Incrementally at the first three:
+   --  in the pieces Core_Wire signs (48 bytes, 16, the rest) and in thirds.
+   --  At the first bound also in two parts at every point up to 80 bytes and,
+   --  past that, around the first and last five block boundaries; in three
+   --  parts at every pair of points up to 40 bytes; and byte by byte up to
+   --  300. Past 4,096 bytes only the one-shot runs and the Core_Wire pieces
+   --  at the first bound remain. One context serves every run, so each Start
+   --  must reset a finished context, and the first one an abandoned context
+   --  under another key.
    type Offsets is array (Positive range <>) of Natural;
 
    procedure Check_CMAC (Key, Data, Expected : SMB.Bytes) is
@@ -197,23 +198,29 @@ procedure Crypto_Probe is
       Key_Block := Key;
       SMB.AES.CMAC.Start (Context, (others => 16#A5#));
       SMB.AES.CMAC.Update (Context, (1 .. 21 => 16#5A#));
-      for Base in 0 .. 2 loop
+      for Base in 0 .. 3 loop
          declare
             First : constant Natural :=
               (case Base is
                   when 0 => 0,
                   when 1 => 7,
-                  when others => Natural'Last - Length);
+                  when 2 => Natural'Last - Length,
+                  when others =>
+                    (if Length = 0 then Natural'Last
+                     else Natural'Last - (Length - 1)));
          begin
             Input := new SMB.Bytes (First .. First + (Length - 1));
             Input.all := Data;
             if SMB.AES.CMAC.MAC (Key_Block, Input.all) /= Expected then
                raise Program_Error with "CMAC mismatch";
             end if;
-            if Length >= 64 and then (Base = 0 or else Length <= 4096) then
+            --  At the fourth bound a piece could not end past Natural'Last.
+            if Length >= 64
+              and then (Base = 0 or else (Base <= 2 and then Length <= 4096))
+            then
                Run ((48, 64));
             end if;
-            if Length <= 4096 then
+            if Base <= 2 and then Length <= 4096 then
                Run ((Length / 3, 2 * Length / 3));
             end if;
             if Base = 0 and then Length <= 4096 then

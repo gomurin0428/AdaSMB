@@ -2,11 +2,13 @@
 """AES-128-CMAC differential tests against Python's cryptography package.
 
 cryptography is a test-only dependency. The fixtures cover the RFC 4493 and
-NIST examples, every length up to five blocks and the lengths around larger
-block and frame boundaries under keys whose subkey generation takes each
-path, messages that only padding or the subkey can tell apart, single-bit
-changes, and seeded random keys, lengths and messages. crypto_probe checks
-each fixture one-shot and in many incremental splits (see Check_CMAC).
+NIST examples; every length up to five blocks and the lengths around larger
+block boundaries up to 4 KiB, under keys whose subkey generation takes each
+path; the lengths around 64 KiB and the frame limit under the RFC key;
+messages that only padding or the subkey can tell apart; single-bit changes;
+and seeded random keys, lengths and messages. crypto_probe checks each
+fixture one-shot at four lower bounds and in many incremental splits (see
+Check_CMAC).
 """
 
 from __future__ import annotations
@@ -162,7 +164,7 @@ def main() -> None:
                                text=True, capture_output=True, timeout=30)
         if check.returncode == 0 or "raised PROGRAM_ERROR" not in check.stderr:
             raise RuntimeError("AES-CMAC probe sensitivity check failed or could not execute")
-    print(f"PASS: {len(cases)} AES-CMAC fixtures, each one-shot at three lower bounds "
+    print(f"PASS: {len(cases)} AES-CMAC fixtures, each one-shot at four lower bounds "
           f"and in incremental splits; {len(variants)} sensitivity checks")
 
 

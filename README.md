@@ -211,10 +211,11 @@ blocks. The S-box is computed rather than looked up, so no table index depends
 on secret data; that is a coding rule, not a tested or proved property.
 
 `make cmac-test` compares AES-128-CMAC, the SMB 3.1.1 signing MAC, with the
-same package: the RFC 4493 and NIST examples, every length up to five blocks
-and the lengths around larger block and frame boundaries under keys that take
-every subkey-doubling path, messages that only the padding tells apart, and
-seeded random messages, each one-shot and fed in pieces.
+same package: the RFC 4493 and NIST examples; every length up to five blocks
+and the lengths around larger block boundaries up to 4 KiB, under keys that
+take every subkey-doubling path; the lengths around 64 KiB and the frame
+limit; messages that only the padding tells apart; and seeded random
+messages, each one-shot and fed in pieces.
 
 The example takes the host, share and path as arguments, but not the
 password. It reads the `SMB_USER`, `SMB_DOMAIN` and `SMB_PASSWORD` environment

@@ -4372,15 +4372,19 @@ unit sees `Expand_Key` and `Encrypt` only through their contracts.
 gnatprove -P proof.gpr -u smb-aes-cmac.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
 ```
 
-GNATprove 14.1.1 on macOS reported **44 checks** (16 flow, 28 prover), zero
+GNATprove 14.1.1 on macOS reported **43 checks** (15 flow, 28 prover), zero
 unproved or justified, zero warnings, zero `pragma Assume`, in about 5
-seconds. `test_suite` checks RFC 4493 examples 1 to 4, NIST's 20-byte
+seconds. `Start` expands the key straight into the context, so it keeps no
+copy of the schedule in a local of its own; nothing but `Finish` wipes. `test_suite` checks RFC 4493 examples 1 to 4, NIST's 20-byte
 example, L and K1, padding look-alikes, every split point of each example,
 restarted and reused contexts, and a chain over every length from 0 to 300.
 `cmac_conformance.py` compares 1,073 fixtures with Python's `cryptography`,
-each one-shot at three lower bounds (the last ending at `Natural'Last`) and in
-incremental pieces, with five sensitivity checks. Static stack: `MAC` 304
-bytes, `Update` 208, `Finish` 112, `Start` 96; `MAC` and `Update` must keep
-static frames in the stack check. A 64 KiB message takes about 58 ms in the
-default unoptimized build and 20 ms at `-O2`, bounded by the AES block
-function.
+each one-shot at four lower bounds (0, 7, one ending just below
+`Natural'Last` and one ending at it) and in incremental pieces at the first
+three, with five sensitivity checks. Deepest static call chains on macOS
+arm64 in the default build, counting the `-gnata` wrapper frames: `MAC`
+1,488 bytes, `Update` 1,184, `Start` 1,168, `Finish` 1,152. `MAC` and
+`Update` must keep static frames in the stack check. A changed-line
+AdaMutant run left no surviving mutant and marks none. A 64 KiB message
+takes about 58 ms in the default unoptimized build and 20 ms at `-O2`,
+bounded by the AES block function.

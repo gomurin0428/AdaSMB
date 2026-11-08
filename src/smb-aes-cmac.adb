@@ -54,23 +54,14 @@ package body SMB.AES.CMAC is
       return Result;
    end Padded;
 
+   --  The key is expanded straight into the context, so Start leaves no copy
+   --  of the schedule in a local of its own.
    procedure Start (Context : out MAC_Context; Key : Key_128) is
-      Schedule : Key_Schedule;
    begin
-      Expand_Key (Key, Schedule);
-      declare
-         Subkey_1 : constant Block :=
-           Double (Encrypt (Schedule, Zero_Block));
-      begin
-         Context :=
-           (Schedule => Schedule,
-            Subkey_1 => Subkey_1,
-            Subkey_2 => Double (Subkey_1),
-            Chain => Zero_Block,
-            Buffer => Zero_Block,
-            Used => 0,
-            Total => 0);
-      end;
+      Context := Cleared;
+      Expand_Key (Key, Context.Schedule);
+      Context.Subkey_1 := Double (Encrypt (Context.Schedule, Zero_Block));
+      Context.Subkey_2 := Double (Context.Subkey_1);
    end Start;
 
    procedure Update (Context : in out MAC_Context; Message : SMB.Bytes) is
