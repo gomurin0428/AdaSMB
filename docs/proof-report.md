@@ -4552,3 +4552,53 @@ list of static frames; their deepest static chains are 1,840 and 2,064
 bytes, down through `Absorb_AAD` into AES's S-box. Sealing 64 KiB takes
 about 109 ms in the default unoptimized build and 37 ms at `-O2`, twice
 AES-CMAC's time: two AES blocks per 16 bytes.
+
+## AES-128-GCM (`SMB.AES.GCM`)
+
+`SMB.AES.GCM` adds AES-128-GCM (NIST SP 800-38D) with SMB 3.1.1's parameters
+(MS-SMB2 3.1.4.3): a 12-byte nonce and a 16-byte tag. `Seal` and `Open` have
+`SMB.AES.CCM`'s shape: `Data` in place, and `Open` compares tags with
+`SMB.Crypto.Constant_Time_Equal` and zeroes `Data` on a mismatch, which its
+postcondition states. Associated data and data may each be up to
+`Maximum_Frame_Size`. GHASH multiplies in GF(2^128) bit by bit on two 64-bit
+words (algorithm 1 of the standard); adding a term and reducing by R use
+masks made from a bit. That no branch or table index depends on the key,
+the data or the tag is a coding rule, not a proved property. Nothing in the
+library calls the package yet.
+
+```sh
+gnatprove -P proof.gpr -u smb-aes-gcm.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
+```
+
+GNATprove 16.1.0 on macOS reported **126 checks** (23 flow, 103 prover, all
+by z3 or trivially), zero unproved or justified, zero `pragma Assume`, in
+about 10 seconds. The first version filled `To_Block` in a loop, which flow
+analysis could not see as complete. A zero initializer would have been an
+equivalent mutant, so `To_Block` and `To_Element` are now expressions that
+name every byte.
+
+`test_suite` seals and opens the four AES-GCM messages of Microsoft's SMB
+3.1.1 encryption examples (appendix A.1), each also at bounds that end at
+`Natural'Last`, with the same rejection checks as CCM: a one-bit change in
+every byte of the tag and of the associated data, three changed ciphertext
+bytes, another nonce and a truncated message, each leaving only zeros. Test
+cases 1 to 4 of McGrew and Viega's GCM paper (empty data, no associated
+data, a partial last block with associated data) and one message with
+associated data only, generated with Python's `AESGCM`, cover the cases SMB
+does not produce: 230 checks in all. `gcm_conformance.py` compares 681
+fixtures with `cryptography`'s `AESGCM`, after checking that it reproduces
+the four published messages. They cover every data length up to five
+blocks and the lengths around larger block boundaries, the counter carries
+up to the frame limit, the bit-length carries at 32 and 8,192 bytes,
+associated data of every length up to three blocks and up to the frame
+limit, single-bit changes at both ends of each GHASH word, and seeded random
+messages. `crypto_probe`'s CCM check is now the generic `Check_AEAD`, with a
+CCM and a GCM instance, so both ciphers get the same four lower bounds and
+rejection checks; CCM's 487 fixtures still pass through it.
+
+An AdaMutant run on `smb-aes-gcm.adb` detected all 188 mutants (three more
+did not compile) and marks none. `Seal` and `Open` are on the stack check's
+list of static frames; their deepest static chains are 1,632 and 1,856
+bytes. Sealing 64 KiB takes about 56 ms in the default unoptimized build
+and 18 ms at `-O2`, half of CCM's time: one AES block per 16 bytes, plus a
+128-step multiplication.
