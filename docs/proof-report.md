@@ -4464,8 +4464,19 @@ make theirs.
 
 ```sh
 make prove
-# gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3,altergo --timeout=120 -j4
+# gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3,altergo -j4
 ```
+
+The prover timeout moved from the command line to `proof.gpr`: 120 seconds,
+and 300 for `smb-core_text.adb`, `smb-core_protocol.adb` and
+`smb-core_client.adb`. Those three hold the only checks that took 40 seconds
+or more in one prover attempt on the Mac: up to 83 seconds, for the
+loop invariant of `UTF8_To_UTF16`, the `Lemma_Valid_UTF16_Prefix` call after
+that loop, an assertion in it, `Build_Rename`'s postcondition and one
+`core_client` postcondition. The first `proof.yml` run on the GitHub runner
+left the first two unproved at 120 seconds; the whole run took 81 minutes.
+A timeout given on the command line overrides `proof.gpr`, so a per-unit
+command with `--timeout=120` can still fail on those checks.
 
 GNATprove 16.1.0 on an Apple M4 Mac mini with 16 GB of RAM reported
 **5,550 checks** (799 flow, 4,751 prover, most of them by z3), zero

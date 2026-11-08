@@ -175,6 +175,10 @@ The AES pull request touches each of these. Its diff is the template.
   and gnatprove 16.1.0. `make prove` runs cvc5, z3 and alt-ergo: z3 and
   cvc5 time out on a few checks in `smb-core_client.adb`, whose context
   carries the whole Engine state, and alt-ergo proves them.
+* The prover timeout is in `proof.gpr`, not on the command line: 120
+  seconds, and 300 for `core_text`, `core_protocol` and `core_client`,
+  whose slowest checks take up to 83 seconds on an M4 and more than 120 on
+  the GitHub runner. A `--timeout` on the command line overrides it.
 * Moving the proof from gnatprove 14.1.1 to 16.1.0 left 12 checks
   unproved, which now have proof hints: byte-slice equalities and
   bit-vector reconstructions in `smb-core_text.adb` (UTF-8 to UTF-16
