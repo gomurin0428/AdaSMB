@@ -35,6 +35,7 @@ DYNAMIC_ALLOWED = {
 # must not grow with that length.
 STATIC_REQUIRED = {
     ("smb-core_wire.adb", "VERIFY_SIGNATURE"),
+    ("smb-core_wire.adb", "VERIFY_SIGNATURE_CMAC"),
     ("smb-crypto.adb", "SHA256"),
     ("smb-crypto.adb", "SHA256_UPDATE"),
     ("smb-crypto.adb", "SHA512"),

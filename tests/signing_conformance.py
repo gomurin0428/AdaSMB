@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Differential tests of SMB 2.1 wire signing, not SMB header validation."""
+"""Differential tests of SMB wire signing, not SMB header validation.
+
+SMB 2.1 signs with HMAC-SHA256 (S and V fixtures, against hmac) and SMB
+3.1.1 with AES-128-CMAC (SC and VC fixtures, against Python's
+cryptography, a test-only dependency), each over the whole message with
+the Signature field zeroed.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,14 @@ import subprocess
 import sys
 
 from crypto_conformance import FRAME, patterned
+
+try:
+    from cryptography.hazmat.primitives.ciphers import algorithms
+    from cryptography.hazmat.primitives.cmac import CMAC
+except ImportError as error:
+    raise RuntimeError(
+        "Python's cryptography package is required for signing-test and mutation testing"
+    ) from error
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -25,6 +39,16 @@ def signature(key: bytes, data: bytes) -> bytes:
 
 def signed(key: bytes, data: bytes) -> bytes:
     return data[:48] + signature(key, data) + data[64:]
+
+
+def cmac_signature(key: bytes, data: bytes) -> bytes:
+    mac = CMAC(algorithms.AES(key))
+    mac.update(data[:48] + b"\0" * 16 + data[64:])
+    return mac.finalize()
+
+
+def cmac_signed(key: bytes, data: bytes) -> bytes:
+    return data[:48] + cmac_signature(key, data) + data[64:]
 
 
 def fixtures() -> list[str]:
@@ -74,6 +98,42 @@ def fixtures() -> list[str]:
         changed = bytearray(large)
         changed[position] ^= 1
         verify(key, bytes(changed))
+
+    # SMB 3.1.1: AES-128-CMAC with a 16-byte key. Lengths around the header,
+    # CMAC's block boundaries and the frame limit.
+    def cmac_verify(key: bytes, data: bytes) -> None:
+        result = "Invalid_Length" if len(data) < 64 else "Ok"
+        valid = result == "Ok" and hmac.compare_digest(data[48:64], cmac_signature(key, data))
+        cases.append(f"VC {field(key)} {field(data)} {str(valid).lower()} {result}")
+
+    cmac_sizes = list(range(130)) + [255, 256, 257, 4095, 4096, 4097, 65535,
+                                    65536, FRAME - 1, FRAME]
+    for seed in (5, 199):
+        key = patterned(16, seed)
+        for size in cmac_sizes:
+            data = patterned(size, seed + 1)
+            result = "Invalid_Length" if size < 64 else "Ok"
+            expected = cmac_signed(key, data) if result == "Ok" else data
+            cases.append(f"SC {field(key)} {field(data)} {field(expected)} {result}")
+            cmac_verify(key, expected)
+    key = patterned(16, 211)
+    packet = cmac_signed(key, patterned(129, 13))
+    for position in range(len(packet)):
+        for bit in (0, 7):
+            changed = bytearray(packet)
+            changed[position] ^= 1 << bit
+            cmac_verify(key, bytes(changed))
+    for position in range(len(key)):
+        for bit in (0, 7):
+            changed = bytearray(key)
+            changed[position] ^= 1 << bit
+            cmac_verify(bytes(changed), packet)
+    for changed in (packet[:-1], packet + b"\0",
+                    packet[:48] + b"\0" * 16 + packet[64:]):
+        cmac_verify(key, changed)
+    # An HMAC-signed message is not CMAC-signed, and the other way round.
+    cmac_verify(key, signed(key, patterned(129, 13)))
+    verify(key, packet)
     return cases
 
 
@@ -96,16 +156,25 @@ def main() -> None:
     invalid[3] = "true"
     error = next(case.split() for case in cases if case.startswith("V ") and case.endswith(" Invalid_Length"))
     error[3] = "true"
+    cmac_signing = next(case.split() for case in cases if case.startswith("SC ") and case.endswith(" Ok"))
+    bad_tag = bytearray.fromhex(cmac_signing[3])
+    bad_tag[63] ^= 1
+    cmac_signing[3] = bad_tag.hex()
+    cmac_valid = next(case.split() for case in cases if case.startswith("VC ") and " true Ok" in case)
+    cmac_valid[3] = "false"
     for fields, diagnostic in ((signing, "core signing mismatch"),
                                (valid, "core verification mismatch"),
                                (invalid, "core verification mismatch"),
-                               (error, "core verification mismatch")):
+                               (error, "core verification mismatch"),
+                               (cmac_signing, "core signing mismatch"),
+                               (cmac_valid, "core verification mismatch")):
         check = subprocess.run([str(probe)], input=" ".join(fields) + "\n",
                                text=True, capture_output=True, timeout=30)
         if check.returncode == 0 or diagnostic not in check.stderr:
             raise RuntimeError("signing probe sensitivity check failed or could not execute")
     print(f"PASS: {len(cases)} signing/verification fixtures / {4 * len(cases)} "
-          "rebased cases through core/public APIs; four sensitivity checks")
+          "rebased cases through the core API, and the public one for HMAC; "
+          "six sensitivity checks")
 
 
 if __name__ == "__main__":

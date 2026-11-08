@@ -2184,7 +2184,8 @@ procedure Test_Suite is
    --  Microsoft's "SMB 3.1.1 Encryption in Windows 10" blog, appendices A.1
    --  (which negotiates AES-128-GCM) and A.2 (AES-128-CCM): the messages that
    --  enter the preauth integrity hash, from the NEGOTIATE request to the
-   --  second SESSION_SETUP request, and each session's keys.
+   --  second SESSION_SETUP request, the final SESSION_SETUP response, and
+   --  each session's keys (signing, encryption, decryption).
    A1_Negotiate_Request : constant SMB.Bytes := Hex
      ("FE534D4240000100000000000000010000000000000000000000000000000000"
       & "FFFE000000000000000000000000000000000000000000000000000000000000"
@@ -2244,6 +2245,13 @@ procedure Test_Suite is
       & "0063006900660073002F00530055005400330031003100000000000000000000"
       & "000000133FA6EA154880BB44576C6E2490BDE7A31204100100000067890BD408"
       & "F5680D00000000");
+   --  The final SESSION_SETUP response, which is not hashed and is signed
+   --  with the session's signing key.
+   A1_Setup_Response_2 : constant SMB.Bytes := Hex
+     ("FE534D4240000100000000000100800009000000000000000200000000000000"
+      & "FFFE00000000000025000000001000006B85A4519A0F3EEA35BA946DD3AFE6B8"
+      & "0900000048001D00A11B3019A0030A0100A3120410010000003932A87523AB66"
+      & "0100000000");
    A1_Session_Key : constant SMB.Bytes := Hex ("419FDDF34C1E001909D362AE7FB6AF79");
    A1_Keys : constant SMB.Bytes := Hex
      ("8765949DFEAEE105CE9118B45BE988F0"
@@ -2308,6 +2316,13 @@ procedure Test_Suite is
       & "0063006900660073002F00530055005400330031003100000000000000000000"
       & "0000005E621187A75CC18E3982494ECC4793B7A3120410010000005C661B9E6B"
       & "E0F1E500000000");
+   --  The final SESSION_SETUP response, which is not hashed and is signed
+   --  with the session's signing key.
+   A2_Setup_Response_2 : constant SMB.Bytes := Hex
+     ("FE534D4240000100000000000100800009000000000000000200000000000000"
+      & "FFFE00000000000021000000001000003676196AEE8CA17E5D50A53642EF2BE4"
+      & "0900000048001D00A11B3019A0030A0100A3120410010000000F57444342A271"
+      & "7E00000000");
    A2_Session_Key : constant SMB.Bytes := Hex ("07B7F69C1E2581662DF6987E88F9E891");
    A2_Keys : constant SMB.Bytes := Hex
      ("3DCC82C5795AE27F383242761078C59B"
@@ -2637,6 +2652,85 @@ procedure Test_Suite is
         ("SMB 3.1.1 preauth integrity:" & Natural'Image (Count)
          & " hashes and keys passed");
    end Test_Preauth_311;
+
+   procedure Test_CMAC_Signing is
+      Count : Natural := 0;
+
+      --  A final SESSION_SETUP response and its session's signing key.
+      procedure Check_Published (Name : String; Packet, Keys : SMB.Bytes) is
+         Key : constant SMB.AES.Key_128 := Keys (Keys'First .. Keys'First + 15);
+         Other_Key : SMB.AES.Key_128 := Key;
+         Data : SMB.Bytes := Packet;
+         Valid : Boolean;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Wire.Verify_Signature_CMAC (Packet, Key, Valid, Status);
+         Assert (Status = SMB.Ok and then Valid, Name & " signature");
+         Data (48 .. 63) := (others => 16#FF#);
+         SMB.Core_Wire.Sign_CMAC (Data, Key, Status);
+         Assert (Status = SMB.Ok, Name & " sign status");
+         Assert_Equal (Data, Packet, Name & " signed");
+         Count := Count + 2;
+         for Position in Integer range 0 .. 6 loop
+            declare
+               Index : constant Natural :=
+                 (case Position is
+                     when 0 => 0, when 1 => 47, when 2 => 48, when 3 => 63,
+                     when 4 => 64, when 5 => Packet'Last / 2,
+                     when others => Packet'Last);
+            begin
+               Data := Packet;
+               Data (Index) := Data (Index) xor 16#01#;
+               SMB.Core_Wire.Verify_Signature_CMAC (Data, Key, Valid, Status);
+               Assert (Status = SMB.Ok and then not Valid,
+                       Name & " accepted a change at" & Natural'Image (Index));
+               Count := Count + 1;
+            end;
+         end loop;
+         Other_Key (15) := Other_Key (15) xor 16#80#;
+         SMB.Core_Wire.Verify_Signature_CMAC (Packet, Other_Key, Valid, Status);
+         Assert (Status = SMB.Ok and then not Valid, Name & " another key");
+         --  The SMB 2.1 HMAC form must not accept a CMAC signature.
+         SMB.Core_Wire.Verify_Signature (Packet, Key, Valid, Status);
+         Assert (Status = SMB.Ok and then not Valid, Name & " as HMAC");
+         Count := Count + 2;
+      end Check_Published;
+
+      Key : constant SMB.AES.Key_128 := (others => 16#42#);
+      Valid : Boolean;
+      Status : SMB.Core_Status;
+   begin
+      Check_Published ("A.1 CMAC", A1_Setup_Response_2, A1_Keys);
+      Check_Published ("A.2 CMAC", A2_Setup_Response_2, A2_Keys);
+      --  Shorter than a header: rejected, and Sign leaves the data alone.
+      declare
+         Short : SMB.Bytes (0 .. 62) := (others => 16#33#);
+      begin
+         SMB.Core_Wire.Sign_CMAC (Short, Key, Status);
+         Assert (Status = SMB.Invalid_Length
+                 and then (for all Value of Short => Value = 16#33#),
+                 "CMAC sign of a short message");
+         SMB.Core_Wire.Verify_Signature_CMAC (Short, Key, Valid, Status);
+         Assert (Status = SMB.Invalid_Length and then not Valid,
+                 "CMAC verify of a short message");
+         Count := Count + 2;
+      end;
+      --  A bare header that ends at Natural'Last signs and verifies.
+      declare
+         Header : SMB.Bytes (Natural'Last - 63 .. Natural'Last) :=
+           (others => 16#5C#);
+      begin
+         SMB.Core_Wire.Sign_CMAC (Header, Key, Status);
+         Assert (Status = SMB.Ok, "CMAC sign of a header at Natural'Last");
+         SMB.Core_Wire.Verify_Signature_CMAC (Header, Key, Valid, Status);
+         Assert (Status = SMB.Ok and then Valid,
+                 "CMAC verify of a header at Natural'Last");
+         Count := Count + 2;
+      end;
+      Ada.Text_IO.Put_Line
+        ("SMB 3.1.1 CMAC signing: 2 published signatures,"
+         & Natural'Image (Count) & " checks passed");
+   end Test_CMAC_Signing;
 
    procedure Test_NTLM_Authenticate is
       Challenge : constant SMB.Bytes := Hex
@@ -9962,6 +10056,7 @@ begin
    Test_AES_GCM;
    Test_Negotiate_311;
    Test_Preauth_311;
+   Test_CMAC_Signing;
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;

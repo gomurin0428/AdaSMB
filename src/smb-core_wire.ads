@@ -1,4 +1,5 @@
 with Interfaces;
+with SMB.AES;
 
 package SMB.Core_Wire is
    pragma SPARK_Mode (On);
@@ -307,6 +308,41 @@ package SMB.Core_Wire is
      Post =>
        Status = (if Data'Length < Header_Size then SMB.Invalid_Length
                  elsif Key'Length = 0 then SMB.Invalid_Value
+                 else SMB.Ok)
+       and then (if Status /= SMB.Ok then not Valid);
+
+   --  SMB 3.1.1 signing (MS-SMB2 3.1.4.1): the 16-byte AES-128-CMAC tag of
+   --  the whole message with its Signature field zeroed, under the
+   --  session's signing key. Sign and Verify_Signature are the SMB 2.1
+   --  HMAC-SHA256 forms; these have the same contracts, except that the
+   --  key's length is fixed by its type.
+   procedure Sign_CMAC
+     (Data : in out SMB.Bytes;
+      Key : SMB.AES.Key_128;
+      Status : out SMB.Core_Status)
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Status = (if Data'Length < Header_Size then SMB.Invalid_Length
+                 else SMB.Ok)
+       and then
+       (if Status = SMB.Ok then
+          (for all Index in Data'Range =>
+             (if Index < Data'First + 48
+              then Data (Index) = Data'Old (Index)))
+          and then
+          (for all Index in Data'Range =>
+             (if Index > Data'First + 63
+              then Data (Index) = Data'Old (Index)))
+        else Data = Data'Old);
+
+   procedure Verify_Signature_CMAC
+     (Data : SMB.Bytes;
+      Key : SMB.AES.Key_128;
+      Valid : out Boolean;
+      Status : out SMB.Core_Status)
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Status = (if Data'Length < Header_Size then SMB.Invalid_Length
                  else SMB.Ok)
        and then (if Status /= SMB.Ok then not Valid);
 end SMB.Core_Wire;

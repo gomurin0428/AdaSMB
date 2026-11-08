@@ -4666,3 +4666,34 @@ hashed messages of Microsoft's A.1 and A.2 examples, checks each value
 against Python's `hashlib`, and derives both sessions' three keys with
 `SMB.KDF` from the final value: all six are the published keys. An empty
 message is checked too: 17 checks. AdaMutant detected all 4 mutants.
+
+## AES-CMAC message signing (`SMB.Core_Wire`)
+
+`SMB.Core_Wire` gains `Sign_CMAC` and `Verify_Signature_CMAC`, the SMB 3.1.1
+signature (MS-SMB2 3.1.4.1): the AES-128-CMAC tag of the whole message
+with its Signature field zeroed. Their contracts are those of `Sign` and
+`Verify_Signature`, except that the key is an `SMB.AES.Key_128`. Nothing in
+the library calls them yet, and the existing procedures are unchanged.
+
+```sh
+gnatprove -P proof.gpr -u smb-core_wire.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
+```
+
+GNATprove 16.1.0 proved all **415 checks** of `smb-core_wire.adb` (37 flow,
+378 prover). The first version passed the empty rest of a bare header to
+the incremental CMAC as `Data (Data'First + 64 .. Data'Last)`, whose lower
+bound overflows when the header ends at `Natural'Last`; GNATprove reported
+the overflow, and the empty rest is now skipped as `Verify_Signature`
+skips it.
+
+`test_suite` verifies the final SESSION_SETUP responses of Microsoft's A.1
+and A.2 examples with each session's derived signing key, re-signs them
+from a garbled Signature field, rejects one-bit changes at seven positions,
+another key and verification as HMAC, rejects a message shorter than a
+header, and signs and verifies a bare header that ends at `Natural'Last`:
+26 checks. `make signing-test` adds AES-128-CMAC fixtures compared with
+Python's `cryptography`: two keys over the lengths up to 129 bytes and
+around CMAC's block boundaries, 64 KiB and the frame limit, and one-bit
+changes in a message and its key. With the HMAC fixtures that makes 3,990
+fixtures, each at two lower bounds of the key and of the data, and six
+sensitivity checks. A changed-line AdaMutant run detected all 43 mutants.

@@ -1,3 +1,4 @@
+with SMB.AES.CMAC;
 with SMB.Crypto;
 
 package body SMB.Core_Wire with SPARK_Mode is
@@ -362,4 +363,60 @@ package body SMB.Core_Wire with SPARK_Mode is
       end;
       Status := SMB.Ok;
    end Verify_Signature;
+
+   procedure Sign_CMAC
+     (Data : in out SMB.Bytes;
+      Key : SMB.AES.Key_128;
+      Status : out SMB.Core_Status) is
+   begin
+      if Data'Length < Header_Size then
+         Status := SMB.Invalid_Length;
+         return;
+      end if;
+      for Index in 48 .. 63 loop
+         Data (Data'First + Index) := 0;
+      end loop;
+      declare
+         Tag : constant SMB.AES.CMAC.Tag_128 := SMB.AES.CMAC.MAC (Key, Data);
+      begin
+         for Index in 0 .. 15 loop
+            Data (Data'First + 48 + Index) := Tag (Index);
+         end loop;
+      end;
+      Status := SMB.Ok;
+   end Sign_CMAC;
+
+   procedure Verify_Signature_CMAC
+     (Data : SMB.Bytes;
+      Key : SMB.AES.Key_128;
+      Valid : out Boolean;
+      Status : out SMB.Core_Status) is
+   begin
+      Valid := False;
+      if Data'Length < Header_Size then
+         Status := SMB.Invalid_Length;
+         return;
+      end if;
+      declare
+         Zero_Signature : constant SMB.Bytes (0 .. 15) := (others => 0);
+         Given : constant SMB.Bytes (0 .. 15) :=
+           Data (Data'First + 48 .. Data'First + 63);
+         Tag : SMB.AES.CMAC.Tag_128;
+         Context : SMB.AES.CMAC.MAC_Context;
+      begin
+         --  The header up to the Signature field, a zero signature and the
+         --  rest. For a bare header that ends at Natural'Last, the rest's
+         --  first index would overflow, so it is skipped when empty.
+         SMB.AES.CMAC.Start (Context, Key);
+         SMB.AES.CMAC.Update (Context, Data (Data'First .. Data'First + 47));
+         SMB.AES.CMAC.Update (Context, Zero_Signature);
+         if Data'Length > Header_Size then
+            SMB.AES.CMAC.Update
+              (Context, Data (Data'First + Header_Size .. Data'Last));
+         end if;
+         SMB.AES.CMAC.Finish (Context, Tag);
+         Valid := SMB.Crypto.Constant_Time_Equal (Given, Tag);
+      end;
+      Status := SMB.Ok;
+   end Verify_Signature_CMAC;
 end SMB.Core_Wire;
