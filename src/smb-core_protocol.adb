@@ -524,12 +524,43 @@ package body SMB.Core_Protocol with SPARK_Mode is
            (for all Index in 0 .. 15 =>
               Output (Output'First + 16 + Index) =
                 File_Id (File_Id'First + Index)));
-      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: Begin_Build cleared the buffer
-      Put_U32 (Output, 44, 0, Status);
+      --  Keep only what the rest needs: the eight header calls before this
+      --  point leave a chain of frame conditions that makes the provers time
+      --  out on the data copy below.
+      pragma Assert_And_Cut
+        (Output'Length <= SMB.Maximum_Frame_Size
+         and then Data'Length <= Maximum_IO_Chunk
+         and then File_Id'Length = 16
+         and then Required = 48 + Data'Length
+         and then
+           (if Status = SMB.Ok then
+              Required <= Output'Length
+              and then Output (Output'First + 4) =
+                SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 0)
+              and then Output (Output'First + 5) =
+                SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 1)
+              and then Output (Output'First + 6) =
+                SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 2)
+              and then Output (Output'First + 7) =
+                SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 3)
+              and then SMB.Core_Wire.Encoded_U64 (Output, 8) = Offset
+              and then
+                (for all Byte_Index in 0 .. 7 =>
+                   Output (Output'First + 8 + Byte_Index) =
+                     SMB.Core_Wire.U64_Byte (Offset, Byte_Index))
+              and then
+                (for all Index in 0 .. 15 =>
+                   Output (Output'First + 16 + Index) =
+                     File_Id (File_Id'First + Index))));
+      --  Bytes 44 to 47 (Channel) stay zero, as Begin_Build cleared them.
       --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
       if Status = SMB.Ok then
          Copy (Output, 48, Data, Status);
       end if;
+      pragma Assert
+        (if Status = SMB.Ok and then Data'Length > 0 then
+           (for all Index in 0 .. Data'Length - 1 =>
+              Output (Output'First + 48 + Index) = Data (Data'First + Index)));
       Finish (Required, Output'Length, Used, Status);
    end Build_Write;
 
@@ -644,6 +675,13 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Copy (Output, 52, Name, Status);
       end if;
       Finish (Required, Output'Length, Used, Status);
+      --  Copy states the name's slice with its upper bound counted from
+      --  Output'Last; the postcondition counts it from Used.
+      pragma Assert
+        (if Status = SMB.Ok and then Name'Length > 0 then
+           Used = 52 + Name'Length
+           and then Output'Last - (Output'Length - 52 - Name'Length) =
+             Output'First + (Used - 1));
    end Build_Rename;
 
    procedure Build_Simple

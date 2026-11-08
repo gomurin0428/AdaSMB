@@ -138,7 +138,7 @@ make clock-test             # FILETIME の全暦日・秒・100ns 端数を Pyth
 make check                  # warnings-as-errors と依存関係検査（stack-check を含む）
 make stack-check            # 公開 API ごとの最悪スタック使用量を GCC の呼び出しグラフで検査
 make example                # build/bin/smb_example
-make prove                  # GNATprove + cvc5/z3 が必要。未証明があれば失敗
+make prove                  # GNATprove + cvc5/z3/alt-ergo が必要。未証明があれば失敗
 make transport-test         # TCP 断片化、送受信 timeout、途中切断・復旧試験
 make integration            # 明示的にローカル Samba を起動する opt-in テスト
 make mutation               # src/*.adb 全体に対する試験のミューテーションテスト（AdaMutant が必要）
@@ -224,10 +224,8 @@ SMB_USER=alice SMB_PASSWORD='...' SMB_DOMAIN=WORKGROUP \
 ## CI
 
 GitHub Actions（`.github/workflows`）で次を実行します。ツールチェーンは
-Alire 2.1.1 で導入します（`alr` はリリースの SHA-256 を照合し、導入結果は
-キャッシュします）。ビルド・試験・ミューテーション試験は GNAT 16.1.0・
-gprbuild 26.0.1、証明は gnatprove 16.1.0 で証明できるようになるまで GNAT
-14.2.1・gprbuild 25.0.1・gnatprove 14.1.1 を使います。
+Alire 2.1.1 で GNAT 16.1.0・gprbuild 26.0.1・gnatprove 16.1.0 を導入します
+（`alr` はリリースの SHA-256 を照合し、導入結果はキャッシュします）。
 
 * `ci.yml`（main への push、pull request、手動実行。文書だけの変更では
   動きません）

@@ -171,22 +171,21 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Toolchain
 
-* CI builds, tests and mutates with GNAT 16.1.0 and gprbuild 26.0.1. The
-  weekly proof still uses gnatprove 14.1.1 (with GNAT 14.2.1 and gprbuild
-  25.0.1), because gnatprove 16.1.0 leaves 12 of 5,272 checks unproved,
-  even at `--level=3` with a 300-second timeout or with alt-ergo added:
-  * `smb-core_text.adb:318` and `:327` (UTF-8 to UTF-16 emission);
-  * `smb-core_wire.ads:185` (`Write_U64`'s `Encoded_U64 (Data, Offset) =
-    Value`);
-  * `smb-core_client.adb:642`, `:1225`, `:1238`, `:1243` and
-    `smb-core_client.ads:1415`;
-  * `smb-engine.adb:672`;
-  * `smb-core_protocol.ads:214` and `:333`;
-  * `smb-core_connection.ads:120`.
-
-  They are equalities over byte slices and bit-vector reconstructions that
-  the newer provers need help with. Moving the proof to 16.1.0 means adding
-  assertions there, then changing `proof.yml`.
+* CI builds, tests, mutates and proves with GNAT 16.1.0, gprbuild 26.0.1
+  and gnatprove 16.1.0. `make prove` runs cvc5, z3 and alt-ergo: a few
+  checks in `smb-core_client.adb`, whose context carries the whole Engine
+  state, are proved only by alt-ergo.
+* Moving the proof from gnatprove 14.1.1 to 16.1.0 left 12 checks
+  unproved, which now have proof hints: byte-slice equalities and
+  bit-vector reconstructions in `smb-core_text.adb` (UTF-8 to UTF-16
+  emission), `smb-core_wire.adb` (`Write_U64`), `smb-core_client.adb`
+  (`Prepare_Metadata`), `smb-engine.adb` (the final MIC suffix),
+  `smb-core_protocol.adb` (`Build_Write`, `Build_Rename`) and
+  `smb-core_connection.adb` (`Prepare_Negotiate`'s client GUID). The hints
+  are ghost lemmas, `pragma Assert_And_Cut`, and a `Seal_Request` helper
+  that takes the signing step out of `Prepare_Metadata`'s context.
+  `Build_Write` no longer writes the zero Channel field, which
+  `Begin_Build` already cleared.
 * alr 2.1.1 installs every one of these versions. When GitHub's release
   downloads fail (HTTP 504), `gh release download` through the API still
   works; check the archive against the Alire index's SHA-256.
@@ -194,11 +193,13 @@ The AES pull request touches each of these. Its diff is the template.
 ## macOS environment notes
 
 * `alr -n install --prefix=<dir> gnat_native=16.1.0 gprbuild=26.0.1` and,
-  in another prefix, `gnatprove=14.1.1` (or `16.1.0`) install the
-  toolchain, as CI's `.github/scripts/install-ada.sh` does. The bundled
-  alt-ergo needs Homebrew's `gmp`, but the proofs use only cvc5 and z3.
+  in another prefix, `gnatprove=16.1.0` install the toolchain, as CI's
+  `.github/scripts/install-ada.sh` does. The bundled alt-ergo needs
+  Homebrew's `gmp`.
 * With 16 GB of RAM, prove one unit at a time with `-j4` and watch
-  `gnatwhy3`'s memory.
+  `gnatwhy3`'s memory. The full gnatprove 16.1.0 proof with cvc5, z3 and
+  alt-ergo took about 67 minutes on an M4 Mac mini; gnatwhy3, cvc5 and z3
+  together peaked near 9 GB.
 * `make aes-test`, `make cmac-test`, `make kdf-test` and the mutation runs
   need `cryptography` for the interpreter behind `python`; `python -m pip
   install --user cryptography==50.0.2` matches the Windows CI pin.

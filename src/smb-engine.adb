@@ -72,6 +72,20 @@ is
       Info : SMB.Core_Protocol.Response_Info;
       Expected_MIC : SMB.Crypto.Digest_128) is null;
 
+   --  A token whose last 16 bytes equal a MIC, byte by byte. Proved on its
+   --  own because GNATprove 16 times out on it inside Accept_Response.
+   procedure Lemma_Token_Tail
+     (Token : SMB.Bytes; Expected_MIC : SMB.Crypto.Digest_128)
+   with Ghost,
+     Pre => Token'Length >= 16
+       and then Token (Token'Last - 15 .. Token'Last) = Expected_MIC,
+     Post =>
+       (for all I in 0 .. 15 =>
+          Token (Token'Last - 15 + I) = Expected_MIC (I));
+
+   procedure Lemma_Token_Tail
+     (Token : SMB.Bytes; Expected_MIC : SMB.Crypto.Digest_128) is null;
+
    procedure Initialize
       (State : in out Engine_State;
       Status : out SMB.Core_Status) is
@@ -667,6 +681,7 @@ is
                         pragma Assert
                           (Token'Last - Token'First =
                              Tail_Last - (Packet'First + Parsed.Data_Offset));
+                        Lemma_Token_Tail (Token, Expected_MIC);
                         pragma Assert
                           (for all I in 0 .. 15 =>
                              Token (Token'Last - 15 + I) = Expected_MIC (I));

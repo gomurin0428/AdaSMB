@@ -22,10 +22,10 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/ada-prover
-          key: ada-${{ runner.os }}-${{ runner.arch }}-alr2.1.1-gnat14.2.1-gprbuild25.0.1-gnatprove14.1.1-v1
+          key: ada-${{ runner.os }}-${{ runner.arch }}-alr2.1.1-gnat16.1.0-gprbuild26.0.1-gnatprove16.1.0-v1
       - name: Install Ada toolchain and GNATprove
         run: >
           bash .github/scripts/install-ada.sh "$HOME/ada-prover"
-          gnat_native=14.2.1 gprbuild=25.0.1 gnatprove=14.1.1
+          gnat_native=16.1.0 gprbuild=26.0.1 gnatprove=16.1.0
       - name: Prove
         run: make prove

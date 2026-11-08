@@ -4416,3 +4416,54 @@ posts). `kdf_conformance.py` compares 330 fixtures with Python's
 keys, with 27 sensitivity checks, including each of the twelve published keys
 under the other two labels. A changed-line AdaMutant run detected all 64
 mutants and marks none.
+
+## GNATprove 16.1.0
+
+The proof moves from gnatprove 14.1.1 (with GNAT 14.2.1 and gprbuild 25.0.1)
+to gnatprove 16.1.0 with GNAT 16.1.0 and gprbuild 26.0.1, which CI has used
+for builds, tests and mutation runs since #116. With the same settings,
+16.1.0 left 12 of 5,272 checks unproved, also at `--level=3` with a
+300-second timeout. Each site now has proof hints. No contract is weakened,
+and no `pragma Assume` or justification is added:
+
+* `smb-core_wire.adb`: `Write_U64`'s `Encoded_U64 (Data, Offset) = Value`
+  needs a 64-bit value rebuilt from its eight bytes, which the ghost lemma
+  `Lemma_U64_Bytes` states and proves on its own.
+* `smb-core_text.adb`: in UTF-8 to UTF-16 emission, `Lemma_Slice_Units` and
+  `Lemma_Emitted_Scalar` restate the units just written through the slice's
+  rebased indices and show that they decode to the emitted scalar.
+* `smb-core_protocol.adb`: `Build_Write` cuts the context with
+  `pragma Assert_And_Cut` before the data copy. It no longer writes the zero
+  Channel field (bytes 44 to 47), which `Begin_Build` already cleared; that
+  write was annotated as an equivalent mutant. `Build_Rename` states the
+  name slice's upper bound the way its postcondition counts it.
+* `smb-core_connection.adb`: `Prepare_Negotiate` keeps a ghost snapshot of
+  its inputs, cuts the success and failure paths separately, and places the
+  client GUID with `Lemma_Guid_Place`.
+* `smb-engine.adb` and `smb-engine.ads`: `Lemma_Token_Tail` states the final
+  MIC suffix element by element, and `Final_Token_MIC_Matches` is marked
+  `Inline_For_Proof`.
+* `smb-core_client.adb`: `Prepare_Metadata`'s postcondition joins the whole
+  Engine state with the packet bytes. The new `Seal_Request` does the header
+  preparation and signing behind a contract that names only the header
+  fields, the unchanged body and the name. A cut before it keeps only the
+  facts the rest needs, and `Lemma_Slice_Equals` turns the element-wise name
+  copy into the slice equality of the postcondition. A few of these checks
+  are proved only by alt-ergo, so `make prove` now runs
+  `--prover=cvc5,z3,altergo`.
+
+```sh
+make prove
+# gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3,altergo --timeout=120 -j4
+```
+
+GNATprove 16.1.0 on an Apple M4 Mac mini with 16 GB of RAM reported
+**5,550 checks** (799 flow, 4,751 prover, most of them by z3), zero
+unproved or justified, zero `pragma Assume`, and 16 units, in about 67
+minutes. gnatwhy3, cvc5 and z3 together peaked near 9 GB.
+None of the 81 warnings is on a changed line. `make check` (with
+`GPRBUILD="gprbuild -f"`) and `make test` passed with the new toolchain. A
+changed-line AdaMutant run detected all 4 mutants (three statement deletions
+and an equality operator in `smb-core_client.adb`) and marks none; the other
+changed lines are contracts, assertions and ghost code, which AdaMutant does
+not mutate.
