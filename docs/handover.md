@@ -28,8 +28,8 @@ of date.
 | 2 | AES-128-CMAC | merged (#114) |
 | 2 | SP 800-108 KDF (counter mode, HMAC-SHA256) | merged (#115) |
 | 2 | AES-128-CCM | merged (#118) |
-| 2 | AES-128-GCM | next |
-| 3 | 3.1.1 negotiation, preauth integrity, CMAC signing | not started |
+| 2 | AES-128-GCM | merged (#119) |
+| 3 | 3.1.1 negotiation, preauth integrity, CMAC signing | next |
 | 4 | Encryption | not started |
 | 5 | Windows server interop, release 0.2.0 | not started |
 
@@ -136,17 +136,43 @@ Decisions worth keeping for phase 4:
   that the formals might be aliased; copy the 52-byte header into a local
   then.
 
+## AES-128-GCM (#119)
+
+`SMB.AES.GCM` (`src/smb-aes-gcm.ads`, `src/smb-aes-gcm.adb`) has the same
+`Seal` and `Open` as `SMB.AES.CCM`, with a 12-byte nonce (`Nonce_96`) and a
+16-byte tag. Associated data and data may each be up to
+`Maximum_Frame_Size`. It proves with 126 checks in about 10 seconds.
+
+* GHASH multiplies bit by bit (SP 800-38D algorithm 1) on two 64-bit words.
+  Adding V to the product and reducing by R use masks made from a bit, so
+  no branch or table index depends on the hash subkey or the data. A
+  message costs one AES block and one 128-step multiplication per 16 bytes:
+  64 KiB takes about 18 ms at `-O2`, half of CCM's time.
+* The caller passes the transform header's 32 bytes from the Nonce field on
+  as the associated data and the first 12 bytes of the Nonce field as the
+  nonce; the tag is the Signature field. The tests take all three from
+  Microsoft's four A.1 messages.
+* `Open` decrypts as it hashes and zeroes `Data` on a mismatch, as CCM's
+  does, so both ciphers have one shape for phase 4. GCM could check the tag
+  before decrypting, at the cost of a second pass over the data; a rejected
+  message would then never put plaintext in `Data` or key stream on the
+  stack. Consider it if phase 4 needs that.
+* `crypto_probe`'s CCM check became the generic `Check_AEAD`, with a CCM and
+  a GCM instance.
+* The library is built as Ada 2012 (`smb.gpr`) and the proof as Ada 2022
+  (`proof.gpr`). An Ada 2022 construct such as an iterated component
+  association proves but does not build, so `To_Block` is a positional
+  aggregate.
+
 ## Next steps
 
-Each primitive is its own pull request with no protocol behavior change,
-following the checklist below.
-
-1. **AES-128-GCM** (12-byte nonce, 16-byte tag). The GHASH multiply must use
-   masks, not tables. Verifying a tag must be constant-time and must not
-   release plaintext on failure; follow `SMB.AES.CCM`'s `Seal`/`Open`
-   shape.
-2. Then phase 3, which changes `SMB.Engine` contracts and is expected to
-   carry most of the proof cost.
+Phase 2's primitives are all merged. Next is phase 3 of
+`docs/smb3-design.md`: SMB 3.1.1 negotiation with negotiate contexts,
+preauth integrity (SHA-512 over the NEGOTIATE and SESSION_SETUP exchanges)
+and AES-CMAC signing, without encryption. The Samba integration test gains
+a 3.1.1-only configuration with mandatory signing. Phase 3 changes
+`SMB.Engine` contracts and is expected to carry most of the proof cost. The
+checklist below still applies to any new unit.
 
 ## Checklist for a new primitive
 
@@ -240,9 +266,9 @@ The AES pull request touches each of these. Its diff is the template.
   alt-ergo took 67 to 84 minutes on an M4 Mac mini, and the prover
   processes together peaked near 9.6 GB. On the GitHub runner it took 50
   minutes.
-* `make aes-test`, `make cmac-test`, `make ccm-test`, `make kdf-test` and
-  the mutation runs need `cryptography` for the interpreter behind
-  `python`; `python -m pip install --user cryptography==50.0.2` matches the
+* `make aes-test`, `make cmac-test`, `make ccm-test`, `make gcm-test`,
+  `make kdf-test` and the mutation runs need `cryptography` for the
+  interpreter behind `python`; `python -m pip install --user cryptography==50.0.2` matches the
   Windows CI pin.
 * GNU make is available, so the Makefile targets work directly. A
   changed-line AdaMutant run of the AES unit took about three minutes with
@@ -276,8 +302,8 @@ The AES pull request touches each of these. Its diff is the template.
     makes that fail with "cannot copy".
   * A full run of `src/*.adb` takes about four hours on a fast machine.
     The weekly `mutation.yml` splits it into eight jobs.
-* `make aes-test`, `make cmac-test`, `make ccm-test` and `make kdf-test`
-  need `pip install cryptography`. CI pins 50.0.2 on Windows.
+* `make aes-test`, `make cmac-test`, `make ccm-test`, `make gcm-test` and
+  `make kdf-test` need `pip install cryptography`. CI pins 50.0.2 on Windows.
 
 ## Open items
 

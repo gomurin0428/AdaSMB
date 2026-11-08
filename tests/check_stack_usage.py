@@ -43,6 +43,8 @@ STATIC_REQUIRED = {
     ("smb-aes-cmac.adb", "UPDATE"),
     ("smb-aes-ccm.adb", "SEAL"),
     ("smb-aes-ccm.adb", "OPEN"),
+    ("smb-aes-gcm.adb", "SEAL"),
+    ("smb-aes-gcm.adb", "OPEN"),
     ("smb-crypto.adb", "HMAC_SHA256"),
     ("smb-crypto.adb", "HMAC_SHA256_UPDATE"),
     ("smb-crypto.adb", "MD5"),

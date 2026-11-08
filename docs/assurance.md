@@ -8,11 +8,11 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes seventeen units (sixteen bodies plus `SMB`'s
+`proof.gpr` explicitly includes eighteen units (seventeen bodies plus `SMB`'s
 types). These are the implementations called by `SMB.Client` and
 `SMB.Transport`, not a parallel model, plus `SMB.AES`, `SMB.AES.CMAC`,
-`SMB.AES.CCM` and `SMB.KDF`, which nothing in the library calls yet: they are
-cryptography for the SMB 3.1.1 work.
+`SMB.AES.CCM`, `SMB.AES.GCM` and `SMB.KDF`, which nothing in the library calls
+yet: they are cryptography for the SMB 3.1.1 work.
 
 | Unit | Runtime responsibility |
 | --- | --- |
@@ -21,6 +21,7 @@ cryptography for the SMB 3.1.1 work.
 | `SMB.AES` | AES-128 encryption with a computed S-box, for SMB 3.1.1; run-time safety, not cryptographic hardness or timing |
 | `SMB.AES.CMAC` | AES-128-CMAC, one-shot and incremental, for SMB 3.1.1 signing; run-time safety, the `Ready`/`Length` contracts and a wiped context after `Finish`, not cryptographic hardness or timing |
 | `SMB.AES.CCM` | AES-128-CCM with SMB's 11-byte nonce and 16-byte tag, in place, for SMB 3.x encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
+| `SMB.AES.GCM` | AES-128-GCM with SMB's 12-byte nonce and 16-byte tag, in place, for SMB 3.1.1 encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
 | `SMB.KDF` | SMB 3.1.1 signing, encryption and decryption key derivation (SP 800-108, HMAC-SHA256) with every length fixed by its types; run-time safety, not cryptographic hardness |
 | `SMB.Core_Text` | Strict UTF-8/UTF-16 conversion, NTLM ASCII username uppercase; exact lexical path/share acceptance, byte-preserving slash normalization, and zeroed invalid-path output |
 | `SMB.Core_NTLM` | Strict DER/SPNEGO challenge extraction, directional mechanism-list MIC and final-token validation |
