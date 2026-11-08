@@ -135,7 +135,7 @@ make cmac-test              # Python の cryptography と AES-128-CMAC の差分
 make ccm-test               # Python の cryptography と AES-128-CCM の差分試験
 make gcm-test               # Python の cryptography と AES-128-GCM の差分試験
 make kdf-test               # Python の cryptography と SMB 3.1.1 の鍵導出の差分試験
-make signing-test           # SMB 署名の組立て・改ざん拒否を Python と照合
+make signing-test           # SMB 2.1・3.1.1 の署名の組立て・改ざん拒否を Python と照合
 make clock-test             # FILETIME の全暦日・秒・100ns 端数を Python と照合
 make check                  # warnings-as-errors と依存関係検査（stack-check を含む）
 make stack-check            # 公開 API ごとの最悪スタック使用量を GCC の呼び出しグラフで検査

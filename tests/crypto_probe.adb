@@ -438,13 +438,20 @@ procedure Crypto_Probe is
       end if;
    end Check_MIC;
 
+   --  Signs (Signing) or verifies Data with Key at two lower bounds each,
+   --  through SMB.Core_Wire and SMB.Wire. With CMAC, the SMB 3.1.1 form, only
+   --  SMB.Core_Wire has it and the key is 16 bytes.
    procedure Check_Wire
      (Key, Data, Expected : SMB.Bytes;
       Expected_Status : SMB.Core_Status;
       Signing : Boolean;
-      Expected_Valid : Boolean := False)
+      Expected_Valid : Boolean := False;
+      CMAC : Boolean := False)
    is
    begin
+      if CMAC and then Key'Length /= 16 then
+         raise Program_Error with "invalid CMAC signing fixture";
+      end if;
       for Key_Rebased in 0 .. 1 loop
          for Data_Rebased in 0 .. 1 loop
             declare
@@ -461,7 +468,19 @@ procedure Crypto_Probe is
                  (Data_First .. Data_First + Data'Length - 1);
                Input_Key.all := Key;
                Input_Data.all := Data;
-               if Signing then
+               if Signing and then CMAC then
+                  SMB.Core_Wire.Sign_CMAC
+                    (Input_Data.all, Input_Key.all, Status);
+                  if Status /= Expected_Status or else Input_Data.all /= Expected then
+                     raise Program_Error with "core signing mismatch";
+                  end if;
+               elsif CMAC then
+                  SMB.Core_Wire.Verify_Signature_CMAC
+                    (Input_Data.all, Input_Key.all, Valid, Status);
+                  if Status /= Expected_Status or else Valid /= Expected_Valid then
+                     raise Program_Error with "core verification mismatch";
+                  end if;
+               elsif Signing then
                   SMB.Core_Wire.Sign (Input_Data.all, Input_Key.all, Status);
                   if Status /= Expected_Status or else Input_Data.all /= Expected then
                      raise Program_Error with "core signing mismatch";
@@ -586,6 +605,16 @@ begin
                  (Hex (Field (2)), Hex (Field (3)), SMB.Bytes'(1 .. 0 => 0),
                   SMB.Core_Status'Value (Field (5)), Signing => False,
                   Expected_Valid => Boolean'Value (Field (4)));
+            elsif Field (1) = "SC" then
+               Check_Wire
+                 (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)),
+                  SMB.Core_Status'Value (Field (5)), Signing => True,
+                  CMAC => True);
+            elsif Field (1) = "VC" then
+               Check_Wire
+                 (Hex (Field (2)), Hex (Field (3)), SMB.Bytes'(1 .. 0 => 0),
+                  SMB.Core_Status'Value (Field (5)), Signing => False,
+                  Expected_Valid => Boolean'Value (Field (4)), CMAC => True);
             else
                raise Program_Error with "unknown fixture operation";
             end if;

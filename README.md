@@ -154,7 +154,7 @@ make cmac-test              # AES-128-CMAC against Python's cryptography package
 make ccm-test               # AES-128-CCM against Python's cryptography package
 make gcm-test               # AES-128-GCM against Python's cryptography package
 make kdf-test               # SMB 3.1.1 key derivation against Python's cryptography
-make signing-test           # SMB signing and tamper rejection against Python
+make signing-test           # SMB 2.1 and 3.1.1 signing and tamper rejection against Python
 make clock-test             # FILETIME for every day, second and 100 ns fraction
 make check                  # warnings as errors and dependency checks (with stack-check)
 make stack-check            # worst-case stack use per public API from GCC call graphs

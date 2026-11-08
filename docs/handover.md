@@ -31,6 +31,7 @@ of date.
 | 2 | AES-128-GCM | merged (#119) |
 | 3 | 3.1.1 negotiate contexts (`SMB.Core_Negotiate`) | merged (#120) |
 | 3 | Preauth integrity hash (`SMB.Core_Preauth`) | merged (#121) |
+| 3 | AES-CMAC message signing in `SMB.Core_Wire` | merged (#122) |
 | 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | next |
 | 4 | Encryption | not started |
 | 5 | Windows server interop, release 0.2.0 | not started |
@@ -210,6 +211,27 @@ are the published keys. The A.1 and A.2 messages are shared constants in
   not the final, successful SESSION_SETUP response.
 * The hash state is 64 bytes per connection and per session in progress;
   the engine pull request decides where it lives.
+
+## AES-CMAC message signing (#122)
+
+`SMB.Core_Wire.Sign_CMAC` and `Verify_Signature_CMAC` are the SMB 3.1.1
+forms of `Sign` and `Verify_Signature`: AES-128-CMAC over the whole message
+with the Signature field zeroed, under a 16-byte key typed as
+`SMB.AES.Key_128`. Nothing calls them yet.
+
+* They are separate procedures, not an algorithm parameter of `Sign`, so
+  the contracts that `core_connection`, `core_client` and the engine prove
+  against stay as they were. The engine pull request picks one by dialect.
+* `Verify_Signature_CMAC` feeds the header, a zero signature and the rest
+  to the incremental CMAC. The rest is skipped when empty: for a bare
+  header that ends at `Natural'Last`, its first index would overflow,
+  which GNATprove reported and a test now covers.
+* Like `Sign`, `Sign_CMAC` has a postcondition with `Data'Old`, which
+  `-gnata` copies at run time, so it is not on the stack check's list of
+  static frames; `Verify_Signature_CMAC` is.
+* The final SESSION_SETUP responses of Microsoft's A.1 and A.2 examples
+  are the published vectors: each verifies with its session's derived
+  signing key.
 
 ## Next steps
 
