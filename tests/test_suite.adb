@@ -18,6 +18,7 @@ with SMB.Core_Transport;
 with SMB.Core_Wire;
 with SMB.AES;
 with SMB.AES.CMAC;
+with SMB.KDF;
 with SMB.Crypto;
 with SMB.Engine;
 with SMB.Entropy;
@@ -1692,6 +1693,77 @@ procedure Test_Suite is
       Ada.Text_IO.Put_Line
         ("AES-CMAC: known answers, every split, and 301 chained lengths passed");
    end Test_AES_CMAC;
+
+   procedure Test_KDF is
+      --  The SMB 3.1.1 keys published in Microsoft's worked examples (see
+      --  the Testing section of docs/smb3-design.md): the anatomy blog's
+      --  master session (the preauth blog's A.1) and binding channel, the
+      --  preauth blog's A.2 and B, which print only the signing key, and
+      --  the encryption blog's A.1 (AES-128-GCM) and A.2 (AES-128-CCM).
+      --  Each key is the session's ExportedSessionKey, each hash its final
+      --  preauth integrity hash value.
+      procedure Check
+        (Name, Session_Key, Preauth_Hash : String;
+         Purpose : SMB.KDF.Key_Purpose;
+         Expected : String) is
+      begin
+         Assert_Equal
+           (SMB.KDF.Derive (Hex (Session_Key), Purpose, Hex (Preauth_Hash)),
+            Hex (Expected),
+            "SMB 3.1.1 KDF " & Name & " " & SMB.KDF.Key_Purpose'Image (Purpose));
+      end Check;
+
+      Anatomy_Key : constant String := "270E1BA896585EEB7AF3472D3B4C75A7";
+      Anatomy_Hash : constant String :=
+        "0DD13628CC3ED218EF9DF9772D436D0887AB9814BFAE63A80AA845F36909DB79"
+        & "28622DDDAD522D9751640A459762C5A9D6BB084CBB3CE6BDADEF5D5BCE3C6C01";
+      Binding_Key : constant String := "84B9DBB730116A8FA6E9889555C265F9";
+      Binding_Hash : constant String :=
+        "EA3BF912B11CBFEC5B1889E8209614218687F82FA5294521AD3063425E49E88A"
+        & "10BD022124CE25123BC9111F52D9566BA88BF46344E6063DC5E3FF0389026F6C";
+      Preauth_A2_Key : constant String := "FD67875E7DF37605F5A9D226991A8782";
+      Preauth_A2_Hash : constant String :=
+        "BD57317658D28E7599C2491165F5D6FB36AD0AD65833774A6684D07F83EF2EBA"
+        & "B8726C1D76704AF325285A70FCBAD053F39EF4C031AE67C56006C50C6D349EC6";
+      Preauth_B_Key : constant String := "A8B3FCB8C96884BA9126132AE5B076AF";
+      Preauth_B_Hash : constant String :=
+        "CB3320852ED35231F1087E6A4828C129384F7041005FF76543B46B1590574300"
+        & "B376771109C29903D0A5E6EB124A3BCA8DD9CF0FBF2EF60F2FED746A70CE0533";
+      GCM_Key : constant String := "419FDDF34C1E001909D362AE7FB6AF79";
+      GCM_Hash : constant String :=
+        "B23F3CBFD69487D9832B79B1594A367CDD950909B774C3A4C412B4FCEA9EDDDB"
+        & "A7DB256BA2EA30E977F11F9B113247578E0E915C6D2A513B8F2FCA5707DC8770";
+      CCM_Key : constant String := "07B7F69C1E2581662DF6987E88F9E891";
+      CCM_Hash : constant String :=
+        "DECF98A420718718F22090D3580FCC5E484BD310FA1268210C6E86335A8891E7"
+        & "67F5BCD99FA5A7859D665AD07A73EA94E1BCDB7CFA69A6962A28A244138340B1";
+   begin
+      Check ("anatomy master session", Anatomy_Key, Anatomy_Hash, SMB.KDF.Signing,
+             "73FE7A9A77BEF0BDE49C650D8CCB5F76");
+      Check ("anatomy master session", Anatomy_Key, Anatomy_Hash, SMB.KDF.Encryption,
+             "629BCBC54422A0F572B97F45989B6073");
+      Check ("anatomy master session", Anatomy_Key, Anatomy_Hash, SMB.KDF.Decryption,
+             "E2AF0DCEFAC68DA71A0DFBD0D1350D74");
+      Check ("anatomy binding channel", Binding_Key, Binding_Hash, SMB.KDF.Signing,
+             "C962BCA1A9DD1697B030644199705431");
+      Check ("preauth A.2", Preauth_A2_Key, Preauth_A2_Hash, SMB.KDF.Signing,
+             "D9AE56D84460F692E15673D7AC357904");
+      Check ("preauth B", Preauth_B_Key, Preauth_B_Hash, SMB.KDF.Signing,
+             "5756AC382298721282D4D9F61CF1195F");
+      Check ("encryption A.1 (GCM)", GCM_Key, GCM_Hash, SMB.KDF.Signing,
+             "8765949DFEAEE105CE9118B45BE988F0");
+      Check ("encryption A.1 (GCM)", GCM_Key, GCM_Hash, SMB.KDF.Encryption,
+             "A2F5E80E5D59103034F32E52F698E5EC");
+      Check ("encryption A.1 (GCM)", GCM_Key, GCM_Hash, SMB.KDF.Decryption,
+             "748C50868C90F302962A5C35F5F9A8BF");
+      Check ("encryption A.2 (CCM)", CCM_Key, CCM_Hash, SMB.KDF.Signing,
+             "3DCC82C5795AE27F383242761078C59B");
+      Check ("encryption A.2 (CCM)", CCM_Key, CCM_Hash, SMB.KDF.Encryption,
+             "DFAAA31AAE40A2485D47AC4DF09FDA1D");
+      Check ("encryption A.2 (CCM)", CCM_Key, CCM_Hash, SMB.KDF.Decryption,
+             "95C544AEF6072680DA1CE49A68A97FA6");
+      Ada.Text_IO.Put_Line ("SMB 3.1.1 KDF: 12 published keys passed");
+   end Test_KDF;
 
    procedure Test_NTLM_Authenticate is
       Challenge : constant SMB.Bytes := Hex
@@ -9012,6 +9084,7 @@ begin
    Test_SHA512;
    Test_AES;
    Test_AES_CMAC;
+   Test_KDF;
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;

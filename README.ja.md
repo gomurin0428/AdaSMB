@@ -132,6 +132,7 @@ make ntlm-test              # NTLM challenge と認証出力の差分試験
 make crypto-test            # OpenSSL / Python と hash・HMAC の差分試験
 make aes-test               # Python の cryptography と AES-128 の差分試験
 make cmac-test              # Python の cryptography と AES-128-CMAC の差分試験
+make kdf-test               # Python の cryptography と SMB 3.1.1 の鍵導出の差分試験
 make signing-test           # SMB 署名の組立て・改ざん拒否を Python と照合
 make clock-test             # FILETIME の全暦日・秒・100ns 端数を Python と照合
 make check                  # warnings-as-errors と依存関係検査（stack-check を含む）
@@ -154,8 +155,8 @@ make mutation-diff          # 同じことを origin/main から変わった行�
 指定します。ライブラリのソースに一度に一つだけ小さな変更（演算子、
 リテラル、条件、代入や呼び出し一つを `null` に置換）を加え、`test_suite` を
 作り直して実行します。試験が気づかなかった変更が生き残ったミュータント
-です。照合試験が対象にしている単位（NTLM、ハッシュ・AES・AES-CMAC と署名、
-UTF 変換、時刻）のミュータントを `test_suite` が見逃したときは、
+です。照合試験が対象にしている単位（NTLM、ハッシュ・AES・AES-CMAC・鍵導出と
+署名、UTF 変換、時刻）のミュータントを `test_suite` が見逃したときは、
 [`tests/mutant_tests.py`](tests/mutant_tests.py) がその照合試験も実行するので、
 該当するすべての試験が見逃したミュータントだけが生き残ります。変更前の
 ベースラインではすべての照合試験を実行するため、`make mutation` と
@@ -197,6 +198,12 @@ NTLM 互換用途以外の新しい設計に推奨するものでもありませ
 通る鍵での 5 ブロックまでのすべての長さと 4 KiB までの大きなブロック境界前後の
 長さ、64 KiB とフレーム上限前後の長さ、パディングでしか区別できない
 メッセージ、シード固定の乱数メッセージを、一括と分割入力の両方で検査します。
+
+`make kdf-test` は SMB 3.1.1 の鍵導出（HMAC-SHA256 を使うカウンターモードの
+SP 800-108）を同じパッケージの `KBKDFHMAC` と比較します。Microsoft が公開して
+いる 3.1.1 の署名鍵・暗号化鍵・復号鍵 12 個、全ビット 0 と全ビット 1 の入力、
+シード固定の乱数のセッション鍵と preauth ハッシュを、3 つのラベルすべてで
+検査します。
 
 example はホスト、share、パスを引数に取れますが、パスワードを引数に
 取りません。`SMB_USER`、`SMB_DOMAIN`、`SMB_PASSWORD` 環境変数を使います。

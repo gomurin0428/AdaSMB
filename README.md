@@ -151,6 +151,7 @@ make ntlm-test              # NTLM challenge handling and authentication output
 make crypto-test            # hashes and HMAC against OpenSSL / Python
 make aes-test               # AES-128 against Python's cryptography package
 make cmac-test              # AES-128-CMAC against Python's cryptography package
+make kdf-test               # SMB 3.1.1 key derivation against Python's cryptography
 make signing-test           # SMB signing and tamper rejection against Python
 make clock-test             # FILETIME for every day, second and 100 ns fraction
 make check                  # warnings as errors and dependency checks (with stack-check)
@@ -174,9 +175,9 @@ passing whenever a stale value happens to be the expected one.
 library source (an operator, a literal, a condition, or a whole assignment or
 call replaced by `null`), rebuilds `test_suite` and runs it. A change the tests
 do not notice is a surviving mutant. When `test_suite` misses a mutant of a
-unit that a comparison test covers (NTLM, hashes, AES, AES-CMAC and signing,
-UTF conversion, the clock), [`tests/mutant_tests.py`](tests/mutant_tests.py)
-also runs that comparison test, so only the mutants that every applicable test
+unit that a comparison test covers (NTLM, hashes, AES, AES-CMAC, the key
+derivation and signing, UTF conversion, the clock),
+[`tests/mutant_tests.py`](tests/mutant_tests.py) also runs that comparison test, so only the mutants that every applicable test
 misses survive. The unmutated baseline runs every comparison test, so
 `make mutation` and `make mutation-diff` need what those tests need, including
 Python's `cryptography` package. Contracts, pragmas and ghost code are not
@@ -216,6 +217,12 @@ and the lengths around larger block boundaries up to 4 KiB, under keys that
 take every subkey-doubling path; the lengths around 64 KiB and the frame
 limit; messages that only the padding tells apart; and seeded random
 messages, each one-shot and fed in pieces.
+
+`make kdf-test` compares the SMB 3.1.1 key derivation (SP 800-108 in counter
+mode with HMAC-SHA256) with the same package's `KBKDFHMAC`: Microsoft's twelve
+published 3.1.1 signing, encryption and decryption keys, all-zero and all-one
+inputs, and seeded random session keys and preauth hashes, each under all
+three labels.
 
 The example takes the host, share and path as arguments, but not the
 password. It reads the `SMB_USER`, `SMB_DOMAIN` and `SMB_PASSWORD` environment
