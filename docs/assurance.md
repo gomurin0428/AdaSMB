@@ -8,12 +8,12 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes nineteen units (eighteen bodies plus `SMB`'s
+`proof.gpr` explicitly includes twenty units (nineteen bodies plus `SMB`'s
 types). These are the implementations called by `SMB.Client` and
 `SMB.Transport`, not a parallel model, plus `SMB.AES`, `SMB.AES.CMAC`,
-`SMB.AES.CCM`, `SMB.AES.GCM`, `SMB.KDF` and `SMB.Core_Negotiate`, which
-nothing in the library calls yet: they are the cryptography and negotiation
-for the SMB 3.1.1 work.
+`SMB.AES.CCM`, `SMB.AES.GCM`, `SMB.KDF`, `SMB.Core_Negotiate` and
+`SMB.Core_Preauth`, which nothing in the library calls yet: they are the
+cryptography and negotiation for the SMB 3.1.1 work.
 
 | Unit | Runtime responsibility |
 | --- | --- |
@@ -32,6 +32,7 @@ for the SMB 3.1.1 work.
 | `SMB.Core_Transport` | Native stream frame construction, exact receive-prefix copying with prefix/tail preservation, bounded partial-read/write progress and unsent-slice selection |
 | `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
 | `SMB.Core_Negotiate` | The SMB 3.1.1 NEGOTIATE request body with its preauth integrity and encryption contexts, and the checks on a 3.1.1 response's negotiate contexts; run-time safety and a cipher of `No_Cipher` on failure |
+| `SMB.Core_Preauth` | The SMB 3.1.1 preauth integrity hash step, SHA-512 of the previous value and a message; run-time safety |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions |
