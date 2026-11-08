@@ -4492,12 +4492,15 @@ nothing; AdaMutant does not mutate contracts, so the change adds no
 mutants. Two other changes were tried and dropped. Stating the prefix
 property as an assertion at the end of the loop body took 138 seconds on
 its own, and would scan the prefix for every unit at run time. Moving the
-exit test after the invariants made the invariant take 234 seconds.
+exit test after the invariants made the invariant take 234 seconds. With
+the contract, the third `proof.yml` run proved every check in 50 minutes.
 
 GNATprove 16.1.0 on an Apple M4 Mac mini with 16 GB of RAM reported
-**5,550 checks** (799 flow, 4,751 prover, most of them by z3), zero
-unproved or justified, zero `pragma Assume`, and 16 units, in about 67
-minutes. gnatwhy3, cvc5 and z3 together peaked near 9 GB.
+**5,494 checks** (799 flow, 4,695 prover, most of them by z3), zero
+unproved or justified, zero `pragma Assume`, and 16 units. The run took 84
+minutes with builds and tests running alongside; one on its own, before the
+`Store_Unit` contract, took about 67. The prover processes together peaked
+near 9.6 GB.
 None of the 81 warnings is on a changed line. `make check` (with
 `GPRBUILD="gprbuild -f"`) and `make test` passed with the new toolchain. A
 changed-line AdaMutant run detected all 4 mutants (three statement deletions

@@ -208,8 +208,9 @@ The AES pull request touches each of these. Its diff is the template.
   Homebrew's `gmp`.
 * With 16 GB of RAM, prove one unit at a time with `-j4` and watch
   `gnatwhy3`'s memory. The full gnatprove 16.1.0 proof with cvc5, z3 and
-  alt-ergo took about 67 minutes on an M4 Mac mini; gnatwhy3, cvc5 and z3
-  together peaked near 9 GB.
+  alt-ergo took 67 to 84 minutes on an M4 Mac mini, and the prover
+  processes together peaked near 9.6 GB. On the GitHub runner it took 50
+  minutes.
 * `make aes-test`, `make cmac-test`, `make kdf-test` and the mutation runs
   need `cryptography` for the interpreter behind `python`; `python -m pip
   install --user cryptography==50.0.2` matches the Windows CI pin.
