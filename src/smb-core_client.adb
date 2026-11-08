@@ -995,6 +995,31 @@ is
       Status := (if S = SMB.Ok then Failure else S);
    end Fail_Metadata;
 
+   --  Bytes equal one by one make equal slices. Proved on its own: in
+   --  Prepare_Metadata's context GNATprove 16 times out on it. The offsets
+   --  count from Target'First, so a caller computes no index.
+   procedure Lemma_Slice_Equals
+     (Target, Source : SMB.Bytes; First, Last : Natural)
+   with Ghost,
+     Pre => Target'Length <= SMB.Maximum_Frame_Size
+       and then Source'Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+       and then
+         (if Source'Length > 0 then
+            First <= Last
+            and then Last < Target'Length
+            and then Last - First + 1 = Source'Length
+            and then
+              (for all Index in 0 .. Source'Length - 1 =>
+                 Target (Target'First + First + Index) =
+                   Source (Source'First + Index))),
+     Post =>
+       (if Source'Length > 0 then
+          Target (Target'First + First .. Target'First + Last) = Source)
+   is
+   begin
+      null;
+   end Lemma_Slice_Equals;
+
    procedure Prepare_Metadata
      (Value : in out Metadata_Operation;
       State : in out SMB.Engine.Engine_State;
@@ -1008,6 +1033,7 @@ is
    with
      Pre => Kind in Rename_Metadata | Disposition_Metadata
        and then Name'Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+       and then (if Kind = Disposition_Metadata then Name'Length = 0)
        and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
        Used <= Output'Length
@@ -1069,6 +1095,70 @@ is
                Metadata_Snapshot_Of (Value).Access_Mode,
                Metadata_Snapshot_Of (Value).Directory))
    is
+      --  Seal_Request's postcondition is proved. Checking it at run time
+      --  would keep a copy of the whole packet for Output'Old while
+      --  Prepare_Header and Sign_Packet make their own copies.
+      pragma Assertion_Policy (Post => Ignore);
+
+      --  Writes the header of a request whose body is in place, then signs
+      --  it. A procedure of its own, with the name in the body in its
+      --  contract, so that GNATprove carries the name through both steps in
+      --  a small context; inline, GNATprove 16 times out on it.
+      procedure Seal_Request
+        (Output : in out SMB.Bytes;
+         Need : Natural;
+         Expected : SMB.Engine.Request_Expectation;
+         Key : SMB.Bytes;
+         Name : SMB.Bytes;
+         Status : out SMB.Core_Status)
+      with
+        Pre =>
+          Output'Length <= SMB.Maximum_Frame_Size
+          and then Need >= Header_Length
+          and then Need <= Output'Length
+          and then Key'Length <= SMB.Maximum_Frame_Size
+          and then Name'Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+          and then
+            (if Name'Length > 0 then
+               Header_Length + 52 + Name'Length <= Output'Length
+               and then
+                 (for all Index in 0 .. Name'Length - 1 =>
+                    Output (Output'First + Header_Length + 52 + Index) =
+                      Name (Name'First + Index))),
+        Post =>
+          (if Status = SMB.Ok then
+             SMB.Core_Wire.Encoded_U16 (Output, 4) = 64
+             and then SMB.Core_Wire.Encoded_U16 (Output, 12) =
+               SMB.Word (Expected.Command)
+             and then SMB.Core_Wire.Encoded_U64 (Output, 24) =
+               Expected.Message_Id
+             and then SMB.Core_Wire.Encoded_U32 (Output, 36) =
+               Expected.Tree_Id
+             and then SMB.Core_Wire.Encoded_U64 (Output, 40) =
+               Expected.Session_Id
+             and then SMB.Core_Wire.Encoded_U32 (Output, 16) = 8
+             and then
+               (for all Index in Output'Range =>
+                  (if Index - Output'First >= Header_Length
+                   then Output (Index) = Output'Old (Index)))
+             and then
+               (if Name'Length > 0 then
+                  (for all Index in 0 .. Name'Length - 1 =>
+                     Output (Output'First + Header_Length + 52 + Index) =
+                       Name (Name'First + Index))))
+      is
+         pragma Unreferenced (Name);
+         E : SMB.Core_Status;
+      begin
+         Prepare_Header (Output, Expected, Status);
+         --  adamutant:disable-next-line ConditionalExpression: the precondition leaves room for the header
+         if Status = SMB.Ok then
+            Sign_Packet (Output, Need, Key, E);
+            --  adamutant:disable-next-line StatementDeletion: Sign_Packet cannot fail on a whole request
+            Status := E;
+         end if;
+      end Seal_Request;
+
       --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       Id : SMB.Bytes (0 .. 15) := (others => 0);
       Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
@@ -1082,7 +1172,6 @@ is
       --  adamutant:disable-next-line NumericLiteral: Begin_Request sets it
       Message : SMB.QWord := 0;
       Expected : SMB.Engine.Request_Expectation;
-      E : SMB.Core_Status;
       Before_Begin : constant SMB.Engine.Engine_State := State with Ghost;
       Old_Metadata : constant Metadata_State_Snapshot :=
         Metadata_Snapshot_Of (Value);
@@ -1167,8 +1256,13 @@ is
       end;
       pragma Assert (Before_Begin = State);
       pragma Assert
-        (for all Index in 10 .. 15 =>
-           Output (Output'First + Header_Length + Index) = 0);
+        ((for all Index in 10 .. 15 =>
+              Output (Output'First + Header_Length + Index) = 0)
+           and then
+             (if Kind = Rename_Metadata then
+                (for all Index in 0 .. Name'Length - 1 =>
+                   Output (Output'First + Header_Length + 52 + Index) =
+                     Name (Name'First + Index))));
       SMB.Engine.Begin_Request
         (State, 17, True, True, Message, Expected, S);
       --  adamutant:disable-next-line ConditionalExpression: the checks above leave Begin_Request nothing to reject
@@ -1205,14 +1299,85 @@ is
         (SMB.Engine.Handle_Matches_In_States
            (Before_Begin, State, Token, Value.File_Id, Value.Access_Mode,
             Value.Directory));
-      Prepare_Header (Output, Expected, S);
-      --  adamutant:disable-next-line ConditionalExpression: Output holds at least a header, as checked above
-      if S = SMB.Ok then
-         Sign_Packet
-           (Output, Need, SMB.Engine.Current_Signing_Key (State), E);
-         --  adamutant:disable-next-line StatementDeletion: Sign_Packet cannot fail on a whole request
-         S := E;
-      end if;
+      --  Keep only what the rest of the procedure needs. With everything
+      --  before this point in context, GNATprove 16 times out even on direct
+      --  consequences of Seal_Request's postcondition.
+      pragma Assert_And_Cut
+        (Kind in Rename_Metadata | Disposition_Metadata
+         and then Name'Length <= SMB.Core_Protocol.Maximum_Name_Bytes
+         and then (if Kind = Disposition_Metadata then Name'Length = 0)
+         and then
+           (if Kind = Rename_Metadata then
+              Name'Length > 0 and then Name'Length mod 2 = 0)
+         and then Output'Length <= SMB.Maximum_Frame_Size
+         and then Need =
+           (if Kind = Disposition_Metadata then Header_Length + 33
+            else Header_Length + 52 + Name'Length)
+         and then Need <= Output'Length
+         and then Old_Metadata.Stage = Metadata_Idle
+         and then Metadata_Preparation_Context_Matches
+           (Old_Metadata, Before_Begin, Token)
+         and then Value.Stage = Metadata_Prepared
+         and then Value.Kind = Kind
+         and then Value.Owner = SMB.Engine.Current_Owner_Id (State)
+         and then Value.Epoch = SMB.Engine.Current_Epoch (State)
+         and then Value.Token = Token
+         and then Value.Token.Owner = Value.Owner
+         and then Value.Token.Epoch = Value.Epoch
+         and then Value.Token.Ticket /= 0
+         and then Value.Delete_File = Delete_File
+         and then Value.Name_Length = Name'Length
+         and then SMB.Engine."=" (Value.Expected, Expected)
+         and then SMB.Engine.Pending_Request_Matches (State, Expected)
+         and then Expected.Command = 17
+         and then Expected.Request_Signed
+         and then Expected.Signed
+         and then Expected.Request_Amount = 0
+         and then SMB.Engine.Handle_Matches
+           (Before_Begin, Token, Value.File_Id, Value.Access_Mode,
+            Value.Directory)
+         and then SMB.Engine.Handle_Matches_In_States
+           (Before_Begin, State, Token, Value.File_Id, Value.Access_Mode,
+            Value.Directory)
+         and then SMB.Engine.Handle_Matches
+           (State, Token, Value.File_Id, Value.Access_Mode, Value.Directory)
+         and then SMB.Core_Wire.Encoded_U16 (Output, Header_Length) = 33
+         and then Output (Output'First + Header_Length + 2) = 1
+         and then SMB.Core_Wire.Encoded_U16 (Output, Header_Length + 8) = 96
+         and then
+           (for all Index in 10 .. 15 =>
+              Output (Output'First + Header_Length + Index) = 0)
+         and then
+           (for all Index in 0 .. 15 =>
+              Output (Output'First + Header_Length + 16 + Index) =
+                Value.File_Id (Value.File_Id'First + Index))
+         and then
+           (if Kind = Disposition_Metadata then
+              Output (Output'First + Header_Length + 3) = 13
+              and then SMB.Core_Wire.Encoded_U32
+                (Output, Header_Length + 4) = 1
+              and then Output (Output'First + Header_Length + 32) =
+                (if Delete_File then 1 else 0)
+            else
+              Output (Output'First + Header_Length + 3) = 10
+              and then SMB.Core_Wire.Encoded_U32
+                (Output, Header_Length + 4) = SMB.DWord (20 + Name'Length)
+              and then
+                (for all Index in 32 .. 47 =>
+                   Output (Output'First + Header_Length + Index) = 0)
+              and then SMB.Core_Wire.Encoded_U32
+                (Output, Header_Length + 48) = SMB.DWord (Name'Length)
+              and then
+                (for all Index in 0 .. Name'Length - 1 =>
+                   Output (Output'First + Header_Length + 52 + Index) =
+                     Name (Name'First + Index))));
+      Seal_Request
+        (Output, Need, Expected, SMB.Engine.Current_Signing_Key (State),
+         Name, S);
+      pragma Assert
+        (if S = SMB.Ok then
+           (for all Index in 10 .. 15 =>
+              Output (Output'First + Header_Length + Index) = 0));
       --  adamutant:disable-next-line ConditionalExpression: as above
       if S /= SMB.Ok then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above
@@ -1222,6 +1387,74 @@ is
          return;
       end if;
       Used := Need;
+      pragma Assert
+        ((for all Index in 10 .. 15 =>
+              Output (Output'First + Header_Length + Index) = 0)
+           and then
+             (if Kind = Rename_Metadata then
+                (for all Index in 0 .. Name'Length - 1 =>
+                   Output (Output'First + Header_Length + 52 + Index) =
+                     Name (Name'First + Index))));
+      --  The parts of Metadata_Packet_Matches, one by one.
+      pragma Assert
+        (Value.Stage = Metadata_Prepared
+         and then Value.Kind in Rename_Metadata | Disposition_Metadata
+         and then Value.Owner = SMB.Engine.Current_Owner_Id (State)
+         and then Value.Epoch = SMB.Engine.Current_Epoch (State)
+         and then Value.Token.Owner = Value.Owner
+         and then Value.Token.Epoch = Value.Epoch
+         and then Value.Token.Ticket /= 0);
+      pragma Assert
+        (SMB.Engine.Pending_Request_Matches (State, Value.Expected)
+         and then Value.Expected.Command = 17
+         and then Value.Expected.Request_Signed
+         and then Value.Expected.Signed
+         and then Value.Expected.Request_Amount = 0
+         and then Value.Name_Length <= SMB.Core_Protocol.Maximum_Name_Bytes);
+      pragma Assert
+        (Used <= Output'Length
+         and then Used =
+           (if Value.Kind = Disposition_Metadata
+            then SMB.Core_Wire.Header_Size + 33
+            else SMB.Core_Wire.Header_Size + 52 + Value.Name_Length));
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U16 (Output, 4) =
+           SMB.Word (SMB.Core_Wire.Header_Size)
+         and then SMB.Core_Wire.Encoded_U16 (Output, 12) = 17
+         and then SMB.Core_Wire.Encoded_U32 (Output, 16) = 8);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U64 (Output, 24) = Value.Expected.Message_Id
+         and then SMB.Core_Wire.Encoded_U32 (Output, 36) =
+           Value.Expected.Tree_Id
+         and then SMB.Core_Wire.Encoded_U64 (Output, 40) =
+           Value.Expected.Session_Id);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U16 (Output, SMB.Core_Wire.Header_Size) = 33
+         and then Output (Output'First + SMB.Core_Wire.Header_Size + 2) = 1
+         and then SMB.Core_Wire.Encoded_U16
+           (Output, SMB.Core_Wire.Header_Size + 8) = 96);
+      pragma Assert
+        (for all Index in 0 .. 15 =>
+           Output (Output'First + SMB.Core_Wire.Header_Size + 16 + Index) =
+             Value.File_Id (Value.File_Id'First + Index));
+      pragma Assert
+        (if Value.Kind = Disposition_Metadata then
+           Output (Output'First + SMB.Core_Wire.Header_Size + 3) = 13
+           and then SMB.Core_Wire.Encoded_U32
+             (Output, SMB.Core_Wire.Header_Size + 4) = 1
+           and then Output (Output'First + SMB.Core_Wire.Header_Size + 32) =
+             (if Value.Delete_File then 1 else 0)
+         else
+           Output (Output'First + SMB.Core_Wire.Header_Size + 3) = 10
+           and then SMB.Core_Wire.Encoded_U32
+             (Output, SMB.Core_Wire.Header_Size + 4) =
+               SMB.DWord (20 + Value.Name_Length)
+           and then
+             (for all Index in 32 .. 47 =>
+                Output (Output'First + SMB.Core_Wire.Header_Size + Index) = 0)
+           and then SMB.Core_Wire.Encoded_U32
+             (Output, SMB.Core_Wire.Header_Size + 48) =
+               SMB.DWord (Value.Name_Length));
       pragma Assert (Metadata_Packet_Matches (Value, State, Output, Used));
       pragma Assert
         (SMB.Engine.Handle_Matches
@@ -1233,6 +1466,7 @@ is
            (Before_Begin, State, Token, Metadata_Snapshot_Of (Value).File_Id,
             Metadata_Snapshot_Of (Value).Access_Mode,
             Metadata_Snapshot_Of (Value).Directory));
+      Lemma_Slice_Equals (Output, Name, Header_Length + 52, Need - 1);
       pragma Assert
         (if Kind = Rename_Metadata then
            Output (Output'First + Header_Length + 52 ..

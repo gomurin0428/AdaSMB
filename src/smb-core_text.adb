@@ -211,6 +211,59 @@ package body SMB.Core_Text is
       end if;
    end Decode_UTF8;
 
+   --  The units of a slice that starts at an even offset are the units of
+   --  the whole array from half that offset on. Proved on its own, outside
+   --  UTF8_To_UTF16's large loop context, where the provers time out.
+   procedure Lemma_Slice_Units (Data : SMB.Bytes; Start, Count : Natural)
+     with Ghost,
+       Pre => Data'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Start mod 2 = 0
+         and then Count in 1 .. 2
+         and then Start <= Data'Length - 2 * Count,
+       Post =>
+         (for all Unit in 0 .. Count - 1 =>
+            UTF16_Unit
+              (Data (Data'First + Start .. Data'First + Start + (2 * Count - 1)),
+               Unit)
+            = UTF16_Unit (Data, Start / 2 + Unit));
+
+   procedure Lemma_Slice_Units (Data : SMB.Bytes; Start, Count : Natural) is
+      pragma Unreferenced (Start, Count);
+   begin
+      null;
+   end Lemma_Slice_Units;
+
+   --  The units just emitted for one scalar, read back as their own slice,
+   --  decode to that scalar. Proved here rather than inside UTF8_To_UTF16's
+   --  loop, whose context makes the provers time out.
+   procedure Lemma_Emitted_Scalar (Data : SMB.Bytes; Start, Stop, Scalar : Natural)
+     with Ghost,
+       Pre => Data'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Start mod 2 = 0
+         and then Start <= Stop and then Stop <= Data'Length
+         and then Scalar in 1 .. 16#10FFFF#
+         and then Scalar not in 16#D800# .. 16#DFFF#
+         and then Stop - Start = (if Scalar <= 16#FFFF# then 2 else 4)
+         and then
+           (if Scalar <= 16#FFFF# then
+              UTF16_Unit (Data, Start / 2) = Scalar
+            else
+              UTF16_Unit (Data, Start / 2) in 16#D800# .. 16#DBFF#
+              and then UTF16_Unit (Data, Start / 2 + 1) in 16#DC00# .. 16#DFFF#
+              and then 16#10000#
+                + (UTF16_Unit (Data, Start / 2) mod 1_024) * 1_024
+                + UTF16_Unit (Data, Start / 2 + 1) mod 1_024
+                = Scalar),
+       Post =>
+         UTF16_Scalar_At (Data (Data'First + Start .. Data'First + (Stop - 1)), 0)
+         = Scalar;
+
+   procedure Lemma_Emitted_Scalar (Data : SMB.Bytes; Start, Stop, Scalar : Natural) is
+      pragma Unreferenced (Scalar);
+   begin
+      Lemma_Slice_Units (Data, Start, (Stop - Start) / 2);
+   end Lemma_Emitted_Scalar;
+
    procedure UTF8_To_UTF16
      (Input : String;
       Output : out SMB.Bytes;
@@ -218,14 +271,41 @@ package body SMB.Core_Text is
       Status : out SMB.Core_Status) is
       pragma Assertion_Policy (Loop_Invariant => Ignore);
       Position : Natural := 0;
-      --  Body assertions retain the checks while enabling contextual proof.
-      procedure Store_Unit (Unit : Natural) is
+      --  Store_Unit's postcondition is proved. Checking it at run time would
+      --  copy Output for Output'Old on every unit.
+      pragma Assertion_Policy (Post => Ignore);
+      --  The postcondition says which units stay as they were, so the loop
+      --  is proved from that and not from the byte stores. Proving the loop
+      --  from the inlined body took over 300 seconds on the GitHub runner.
+      procedure Store_Unit (Unit : Natural)
+      with
+        Pre =>
+          Output'Length <= 2 * SMB.Maximum_Frame_Size
+          and then Unit <= 16#FFFF# and then Used <= Output'Length
+          and then Output'Length - Used >= 2 and then Used mod 2 = 0,
+        Post =>
+          Used = Used'Old + 2
+          and then UTF16_Unit (Output, Used'Old / 2) = Unit
+          and then
+            (for all K in 0 .. Used'Old / 2 - 1 =>
+               UTF16_Unit (Output, K) = UTF16_Unit (Output'Old, K))
+          --  A valid unit stays valid unless it is a high surrogate whose
+          --  low half was the unit this call overwrote.
+          and then
+            (for all K in 0 .. Used'Old / 2 - 1 =>
+               (if Valid_UTF16_Unit (Output'Old, K)
+                  and then
+                    (K + 1 < Used'Old / 2
+                     or else UTF16_Unit (Output'Old, K)
+                       not in 16#D800# .. 16#DBFF#)
+                then Valid_UTF16_Unit (Output, K)))
+          and then
+            (for all Index in Output'Range =>
+               (if Index - Output'First >= Used then
+                  Output (Index) = Output'Old (Index)))
+      is
          Previous_Used : constant Natural := Used;
       begin
-         pragma Assert
-           (Output'Length <= 2 * SMB.Maximum_Frame_Size
-            and then Unit <= 16#FFFF# and then Used <= Output'Length
-            and then Output'Length - Used >= 2 and then Used mod 2 = 0);
          pragma Assert (2 * (Previous_Used / 2) = Previous_Used);
          pragma Assert
            (Natural (SMB.Byte (Unit mod 256))
@@ -274,6 +354,7 @@ package body SMB.Core_Text is
          end if;
          Decoded_Scalar := Scalar;
          Scalar_Output_Start := Used;
+         pragma Assert (2 * (Scalar_Output_Start / 2) = Scalar_Output_Start);
          if Scalar <= 16#FFFF# then
             if Output'Length - Used < 2 then
                pragma Assert (Output'Length < 2 * Input'Length);
@@ -309,20 +390,9 @@ package body SMB.Core_Text is
                   * 1_024
                 + UTF16_Unit (Output, Scalar_Output_Start / 2 + 1) mod 1_024
                 = Decoded_Scalar);
-         declare
-            Emitted : constant SMB.Bytes :=
-              Output (Output'First + Scalar_Output_Start
-                      .. Output'First + (Used - 1)) with Ghost;
-         begin
-            pragma Assert
-              (UTF16_Unit (Emitted, 0) =
-                 UTF16_Unit (Output, Scalar_Output_Start / 2)
-               and then
-                 (if Emitted'Length = 4 then
-                    UTF16_Unit (Emitted, 1) =
-                      UTF16_Unit (Output, Scalar_Output_Start / 2 + 1)));
-            pragma Assert (UTF16_Scalar_At (Emitted, 0) = Decoded_Scalar);
-         end;
+         --  The emitted units, read back on their own, give the scalar.
+         Lemma_Emitted_Scalar
+           (Output, Scalar_Output_Start, Used, Decoded_Scalar);
       end loop;
       Lemma_Valid_UTF16_Prefix (Output, Used);
       Status := SMB.Ok;

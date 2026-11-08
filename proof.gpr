@@ -39,4 +39,15 @@ project Proof is
       for Default_Switches ("Ada") use
         ("-gnat2022", "-gnatW8", "-gnata", "-gnatwa");
    end Compiler;
+
+   --  A --timeout on the command line overrides these, so make prove passes
+   --  none. The two units below hold the only checks that take 40 seconds
+   --  or more on an M4 Mac (up to 83). The GitHub runner can be several
+   --  times slower: a check that took 83 seconds on the Mac ran past 300
+   --  there.
+   package Prove is
+      for Proof_Switches ("Ada") use ("--timeout=120");
+      for Proof_Switches ("smb-core_protocol.adb") use ("--timeout=300");
+      for Proof_Switches ("smb-core_client.adb") use ("--timeout=300");
+   end Prove;
 end Proof;

@@ -1,6 +1,26 @@
 with SMB.Crypto;
 
 package body SMB.Core_Wire with SPARK_Mode is
+   --  The eight bytes of a value, put back in their places, give the value.
+   --  Proved on its own, as a pure bit-vector identity, so that Write_U64's
+   --  postcondition does not have to find it inside a larger goal.
+   procedure Lemma_U64_Bytes (Value : SMB.QWord)
+   with Ghost,
+     Post =>
+       (SMB.QWord (U64_Byte (Value, 0))
+        or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 1)), 8)
+        or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 2)), 16)
+        or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 3)), 24)
+        or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 4)), 32)
+        or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 5)), 40)
+        or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 6)), 48)
+        or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 7)), 56))
+       = Value
+   is
+   begin
+      null;
+   end Lemma_U64_Bytes;
+
    procedure Read_U16
      (Data : SMB.Bytes; Offset : Natural; Value : out SMB.Word;
       Status : out SMB.Core_Status) is
@@ -123,6 +143,17 @@ package body SMB.Core_Wire with SPARK_Mode is
                  or else Index > Data'First + Offset + I
                then Data (Index) = Data'Loop_Entry (Index)));
       end loop;
+      Lemma_U64_Bytes (Value);
+      pragma Assert
+        (Encoded_U64 (Data, Offset) =
+           (SMB.QWord (U64_Byte (Value, 0))
+            or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 1)), 8)
+            or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 2)), 16)
+            or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 3)), 24)
+            or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 4)), 32)
+            or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 5)), 40)
+            or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 6)), 48)
+            or Interfaces.Shift_Left (SMB.QWord (U64_Byte (Value, 7)), 56)));
       Status := SMB.Ok;
    end Write_U64;
 

@@ -157,7 +157,7 @@ def fixtures() -> list[tuple[str, str]]:
 def run_cases(cases: list[tuple[str, str]], label: str) -> None:
     probe = ROOT / "build" / "bin" / ("ntlm_av_probe.exe" if sys.platform == "win32" else "ntlm_av_probe")
     result = subprocess.run([str(probe)], input="\n".join(line for _, line in cases) + "\n",
-                            text=True, capture_output=True, timeout=180)
+                            text=True, capture_output=True, timeout=600)
     if result.returncode != 0 or result.stdout.strip() != f"PASS {len(cases)}":
         print(result.stdout + result.stderr, file=sys.stderr)
         raise RuntimeError(f"NTLM {label} conformance failed; fixture ordering is deterministic")

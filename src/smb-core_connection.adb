@@ -429,6 +429,25 @@ is
       null;
    end Lemma_Body_Copy;
 
+   --  A packet whose GUID field matches a stored copy of a GUID matches the
+   --  GUID itself. GNATprove 16 does not find this inside Prepare_Negotiate.
+   procedure Lemma_Guid_Place (Packet, Stored, Guid : SMB.Bytes)
+   with Ghost,
+     Pre => Packet'Length >= 92
+       and then Stored'Length = 16
+       and then Guid'Length = 16
+       and then Packet_Guid_Matches (Packet, Stored)
+       and then
+         (for all Index in 0 .. 15 =>
+            Stored (Stored'First + Index) = Guid (Guid'First + Index)),
+     Post =>
+       (for all Index in 0 .. 15 =>
+          Packet (Packet'First + 76 + Index) = Guid (Guid'First + Index))
+   is
+   begin
+      null;
+   end Lemma_Guid_Place;
+
    procedure Lemma_Copies_Compose
      (Source, Middle, Target : SMB.Bytes;
       Middle_Offset, Target_Offset : Natural)
@@ -711,6 +730,9 @@ is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      State_At_Entry : constant SMB.Engine.Engine_State := State with Ghost;
+      Snapshot_At_Entry : constant Connection_State_Snapshot :=
+        Snapshot_Of (Value) with Ghost;
       Body_Buffer : SMB.Bytes (0 .. 37);
       Body_Used : Natural;
       Build_Status : SMB.Core_Status;
@@ -731,9 +753,56 @@ is
         (Value, State, Negotiate, Guid, 0,
          Body_Buffer (0 .. Body_Used - 1),
                Output, Used, Status);
-      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: the branch holds only a lemma
+      --  Prepare's postcondition is large enough that GNATprove 16 times out
+      --  on even direct consequences of it, so keep only what the
+      --  postcondition needs, as Prepare_Tree_Connect does. The GUID's place
+      --  in the packet follows from Packet_Matches_Prepared and Value.Guid.
       if Status = SMB.Ok then
-         Lemma_Copies_Compose (Guid, Body_Buffer, Output, 12, 76);
+         pragma Assert
+           (Packet_Guid_Matches (Output, Value.Guid)
+            and then Value.Guid = Guid);
+         pragma Assert
+           (for all Index in 0 .. 15 =>
+              Value.Guid (Value.Guid'First + Index) =
+                Guid (Guid'First + Index));
+         pragma Assert_And_Cut
+           (Status = SMB.Ok
+            and then Guid'Length = 16
+            and then Used <= Output'Length
+            and then Used = SMB.Core_Wire.Header_Size + 38
+            and then Output'Length >= SMB.Core_Wire.Header_Size + 38
+            and then Preparation_Context_Matches
+              (Snapshot_At_Entry, State_At_Entry, Negotiate)
+            and then Stage_Of (Value) = Prepared
+            and then Kind_Of (Value) = Negotiate
+            and then SMB.Engine.Connection_Context_Equivalent
+              (State_At_Entry, State)
+            and then Continuation_Context_Matches (Snapshot_Of (Value), State)
+            and then Packet_Matches_Prepared (Value, State, Output, Used)
+            and then Packet_Guid_Matches (Output, Value.Guid)
+            and then
+              (for all Index in 0 .. 15 =>
+                 Value.Guid (Value.Guid'First + Index) =
+                   Guid (Guid'First + Index))
+            and then
+              (for all Index in 0 .. 15 =>
+                 Snapshot_Of (Value).Guid (Index) =
+                   Guid (Guid'First + Index))
+            and then Snapshot_Of (Value).Path_Length = 0);
+         Lemma_Guid_Place (Output, Value.Guid, Guid);
+      else
+         pragma Assert_And_Cut
+           (Status /= SMB.Ok
+            and then Used <= Output'Length
+            and then
+              (if not Preparation_Context_Matches
+                    (Snapshot_At_Entry, State_At_Entry, Negotiate)
+                  or else Output'Length < SMB.Core_Wire.Header_Size + 38
+                  or else Status = SMB.Counter_Exhausted
+               then
+                 Snapshot_Of (Value) = Snapshot_At_Entry
+                 and then State = State_At_Entry
+                 and then Used = 0));
       end if;
    end Prepare_Negotiate;
 

@@ -157,7 +157,7 @@ make clock-test             # FILETIME for every day, second and 100 ns fraction
 make check                  # warnings as errors and dependency checks (with stack-check)
 make stack-check            # worst-case stack use per public API from GCC call graphs
 make example                # build/bin/smb_example
-make prove                  # needs GNATprove + cvc5/z3; fails on any unproved check
+make prove                  # needs GNATprove + cvc5/z3/alt-ergo; fails on any unproved check
 make transport-test         # TCP fragmentation, send/receive timeouts, disconnects, recovery
 make integration            # opt-in test that explicitly starts a local Samba
 make mutation               # mutation testing of the tests over all of src/*.adb (needs AdaMutant)
@@ -242,11 +242,10 @@ and Python 3.
 
 ## CI
 
-GitHub Actions (`.github/workflows`) runs the following. The toolchain is
-installed with Alire 2.1.1 (`alr` is checked against the release's SHA-256,
-and the installation is cached): GNAT 16.1.0 and gprbuild 26.0.1 for the
-builds, tests and mutation runs, and GNAT 14.2.1, gprbuild 25.0.1 and
-gnatprove 14.1.1 for the proof until it proves with gnatprove 16.1.0.
+GitHub Actions (`.github/workflows`) runs the following. The toolchain (GNAT
+16.1.0, gprbuild 26.0.1 and gnatprove 16.1.0) is installed with Alire 2.1.1
+(`alr` is checked against the release's SHA-256, and the installation is
+cached).
 
 * `ci.yml` (pushes to main, pull requests and manual runs; not run for
   documentation-only changes)

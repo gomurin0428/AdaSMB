@@ -171,22 +171,31 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Toolchain
 
-* CI builds, tests and mutates with GNAT 16.1.0 and gprbuild 26.0.1. The
-  weekly proof still uses gnatprove 14.1.1 (with GNAT 14.2.1 and gprbuild
-  25.0.1), because gnatprove 16.1.0 leaves 12 of 5,272 checks unproved,
-  even at `--level=3` with a 300-second timeout or with alt-ergo added:
-  * `smb-core_text.adb:318` and `:327` (UTF-8 to UTF-16 emission);
-  * `smb-core_wire.ads:185` (`Write_U64`'s `Encoded_U64 (Data, Offset) =
-    Value`);
-  * `smb-core_client.adb:642`, `:1225`, `:1238`, `:1243` and
-    `smb-core_client.ads:1415`;
-  * `smb-engine.adb:672`;
-  * `smb-core_protocol.ads:214` and `:333`;
-  * `smb-core_connection.ads:120`.
-
-  They are equalities over byte slices and bit-vector reconstructions that
-  the newer provers need help with. Moving the proof to 16.1.0 means adding
-  assertions there, then changing `proof.yml`.
+* CI builds, tests, mutates and proves with GNAT 16.1.0, gprbuild 26.0.1
+  and gnatprove 16.1.0. `make prove` runs cvc5, z3 and alt-ergo: z3 and
+  cvc5 time out on a few checks in `smb-core_client.adb`, whose context
+  carries the whole Engine state, and alt-ergo proves them.
+* The prover timeout is in `proof.gpr`, not on the command line: 120
+  seconds, and 300 for `core_protocol` and `core_client`, whose slowest
+  checks take up to 83 seconds on an M4. The GitHub runner can be four
+  times slower on one check. A `--timeout` on the command line overrides
+  it.
+* `UTF8_To_UTF16`'s nested `Store_Unit` has a postcondition: the units
+  before the new one keep their values, and a valid unit stays valid. The
+  loop is proved from it, not from the inlined byte stores, for which the
+  check after the loop ran past 300 seconds on the GitHub runner. The
+  postcondition is ignored at run time, so `Output'Old` is not copied.
+* Moving the proof from gnatprove 14.1.1 to 16.1.0 left 12 checks
+  unproved, which now have proof hints: byte-slice equalities and
+  bit-vector reconstructions in `smb-core_text.adb` (UTF-8 to UTF-16
+  emission), `smb-core_wire.adb` (`Write_U64`), `smb-core_client.adb`
+  (`Prepare_Metadata`), `smb-engine.adb` (the final MIC suffix),
+  `smb-core_protocol.adb` (`Build_Write`, `Build_Rename`) and
+  `smb-core_connection.adb` (`Prepare_Negotiate`'s client GUID). The hints
+  are ghost lemmas, `pragma Assert_And_Cut`, and a `Seal_Request` helper
+  that takes the signing step out of `Prepare_Metadata`'s context.
+  `Build_Write` no longer writes the zero Flags field (bytes 44 to 47),
+  which `Begin_Build` already cleared.
 * alr 2.1.1 installs every one of these versions. When GitHub's release
   downloads fail (HTTP 504), `gh release download` through the API still
   works; check the archive against the Alire index's SHA-256.
@@ -194,11 +203,14 @@ The AES pull request touches each of these. Its diff is the template.
 ## macOS environment notes
 
 * `alr -n install --prefix=<dir> gnat_native=16.1.0 gprbuild=26.0.1` and,
-  in another prefix, `gnatprove=14.1.1` (or `16.1.0`) install the
-  toolchain, as CI's `.github/scripts/install-ada.sh` does. The bundled
-  alt-ergo needs Homebrew's `gmp`, but the proofs use only cvc5 and z3.
+  in another prefix, `gnatprove=16.1.0` install the toolchain, as CI's
+  `.github/scripts/install-ada.sh` does. The bundled alt-ergo needs
+  Homebrew's `gmp`.
 * With 16 GB of RAM, prove one unit at a time with `-j4` and watch
-  `gnatwhy3`'s memory.
+  `gnatwhy3`'s memory. The full gnatprove 16.1.0 proof with cvc5, z3 and
+  alt-ergo took 67 to 84 minutes on an M4 Mac mini, and the prover
+  processes together peaked near 9.6 GB. On the GitHub runner it took 50
+  minutes.
 * `make aes-test`, `make cmac-test`, `make kdf-test` and the mutation runs
   need `cryptography` for the interpreter behind `python`; `python -m pip
   install --user cryptography==50.0.2` matches the Windows CI pin.
@@ -208,18 +220,19 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Windows environment notes
 
-* The toolchain comes from Alire 2.1.1. Before #116 it was gnat_native
-  14.2.1, gprbuild 25.0.1 and gnatprove 14.1.1; see "Toolchain" above for
-  what CI uses now.
+* The toolchain comes from Alire 2.1.1. Builds and tests used gnat_native
+  14.2.1 and gprbuild 25.0.1 before #116, and the proof used gnatprove
+  14.1.1 before #117; see "Toolchain" above for what CI uses now.
 * There is no GNU make on Windows, so run each Makefile recipe's commands
   directly.
 * Run GNATprove from PowerShell or cmd. Started from Git Bash (MSYS), it
   silently reports every prover check as unproved.
-* Prove one unit at a time. The large core units (`core_auth`,
-  `core_client`) take about four minutes each:
+* Prove one unit at a time. With gnatprove 14.1.1, the large core units
+  (`core_auth`, `core_client`) took about four minutes each; 16.1.0 has not
+  been timed on Windows. Use the provers `make prove` uses:
 
   ```powershell
-  gnatprove -P proof.gpr -u smb-aes.adb --subdirs=aes-check --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j8
+  gnatprove -P proof.gpr -u smb-aes.adb --subdirs=aes-check --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo --timeout=120 -j8
   ```
 
 * AdaMutant:

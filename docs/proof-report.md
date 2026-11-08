@@ -4416,3 +4416,94 @@ posts). `kdf_conformance.py` compares 330 fixtures with Python's
 keys, with 27 sensitivity checks, including each of the twelve published keys
 under the other two labels. A changed-line AdaMutant run detected all 64
 mutants and marks none.
+
+## GNATprove 16.1.0
+
+The proof moves from gnatprove 14.1.1 (with GNAT 14.2.1 and gprbuild 25.0.1)
+to gnatprove 16.1.0 with GNAT 16.1.0 and gprbuild 26.0.1, which CI has used
+for builds, tests and mutation runs since #116. With the same settings,
+16.1.0 left 12 of 5,272 checks unproved, also at `--level=3` with a
+300-second timeout. Each site now has proof hints. No contract is weakened,
+and no `pragma Assume` or justification is added:
+
+* `smb-core_wire.adb`: `Write_U64`'s `Encoded_U64 (Data, Offset) = Value`
+  needs a 64-bit value rebuilt from its eight bytes, which the ghost lemma
+  `Lemma_U64_Bytes` states and proves on its own.
+* `smb-core_text.adb`: in UTF-8 to UTF-16 emission, `Lemma_Slice_Units` and
+  `Lemma_Emitted_Scalar` restate the units just written through the slice's
+  rebased indices and show that they decode to the emitted scalar.
+* `smb-core_protocol.adb`: `Build_Write` cuts the context with
+  `pragma Assert_And_Cut` before the data copy. It no longer writes the zero
+  Flags field (bytes 44 to 47), which `Begin_Build` already cleared; that
+  write was annotated as an equivalent mutant. `Build_Rename` states the
+  name slice's upper bound the way its postcondition counts it.
+* `smb-core_connection.adb`: `Prepare_Negotiate` keeps a ghost snapshot of
+  its inputs, cuts the success and failure paths separately, and places the
+  client GUID with `Lemma_Guid_Place`.
+* `smb-engine.adb` and `smb-engine.ads`: `Lemma_Token_Tail` states the final
+  MIC suffix element by element, and `Final_Token_MIC_Matches` is marked
+  `Inline_For_Proof`.
+* `smb-core_client.adb`: `Prepare_Metadata`'s postcondition joins the whole
+  Engine state with the packet bytes. The new `Seal_Request`, nested in
+  it, does the header preparation and signing behind a contract that names
+  only the header fields, the unchanged body and the name. A cut before it
+  keeps only the facts the rest needs, and `Lemma_Slice_Equals` turns the
+  element-wise name copy into the slice equality of the postcondition. z3
+  and cvc5 time out on a few of these checks and alt-ergo proves them, so
+  `make prove` now runs `--prover=cvc5,z3,altergo`.
+
+The library is built with `-gnata`, so ghost code runs. `Prepare_Negotiate`'s
+ghost copy of the Engine state on entry (about 10 KB, as in
+`Prepare_Tree_Connect`) raises the worst-case static stack of
+`SMB.Client.Connect` by about 11 KB to 122,400 bytes. That is still below
+`Connect_Share`'s 187,920 and the 262,144-byte budget. `Prepare_Metadata`
+ignores `Seal_Request`'s postcondition at run time
+(`pragma Assertion_Policy (Post => Ignore)`), so its `Output'Old` does not
+keep a second copy of the packet while `Prepare_Header` and `Sign_Packet`
+make theirs.
+
+```sh
+make prove
+# gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=all --checks-as-errors=on --prover=cvc5,z3,altergo -j4
+```
+
+The prover timeout moved from the command line to `proof.gpr`: 120 seconds,
+and 300 for `smb-core_protocol.adb` and `smb-core_client.adb`. Those two
+hold the only checks that take 40 seconds or more in one prover attempt on
+the Mac: 60 seconds for `Build_Rename`'s postcondition and 83 for one
+`core_client` check. A timeout given on the command line overrides
+`proof.gpr`, so a per-unit command with `--timeout=120` can still fail on
+them.
+
+`smb-core_text.adb` had three more, all in `UTF8_To_UTF16`: the loop
+invariant, the `Lemma_Valid_UTF16_Prefix` call after the loop and an
+assertion in the loop (55, 83 and 76 seconds on the Mac). The first
+`proof.yml` run left the first two unproved at 120 seconds after 81
+minutes, and a second run at 300 seconds still left the lemma call. The
+loop was proved from the inlined byte stores of `Store_Unit`, and the check
+after a while loop also sees the last iteration's body. `Store_Unit` now
+has a contract. Its postcondition says that the units before the new one
+keep their values, and that a valid unit stays valid unless it is a high
+surrogate whose low half was overwritten. The unit now proves in 71
+seconds on the Mac, no attempt takes over 16 seconds, and it is back to the
+120-second default. The postcondition is ignored at run time
+(`pragma Assertion_Policy (Post => Ignore)`), so `Output'Old` costs
+nothing; AdaMutant does not mutate contracts, so the change adds no
+mutants. Two other changes were tried and dropped. Stating the prefix
+property as an assertion at the end of the loop body took 138 seconds on
+its own, and would scan the prefix for every unit at run time. Moving the
+exit test after the invariants made the invariant take 234 seconds. With
+the contract, the third `proof.yml` run proved every check in 50 minutes.
+
+GNATprove 16.1.0 on an Apple M4 Mac mini with 16 GB of RAM reported
+**5,494 checks** (799 flow, 4,695 prover, most of them by z3), zero
+unproved or justified, zero `pragma Assume`, and 16 units. The run took 84
+minutes with builds and tests running alongside; one on its own, before the
+`Store_Unit` contract, took about 67. The prover processes together peaked
+near 9.6 GB.
+None of the 81 warnings is on a changed line. `make check` (with
+`GPRBUILD="gprbuild -f"`) and `make test` passed with the new toolchain. A
+changed-line AdaMutant run detected all 4 mutants (three statement deletions
+and an equality operator in `smb-core_client.adb`) and marks none; the other
+changed lines are contracts, assertions and ghost code, which AdaMutant does
+not mutate.

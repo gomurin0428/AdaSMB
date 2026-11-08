@@ -529,7 +529,8 @@ is
          .. Packet'Last
             - (Packet'Length - Info.Data_Offset - Info.Data_Length)) =
         Expected_MIC)
-   with Ghost;
+   with Ghost,
+     Annotate => (GNATprove, Inline_For_Proof);
 
    procedure Lemma_Final_Token_MIC_Transfer
      (Packet : SMB.Bytes;
