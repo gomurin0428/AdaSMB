@@ -10,6 +10,8 @@ project Proof is
       "smb-aes.adb",
       "smb-aes-cmac.ads",
       "smb-aes-cmac.adb",
+      "smb-aes-ccm.ads",
+      "smb-aes-ccm.adb",
       "smb-kdf.ads",
       "smb-kdf.adb",
       "smb-core_wire.ads",

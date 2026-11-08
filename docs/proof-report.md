@@ -4507,3 +4507,48 @@ changed-line AdaMutant run detected all 4 mutants (three statement deletions
 and an equality operator in `smb-core_client.adb`) and marks none; the other
 changed lines are contracts, assertions and ghost code, which AdaMutant does
 not mutate.
+
+## AES-128-CCM (`SMB.AES.CCM`)
+
+`SMB.AES.CCM` adds AES-128-CCM (NIST SP 800-38C, RFC 3610) with SMB's
+parameters (MS-SMB2 3.1.4.3): an 11-byte nonce, so a four-byte length field,
+and a 16-byte tag. `Seal` and `Open` work on `Data` in place; associated
+data may be up to 65,279 bytes and data up to `Maximum_Frame_Size`. `Open`
+compares the recomputed tag with `SMB.Crypto.Constant_Time_Equal` and, on a
+mismatch, zeroes `Data`, which its postcondition states:
+`(if not Authentic then (for all I in Data'Range => Data (I) = 0))`. The
+counter and the length field depend only on lengths; that is a coding rule,
+not a proved property. Nothing in the library calls the package yet.
+
+```sh
+gnatprove -P proof.gpr -u smb-aes-ccm.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo --timeout=120 -j4
+```
+
+GNATprove 16.1.0 on macOS reported **70 checks** (15 flow, 55 prover, all
+by z3 or trivially), zero unproved or justified, zero `pragma Assume`, in
+about 10 seconds. `test_suite` seals and opens the four AES-CCM messages of
+Microsoft's SMB 3.1.1 encryption examples (appendix A.2), each also at
+bounds that end at `Natural'Last`, and checks that `Open` rejects a
+one-bit change in every byte of the tag and of the associated data, three
+changed ciphertext bytes, another nonce and a truncated message, leaving
+only zeros. SMB always passes associated data and a nonempty message, so
+three messages generated with Python's `AESCCM` (no associated data, no
+data, neither) cover B0 without the Adata flag and empty data: 226 checks
+in all, 215 of them rejections. `ccm_conformance.py` compares 487 fixtures with Python's
+`cryptography` `AESCCM`, after checking that it reproduces the four
+published messages; `crypto_probe` seals and opens each at four lower
+bounds of the data, with the associated data at two, and checks the
+rejection of a changed tag and ciphertext. Six sensitivity checks change
+the key, the nonce, the associated data, the plaintext, the ciphertext or
+the tag of a published message.
+
+A changed-line AdaMutant run detected all 113 mutants and marks none. The
+first run left seven: the redundant top byte and `mod` of the four-byte
+encoding, the zero initializer that every byte then overwrote, and an
+Adata flag of `16#41#`, which `16#3B# or` absorbs. `Nonce_Block` is now one
+aggregate with a precondition that bounds the value, and B0's two flags
+bytes are separate constants. `Seal` and `Open` are on the stack check's
+list of static frames; their deepest static chains are 1,840 and 2,064
+bytes, down through `Absorb_AAD` into AES's S-box. Sealing 64 KiB takes
+about 109 ms in the default unoptimized build and 37 ms at `-O2`, twice
+AES-CMAC's time: two AES blocks per 16 bytes.
