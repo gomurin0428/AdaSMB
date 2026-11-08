@@ -4648,3 +4648,21 @@ checked again. The request now writes those fields as two bytes and two
 zeros, bounds are additions, the loop checks only the positions it
 advances to, and the offset tests past the end use a packet whose length
 is a multiple of 8, so the alignment check does not reject them first.
+
+## SMB 3.1.1 preauth integrity hash (`SMB.Core_Preauth`)
+
+`SMB.Core_Preauth.Update` replaces a 64-byte hash value with SHA-512 of
+that value followed by a message, the preauth integrity step of MS-SMB2
+3.2.5.2 and 3.2.5.3.1. Nothing in the library calls it yet.
+
+```sh
+gnatprove -P proof.gpr -u smb-core_preauth.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
+```
+
+GNATprove 16.1.0 reported **4 checks** (1 flow, 3 prover), zero unproved,
+and one warning: `Context` is set by `SHA512_Finish` but not used after the
+call, as for the HMAC contexts elsewhere. `test_suite` replays the five
+hashed messages of Microsoft's A.1 and A.2 examples, checks each value
+against Python's `hashlib`, and derives both sessions' three keys with
+`SMB.KDF` from the final value: all six are the published keys. An empty
+message is checked too: 17 checks. AdaMutant detected all 4 mutants.

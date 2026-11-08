@@ -30,8 +30,8 @@ of date.
 | 2 | AES-128-CCM | merged (#118) |
 | 2 | AES-128-GCM | merged (#119) |
 | 3 | 3.1.1 negotiate contexts (`SMB.Core_Negotiate`) | merged (#120) |
-| 3 | Preauth integrity hash | next |
-| 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | not started |
+| 3 | Preauth integrity hash (`SMB.Core_Preauth`) | merged (#121) |
+| 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | next |
 | 4 | Encryption | not started |
 | 5 | Windows server interop, release 0.2.0 | not started |
 
@@ -196,12 +196,24 @@ part of phase 3. Nothing calls it yet.
   `>=` differ in some test; and only positions the loop advances to are
   checked inside it, since the first is checked before.
 
+## Preauth integrity hash (#121)
+
+`SMB.Core_Preauth.Update (Value, Message)` sets `Value` to SHA-512 of
+`Value` followed by `Message`; `Initial` is the 64 zero bytes. The test
+replays Microsoft's A.1 and A.2 chains, from the NEGOTIATE request to the
+second SESSION_SETUP request, and derives each session's signing,
+encryption and decryption keys with `SMB.KDF` from the final value: they
+are the published keys. The A.1 and A.2 messages are shared constants in
+`tests/test_suite.adb`, for the engine tests to reuse.
+
+* Hash every message whole, from its header, without the TCP framing, and
+  not the final, successful SESSION_SETUP response.
+* The hash state is 64 bytes per connection and per session in progress;
+  the engine pull request decides where it lives.
+
 ## Next steps
 
-1. **Preauth integrity hash**: SHA-512 over the NEGOTIATE and
-   SESSION_SETUP messages, as a SPARK unit tested against the hash chains
-   that Microsoft's A.1 and A.2 examples publish for every message.
-2. **Engine integration**: the dialect, cipher, preauth and key state in
+1. **Engine integration**: the dialect, cipher, preauth and key state in
    `SMB.Engine`; `Prepare_Negotiate` using `SMB.Core_Negotiate`; the
    DialectRevision and downgrade checks; signing and cipher keys from
    `SMB.KDF`; AES-CMAC signing and the signed final SESSION_SETUP
