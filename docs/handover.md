@@ -176,9 +176,15 @@ The AES pull request touches each of these. Its diff is the template.
   cvc5 time out on a few checks in `smb-core_client.adb`, whose context
   carries the whole Engine state, and alt-ergo proves them.
 * The prover timeout is in `proof.gpr`, not on the command line: 120
-  seconds, and 300 for `core_text`, `core_protocol` and `core_client`,
-  whose slowest checks take up to 83 seconds on an M4 and more than 120 on
-  the GitHub runner. A `--timeout` on the command line overrides it.
+  seconds, and 300 for `core_protocol` and `core_client`, whose slowest
+  checks take up to 83 seconds on an M4. The GitHub runner can be four
+  times slower on one check. A `--timeout` on the command line overrides
+  it.
+* `UTF8_To_UTF16`'s nested `Store_Unit` has a postcondition: the units
+  before the new one keep their values, and a valid unit stays valid. The
+  loop is proved from it, not from the inlined byte stores, for which the
+  check after the loop ran past 300 seconds on the GitHub runner. The
+  postcondition is ignored at run time, so `Output'Old` is not copied.
 * Moving the proof from gnatprove 14.1.1 to 16.1.0 left 12 checks
   unproved, which now have proof hints: byte-slice equalities and
   bit-vector reconstructions in `smb-core_text.adb` (UTF-8 to UTF-16

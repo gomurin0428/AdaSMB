@@ -41,12 +41,12 @@ project Proof is
    end Compiler;
 
    --  A --timeout on the command line overrides these, so make prove passes
-   --  none. The three units below hold the only checks that take 40 seconds
-   --  or more on an M4 Mac (up to 83); the GitHub runner is about half as
-   --  fast, and two of them passed 120 seconds there.
+   --  none. The two units below hold the only checks that take 40 seconds
+   --  or more on an M4 Mac (up to 83). The GitHub runner can be several
+   --  times slower: a check that took 83 seconds on the Mac ran past 300
+   --  there.
    package Prove is
       for Proof_Switches ("Ada") use ("--timeout=120");
-      for Proof_Switches ("smb-core_text.adb") use ("--timeout=300");
       for Proof_Switches ("smb-core_protocol.adb") use ("--timeout=300");
       for Proof_Switches ("smb-core_client.adb") use ("--timeout=300");
    end Prove;

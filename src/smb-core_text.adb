@@ -271,14 +271,41 @@ package body SMB.Core_Text is
       Status : out SMB.Core_Status) is
       pragma Assertion_Policy (Loop_Invariant => Ignore);
       Position : Natural := 0;
-      --  Body assertions retain the checks while enabling contextual proof.
-      procedure Store_Unit (Unit : Natural) is
+      --  Store_Unit's postcondition is proved. Checking it at run time would
+      --  copy Output for Output'Old on every unit.
+      pragma Assertion_Policy (Post => Ignore);
+      --  The postcondition says which units stay as they were, so the loop
+      --  is proved from that and not from the byte stores. Proving the loop
+      --  from the inlined body took over 300 seconds on the GitHub runner.
+      procedure Store_Unit (Unit : Natural)
+      with
+        Pre =>
+          Output'Length <= 2 * SMB.Maximum_Frame_Size
+          and then Unit <= 16#FFFF# and then Used <= Output'Length
+          and then Output'Length - Used >= 2 and then Used mod 2 = 0,
+        Post =>
+          Used = Used'Old + 2
+          and then UTF16_Unit (Output, Used'Old / 2) = Unit
+          and then
+            (for all K in 0 .. Used'Old / 2 - 1 =>
+               UTF16_Unit (Output, K) = UTF16_Unit (Output'Old, K))
+          --  A valid unit stays valid unless it is a high surrogate whose
+          --  low half was the unit this call overwrote.
+          and then
+            (for all K in 0 .. Used'Old / 2 - 1 =>
+               (if Valid_UTF16_Unit (Output'Old, K)
+                  and then
+                    (K + 1 < Used'Old / 2
+                     or else UTF16_Unit (Output'Old, K)
+                       not in 16#D800# .. 16#DBFF#)
+                then Valid_UTF16_Unit (Output, K)))
+          and then
+            (for all Index in Output'Range =>
+               (if Index - Output'First >= Used then
+                  Output (Index) = Output'Old (Index)))
+      is
          Previous_Used : constant Natural := Used;
       begin
-         pragma Assert
-           (Output'Length <= 2 * SMB.Maximum_Frame_Size
-            and then Unit <= 16#FFFF# and then Used <= Output'Length
-            and then Output'Length - Used >= 2 and then Used mod 2 = 0);
          pragma Assert (2 * (Previous_Used / 2) = Previous_Used);
          pragma Assert
            (Natural (SMB.Byte (Unit mod 256))

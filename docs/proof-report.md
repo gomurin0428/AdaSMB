@@ -4468,15 +4468,31 @@ make prove
 ```
 
 The prover timeout moved from the command line to `proof.gpr`: 120 seconds,
-and 300 for `smb-core_text.adb`, `smb-core_protocol.adb` and
-`smb-core_client.adb`. Those three hold the only checks that took 40 seconds
-or more in one prover attempt on the Mac: up to 83 seconds, for the
-loop invariant of `UTF8_To_UTF16`, the `Lemma_Valid_UTF16_Prefix` call after
-that loop, an assertion in it, `Build_Rename`'s postcondition and one
-`core_client` postcondition. The first `proof.yml` run on the GitHub runner
-left the first two unproved at 120 seconds; the whole run took 81 minutes.
-A timeout given on the command line overrides `proof.gpr`, so a per-unit
-command with `--timeout=120` can still fail on those checks.
+and 300 for `smb-core_protocol.adb` and `smb-core_client.adb`. Those two
+hold the only checks that take 40 seconds or more in one prover attempt on
+the Mac: 60 seconds for `Build_Rename`'s postcondition and 83 for one
+`core_client` check. A timeout given on the command line overrides
+`proof.gpr`, so a per-unit command with `--timeout=120` can still fail on
+them.
+
+`smb-core_text.adb` had three more, all in `UTF8_To_UTF16`: the loop
+invariant, the `Lemma_Valid_UTF16_Prefix` call after the loop and an
+assertion in the loop (55, 83 and 76 seconds on the Mac). The first
+`proof.yml` run left the first two unproved at 120 seconds after 81
+minutes, and a second run at 300 seconds still left the lemma call. The
+loop was proved from the inlined byte stores of `Store_Unit`, and the check
+after a while loop also sees the last iteration's body. `Store_Unit` now
+has a contract. Its postcondition says that the units before the new one
+keep their values, and that a valid unit stays valid unless it is a high
+surrogate whose low half was overwritten. The unit now proves in 71
+seconds on the Mac, no attempt takes over 16 seconds, and it is back to the
+120-second default. The postcondition is ignored at run time
+(`pragma Assertion_Policy (Post => Ignore)`), so `Output'Old` costs
+nothing; AdaMutant does not mutate contracts, so the change adds no
+mutants. Two other changes were tried and dropped. Stating the prefix
+property as an assertion at the end of the loop body took 138 seconds on
+its own, and would scan the prefix for every unit at run time. Moving the
+exit test after the invariants made the invariant take 234 seconds.
 
 GNATprove 16.1.0 on an Apple M4 Mac mini with 16 GB of RAM reported
 **5,550 checks** (799 flow, 4,751 prover, most of them by z3), zero
