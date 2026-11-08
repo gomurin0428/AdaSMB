@@ -25,6 +25,7 @@ package SMB is
       Counter_Exhausted);
 
    SMB2_Dialect_0210 : constant Word := 16#0210#;
+   SMB2_Dialect_0311 : constant Word := 16#0311#;
    Maximum_Frame_Size : constant := 1_048_576;
 
    Success : constant DWord := 0;

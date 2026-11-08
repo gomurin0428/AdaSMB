@@ -33,7 +33,7 @@ or ambiguous, the choice is marked as ours.
 * Dialects: `0x0311`, plus `0x0210` only when 2.1 is allowed. The response's
   DialectRevision must be one of the offered dialects, or the connection is
   closed.
-* SecurityMode stays SIGNING_ENABLED, as today. Capabilities is
+* SecurityMode stays 3 (signing enabled and required), as today. Capabilities is
   SMB2_GLOBAL_CAP_ENCRYPTION (`0x40`) and nothing else. A server encrypts its
   responses only if the client set this bit (§3.3.4.1.4).
 * Negotiate contexts start at the first 8-byte-aligned offset after the
