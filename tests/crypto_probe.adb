@@ -3,6 +3,7 @@ with Ada.Text_IO;
 with SMB.AES;
 with SMB.AES.CMAC;
 with SMB.Crypto;
+with SMB.KDF;
 with SMB.Core_NTLM;
 with SMB.Core_Wire;
 with SMB.Wire;
@@ -258,6 +259,23 @@ procedure Crypto_Probe is
       end loop;
    end Check_CMAC;
 
+   --  The key and the hash arrive with the bounds Hex gives them (1 ..), so
+   --  each call also slides them onto Derive's zero-based subtypes.
+   procedure Check_KDF
+     (Key : SMB.Bytes;
+      Purpose : SMB.KDF.Key_Purpose;
+      Hash, Expected : SMB.Bytes) is
+   begin
+      if Key'Length /= 16 or else Hash'Length /= 64
+        or else Expected'Length /= 16
+      then
+         raise Program_Error with "invalid KDF fixture";
+      end if;
+      if SMB.KDF.Derive (Key, Purpose, Hash) /= Expected then
+         raise Program_Error with "KDF mismatch";
+      end if;
+   end Check_KDF;
+
    procedure Check_HMAC (Key, Data, MD5, SHA256 : SMB.Bytes) is
    begin
       for Key_Rebased in 0 .. 1 loop
@@ -422,6 +440,10 @@ begin
                   raise Program_Error with "invalid CMAC fixture";
                end if;
                Check_CMAC (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)));
+            elsif Field (1) = "K" then
+               Check_KDF
+                 (Hex (Field (2)), SMB.KDF.Key_Purpose'Value (Field (3)),
+                  Hex (Field (4)), Hex (Field (5)));
             elsif Field (1) = "H" then
               Check_HMAC
                 (Hex (Field (2)), Hex (Field (3)),

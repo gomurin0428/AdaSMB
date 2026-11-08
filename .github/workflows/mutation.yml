@@ -37,7 +37,7 @@ jobs:
       - name: Build AdaMutant
         run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
       - name: Install Python cryptography
-        # The AES and AES-CMAC comparison tests' reference; a test-only dependency.
+        # The AES, AES-CMAC and KDF comparison tests' reference; a test-only dependency.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-cryptography

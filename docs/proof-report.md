@@ -4388,3 +4388,30 @@ arm64 in the default build, counting the `-gnata` wrapper frames: `MAC`
 AdaMutant run left no surviving mutant and marks none. A 64 KiB message
 takes about 58 ms in the default unoptimized build and 20 ms at `-O2`,
 bounded by the AES block function.
+
+## SMB 3.1.1 key derivation (`SMB.KDF`)
+
+`SMB.KDF.Derive (Session_Key, Purpose, Preauth_Hash)` is the SMB 3.1.1 key
+derivation (MS-SMB2 3.1.4.2): SP 800-108 in counter mode with HMAC-SHA256,
+one block, `HMAC-SHA256 (Session_Key, 00000001 || Label || 00 || Preauth_Hash
+|| 00000080)` truncated to 16 bytes. `Purpose` (`Signing`, `Encryption`,
+`Decryption`) selects one of the three NUL-terminated labels the client needs,
+which only the body holds, and the 16-, 64- and 16-byte lengths are fixed by
+the parameter and result subtypes, so the function has no precondition. The
+parts are fed to `SMB.Crypto`'s incremental HMAC-SHA256 without assembling a
+copy. Nothing in the library calls it yet.
+
+```sh
+gnatprove -P proof.gpr -u smb-kdf.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3 --timeout=120 -j4
+```
+
+GNATprove 14.1.1 on macOS reported **13 checks** (3 flow, 10 prover), zero
+unproved or justified, zero `pragma Assume`, in about 5 seconds, and one flow
+warning of a kind the full proof already reports in other units: the HMAC
+context is set by `HMAC_SHA256_Finish` (which wipes it) and not used after.
+`test_suite` checks the twelve 3.1.1 keys published in Microsoft's worked
+examples (the anatomy, pre-authentication integrity and encryption blog
+posts). `kdf_conformance.py` compares 330 fixtures with Python's
+`cryptography` `KBKDFHMAC`, after checking that it reproduces the published
+keys, with nine sensitivity checks, including each published key under the
+other two labels.

@@ -1,6 +1,6 @@
 # Handover
 
-State of the SMB 3.1.1 work after #114, for whoever picks it up. Fold what
+State of the SMB 3.1.1 work after #115, for whoever picks it up. Fold what
 stays useful into the other documents, and delete this file, once it is out
 of date.
 
@@ -26,8 +26,8 @@ of date.
 | 2 | SHA-512 | merged (#112) |
 | 2 | AES-128, encryption direction | merged (#113) |
 | 2 | AES-128-CMAC | merged (#114) |
-| 2 | SP 800-108 KDF (counter mode, HMAC-SHA256) | next |
-| 2 | AES-128-CCM | not started |
+| 2 | SP 800-108 KDF (counter mode, HMAC-SHA256) | merged (#115) |
+| 2 | AES-128-CCM | next |
 | 2 | AES-128-GCM | not started |
 | 3 | 3.1.1 negotiation, preauth integrity, CMAC signing | not started |
 | 4 | Encryption | not started |
@@ -95,20 +95,28 @@ Decisions worth keeping for phase 3:
   every 64 KiB chunk, so a faster constant-time AES (several blocks per
   bit-sliced pass) or an optimized default build may be needed later.
 
+## Key derivation (#115)
+
+`SMB.KDF.Derive (Session_Key, Purpose, Preauth_Hash)` derives the 3.1.1
+signing, encryption (client to server) and decryption (server to client)
+keys. `Purpose` selects the label, so a caller cannot pass a label without
+its NUL, an SMB 3.0 label or the ApplicationKey label, and every length is
+fixed by the types. Phase 3 calls it once per key after the final
+SESSION_SETUP response, with the NTLM ExportedSessionKey and the session's
+final preauth hash. The tests use Microsoft's twelve published 3.1.1 keys;
+the same posts also give 3.0 and ApplicationKey vectors, which this API
+deliberately cannot produce.
+
 ## Next steps
 
 Each primitive is its own pull request with no protocol behavior change,
 following the checklist below.
 
-1. **SP 800-108 KDF** in counter mode with HMAC-SHA256. HMAC-SHA256
-   already exists in `SMB.Crypto`. Use the session and signing keys from
-   Microsoft's worked examples (linked in the design document's Testing
-   section) and `cryptography`'s `KBKDFHMAC`.
-2. **AES-128-CCM** (11-byte nonce, 16-byte tag) and **AES-128-GCM** (12-byte
+1. **AES-128-CCM** (11-byte nonce, 16-byte tag) and **AES-128-GCM** (12-byte
    nonce, 16-byte tag). The GHASH multiply must use masks, not tables.
    Verifying a tag must be constant-time and must not release plaintext
    on failure.
-3. Then phase 3, which changes `SMB.Engine` contracts and is expected to
+2. Then phase 3, which changes `SMB.Engine` contracts and is expected to
    carry most of the proof cost.
 
 ## Checklist for a new primitive
@@ -169,8 +177,8 @@ The AES pull request touches each of these. Its diff is the template.
   needs Homebrew's `gmp`, but the proofs use only cvc5 and z3.
 * With 16 GB of RAM, prove one unit at a time with `-j4` and watch
   `gnatwhy3`'s memory.
-* `make aes-test`, `make cmac-test` and the mutation runs need
-  `cryptography` for the interpreter behind `python`; `python -m pip
+* `make aes-test`, `make cmac-test`, `make kdf-test` and the mutation runs
+  need `cryptography` for the interpreter behind `python`; `python -m pip
   install --user cryptography==50.0.2` matches the Windows CI pin.
 * GNU make is available, so the Makefile targets work directly. A
   changed-line AdaMutant run of the AES unit took about three minutes with
@@ -202,8 +210,8 @@ The AES pull request touches each of these. Its diff is the template.
     makes that fail with "cannot copy".
   * A full run of `src/*.adb` takes about four hours on a fast machine.
     The weekly `mutation.yml` splits it into eight jobs.
-* `make aes-test` and `make cmac-test` need `pip install cryptography`. CI
-  pins 50.0.2 on Windows.
+* `make aes-test`, `make cmac-test` and `make kdf-test` need `pip install
+  cryptography`. CI pins 50.0.2 on Windows.
 
 ## Open items
 

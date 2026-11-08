@@ -106,7 +106,8 @@ Type 2、zero-MIC Type 3 全体で MIC を計算します。channel binding が
 ## 暗号と入力制限
 
 MD4、MD5、SHA-256、SHA-512、HMAC-MD5、HMAC-SHA256、AES-128（暗号化方向のみ）、
-AES-128-CMAC は Ada の整数演算だけで実装しています。既定エントロピーはUnixで `/dev/urandom`、Windowsで
+AES-128-CMAC、SMB 3.1.1 の鍵導出（SP 800-108）は Ada の整数演算だけで実装して
+います。既定エントロピーはUnixで `/dev/urandom`、Windowsで
 `BCryptGenRandom(NULL, buffer, length, BCRYPT_USE_SYSTEM_PREFERRED_RNG)`です。
 短い読み取りやOS API失敗を成功扱いにせず、疑似乱数にフォールバックしません。UTF-8 の overlong、surrogate、範囲外 scalar、
 embedded NUL、UTF-16 の奇数長・不正 surrogate は拒否します。
