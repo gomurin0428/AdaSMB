@@ -224,8 +224,10 @@ SMB_USER=alice SMB_PASSWORD='...' SMB_DOMAIN=WORKGROUP \
 ## CI
 
 GitHub Actions（`.github/workflows`）で次を実行します。ツールチェーンは
-Alire 2.1.1 で GNAT 14.2.1・gprbuild 25.0.1・gnatprove 14.1.1 を導入します
-（`alr` はリリースの SHA-256 を照合し、導入結果はキャッシュします）。
+Alire 2.1.1 で導入します（`alr` はリリースの SHA-256 を照合し、導入結果は
+キャッシュします）。ビルド・試験・ミューテーション試験は GNAT 16.1.0・
+gprbuild 26.0.1、証明は gnatprove 16.1.0 で証明できるようになるまで GNAT
+14.2.1・gprbuild 25.0.1・gnatprove 14.1.1 を使います。
 
 * `ci.yml`（main への push、pull request、手動実行。文書だけの変更では
   動きません）

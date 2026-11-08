@@ -169,12 +169,34 @@ The AES pull request touches each of these. Its diff is the template.
     following lines.
   * Confirm each fix with `adamutant run --mutate <id>`.
 
+## Toolchain
+
+* CI builds, tests and mutates with GNAT 16.1.0 and gprbuild 26.0.1. The
+  weekly proof still uses gnatprove 14.1.1 (with GNAT 14.2.1 and gprbuild
+  25.0.1), because gnatprove 16.1.0 leaves 12 of 5,272 checks unproved,
+  even at `--level=3` with a 300-second timeout or with alt-ergo added:
+  * `smb-core_text.adb:318` and `:327` (UTF-8 to UTF-16 emission);
+  * `smb-core_wire.ads:185` (`Write_U64`'s `Encoded_U64 (Data, Offset) =
+    Value`);
+  * `smb-core_client.adb:642`, `:1225`, `:1238`, `:1243` and
+    `smb-core_client.ads:1415`;
+  * `smb-engine.adb:672`;
+  * `smb-core_protocol.ads:214` and `:333`;
+  * `smb-core_connection.ads:120`.
+
+  They are equalities over byte slices and bit-vector reconstructions that
+  the newer provers need help with. Moving the proof to 16.1.0 means adding
+  assertions there, then changing `proof.yml`.
+* alr 2.1.1 installs every one of these versions. When GitHub's release
+  downloads fail (HTTP 504), `gh release download` through the API still
+  works; check the archive against the Alire index's SHA-256.
+
 ## macOS environment notes
 
-* GNATprove 14.1.1 installs with alr 2.1.1, as CI's
-  `.github/scripts/install-ada.sh` does:
-  `alr -n install --prefix=<dir> gnatprove=14.1.1`. Its bundled alt-ergo
-  needs Homebrew's `gmp`, but the proofs use only cvc5 and z3.
+* `alr -n install --prefix=<dir> gnat_native=16.1.0 gprbuild=26.0.1` and,
+  in another prefix, `gnatprove=14.1.1` (or `16.1.0`) install the
+  toolchain, as CI's `.github/scripts/install-ada.sh` does. The bundled
+  alt-ergo needs Homebrew's `gmp`, but the proofs use only cvc5 and z3.
 * With 16 GB of RAM, prove one unit at a time with `-j4` and watch
   `gnatwhy3`'s memory.
 * `make aes-test`, `make cmac-test`, `make kdf-test` and the mutation runs
@@ -186,8 +208,9 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Windows environment notes
 
-* The toolchain comes from Alire 2.1.1 and matches CI: gnat_native 14.2.1,
-  gprbuild 25.0.1, gnatprove 14.1.1.
+* The toolchain comes from Alire 2.1.1. Before #116 it was gnat_native
+  14.2.1, gprbuild 25.0.1 and gnatprove 14.1.1; see "Toolchain" above for
+  what CI uses now.
 * There is no GNU make on Windows, so run each Makefile recipe's commands
   directly.
 * Run GNATprove from PowerShell or cmd. Started from Git Bash (MSYS), it
