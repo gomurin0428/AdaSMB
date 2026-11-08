@@ -2327,12 +2327,6 @@ procedure Test_Suite is
               Response (1, Context (1, Preauth_Data (1, 0, 1, 0))), SMB.Ok);
       Expect ("longer preauth data",
               Response (1, Context (1, Preauth_Data (1, 4, 1, 9))), SMB.Ok);
-      Expect ("one of each other kind",
-              Response (5, Padded (Context (3, (1 .. 6 => 0)))
-                        & Padded (Context (6, (1 .. 4 => 0)))
-                        & Padded (Context (7, (1 .. 6 => 0)))
-                        & Padded (Preauth) & Cipher (2)),
-              SMB.Ok, SMB.Core_Negotiate.AES_128_GCM);
       Expect ("ignored kinds",
               Response (6, Padded (Context (5, (1 .. 3 => 0)))
                         & Padded (Context (5, (1 .. 3 => 0)))
@@ -2376,20 +2370,18 @@ procedure Test_Suite is
       Expect ("short encryption",
               Response (2, Padded (Preauth) & Context (2, U16 (1) & (1 => 2))),
               SMB.Invalid_Protocol);
+      --  Contexts we never offer: compression, transport, RDMA, signing.
+      Expect ("compression", Response (2, Padded (Preauth)
+                                       & Context (3, (1 .. 6 => 0))),
+              SMB.Invalid_Protocol);
+      Expect ("transport", Response (2, Padded (Context (6, (1 .. 4 => 0)))
+                                     & Preauth),
+              SMB.Invalid_Protocol);
+      Expect ("RDMA", Response (2, Padded (Preauth)
+                                & Context (7, (1 .. 6 => 0))),
+              SMB.Invalid_Protocol);
       Expect ("signing", Response (2, Padded (Preauth)
                                    & Context (8, U16 (1) & U16 (2))),
-              SMB.Invalid_Protocol);
-      Expect ("two compression",
-              Response (3, Padded (Preauth) & Padded (Context (3, (1 .. 6 => 0)))
-                        & Context (3, (1 .. 6 => 0))),
-              SMB.Invalid_Protocol);
-      Expect ("two transport",
-              Response (3, Padded (Preauth) & Padded (Context (6, (1 .. 4 => 0)))
-                        & Context (6, (1 .. 4 => 0))),
-              SMB.Invalid_Protocol);
-      Expect ("two RDMA",
-              Response (3, Padded (Preauth) & Padded (Context (7, (1 .. 6 => 0)))
-                        & Context (7, (1 .. 6 => 0))),
               SMB.Invalid_Protocol);
       Expect ("no contexts", Response (0, Preauth), SMB.Invalid_Protocol);
 
@@ -2432,6 +2424,20 @@ procedure Test_Suite is
               SMB.Invalid_Offset);
       Expect ("offset beyond Natural", With_Offset (A1_Response, 16#FFFF_FFF8#),
               SMB.Invalid_Offset);
+      --  Read as 16 bits, this offset would be A.1's own, 448.
+      Expect ("offset above 2**16", With_Offset (A1_Response, 16#0001_01C0#),
+              SMB.Invalid_Offset);
+      --  Read as one byte, this count would be A.1's own, 2.
+      Expect ("count above 2**8",
+              Response (16#0102#, Padded (Preauth) & Cipher (2)),
+              SMB.Invalid_Offset);
+      declare
+         Rebased : constant SMB.Bytes
+           (1_000 .. 1_000 + A1_Response'Length - 1) := A1_Response;
+      begin
+         Expect ("A.1 at index 1000", Rebased, SMB.Ok,
+                 SMB.Core_Negotiate.AES_128_GCM);
+      end;
       Ada.Text_IO.Put_Line
         ("SMB 3.1.1 negotiate contexts: 3 requests and"
          & Natural'Image (Count) & " responses passed");

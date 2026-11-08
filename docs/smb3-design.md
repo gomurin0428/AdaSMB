@@ -48,10 +48,10 @@ or ambiguous, the choice is marked as ours.
 * Response checks for 3.1.1, all failing the connection:
   * exactly one preauth context, with HashAlgorithmCount = 1, SHA-512, and a
     DataLength that covers the count and salt;
-  * at most one encryption, compression, RDMA, signing or transport context;
-  * an encryption context has CipherCount = 1 and a cipher that is 0 or was
-    offered;
-  * a signing context, which we never offer, is rejected (ours);
+  * at most one encryption context, with CipherCount = 1 and a cipher that
+    is 0 or was offered;
+  * a compression, transport, RDMA or signing context is rejected (ours):
+    a server sends one only in answer to the client's, and we offer none;
   * every context lies inside the message, and other context types are
     ignored.
 * A missing encryption context, or cipher 0, means no encryption.

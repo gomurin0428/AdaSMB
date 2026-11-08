@@ -178,12 +178,15 @@ part of phase 3. Nothing calls it yet.
   context (GCM, then CCM). The contexts start at body offset 40 (104 from
   the header) with one dialect or two, so the layout does not depend on
   `Allow_21`. The contexts are byte for byte those of Microsoft's A.1
-  request, which the test checks.
+  request, which the test checks. `Request` is completed in the spec's
+  private part, so the engine's proofs can see the bytes it sends.
 * `Check_Response_Contexts (Packet, Cipher, Status)` takes the whole
   response, header included, because the offset fields count from the
   header. It applies the design document's rules and returns the cipher,
-  or `No_Cipher` with any failure. It also requires the first context at
-  or after offset 128, the end of the fixed response body (ours).
+  or `No_Cipher` with any failure. A compression, transport, RDMA or
+  signing context fails it, since we offer none. It also requires the
+  first context at or after offset 128, the end of the fixed response body
+  (ours).
 * It does not check DialectRevision or call anything; the engine pull
   request does that, takes the salt from the entropy source and hashes the
   messages.

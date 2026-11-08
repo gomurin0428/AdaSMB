@@ -6,6 +6,8 @@
 package SMB.Core_Negotiate is
    pragma SPARK_Mode (On);
 
+   use type SMB.Word;
+
    subtype Guid_Bytes is SMB.Bytes (0 .. 15);
    subtype Salt_Bytes is SMB.Bytes (0 .. 31);
 
@@ -21,7 +23,8 @@ package SMB.Core_Negotiate is
    --  Allow_21 is set. SecurityMode is 3 (signing enabled and required) and
    --  Capabilities is SMB2_GLOBAL_CAP_ENCRYPTION. The preauth integrity
    --  context offers SHA-512 with Salt, and the encryption context offers
-   --  AES-128-GCM, then AES-128-CCM.
+   --  AES-128-GCM, then AES-128-CCM. Its completion in the private part
+   --  gives callers' proofs every byte.
    function Request
      (Guid : Guid_Bytes; Salt : Salt_Bytes; Allow_21 : Boolean)
       return Request_Bytes;
@@ -35,8 +38,8 @@ package SMB.Core_Negotiate is
    --    SHA-512, and a salt that fits its data;
    --  * at most one encryption context, with one cipher that is 0 (none) or
    --    one we offered;
-   --  * at most one compression, transport and RDMA context each, and no
-   --    signing context, which we never offer.
+   --  * no compression, transport, RDMA or signing context: a server sends
+   --    one only in answer to the client's, and we offer none.
    --  Other context types are ignored. Without an encryption context, or
    --  with cipher 0, Cipher is No_Cipher.
    procedure Check_Response_Contexts
@@ -44,6 +47,64 @@ package SMB.Core_Negotiate is
       Cipher : out Cipher_Id;
       Status : out SMB.Core_Status)
    with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
-     Post => (if Status /= SMB.Ok then Cipher = No_Cipher);
+     Post => Status in SMB.Ok | SMB.Invalid_Length | SMB.Invalid_Offset
+                     | SMB.Invalid_Protocol
+       and then (if Status /= SMB.Ok then Cipher = No_Cipher);
+
+private
+
+   subtype Two_Bytes is SMB.Bytes (0 .. 1);
+
+   function LE16 (Value : SMB.Word) return Two_Bytes is
+     (SMB.Byte (Value mod 2**8), SMB.Byte (Value / 2**8));
+
+   --  The request's four-byte fields all hold values below 2**16, so each is
+   --  written as LE16 of the value and two zero bytes.
+   Zero_High : constant Two_Bytes := (0, 0);
+
+   --  Negotiate context types (MS-SMB2 2.2.3.1) and the IDs we offer.
+   Preauth_Integrity : constant SMB.Word := 1;
+   Encryption : constant SMB.Word := 2;
+   SHA_512 : constant SMB.Word := 1;
+   CCM_Id : constant SMB.Word := 1;
+   GCM_Id : constant SMB.Word := 2;
+
+   --  The request's first context sits at body offset 40, which is 104 from
+   --  the start of the header.
+   Request_Context_Offset : constant := 64 + 40;
+
+   function Request
+     (Guid : Guid_Bytes; Salt : Salt_Bytes; Allow_21 : Boolean)
+      return Request_Bytes
+   is
+     (LE16 (36)
+      & LE16 (if Allow_21 then 2 else 1)
+      & LE16 (3)
+      & LE16 (0)
+      & LE16 (16#40#) & Zero_High
+      & Guid
+      & LE16 (Request_Context_Offset) & Zero_High
+      & LE16 (2)
+      & LE16 (0)
+      & LE16 (SMB.SMB2_Dialect_0311)
+      --  The second dialect, or padding to the first context.
+      & LE16 (if Allow_21 then SMB.SMB2_Dialect_0210 else 0)
+      --  PREAUTH_INTEGRITY_CAPABILITIES: one hash algorithm, the salt's
+      --  length, SHA-512 and the salt, then padding to the next context.
+      & LE16 (Preauth_Integrity)
+      & LE16 (6 + Salt_Bytes'Length)
+      & LE16 (0) & Zero_High
+      & LE16 (1)
+      & LE16 (Salt_Bytes'Length)
+      & LE16 (SHA_512)
+      & Salt
+      & LE16 (0)
+      --  ENCRYPTION_CAPABILITIES: two ciphers, GCM first.
+      & LE16 (Encryption)
+      & LE16 (6)
+      & LE16 (0) & Zero_High
+      & LE16 (2)
+      & LE16 (GCM_Id)
+      & LE16 (CCM_Id));
 
 end SMB.Core_Negotiate;
