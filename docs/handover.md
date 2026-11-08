@@ -1,8 +1,8 @@
 # Handover
 
-State of the SMB 3.1.1 work as of 2026-11-08, for whoever picks it up. Fold
-what stays useful into the other documents, and delete this file, once it is
-out of date.
+State of the SMB 3.1.1 work after #113, for whoever picks it up. Fold what
+stays useful into the other documents, and delete this file, once it is out
+of date.
 
 ## Where things stand
 
@@ -24,8 +24,8 @@ out of date.
 | --- | --- | --- |
 | 1 | Design document | merged (#101) |
 | 2 | SHA-512 | merged (#112) |
-| 2 | AES-128, encryption direction | open pull request from `claude/aes` (see below) |
-| 2 | AES-128-CMAC | not started |
+| 2 | AES-128, encryption direction | merged (#113) |
+| 2 | AES-128-CMAC | next |
 | 2 | SP 800-108 KDF (counter mode, HMAC-SHA256) | not started |
 | 2 | AES-128-CCM | not started |
 | 2 | AES-128-GCM | not started |
@@ -35,74 +35,41 @@ out of date.
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
-  #104 to #111, so `main` had no known surviving mutants after #112.
+  #104 to #111, so `main` had no known surviving mutants after #112. Each
+  pull request since then has ended its changed-line run with none.
 
-## The open AES-128 pull request
+## AES-128 (#113)
 
-New unit `SMB.AES` (`src/smb-aes.ads`, `src/smb-aes.adb`): key expansion
-and the encryption direction of FIPS 197 AES-128. CMAC, CCM and GCM never
-run the cipher backwards, so there is no decryption.
+`SMB.AES` (`src/smb-aes.ads`, `src/smb-aes.adb`) has key expansion and the
+encryption direction of FIPS 197 AES-128. CMAC, CCM and GCM never run the
+cipher backwards, so there is no decryption.
 
 * The S-box is computed, not looked up. The sixteen state bytes are
   transposed into eight 16-bit bit planes, inverted in GF(2^8) as x^254
   (four multiplications and seven squarings, reduced modulo
   x^8 + x^4 + x^3 + x + 1), then put through the affine transform.
-  MixColumns multiplies by x with a mask. No table index or branch depends on
-  the key or the data. This is a coding rule, not a proved property.
-* Tests:
-  * `test_suite` checks FIPS 197 appendices B and C.1 and a 1,000-step
-    chain in which each ciphertext is fed back as the next plaintext and
-    folded into the key.
-  * `tests/aes_conformance.py` (`make aes-test`) compares 1,287 cases with
-    Python's `cryptography` through `crypto_probe` (record type `A`).
-    The cases are the published vectors, every single-bit key and
-    plaintext, every repeated-byte key and plaintext, and 512 seeded random
-    pairs. Three sensitivity checks confirm that the probe rejects a
-    corrupted key, plaintext or ciphertext.
-* Wiring:
-  * `proof.gpr` and `tests/check_sources.py` include the new unit.
-  * `tests/mutant_tests.py` gives `smb-aes.adb` a second stage (`aes`).
-  * There is a `make aes-test` target.
-  * CI installs `cryptography`: `python3-cryptography` from apt on Linux,
-    including both mutation workflows, and a pinned `pip install` on
-    Windows.
-  * `README.md`, `README.ja.md`, `docs/protocol.md` and
-    `docs/assurance.md` mention the unit.
-
-Verified locally on Windows before the push:
-
-* `gprbuild` with `-gnatwe` for `smb.gpr`, `smb_tests.gpr` and
-  `smb_example.gpr`;
-* `test_suite`, `aes_conformance.py`, `check_sources.py`, and the stack
-  check.
-
-Not done yet:
-
-1. **The proof does not finish.** GNATprove on `smb-aes.adb` ran for about
-   two hours. By then `gnatwhy3` had grown to about 50 GB of memory, and the
-   run was stopped. The likely cause is GNATprove's contextual analysis.
-   Its output had separate entities only for `Column_Sum`, `Encrypt` and
-   `Expand_Key`. Their `.gnat-json` files were 22 to 34 MB. So the local
-   helpers without contracts were inlined into their callers, and the
-   nested calls in `Inverse` (`Square (Square (Multiply (...)))`) multiply
-   the size of the inlined terms. The fix to try first is to give each
-   helper a contract so that it is proved on its own and its callers see
-   only the contract. The helpers are `To_Planes`, `From_Planes`,
-   `Reduce`, `Multiply`, `Square`, `Inverse`, `Sub_Bytes`, `Shift_Rows`,
-   `Mix_Columns` and `Add_Round_Key`. A trivial `Post => True` is enough,
-   because the proof target is only the absence of run-time errors.
-   `--no-inlining` on the command line is a quick way to confirm the
-   diagnosis.
-2. **Changed-line mutation run.** The CI job "Mutation testing (changed
-   lines)" runs it on the pull request and fails on any survivor. Triage
-   survivors with the rules under "Conventions". Equivalents are likely
-   where a loop overwrites a whole local before reading it, as with the
-   `Result : Block := State` and `S : Planes := B` initial values. The
-   two `(others => 0)` initializers in `Expand_Key` are already marked.
-3. **Independent review** of the diff. None has been done.
-4. Merge once CI is green. CI does not run GNATprove on pull requests, only
-   the weekly `proof.yml` does, and that run would include the new unit
-   after the merge. Fix item 1 before merging.
+  MixColumns doubles a byte by multiplying the reduction constant 0x1B by
+  the byte's top bit. No table index or branch depends on the key or the
+  data. This is a coding rule, not a proved property.
+* A `Key_Schedule` is `Ready` only after `Expand_Key`, and `Encrypt`
+  requires `Ready`, as `SMB.Crypto`'s contexts do.
+* Every helper in the body has a contract, if only `Post => True`. The first
+  version had none, and GNATprove inlined each helper into its callers
+  (contextual analysis). With the nested calls in `Inverse`, `gnatwhy3`
+  grew to about 50 GB on Windows without finishing. With the contracts the
+  unit proves in about 35 seconds with 1.2 GB (66 checks, none unproved).
+  `--no-inlining` on the command line is a quick way to check whether
+  inlining is the cause of a slow proof.
+* Tests: `test_suite` checks FIPS 197 appendices B and C.1 and a 1,000-step
+  chain. `tests/aes_conformance.py` (`make aes-test`) compares 1,287 cases
+  with Python's `cryptography` through `crypto_probe` (record type `A`),
+  with three sensitivity checks.
+* The CI changed-line mutation run found two equivalent survivors.
+  The affine term is now written `(4 + I) mod 8`, because the mutant of
+  `(I + 4) mod 8` to `(I - 4) mod 8` is the same index. The substituted
+  word in `Expand_Key` is a four-byte array, so its loop bound is checked.
+  The two `(others => 0)` initializers in `Expand_Key` stay marked as
+  equivalent.
 
 ## Next steps after AES
 
@@ -129,6 +96,10 @@ following the checklist below.
 The AES pull request touches each of these. Its diff is the template.
 
 * `src/`: the unit with `pragma SPARK_Mode (On)`, bounded inputs, and no heap.
+  Give every helper in the body a contract, if only `Post => True`, so that
+  GNATprove does not inline it into its callers (see the AES section). A
+  type that must be set up before use gets a `Ready` function, required by
+  the subprograms that use it.
 * `proof.gpr` and `tests/check_sources.py` (`PROOF_UNITS`, `PROOF_BODIES`).
 * `tests/test_suite.adb`: the published known answers.
 * `tests/crypto_probe.adb`: a record type for the differential test.
@@ -137,8 +108,10 @@ The AES pull request touches each of these. Its diff is the template.
   the unit also run the comparison test.
 * `tests/check_stack_usage.py`, when a subprogram will process peer-sized
   messages (SHA-512 did this).
-* `Makefile`, `.github/workflows/ci.yml` (Linux and Windows), and
-  `.github/workflows/mutation.yml` if a new test dependency is needed.
+* `Makefile`, and for a new test dependency `.github/workflows/ci.yml` (the
+  Linux, Windows and changed-line mutation jobs) and
+  `.github/workflows/mutation.yml`: the mutation baseline runs every
+  comparison test.
 * `README.md`, `README.ja.md`, `docs/protocol.md` and `docs/assurance.md`.
 
 ## Conventions
@@ -146,8 +119,9 @@ The AES pull request touches each of these. Its diff is the template.
 * One topic per branch, squash-merged. Commit messages and pull request
   descriptions are in English.
 * The repository does not allow GitHub auto-merge, so merge by hand once
-  the checks are green. The Codex and Devin review bots stopped reviewing
-  (out of quota), so ask for a human review or run your own.
+  the checks are green. The Codex and Devin review bots no longer review
+  this repository, so run an independent review of your own before each
+  merge.
 * Before opening a pull request, all of these should pass:
   * `-gnatwe` builds;
   * `test_suite`, the conformance scripts, `check_sources.py` and the stack
@@ -166,6 +140,21 @@ The AES pull request touches each of these. Its diff is the template.
     disable/enable block for an `or else` chain whose operators are on
     following lines.
   * Confirm each fix with `adamutant run --mutate <id>`.
+
+## macOS environment notes
+
+* GNATprove 14.1.1 installs with alr 2.1.1, as CI's
+  `.github/scripts/install-ada.sh` does:
+  `alr -n install --prefix=<dir> gnatprove=14.1.1`. Its bundled alt-ergo
+  needs Homebrew's `gmp`, but the proofs use only cvc5 and z3.
+* With 16 GB of RAM, prove one unit at a time with `-j4` and watch
+  `gnatwhy3`'s memory.
+* `make aes-test` and the mutation runs need `cryptography` for the
+  interpreter behind `python`; `python -m pip install --user
+  cryptography==50.0.2` matches the Windows CI pin.
+* GNU make is available, so the Makefile targets work directly. A
+  changed-line AdaMutant run of the AES unit took about three minutes with
+  `--concurrency 8`.
 
 ## Windows environment notes
 

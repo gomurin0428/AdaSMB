@@ -173,10 +173,12 @@ passing whenever a stale value happens to be the expected one.
 library source (an operator, a literal, a condition, or a whole assignment or
 call replaced by `null`), rebuilds `test_suite` and runs it. A change the tests
 do not notice is a surviving mutant. When `test_suite` misses a mutant of a
-unit that a comparison test covers (NTLM, hashes and signing, UTF conversion,
-the clock), [`tests/mutant_tests.py`](tests/mutant_tests.py) also runs that
-comparison test, so only the mutants that every applicable test misses
-survive. Contracts, pragmas and ghost code are not mutated, because GNATprove
+unit that a comparison test covers (NTLM, hashes, AES and signing, UTF
+conversion, the clock), [`tests/mutant_tests.py`](tests/mutant_tests.py) also
+runs that comparison test, so only the mutants that every applicable test
+misses survive. The unmutated baseline runs every comparison test, so
+`make mutation` and `make mutation-diff` need what those tests need, including
+Python's `cryptography` package. Contracts, pragmas and ghost code are not mutated, because GNATprove
 checks them. `src/smb-client.adb` and `src/smb-transport.adb` are left out:
 they need a live server, so only the Samba integration and transport tests
 exercise them, and those are too slow to run once per mutant. The settings are

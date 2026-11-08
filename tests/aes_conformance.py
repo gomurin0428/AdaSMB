@@ -17,7 +17,9 @@ import sys
 try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 except ImportError as error:
-    raise RuntimeError("Python's cryptography package is required for aes-test") from error
+    raise RuntimeError(
+        "Python's cryptography package is required for aes-test and mutation testing"
+    ) from error
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 

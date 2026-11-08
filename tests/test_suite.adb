@@ -1508,7 +1508,9 @@ procedure Test_Suite is
       Key : SMB.AES.Key_128 := (others => 0);
       Text : SMB.AES.Block := (others => 0);
    begin
+      Assert (not SMB.AES.Ready (Schedule), "AES-128 schedule ready before Expand_Key");
       SMB.AES.Expand_Key (Hex ("2b7e151628aed2a6abf7158809cf4f3c"), Schedule);
+      Assert (SMB.AES.Ready (Schedule), "AES-128 schedule not ready after Expand_Key");
       Assert_Equal
         (SMB.AES.Encrypt (Schedule, Hex ("3243f6a8885a308d313198a2e0370734")),
          Hex ("3925841d02dc09fbdc118597196a0b32"), "AES-128 FIPS 197 B");

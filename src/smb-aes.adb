@@ -119,11 +119,10 @@ package body SMB.AES is
       S : Planes;
    begin
       for I in Planes'Range loop
-         S (I) := B (I)
-           --  adamutant:disable-next-line ArithmeticOperator: (I - 4) mod 8 = (I + 4) mod 8
-           xor B ((I + 4) mod 8)
-           xor B ((I + 5) mod 8) xor B ((I + 6) mod 8) xor B ((I + 7) mod 8)
-           xor Affine_Constant (I);
+         --  (4 + I) rather than (I + 4): the mutant (I - 4) mod 8 would be
+         --  the same index, while (4 - I) mod 8 is not.
+         S (I) := B (I) xor B ((4 + I) mod 8) xor B ((I + 5) mod 8)
+           xor B ((I + 6) mod 8) xor B ((I + 7) mod 8) xor Affine_Constant (I);
       end loop;
       return From_Planes (S);
    end Sub_Bytes;
@@ -206,7 +205,7 @@ package body SMB.AES is
             end loop;
          end;
       end loop;
-      Schedule := (Round_Keys => W);
+      Schedule := (Round_Keys => W, Expanded => True);
    end Expand_Key;
 
    function Encrypt (Schedule : Key_Schedule; Plain : Block) return Block is

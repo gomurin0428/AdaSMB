@@ -8,9 +8,10 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes thirteen units (twelve bodies plus `SMB`'s types).
-These are the implementations called by `SMB.Client` and `SMB.Transport`, not a
-parallel model.
+`proof.gpr` explicitly includes fourteen units (thirteen bodies plus `SMB`'s
+types). These are the implementations called by `SMB.Client` and
+`SMB.Transport`, not a parallel model, plus `SMB.AES`, which nothing in the
+library calls yet: it is the block cipher for the SMB 3.1.1 work.
 
 | Unit | Runtime responsibility |
 | --- | --- |
