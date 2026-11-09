@@ -25,9 +25,10 @@ package SMB.Core_Protocol is
       --  The dialect a NEGOTIATE response selected: 2.1 or 3.1.1.
       Dialect : SMB.Word := 0;
       --  The server encrypts the session (SESSION_SETUP's SessionFlags is
-      --  SMB2_SESSION_FLAG_ENCRYPT_DATA) or the share (TREE_CONNECT's
+      --  SMB2_SESSION_FLAG_ENCRYPT_DATA, the only nonzero SessionFlags
+      --  accepted; guest and null fail) or the share (TREE_CONNECT's
       --  SMB2_SHAREFLAG_ENCRYPT_DATA). The engine accepts either only with
-      --  a cipher.
+      --  a cipher. Tested, not stated in Parse_Response's postcondition.
       Encrypt_Data : Boolean := False;
    end record;
 
@@ -428,11 +429,6 @@ package SMB.Core_Protocol is
              and then Info.Session_Id /= 0
              and then Info.Session_Id =
                SMB.Core_Wire.Encoded_U64 (Packet, 40)
-             --  SessionFlags: none, or ENCRYPT_DATA alone; never guest or
-             --  null.
-             and then SMB.Core_Wire.Encoded_U16 (Packet, 66) in 0 | 4
-             and then Info.Encrypt_Data =
-               (SMB.Core_Wire.Encoded_U16 (Packet, 66) = 4)
              and then (Info.Data_Length = 0 or else Info.Data_Offset >= 72)
              and then Info.Data_Offset =
                Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68))
