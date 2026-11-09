@@ -4983,3 +4983,40 @@ the cipher-key check in `Derive_SMB3_Keys` (the keys exist only with the
 signing key), the cipher check in `Seal_Request` and `Unwrap_Response`
 (encryption needs the keys), and the counter at `QWord'Last` (2**64
 requests).
+
+## Windows SMB server interoperability
+
+The Windows CI job now runs `tests/windows_integration.py` against the
+runner's own SMB server (Windows Server 2025). The harness adds a test-only
+local account, with a random password that it generates and never prints,
+and a share holding the Samba test's fixture. It runs `integration_client`
+over SMB 3.1.1 three times: with a cipher negotiated but not required; then
+with `EncryptData` on and only `AES_128_GCM` allowed; then with only
+`AES_128_CCM` allowed. Afterwards it restores the server settings and
+removes the account and the share.
+
+The first run passed unchanged, `Disconnect` included: Windows encrypts the
+LOGOFF response. The required run failed in authentication. Windows sets
+SMB2_SESSION_FLAG_ENCRYPT_DATA in the challenge response already, and
+`Accept_Response` refused that flag whenever the cipher keys did not exist
+yet. Samba sets it only in the final response, after the keys exist. The
+rule now refuses the flag only when no cipher was negotiated, which was its
+intent. The `Nt_Status := 0` of that rejection had been annotated as
+unreachable for a non-success response; that annotation was wrong.
+`test_suite` now covers both cases: each cipher's encrypted run takes the
+flag in the challenge response, and without a cipher the flag in the
+challenge response is refused with NTSTATUS 0. That brings the 3.1.1 test
+to 115 checks.
+
+GNATprove 16.1.0 on the Mac proved every check of `smb-engine.adb` (323, in
+10 minutes), the only unit whose body changed, with no `pragma Assume` or
+justification. No specification changed.
+
+On GitHub Actions all three runs passed. The server's own cipher list was
+`AES_128_GCM, AES_128_CCM, AES_256_GCM, AES_256_CCM`; in the required runs
+only the named cipher was allowed, so each run shows that the client and
+Windows agree on that cipher: the keys, the nonce, the transform header and
+the tag. Windows accepted encrypted requests that keep SMB2_FLAGS_SIGNED and
+a CMAC signature inside, and a NEGOTIATE without NETNAME.
+
+MUTATION_RESULT

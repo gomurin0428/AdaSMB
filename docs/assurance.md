@@ -106,8 +106,8 @@ accepts a signed response only if its CMAC under that key verifies, including
 the final SESSION_SETUP response. The NTLM session key still keys the SPNEGO
 mechanism-list MIC. The proof does not show that the hash covers exactly the
 messages MS-SMB2 3.2.5.2 and 3.2.5.3 list, or that the derived key matches
-Windows'; the Microsoft test vectors in the unit tests and the 3.1.1 Samba run
-supply that evidence.
+Windows'; the Microsoft test vectors in the unit tests and the 3.1.1 runs
+against Samba and against Windows Server 2025 supply that evidence.
 
 With a cipher negotiated, `Derive_SMB3_Keys` also derives the encryption and
 decryption keys and sets the nonce counter to 1, which its postcondition
@@ -348,14 +348,16 @@ does not make the above bodies formally verified.
   semantics are not claimed.
 * No `Assume`, `False_Positive`, or SPARK-off body substitutes for proof.
   `make prove` uses checks-as-errors. GitHub Actions runs the builds, unit,
-  conformance and transport tests (Linux and Windows) and the Samba
-  integration test (Linux) on pushes to `main` and pull requests, and the full
+  conformance and transport tests (Linux and Windows), the Samba
+  integration test (Linux) and the same integration client against the
+  Windows runner's own SMB server (SMB 3.1.1, encryption required under
+  each AES-128 cipher) on pushes to `main` and pull requests, and the full
   proof weekly and on demand; see `.github/workflows`.
 * Mutation testing (AdaMutant, configured in `adamutant.toml`) measures how
   much of the executable library code the unit and conformance tests
   constrain. It mutates only executable code, not contracts or ghost code, and
   runs `test_suite` and the conformance tests of the mutated unit, so a mutant
-  that only the Samba integration test would catch is reported as surviving.
+  that only an integration test would catch is reported as surviving.
   The socket facade (`SMB.Client`, `SMB.Transport`) is left out for that
   reason. It says nothing about the proofs.
 

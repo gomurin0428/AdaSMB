@@ -16,7 +16,9 @@ I/O 最大値が 0、または cipher がないのに暗号化 share を要求�
 を SHA-512 の preauth integrity hash に入れ、その値とセッション鍵から
 署名鍵を導出して、最終応答以降を AES-128-CMAC で署名・検証します。セッション setup の成功応答にも
 署名を要求し、guest と null を拒否します。session encryption の要求は
-cipher があるときだけ受け入れます。
+cipher があるときだけ受け入れます。Windows Server 2025 は鍵を導出する前の
+challenge 応答ですでにこの flag を立てるので、判定は鍵ではなく cipher の
+有無で行います。
 
 cipher（AES-128-GCM または CCM）をネゴシエーションした 3.1.1 セッションは、
 同じ preauth hash から暗号化鍵・復号鍵も導出し、認証後のすべての要求を
@@ -31,7 +33,8 @@ OriginalMessageSize、SessionId、tag、復号後の SMB2 ProtocolId と Session
 のどれかが合わない場合や、平文の応答が来た場合は状態を破棄します。復号した
 応答は tag で認証済みなので、中の署名は要求も検証もしません。SIGNED flag も
 問いません（Windows は暗号化した応答で flag を下ろし、Samba は要求の flag を
-そのまま写します）。
+そのまま写します）。CI では Samba と Windows Server 2025 の SMB サーバーを
+相手に、暗号化を必須にして AES-128-GCM と AES-128-CCM の両方を試験します。
 
 各 request は単調な message id と 1 credit で送信します。応答の magic、
 structure size、command、message id、session/tree id、zero credit、
