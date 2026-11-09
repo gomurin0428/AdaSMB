@@ -615,5 +615,5 @@ begin
       SMB.Client.Disconnect (Client);
       end;
    end;
-   Ada.Text_IO.Put_Line ("AdaSMB Samba integration client passed");
+   Ada.Text_IO.Put_Line ("AdaSMB integration client passed");
 end Integration_Client;
