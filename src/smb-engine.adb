@@ -123,6 +123,12 @@ is
       State.Has_Key := False;
       State.SMB3_Key := (others => 0);
       State.Has_SMB3_Key := False;
+      State.Encryption_Key := (others => 0);
+      State.Decryption_Key := (others => 0);
+      State.Has_Cipher_Keys := False;
+      State.Encrypting := False;
+      State.Decrypted := False;
+      State.Nonce_Counter := 0;
       State.Dialect := 0;
       State.Cipher := SMB.Core_Negotiate.No_Cipher;
       State.Preauth := SMB.Core_Preauth.Initial;
@@ -199,7 +205,7 @@ is
       Status := SMB.Ok;
    end Mark_Negotiated;
 
-   procedure Derive_SMB3_Signing_Key
+   procedure Derive_SMB3_Keys
      (State : in out Engine_State;
       Preauth : SMB.Core_Preauth.Hash_Value;
       Status : out SMB.Core_Status) is
@@ -207,6 +213,8 @@ is
       if State.Dialect /= SMB.SMB2_Dialect_0311
         or else not State.Has_Key
         or else State.Has_SMB3_Key
+        --  adamutant:disable-next-line LogicalOperator, BooleanLiteral: the cipher keys exist only with the signing key
+        or else State.Has_Cipher_Keys
       then
          Status := SMB.Invalid_State_Status;
          return;
@@ -214,8 +222,16 @@ is
       State.SMB3_Key :=
         SMB.KDF.Derive (State.Signing_Key, SMB.KDF.Signing, Preauth);
       State.Has_SMB3_Key := True;
+      if State.Cipher /= SMB.Core_Negotiate.No_Cipher then
+         State.Encryption_Key :=
+           SMB.KDF.Derive (State.Signing_Key, SMB.KDF.Encryption, Preauth);
+         State.Decryption_Key :=
+           SMB.KDF.Derive (State.Signing_Key, SMB.KDF.Decryption, Preauth);
+         State.Has_Cipher_Keys := True;
+         State.Nonce_Counter := 1;
+      end if;
       Status := SMB.Ok;
-   end Derive_SMB3_Signing_Key;
+   end Derive_SMB3_Keys;
 
    procedure Install_Session_Key
      (State : in out Engine_State;
@@ -274,6 +290,7 @@ is
       end if;
       State.Current := Authenticated;
       State.Receipt_Valid := False;
+      State.Encrypting := State.Has_Cipher_Keys;
       Status := SMB.Ok;
    end Mark_Authenticated;
 
@@ -464,6 +481,12 @@ is
       State.Has_Key := False;
       State.SMB3_Key := (others => 0);
       State.Has_SMB3_Key := False;
+      State.Encryption_Key := (others => 0);
+      State.Decryption_Key := (others => 0);
+      State.Has_Cipher_Keys := False;
+      State.Encrypting := False;
+      State.Decrypted := False;
+      State.Nonce_Counter := 0;
       State.Dialect := 0;
       State.Cipher := SMB.Core_Negotiate.No_Cipher;
       State.Preauth := SMB.Core_Preauth.Initial;
@@ -494,6 +517,67 @@ is
       Status := SMB.Ok;
    end Invalidate;
 
+   procedure Seal_Request
+     (State : in out Engine_State;
+      Message : SMB.Bytes;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status) is
+   begin
+      Output := (others => 0);
+      Used := 0;
+      if not State.Encrypting
+        --  adamutant:disable-next-line LogicalOperator, ConditionalExpression, EqualityOperator: encryption needs the cipher keys, which need a cipher
+        or else State.Cipher = SMB.Core_Negotiate.No_Cipher
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: needs 2**64 requests
+      if State.Nonce_Counter = SMB.QWord'Last then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
+         Status := SMB.Counter_Exhausted;
+         return;
+      end if;
+      SMB.Core_Transform.Seal
+        (State.Cipher, State.Encryption_Key,
+         SMB.Core_Transform.Counter_Nonce (State.Nonce_Counter),
+         State.Session_Id, Message, Output, Used, Status);
+      if Status /= SMB.Ok then
+         return;
+      end if;
+      State.Nonce_Counter := State.Nonce_Counter + 1;
+   end Seal_Request;
+
+   procedure Unwrap_Response
+     (State : in out Engine_State;
+      Packet : in out SMB.Bytes;
+      Status : out SMB.Core_Status) is
+      Ignore_Status : SMB.Core_Status;
+   begin
+      if not State.Encrypting
+        or else not State.Pending
+        or else State.Decrypted
+        --  adamutant:disable-next-line LogicalOperator, ConditionalExpression, EqualityOperator: encryption needs the cipher keys, which need a cipher
+        or else State.Cipher = SMB.Core_Negotiate.No_Cipher
+      then
+         Status := SMB.Invalid_State_Status;
+      else
+         SMB.Core_Transform.Unwrap
+           (State.Cipher, State.Decryption_Key, State.Session_Id, Packet,
+            Status);
+         if Status = SMB.Ok then
+            State.Decrypted := True;
+            return;
+         end if;
+      end if;
+      Invalidate (State, Ignore_Status);
+      if Packet'Length > SMB.Core_Transform.Header_Size then
+         Packet (Packet'First + SMB.Core_Transform.Header_Size .. Packet'Last) :=
+           (others => 0);
+      end if;
+   end Unwrap_Response;
+
    procedure Inspect_Interim_Response
      (State : in out Engine_State;
       Packet : SMB.Bytes;
@@ -516,6 +600,13 @@ is
       if not State.Pending then
          Invalidate (State, Ignore_Status);
          Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      --  Once encryption is on, an interim response must have been
+      --  decrypted as well.
+      if State.Encrypting and then not State.Decrypted then
+         Invalidate (State, Ignore_Status);
+         Status := SMB.Signature_Error;
          return;
       end if;
       Supported_Command :=
@@ -586,6 +677,8 @@ is
          return;
       end if;
       State.Pending_Async_Id := SMB.Core_Wire.Encoded_U64 (Packet, 32);
+      --  The final response is decrypted on its own.
+      State.Decrypted := False;
       Is_Interim := True;
    end Inspect_Interim_Response;
 
@@ -601,6 +694,7 @@ is
       Parse_Status : SMB.Core_Status;
       Parsed : SMB.Core_Protocol.Response_Info;
       Mic_Status : SMB.Core_Status;
+      Expect_Signature : Boolean;
       Initial_Command : constant SMB.Core_Wire.Command_Code :=
         State.Pending_Expected.Command
       with Ghost;
@@ -611,6 +705,17 @@ is
          Status := SMB.Invalid_State_Status;
          return;
       end if;
+      --  Once encryption is on, only a response that Unwrap_Response
+      --  decrypted is taken. Its tag authenticated it, so it carries no
+      --  signature of its own.
+      if State.Encrypting and then not State.Decrypted then
+         Invalidate (State, Ignore_Status);
+         Status := SMB.Signature_Error;
+         return;
+      end if;
+      Expect_Signature :=
+        State.Pending_Expected.Signed and then not State.Decrypted;
+      State.Decrypted := False;
       SMB.Core_Wire.Validate_Header
         (Packet,
          (Command => State.Pending_Expected.Command,
@@ -619,7 +724,7 @@ is
           Session_Id => State.Pending_Expected.Session_Id,
           Match_Tree => State.Pending_Expected.Match_Tree,
           Match_Session => State.Pending_Expected.Match_Session,
-          Signed => State.Pending_Expected.Signed),
+          Signed => Expect_Signature),
          Nt_Status, Wire_Status,
          Async_Id => State.Pending_Async_Id);
       if Wire_Status /= SMB.Ok then
@@ -629,7 +734,7 @@ is
          Status := Wire_Status;
          return;
       end if;
-      if State.Pending_Expected.Signed
+      if Expect_Signature
         and then State.Dialect = SMB.SMB2_Dialect_0311
       then
          --  3.1.1 verifies with the derived key, which the final
@@ -648,7 +753,7 @@ is
             Status := SMB.Signature_Error;
             return;
          end if;
-      elsif State.Pending_Expected.Signed then
+      elsif Expect_Signature then
          --  adamutant:disable-next-line ConditionalExpression: only a request made with a key expects a signed reply
          if not State.Has_Key then
             --  adamutant:disable-next-line StatementDeletion: unreachable, as above
@@ -674,6 +779,14 @@ is
          Invalidate (State, Ignore_Status);
          Nt_Status := 0;
          Status := Parse_Status;
+         return;
+      end if;
+      --  A session or share that the server encrypts needs the cipher keys;
+      --  with them every request is encrypted anyway.
+      if Parsed.Encrypt_Data and then not State.Has_Cipher_Keys then
+         Invalidate (State, Ignore_Status);
+         Nt_Status := 0;
+         Status := SMB.Unsupported_Feature;
          return;
       end if;
       if State.Pending_Expected.Command = 9
@@ -1098,6 +1211,26 @@ is
    function Current_SMB3_Signing_Key
      (State : Engine_State) return SMB.AES.Key_128 is
      (State.SMB3_Key);
+
+   function Has_Cipher_Keys (State : Engine_State) return Boolean is
+     (State.Has_Cipher_Keys);
+
+   function Current_Encryption_Key
+     (State : Engine_State) return SMB.AES.Key_128 is
+     (State.Encryption_Key);
+
+   function Current_Decryption_Key
+     (State : Engine_State) return SMB.AES.Key_128 is
+     (State.Decryption_Key);
+
+   function Is_Encrypting (State : Engine_State) return Boolean is
+     (State.Encrypting);
+
+   function Next_Nonce (State : Engine_State) return SMB.QWord is
+     (State.Nonce_Counter);
+
+   function Holds_Decrypted_Response (State : Engine_State) return Boolean is
+     (State.Decrypted);
 
    function Current_Response_Info (State : Engine_State)
      return SMB.Core_Protocol.Response_Info is

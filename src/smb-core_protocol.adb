@@ -935,12 +935,14 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Read_U16 (Packet, 64, Structure, Header_Status);
          Read_U16 (Packet, 66, Word_Value, Header_Status);
          Read_U64 (Packet, 40, Info.Session_Id, Header_Status);
-         if Structure /= 9 or else Word_Value /= 0
+         if Structure /= 9
+           or else (Word_Value /= 0 and then Word_Value /= 4)
            or else Info.Session_Id = 0
          then
             Status := SMB.Invalid_Protocol;
             return;
          end if;
+         Info.Encrypt_Data := Word_Value = 4;
          Offset := Natural (SMB.Core_Wire.Encoded_U16 (Packet, 68));
          Length := Natural (SMB.Core_Wire.Encoded_U16 (Packet, 70));
          if Length > 0 and then Offset < 72 then
@@ -963,9 +965,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Read_U32 (Packet, 68, DWord_Value, Header_Status);
-         if (DWord_Value and 16#8000#) /= 0 then
-            Status := SMB.Unsupported_Feature;
-         end if;
+         Info.Encrypt_Data := (DWord_Value and 16#8000#) /= 0;
       elsif Command = Create_Command then
          if Packet'Length < 152 then
             Status := SMB.Invalid_Length;

@@ -31,7 +31,8 @@ package SMB.Client is
       Port : Positive := 445;
       Timeout_Seconds : Duration := 10.0;
       Entropy : Entropy_Source := null;
-      Dialects : Dialect_Policy := SMB_311_Only);
+      Dialects : Dialect_Policy := SMB_311_Only;
+      Require_Encryption : Boolean := False);
    procedure Authenticate
      (Client : in out Connection;
       User, Password : String;
@@ -72,6 +73,11 @@ package SMB.Client is
    function Is_Connected (Client : Connection) return Boolean;
    --  The dialect Connect negotiated, 16#0311# or 16#0210#; 0 before it.
    function Negotiated_Dialect (Client : Connection) return SMB.Word;
+   --  Whether requests and responses are encrypted. A 3.1.1 connection
+   --  whose negotiation chose a cipher encrypts everything once Authenticate
+   --  succeeds; Connect with Require_Encryption fails when there is no
+   --  cipher.
+   function Is_Encrypted (Client : Connection) return Boolean;
    overriding procedure Finalize (Client : in out Connection);
 
 private
