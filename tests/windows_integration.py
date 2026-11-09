@@ -5,9 +5,10 @@ Meant for the Windows CI runner: a disposable virtual machine whose job runs
 as an administrator. The harness creates a test-only local account, with a
 random password generated here and never printed, and a share holding the
 same fixture as the Samba test. It then runs the integration client over SMB
-3.1.1 twice: once with a cipher negotiated but not required, and once with
-the server requiring encryption. It removes the share and the account and
-restores the server setting afterwards.
+3.1.1 three times: with a cipher negotiated but not required, then with the
+server requiring encryption and allowing only AES-128-GCM, then only
+AES-128-CCM. It removes the share and the account and restores the server
+settings afterwards.
 
 It refuses to run anywhere but Windows, and without ADASMB_WINDOWS_SERVER=1,
 so that it never changes a developer's own machine by accident.
@@ -36,11 +37,19 @@ def powershell(script: str, env: dict[str, str] | None = None) -> None:
         check=True, env=env, timeout=120)
 
 
+def powershell_output(script: str) -> str:
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+         "$ErrorActionPreference = 'Stop'; " + script],
+        check=True, capture_output=True, text=True, timeout=120).stdout.strip()
+
+
 def diagnostics() -> None:
     subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command",
          "Get-SmbServerConfiguration | Format-List EnableSMB2Protocol,"
-         " EncryptData, RejectUnencryptedAccess, RequireSecuritySignature;"
+         " EncryptData, EncryptionCiphers, RejectUnencryptedAccess,"
+         " RequireSecuritySignature;"
          " Get-SmbShare | Format-Table -AutoSize;"
          " Get-WinEvent -LogName Microsoft-Windows-SMBServer/Operational"
          " -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List"
@@ -62,7 +71,7 @@ def populate(share: pathlib.Path) -> None:
         (share / f"pagination-{index:04}.txt").touch()
 
 
-def run_client(password: str, encryption: str) -> None:
+def run_client(password: str, encryption: str, label: str) -> None:
     env = os.environ.copy()
     env.update(
         SMB_TEST_HOST="127.0.0.1",
@@ -74,8 +83,7 @@ def run_client(password: str, encryption: str) -> None:
         SMB_TEST_ENCRYPTION=encryption,
     )
     subprocess.run([str(CLIENT)], check=True, env=env, timeout=600)
-    print(f"Windows SMB server, SMB 3.1.1, encryption {encryption}: passed",
-          flush=True)
+    print(f"Windows SMB server, SMB 3.1.1, {label}: passed", flush=True)
 
 
 def main() -> int:
@@ -113,17 +121,27 @@ def main() -> int:
             powershell(
                 f"New-SmbShare -Name {SHARE} -Path '{share}'"
                 f" -ChangeAccess {USER} | Out-Null")
+            ciphers = powershell_output(
+                "(Get-SmbServerConfiguration).EncryptionCiphers")
+            print(f"server ciphers: {ciphers}", flush=True)
             try:
                 try:
-                    run_client(password, "on")
+                    run_client(password, "on", "cipher negotiated, not required")
                     powershell("Set-SmbServerConfiguration -EncryptData $true -Force")
-                    run_client(password, "required")
+                    # With one cipher allowed, a passing run shows that the
+                    # client and Windows agree on that cipher.
+                    for cipher in ("AES_128_GCM", "AES_128_CCM"):
+                        powershell("Set-SmbServerConfiguration"
+                                   f" -EncryptionCiphers '{cipher}' -Force")
+                        run_client(password, "required",
+                                   f"encryption required, {cipher} only")
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                     diagnostics()
                     raise
             finally:
                 powershell(
-                    "Set-SmbServerConfiguration -EncryptData $false -Force;"
+                    "Set-SmbServerConfiguration -EncryptData $false"
+                    f" -EncryptionCiphers '{ciphers}' -Force;"
                     f" Remove-SmbShare -Name {SHARE} -Force")
         finally:
             powershell(f"Remove-LocalUser -Name {USER}")
