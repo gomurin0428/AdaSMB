@@ -1,3 +1,4 @@
+with SMB.AES;
 package body SMB.Core_Client
   with SPARK_Mode
 is
@@ -7,6 +8,8 @@ is
      (Packet : in out SMB.Bytes;
       Used : Natural;
       Key : SMB.Bytes;
+      Dialect : SMB.Word;
+      SMB3_Key : SMB.AES.Key_128;
       Status : out SMB.Core_Status)
    with
      Pre =>
@@ -45,10 +48,19 @@ is
         else Packet = Packet'Old)
    is
    begin
-      SMB.Core_Wire.Sign
-        (Packet
-           (Packet'First .. Packet'Last - (Packet'Length - Used)),
-         Key, Status);
+      --  SMB 2.1 signs with HMAC-SHA256 and the session key, 3.1.1 with
+      --  AES-128-CMAC and the derived signing key.
+      if Dialect = SMB.SMB2_Dialect_0311 then
+         SMB.Core_Wire.Sign_CMAC
+           (Packet
+              (Packet'First .. Packet'Last - (Packet'Length - Used)),
+            SMB3_Key, Status);
+      else
+         SMB.Core_Wire.Sign
+           (Packet
+              (Packet'First .. Packet'Last - (Packet'Length - Used)),
+            Key, Status);
+      end if;
    end Sign_Packet;
 
    procedure Fail_Transfer
@@ -359,6 +371,13 @@ is
         (SMB.Core_Wire.Encoded_U64 (Output, 40) =
            Value.Expected.Session_Id);
       pragma Assert (SMB.Core_Wire.Encoded_U32 (Output, 16) = 0);
+      --  SMB 3.1.1: the session's preauth integrity hash continues the
+      --  connection's with this request (MS-SMB2 3.2.5.3.1).
+      Value.Preauth := SMB.Engine.Current_Preauth (State);
+      if SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311 then
+         SMB.Core_Preauth.Update
+           (Value.Preauth, Output (Output'First .. Output'First + (Used - 1)));
+      end if;
    end Prepare_Negotiate;
 
    procedure Authentication_Send_Succeeded
@@ -458,6 +477,9 @@ is
       end if;
       Value.Challenge_Length := Info.Data_Length;
       Value.Session_Id := Info.Session_Id;
+      if SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311 then
+         SMB.Core_Preauth.Update (Value.Preauth, Packet);
+      end if;
       Value.Stage := Challenge_Received;
       Status := SMB.Ok;
    end Complete_Challenge;
@@ -590,6 +612,28 @@ is
              (Output'First + Header_Length + 24 + Index) =
                Token (Token'First + Index));
       Used := Header_Length + Body_Used;
+      --  SMB 3.1.1: this request ends the session's preauth integrity hash,
+      --  from which the signing key that verifies the final response comes.
+      if SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311 then
+         SMB.Core_Preauth.Update
+           (Value.Preauth, Output (Output'First .. Output'First + (Used - 1)));
+         SMB.Engine.Derive_SMB3_Signing_Key
+           (State, Value.Preauth, Engine_Status);
+         --  adamutant:disable-next-line ConditionalExpression: Install_Session_Key has just installed the session key on a 3.1.1 connection
+         if Engine_Status /= SMB.Ok then
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
+            Clear_Output (Output);
+            --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
+            Used := 0;
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
+            Clear_Output (Key);
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
+            Clear_Output (Token);
+            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
+            Fail_Authentication (Value, State, Engine_Status, Status);
+            return;
+         end if;
+      end if;
       --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
       Clear_Output (Key);
       --  adamutant:disable-next-line StatementDeletion: wipes a local secret that nothing reads afterwards
@@ -1153,7 +1197,9 @@ is
          Prepare_Header (Output, Expected, Status);
          --  adamutant:disable-next-line ConditionalExpression: the precondition leaves room for the header
          if Status = SMB.Ok then
-            Sign_Packet (Output, Need, Key, E);
+            Sign_Packet
+              (Output, Need, Key, SMB.Engine.Current_Dialect (State),
+               SMB.Engine.Current_SMB3_Signing_Key (State), E);
             --  adamutant:disable-next-line StatementDeletion: Sign_Packet cannot fail on a whole request
             Status := E;
          end if;
@@ -1795,7 +1841,9 @@ is
          Key : constant SMB.Bytes :=
            SMB.Engine.Current_Signing_Key (State);
       begin
-         Sign_Packet (Output, Used, Key, Sign_Status);
+         Sign_Packet
+           (Output, Used, Key, SMB.Engine.Current_Dialect (State),
+            SMB.Engine.Current_SMB3_Signing_Key (State), Sign_Status);
       end;
       --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
       if Sign_Status /= SMB.Ok then
@@ -2194,7 +2242,8 @@ is
              SMB.Core_Wire.U32_Byte
                ((if Value.Directory then 1 else 16#40#), Index));
       Sign_Packet
-        (Output, Required, Key, Field_Status);
+        (Output, Required, Key, SMB.Engine.Current_Dialect (State),
+         SMB.Engine.Current_SMB3_Signing_Key (State), Field_Status);
       --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
       if Field_Status /= SMB.Ok then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above
@@ -2311,9 +2360,15 @@ is
          Fail_After_Reservation (Value, State, Field_Status, Status);
          return;
       end if;
-      SMB.Core_Wire.Sign
-        (Output (Output'First .. Output'First + (Required - 1)),
-         Key, Field_Status);
+      if SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311 then
+         SMB.Core_Wire.Sign_CMAC
+           (Output (Output'First .. Output'First + (Required - 1)),
+            SMB.Engine.Current_SMB3_Signing_Key (State), Field_Status);
+      else
+         SMB.Core_Wire.Sign
+           (Output (Output'First .. Output'First + (Required - 1)),
+            Key, Field_Status);
+      end if;
       --  adamutant:disable-next-line ConditionalExpression: signing cannot fail on a whole request
       if Field_Status /= SMB.Ok then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above
@@ -2786,7 +2841,9 @@ is
       pragma Assert
         (SMB.Core_Wire.Encoded_U32 (Output, 36) =
            Expected.Tree_Id);
-      Sign_Packet (Output, Used, Key, Field_Status);
+      Sign_Packet
+        (Output, Used, Key, SMB.Engine.Current_Dialect (State),
+         SMB.Engine.Current_SMB3_Signing_Key (State), Field_Status);
       --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
       if Field_Status /= SMB.Ok then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above

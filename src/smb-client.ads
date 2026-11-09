@@ -13,6 +13,11 @@ package SMB.Client is
      (Open_Existing, Create_New, Open_Or_Create, Truncate_Existing,
       Create_Or_Truncate);
 
+   --  The dialects Connect offers. SMB 3.1.1 protects the negotiation with
+   --  its preauth integrity hash; offering 2.1 as well lets an active
+   --  attacker strip 3.1.1 from the request and force 2.1.
+   type Dialect_Policy is (SMB_311_Only, SMB_311_Or_21);
+
    type Directory_Entry is record
       Name : Ada.Strings.Unbounded.Unbounded_String;
       Size : SMB.QWord := 0;
@@ -25,7 +30,8 @@ package SMB.Client is
       Host : String;
       Port : Positive := 445;
       Timeout_Seconds : Duration := 10.0;
-      Entropy : Entropy_Source := null);
+      Entropy : Entropy_Source := null;
+      Dialects : Dialect_Policy := SMB_311_Only);
    procedure Authenticate
      (Client : in out Connection;
       User, Password : String;
@@ -64,6 +70,8 @@ package SMB.Client is
    function Last_Unverified_Authentication_Status
      (Client : Connection) return SMB.DWord;
    function Is_Connected (Client : Connection) return Boolean;
+   --  The dialect Connect negotiated, 16#0311# or 16#0210#; 0 before it.
+   function Negotiated_Dialect (Client : Connection) return SMB.Word;
    overriding procedure Finalize (Client : in out Connection);
 
 private

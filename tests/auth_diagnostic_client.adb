@@ -1,3 +1,4 @@
+with Test_Dialects;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Strings.Fixed;
@@ -14,7 +15,8 @@ procedure Auth_Diagnostic_Client is
    Rejected : Boolean := False;
 begin
    SMB.Client.Connect
-     (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_PORT")));
+     (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_PORT")),
+         Dialects => Test_Dialects.Policy);
    begin
       SMB.Client.Authenticate
         (Client, Env ("SMB_TEST_USER"), Env ("SMB_TEST_PASSWORD"));
@@ -40,7 +42,8 @@ begin
    end if;
    SMB.Client.Connect
      (Client, Env ("SMB_TEST_HOST"),
-      Positive'Value (Env ("SMB_TEST_BACKEND_PORT")));
+      Positive'Value (Env ("SMB_TEST_BACKEND_PORT")),
+         Dialects => Test_Dialects.Policy);
    if SMB.Client.Last_Unverified_Authentication_Status (Client) /= 0 then
       raise Program_Error with "reconnect retained unverified hint";
    end if;

@@ -22,6 +22,8 @@ package SMB.Core_Protocol is
       Tree_Id : SMB.DWord := 0;
       File_Id : SMB.Bytes (0 .. 15) := (others => 0);
       Count : Natural := 0;
+      --  The dialect a NEGOTIATE response selected: 2.1 or 3.1.1.
+      Dialect : SMB.Word := 0;
    end record;
 
    type Directory_Info is record
@@ -402,6 +404,9 @@ package SMB.Core_Protocol is
        (Command = 0 and then Nt_Status = SMB.Success =>
           (if Status = SMB.Ok then
              Packet'Length >= 128
+             and then Info.Dialect = SMB.Core_Wire.Encoded_U16 (Packet, 68)
+             and then Info.Dialect in SMB.SMB2_Dialect_0210
+                                    | SMB.SMB2_Dialect_0311
              and then Info.Data_Length =
                Natural (SMB.Core_Wire.Encoded_U16 (Packet, 122))
              and then

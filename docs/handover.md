@@ -32,8 +32,8 @@ of date.
 | 3 | 3.1.1 negotiate contexts (`SMB.Core_Negotiate`) | merged (#120) |
 | 3 | Preauth integrity hash (`SMB.Core_Preauth`) | merged (#121) |
 | 3 | AES-CMAC message signing in `SMB.Core_Wire` | merged (#122) |
-| 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | next |
-| 4 | Encryption | not started |
+| 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | merged (#123) |
+| 4 | Encryption | next |
 | 5 | Windows server interop, release 0.2.0 | not started |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
@@ -233,18 +233,55 @@ with the Signature field zeroed, under a 16-byte key typed as
   are the published vectors: each verifies with its session's derived
   signing key.
 
+## SMB 3.1.1 in the engine (#123)
+
+Phase 3 is complete: `Connect` offers SMB 3.1.1 by default and signs a
+3.1.1 session with AES-128-CMAC.
+
+* `SMB.Client.Connect` has `Dialects : Dialect_Policy := SMB_311_Only`.
+  `SMB_311_Or_21` also offers 2.1. `Negotiated_Dialect` reports the result.
+  This changes behavior: a 2.1-only server now needs `SMB_311_Or_21`.
+* `SMB.Core_Connection.Prepare_Negotiate` takes the salt and `Allow_21`,
+  sends `SMB.Core_Negotiate.Request` and keeps the request's preauth hash.
+  `Complete` accepts 3.1.1 only with valid negotiate contexts, and 2.1 only
+  when it was offered; its postcondition proves that downgrade rule.
+  `Parse_Response` accepts both dialects, records the one chosen in
+  `Response_Info.Dialect`, and rejects SMB 3 capabilities only from a 2.1
+  server (Samba sends multichannel with 3.1.1).
+* The engine records the dialect, the cipher and the connection's preauth
+  hash (`Mark_Negotiated`). `Current_Signing_Key` stays the NTLM session
+  key, which also keys the SPNEGO mechListMIC; a 3.1.1 session signs with a
+  separate key, `Current_SMB3_Signing_Key`, that
+  `Derive_SMB3_Signing_Key` sets to `SMB.KDF.Derive` of the session key and
+  the session's preauth hash. Its postcondition proves that provenance and
+  lists every other accessor as unchanged, because the accessors are
+  completed in the body and callers cannot see that they depend only on
+  other fields.
+* The session's preauth hash lives in `SMB.Core_Client`'s `Authentication`
+  record, so hashing does not change the engine state. `Prepare_Negotiate`
+  starts it from the connection's, `Complete_Challenge` adds the challenge,
+  and `Prepare_Authenticate` adds the second request once its header is
+  written, then derives the key. The engine verifies the final response
+  with AES-CMAC under it.
+* Every request signer (`Sign_Packet` in both units, and the direct call in
+  `Prepare_Close`) picks HMAC-SHA256 or AES-CMAC by `Current_Dialect`.
+* The cipher is negotiated and recorded but not used; a share or session
+  that requires encryption is still refused. Phase 4 encrypts.
+* Samba runs twice in CI: as before with 2.1 for the proxy tests (their
+  proxies re-sign with the 2.1 key, and every integration client passes
+  `Test_Dialects.Policy`), and with `ADASMB_SMB311_ONLY=1`, a 3.1.1-only
+  server with mandatory signing, for `integration_client` in its default
+  policy.
+
 ## Next steps
 
-1. **Engine integration**: the dialect, cipher, preauth and key state in
-   `SMB.Engine`; `Prepare_Negotiate` using `SMB.Core_Negotiate`; the
-   DialectRevision and downgrade checks; signing and cipher keys from
-   `SMB.KDF`; AES-CMAC signing and the signed final SESSION_SETUP
-   response; `Dialect_Policy` on `Connect`; and a 3.1.1-only Samba
-   configuration with mandatory signing. It changes `SMB.Engine` contracts
-   and is expected to carry most of the proof cost, so it may take more
-   than one pull request.
-
-The checklist below still applies to any new unit.
+Phase 4 of `docs/smb3-design.md`: the transform header, AES-128-GCM/CCM
+encryption of every request after the final SESSION_SETUP response, a
+nonce counter that never wraps, and the response checks listed under
+Encryption. The engine already holds the cipher; the encryption and
+decryption keys come from `SMB.KDF` with the same preauth hash as the
+signing key. Samba with `smb encrypt = required` and hostile transform
+headers are the tests.
 
 ## Checklist for a new primitive
 

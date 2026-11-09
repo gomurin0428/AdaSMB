@@ -1,5 +1,9 @@
+with SMB.AES;
+with SMB.Core_Negotiate;
+with SMB.Core_Preauth;
 with SMB.Core_Wire;
 with SMB.Core_Protocol;
+with SMB.KDF;
 with SMB.Core_NTLM;
 with SMB.Crypto;
 
@@ -9,6 +13,8 @@ package SMB.Engine
        Initializes => Identity_Registry
 is
    use type SMB.Byte;
+   use type SMB.Word;
+   use type SMB.Core_Negotiate.Cipher_Id;
    use type SMB.Core_Wire.Command_Code;
    use type SMB.DWord;
    use type SMB.QWord;
@@ -70,6 +76,20 @@ is
    function Current_Response_Info (State : Engine_State)
      return SMB.Core_Protocol.Response_Info;
    function Signing_Key_Is_Zero (State : Engine_State) return Boolean;
+   --  The dialect and cipher that negotiation chose (0 and No_Cipher before
+   --  it), and the connection's preauth integrity hash after the NEGOTIATE
+   --  exchange, which a 3.1.1 session continues.
+   function Current_Dialect (State : Engine_State) return SMB.Word;
+   function Current_Cipher
+     (State : Engine_State) return SMB.Core_Negotiate.Cipher_Id;
+   function Current_Preauth
+     (State : Engine_State) return SMB.Core_Preauth.Hash_Value;
+   --  A 3.1.1 session signs with a key derived from the session key, which
+   --  Current_Signing_Key holds as for 2.1 and which still keys the SPNEGO
+   --  mechListMIC.
+   function Has_SMB3_Signing_Key (State : Engine_State) return Boolean;
+   function Current_SMB3_Signing_Key
+     (State : Engine_State) return SMB.AES.Key_128;
    function Current_Owner_Id (State : Engine_State) return SMB.QWord;
    function Current_Epoch (State : Engine_State) return SMB.QWord;
    function Connection_Context_Equivalent
@@ -262,9 +282,13 @@ is
             Has_Validated_Response (State)'Old
         else State = State'Old and Status = SMB.Invalid_State_Status);
 
+   --  Cipher and Preauth are those of a 3.1.1 response; a 2.1 response has
+   --  neither, and gets No_Cipher.
    procedure Mark_Negotiated
      (State : in out Engine_State;
       Maximum_Read, Maximum_Write : Natural;
+      Cipher : SMB.Core_Negotiate.Cipher_Id;
+      Preauth : SMB.Core_Preauth.Hash_Value;
       Status : out SMB.Core_Status)
    with
      Post =>
@@ -301,9 +325,63 @@ is
           and Current_Max_Read (State) = Maximum_Read
           and Current_Max_Write (State) = Maximum_Write
           and Current_Session_Id (State) = 0
+          and Current_Dialect (State) =
+            Current_Response_Info (State)'Old.Dialect
+          and Current_Cipher (State) =
+            (if Current_Dialect (State) = SMB.SMB2_Dialect_0311 then Cipher
+             else SMB.Core_Negotiate.No_Cipher)
+          and Current_Preauth (State) = Preauth
+          and not Has_SMB3_Signing_Key (State)
           and not Has_Validated_Response (State)
           and not Has_Pending_Request (State)
         else State = State'Old);
+
+   --  True when After differs from Before at most in the 3.1.1 signing key.
+   function Only_SMB3_Key_Changed (Before, After : Engine_State) return Boolean
+   with Ghost;
+
+   --  Derives the 3.1.1 signing key from the session key and Preauth, the
+   --  session's final preauth integrity hash, once the last SESSION_SETUP
+   --  request that enters it is built (MS-SMB2 3.2.5.3.1). The final
+   --  response is verified with it.
+   procedure Derive_SMB3_Signing_Key
+     (State : in out Engine_State;
+      Preauth : SMB.Core_Preauth.Hash_Value;
+      Status : out SMB.Core_Status)
+   with
+     Post =>
+       (if Status = SMB.Ok then
+          Current_Dialect (State)'Old = SMB.SMB2_Dialect_0311
+          and Has_Signing_Key (State)'Old
+          and not Has_SMB3_Signing_Key (State)'Old
+          and Only_SMB3_Key_Changed (State'Old, State)
+          and Next_Request_Id (State) = Next_Request_Id (State)'Old
+          and Last_Allocated_Handle_Ticket (State) =
+            Last_Allocated_Handle_Ticket (State)'Old
+          and Current_Phase (State) = Current_Phase (State)'Old
+          and Current_Owner_Id (State) = Current_Owner_Id (State)'Old
+          and Current_Epoch (State) = Current_Epoch (State)'Old
+          and Current_Session_Id (State) = Current_Session_Id (State)'Old
+          and Current_Tree_Id (State) = Current_Tree_Id (State)'Old
+          and Current_Max_Read (State) = Current_Max_Read (State)'Old
+          and Current_Max_Write (State) = Current_Max_Write (State)'Old
+          and Current_Signing_Key (State) = Current_Signing_Key (State)'Old
+          and Has_Signing_Key (State) = Has_Signing_Key (State)'Old
+          and Signing_Key_Is_Zero (State) = Signing_Key_Is_Zero (State)'Old
+          and Has_Pending_Request (State) = Has_Pending_Request (State)'Old
+          and Has_Validated_Response (State) =
+            Has_Validated_Response (State)'Old
+          and SMB.Core_Protocol."="
+            (Current_Response_Info (State), Current_Response_Info (State)'Old)
+          and Handle_Table_Equivalent (State'Old, State)
+          and Current_Dialect (State) = Current_Dialect (State)'Old
+          and Current_Cipher (State) = Current_Cipher (State)'Old
+          and Current_Preauth (State) = Current_Preauth (State)'Old
+          and Has_SMB3_Signing_Key (State)
+          and Current_SMB3_Signing_Key (State) =
+            SMB.KDF.Derive
+              (Current_Signing_Key (State), SMB.KDF.Signing, Preauth)
+        else State = State'Old and Status = SMB.Invalid_State_Status);
 
    procedure Install_Session_Key
      (State : in out Engine_State;
@@ -622,6 +700,8 @@ is
                  (if Pending_Command (State)'Old = 0
                     and then Nt_Status = SMB.Success
                   then Packet'Length >= 128
+                    and then Current_Response_Info (State).Dialect in
+                      SMB.SMB2_Dialect_0210 | SMB.SMB2_Dialect_0311
                     and then Current_Response_Info (State).Max_Read in
                       1 .. SMB.Core_Protocol.Maximum_IO_Chunk
                     and then Current_Response_Info (State).Max_Write in
@@ -842,7 +922,6 @@ is
    with Post => Current_Signing_Key'Result'Length = 16;
 
 private
-   use type SMB.Word;
 
    type Handle_Record is record
       Active : Boolean := False;
@@ -868,6 +947,11 @@ private
       Max_Write : Natural := 0;
       Signing_Key : SMB.Bytes (0 .. 15) := (others => 0);
       Has_Key : Boolean := False;
+      SMB3_Key : SMB.AES.Key_128 := (others => 0);
+      Has_SMB3_Key : Boolean := False;
+      Dialect : SMB.Word := 0;
+      Cipher : SMB.Core_Negotiate.Cipher_Id := SMB.Core_Negotiate.No_Cipher;
+      Preauth : SMB.Core_Preauth.Hash_Value := SMB.Core_Preauth.Initial;
       Pending : Boolean := False;
       Pending_Async_Id : SMB.QWord := 0;
       Pending_Expected : Request_Expectation;
@@ -880,6 +964,33 @@ private
       Receipt_Info : SMB.Core_Protocol.Response_Info;
       Handles : Handle_Table;
    end record;
+
+   function Only_SMB3_Key_Changed (Before, After : Engine_State) return Boolean
+   is (After.Current = Before.Current
+       and then After.Owner_Id = Before.Owner_Id
+       and then After.Epoch = Before.Epoch
+       and then After.Next_Message_Id = Before.Next_Message_Id
+       and then After.Next_Ticket = Before.Next_Ticket
+       and then After.Session_Id = Before.Session_Id
+       and then After.Tree_Id = Before.Tree_Id
+       and then After.Max_Read = Before.Max_Read
+       and then After.Max_Write = Before.Max_Write
+       and then After.Signing_Key = Before.Signing_Key
+       and then After.Has_Key = Before.Has_Key
+       and then After.Dialect = Before.Dialect
+       and then After.Cipher = Before.Cipher
+       and then After.Preauth = Before.Preauth
+       and then After.Pending = Before.Pending
+       and then After.Pending_Async_Id = Before.Pending_Async_Id
+       and then After.Pending_Expected = Before.Pending_Expected
+       and then After.Receipt_Valid = Before.Receipt_Valid
+       and then After.Receipt_Command = Before.Receipt_Command
+       and then After.Receipt_Status = Before.Receipt_Status
+       and then After.Receipt_Signed = Before.Receipt_Signed
+       and then After.Receipt_MIC_Valid = Before.Receipt_MIC_Valid
+       and then After.Receipt_Close_Token = Before.Receipt_Close_Token
+       and then SMB.Core_Protocol."=" (After.Receipt_Info, Before.Receipt_Info)
+       and then After.Handles = Before.Handles);
 
    function Has_Pending_Request (State : Engine_State) return Boolean is
      (State.Pending);

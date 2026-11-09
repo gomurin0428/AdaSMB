@@ -6,6 +6,7 @@ with SMB.Entropy;
 with SMB.Core_Auth;
 with SMB.Core_Client;
 with SMB.Core_Connection;
+with SMB.Core_Negotiate;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
 with SMB.Core_Wire;
@@ -522,9 +523,13 @@ package body SMB.Client is
       Host : String;
       Port : Positive := 445;
       Timeout_Seconds : Duration := 10.0;
-      Entropy : Entropy_Source := null) is
+      Entropy : Entropy_Source := null;
+      Dialects : Dialect_Policy := SMB_311_Only) is
       Guid : SMB.Bytes (0 .. 15);
-      Packet : SMB.Bytes (0 .. 101) := (others => 0);
+      Salt : SMB.Core_Negotiate.Salt_Bytes;
+      Packet : SMB.Bytes
+        (0 .. SMB.Core_Wire.Header_Size + SMB.Core_Negotiate.Request_Length
+              - 1) := (others => 0);
       Used : Natural;
       Engine_Status : SMB.Core_Status;
       Operation : SMB.Core_Connection.Connection_Operation;
@@ -538,6 +543,7 @@ package body SMB.Client is
       end if;
       Client.Entropy := Entropy;
       Get_Entropy (Client, Guid);
+      Get_Entropy (Client, Salt);
       SMB.Transport.Connect
         (Client.Channel, Host, Port, Timeout_Seconds);
       Client.Host := Ada.Strings.Unbounded.To_Unbounded_String (Host);
@@ -546,7 +552,8 @@ package body SMB.Client is
          raise SMB.Invalid_State with "session engine rejected transport connection";
       end if;
       SMB.Core_Connection.Prepare_Negotiate
-        (Operation, Client.Engine_Core, Guid, Packet, Used, Engine_Status);
+        (Operation, Client.Engine_Core, Guid, Salt,
+         Dialects = SMB_311_Or_21, Packet, Used, Engine_Status);
       if Engine_Status /= SMB.Ok then
          raise SMB.Protocol_Error with "cannot build SMB negotiate request";
       end if;
@@ -1329,6 +1336,9 @@ package body SMB.Client is
 
    function Is_Connected (Client : Connection) return Boolean is
      (SMB.Engine.Current_Phase (Client.Engine_Core) /= Disconnected);
+
+   function Negotiated_Dialect (Client : Connection) return SMB.Word is
+     (SMB.Engine.Current_Dialect (Client.Engine_Core));
 
    overriding procedure Finalize (Client : in out Connection) is
    begin

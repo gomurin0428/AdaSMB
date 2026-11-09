@@ -121,6 +121,11 @@ is
       State.Max_Write := 0;
       State.Signing_Key := (others => 0);
       State.Has_Key := False;
+      State.SMB3_Key := (others => 0);
+      State.Has_SMB3_Key := False;
+      State.Dialect := 0;
+      State.Cipher := SMB.Core_Negotiate.No_Cipher;
+      State.Preauth := SMB.Core_Preauth.Initial;
       State.Pending := False;
       State.Pending_Async_Id := 0;
       State.Pending_Expected := (others => <>);
@@ -151,6 +156,8 @@ is
    procedure Mark_Negotiated
      (State : in out Engine_State;
       Maximum_Read, Maximum_Write : Natural;
+      Cipher : SMB.Core_Negotiate.Cipher_Id;
+      Preauth : SMB.Core_Preauth.Hash_Value;
       Status : out SMB.Core_Status) is
    begin
       if State.Current /= Transport_Connected
@@ -180,10 +187,35 @@ is
       State.Max_Write := Maximum_Write;
       --  adamutant:disable-next-line StatementDeletion: no session exists before negotiation
       State.Session_Id := 0;
+      State.Dialect := State.Receipt_Info.Dialect;
+      State.Cipher :=
+        (if State.Dialect = SMB.SMB2_Dialect_0311 then Cipher
+         else SMB.Core_Negotiate.No_Cipher);
+      State.Preauth := Preauth;
+      --  adamutant:disable-next-line StatementDeletion, BooleanLiteral: no session, so no key, exists before negotiation
+      State.Has_SMB3_Key := False;
       State.Current := Negotiated;
       State.Receipt_Valid := False;
       Status := SMB.Ok;
    end Mark_Negotiated;
+
+   procedure Derive_SMB3_Signing_Key
+     (State : in out Engine_State;
+      Preauth : SMB.Core_Preauth.Hash_Value;
+      Status : out SMB.Core_Status) is
+   begin
+      if State.Dialect /= SMB.SMB2_Dialect_0311
+        or else not State.Has_Key
+        or else State.Has_SMB3_Key
+      then
+         Status := SMB.Invalid_State_Status;
+         return;
+      end if;
+      State.SMB3_Key :=
+        SMB.KDF.Derive (State.Signing_Key, SMB.KDF.Signing, Preauth);
+      State.Has_SMB3_Key := True;
+      Status := SMB.Ok;
+   end Derive_SMB3_Signing_Key;
 
    procedure Install_Session_Key
      (State : in out Engine_State;
@@ -430,6 +462,14 @@ is
       State.Tree_Id := 0;
       State.Signing_Key := (others => 0);
       State.Has_Key := False;
+      State.SMB3_Key := (others => 0);
+      State.Has_SMB3_Key := False;
+      --  Nothing reads these before the next negotiation sets them.
+      --  adamutant:disable StatementDeletion, NumericLiteral
+      State.Dialect := 0;
+      State.Cipher := SMB.Core_Negotiate.No_Cipher;
+      State.Preauth := SMB.Core_Preauth.Initial;
+      --  adamutant:enable StatementDeletion, NumericLiteral
       State.Max_Read := 0;
       State.Max_Write := 0;
       State.Receipt_Valid := False;
@@ -592,7 +632,26 @@ is
          Status := Wire_Status;
          return;
       end if;
-      if State.Pending_Expected.Signed then
+      if State.Pending_Expected.Signed
+        and then State.Dialect = SMB.SMB2_Dialect_0311
+      then
+         --  3.1.1 verifies with the derived key, which the final
+         --  SESSION_SETUP request's preparation installs.
+         if not State.Has_SMB3_Key then
+            Invalidate (State, Ignore_Status);
+            Nt_Status := 0;
+            Status := SMB.Signature_Error;
+            return;
+         end if;
+         SMB.Core_Wire.Verify_Signature_CMAC
+           (Packet, State.SMB3_Key, Valid, Verify_Status);
+         if Verify_Status /= SMB.Ok or else not Valid then
+            Invalidate (State, Ignore_Status);
+            Nt_Status := 0;
+            Status := SMB.Signature_Error;
+            return;
+         end if;
+      elsif State.Pending_Expected.Signed then
          --  adamutant:disable-next-line ConditionalExpression: only a request made with a key expects a signed reply
          if not State.Has_Key then
             --  adamutant:disable-next-line StatementDeletion: unreachable, as above
@@ -1024,6 +1083,24 @@ is
 
    function Has_Signing_Key (State : Engine_State) return Boolean is
      (State.Has_Key);
+
+   function Current_Dialect (State : Engine_State) return SMB.Word is
+     (State.Dialect);
+
+   function Current_Cipher
+     (State : Engine_State) return SMB.Core_Negotiate.Cipher_Id is
+     (State.Cipher);
+
+   function Current_Preauth
+     (State : Engine_State) return SMB.Core_Preauth.Hash_Value is
+     (State.Preauth);
+
+   function Has_SMB3_Signing_Key (State : Engine_State) return Boolean is
+     (State.Has_SMB3_Key);
+
+   function Current_SMB3_Signing_Key
+     (State : Engine_State) return SMB.AES.Key_128 is
+     (State.SMB3_Key);
 
    function Current_Response_Info (State : Engine_State)
      return SMB.Core_Protocol.Response_Info is

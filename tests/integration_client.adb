@@ -1,3 +1,4 @@
+with Test_Dialects;
 with Ada.Environment_Variables;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
@@ -9,6 +10,7 @@ with SMB.Engine;
 
 procedure Integration_Client is
    use type SMB.Byte;
+   use type SMB.Word;
    use type SMB.Bytes;
    use type SMB.Client.Access_Mode;
    use type SMB.DWord;
@@ -41,7 +43,8 @@ begin
       Wrong : SMB.Client.Connection;
       Rejected : Boolean := False;
    begin
-      SMB.Client.Connect (Wrong, Host, Port);
+      SMB.Client.Connect (Wrong, Host, Port,
+         Dialects => Test_Dialects.Policy);
       begin
          SMB.Client.Authenticate (Wrong, User, "definitely-wrong-password");
       exception
@@ -58,7 +61,8 @@ begin
       Authentication_Test_Support.Reset_Entropy_Calls;
       SMB.Client.Connect
         (Client, Host, Port,
-         Entropy => Authentication_Test_Support.Fail_After_Negotiate'Access);
+         Entropy => Authentication_Test_Support.Fail_After_Negotiate'Access,
+         Dialects => Test_Dialects.Policy);
       begin
          SMB.Client.Authenticate (Client, User, Password);
          raise Program_Error with "injected authentication unexpectedly succeeded";
@@ -169,7 +173,15 @@ begin
          SMB.Client.Close (Client, File);
       end Check_Handle_Capacity;
    begin
-      SMB.Client.Connect (Client, Host, Port);
+      SMB.Client.Connect (Client, Host, Port,
+         Dialects => Test_Dialects.Policy);
+      --  The 3.1.1-only run talks to a 3.1.1-only server; the other run's
+      --  server speaks only 2.1.
+      Assert
+        (SMB.Client.Negotiated_Dialect (Client) =
+           (if SMB.Client."=" (Test_Dialects.Policy, SMB.Client.SMB_311_Only)
+            then SMB.SMB2_Dialect_0311 else SMB.SMB2_Dialect_0210),
+         "negotiated dialect");
       Check_Invalid_Credentials;
       SMB.Client.Authenticate (Client, User, Password);
       begin
@@ -452,7 +464,8 @@ begin
             Other : SMB.Client.Connection;
             Foreign_Rejected : Boolean := False;
          begin
-            SMB.Client.Connect (Other, Host, Port);
+            SMB.Client.Connect (Other, Host, Port,
+         Dialects => Test_Dialects.Policy);
             SMB.Client.Authenticate (Other, User, Password);
             SMB.Client.Connect_Share (Other, Share);
             begin
@@ -554,7 +567,8 @@ begin
       begin
       SMB.Client.Disconnect (Client);
 
-      SMB.Client.Connect (Client, Host, Port);
+      SMB.Client.Connect (Client, Host, Port,
+         Dialects => Test_Dialects.Policy);
       SMB.Client.Authenticate (Client, User, Password);
       SMB.Client.Connect_Share (Client, Share);
          declare

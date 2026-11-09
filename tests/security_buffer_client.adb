@@ -1,3 +1,4 @@
+with Test_Dialects;
 with Ada.Environment_Variables;
 with Ada.Text_IO;
 with SMB.Client;
@@ -24,12 +25,14 @@ procedure Security_Buffer_Client is
 begin
    if not Negotiate then
       SMB.Client.Connect
-        (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_PORT")), 5.0);
+        (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_PORT")), 5.0,
+         Dialects => Test_Dialects.Policy);
    end if;
    begin
       if Negotiate then
          SMB.Client.Connect
-           (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_PORT")), 5.0);
+           (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_PORT")), 5.0,
+         Dialects => Test_Dialects.Policy);
       else
          Authenticate;
       end if;
@@ -52,7 +55,8 @@ begin
       raise Program_Error with "security-buffer failure did not reject and clear state";
    end if;
    SMB.Client.Connect
-     (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_BACKEND_PORT")), 5.0);
+     (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_BACKEND_PORT")), 5.0,
+         Dialects => Test_Dialects.Policy);
    Authenticate;
    SMB.Client.Connect_Share (Client, Env ("SMB_TEST_SHARE"));
    declare

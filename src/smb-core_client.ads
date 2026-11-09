@@ -1,6 +1,7 @@
 with SMB.Crypto;
 with SMB.Core_NTLM;
 with SMB.Core_Auth;
+with SMB.Core_Preauth;
 with SMB.Core_Protocol;
 with SMB.Core_Wire;
 with SMB.Engine;
@@ -1750,6 +1751,8 @@ private
       Challenge_Length : Natural := 0;
       Challenge : SMB.Bytes
         (0 .. SMB.Core_Auth.Maximum_Security_Token - 1) := (others => 0);
+      --  SMB 3.1.1: the session's preauth integrity hash so far.
+      Preauth : SMB.Core_Preauth.Hash_Value := SMB.Core_Preauth.Initial;
    end record;
 
    function Identity_Of
