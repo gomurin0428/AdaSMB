@@ -4750,8 +4750,8 @@ timeouts, proved every check, with no `pragma Assume` or justification:
 | `smb-core_negotiate.adb` | 73 | 25 s |
 | `smb-core_protocol.adb` | 912 | 14 min |
 | `smb-engine.adb` | 282 | 5 min |
-| `smb-core_connection.adb` | 479 | 9 min |
-| `smb-core_client.adb` | CLIENT_CHECKS | CLIENT_TIME |
+| `smb-core_connection.adb` | 479 | 8 min |
+| `smb-core_client.adb` | 1,486 | 42 min |
 
 `test_suite` adds:
 
@@ -4769,15 +4769,43 @@ timeouts, proved every check, with no `pragma Assume` or justification:
   `SMB.KDF` over an independently computed hash of the three SESSION_SETUP
   messages; the final response signed with that key's CMAC is accepted,
   and one signed with HMAC is rejected as `Signature_Error` and
-  disconnects.
+  disconnects;
+* 17 checks on 3.1.1 after authentication. TREE_CONNECT, CREATE and
+  CLOSE requests carry the CMAC of the derived key, not the HMAC of the
+  session key. Derivation is refused on 2.1, without a session key and a
+  second time, and 2.1 records no cipher. A signed response before the
+  derivation fails even with the CMAC of the all-zero key the engine
+  holds, an HMAC-signed CLOSE response fails, and both report no
+  NTSTATUS and clear the dialect, cipher, preauth hash and 3.1.1 key.
 
 The Samba integration test now runs twice. The first run is the SMB 2.1
 test as before, since its proxies re-sign responses with SMB 2.1 HMAC.
 The second limits Samba to SMB3_11 with signing required and runs
 `integration_client` with `Dialects => SMB_311_Only`, which checks that
-`Negotiated_Dialect` is 3.1.1.
+`Negotiated_Dialect` is 3.1.1. Both passed on GitHub Actions (Ubuntu
+24.04's Samba): Samba accepted the CMAC-signed requests, so it derived the
+same key from the same preauth hash, and the client verified Samba's
+signed responses, the final SESSION_SETUP response included.
+
+The review before merging found that drawing the salt as a second entropy
+request moved the integration tests' injected failure, meant for the
+authentication nonce, onto the salt. `Connect` now draws the GUID and the
+salt in one 48-byte request.
 
 `make check`, `make test`, and the CMAC, CCM, GCM, KDF, signing, crypto,
 AES, NTLM, Unicode, clock and transport tests passed. The stack check
 passed: `SMB.Client.Connect` is now 124,032 bytes and `Authenticate`
-235,120, below the 262,144-byte budget. MUTATION_RESULT
+235,120, below the 262,144-byte budget.
+
+A changed-line AdaMutant run on GitHub Actions detected all 148 mutants.
+The first run left eleven. Eight became tests: the three conditions of
+`Derive_SMB3_Signing_Key`'s guard, the cipher dropped on 2.1, the
+missing-key check (an absent key is all zero, so only a response signed
+with the zero key's CMAC tells the check apart), and the cleared NTSTATUS
+after a signature failure, which the earlier tests could not see because
+their responses reported success. Three are equivalent and annotated: the
+session's preauth hash is read only on 3.1.1, so updating it on 2.1
+changes nothing, and only a fresh operation, which already holds the
+initial hash, can prepare a NEGOTIATE. `Fail_Connection` and the 3.1.1
+fields that `Invalidate` resets were suppressed as unreachable; hostile
+input reaches them now, so they are mutated and tested.
