@@ -33,7 +33,8 @@ of date.
 | 3 | Preauth integrity hash (`SMB.Core_Preauth`) | merged (#121) |
 | 3 | AES-CMAC message signing in `SMB.Core_Wire` | merged (#122) |
 | 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | merged (#123) |
-| 4 | Encryption | next |
+| 4 | Transform header (`SMB.Core_Transform`) | merged (#124) |
+| 4 | Engine: encryption keys, nonce counter, encryption policy | next |
 | 5 | Windows server interop, release 0.2.0 | not started |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
@@ -279,15 +280,39 @@ Phase 3 is complete: `Connect` offers SMB 3.1.1 by default and signs a
   server with mandatory signing, for `integration_client` in its default
   policy.
 
+## The transform header (#124)
+
+`SMB.Core_Transform` seals a message into a TRANSFORM_HEADER and checks and
+opens a received one. It is a stateless SPARK unit, like
+`SMB.Core_Negotiate`, and nothing calls it yet.
+
+* `Seal` takes the whole 16-byte Nonce field and keeps only the bytes the
+  cipher uses (11 for CCM, 12 for GCM), with zeros after them, so
+  Microsoft's examples, whose nonces are random, test it. `Counter_Nonce`
+  is the nonce the engine will use: a 64-bit counter in little-endian
+  order, then zeros.
+* `Unwrap` applies every check that `docs/smb3-design.md` lists under
+  Encryption, except that it asks the decrypted message to start with
+  `FE 'SMB'`, not just not to start with `FD 'SMB'`. On any failure every
+  byte after the header is zero, so a caller cannot use the ciphertext or
+  a forged plaintext by mistake.
+* `Test_AES_CCM` and `Test_AES_GCM` pass each of Microsoft's eight
+  transformed messages to `Check_Transform_Vector`, which seals the
+  plaintext back into the published bytes and opens them.
+
 ## Next steps
 
-Phase 4 of `docs/smb3-design.md`: the transform header, AES-128-GCM/CCM
-encryption of every request after the final SESSION_SETUP response, a
-nonce counter that never wraps, and the response checks listed under
-Encryption. The engine already holds the cipher; the encryption and
-decryption keys come from `SMB.KDF` with the same preauth hash as the
-signing key. Samba with `smb encrypt = required` and hostile transform
-headers are the tests.
+The engine half of phase 4 of `docs/smb3-design.md`:
+
+* derive the encryption and decryption keys from `SMB.KDF` with the same
+  preauth hash as the signing key, when a cipher was negotiated;
+* add a nonce counter that starts at 1 for each session and never wraps;
+* seal every request after the final SESSION_SETUP response, and unwrap
+  every response from then on, rejecting plaintext;
+* add `Require_Encryption` and `Is_Encrypted`.
+
+The tests are Samba with `smb encrypt = required` and hostile transform
+headers through the adversarial proxy.
 
 ## Checklist for a new primitive
 

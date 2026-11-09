@@ -8,11 +8,11 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes twenty units (nineteen bodies plus `SMB`'s
+`proof.gpr` explicitly includes twenty-one units (twenty bodies plus `SMB`'s
 types). These are the implementations called by `SMB.Client` and
-`SMB.Transport`, not a parallel model, plus `SMB.AES.CCM` and `SMB.AES.GCM`,
-which nothing in the library calls yet: they are the ciphers for SMB 3.1.1
-encryption.
+`SMB.Transport`, not a parallel model, plus `SMB.AES.CCM`, `SMB.AES.GCM` and
+`SMB.Core_Transform`, which nothing in the library calls yet: they are the
+ciphers and the transform header for SMB 3.1.1 encryption.
 
 | Unit | Runtime responsibility |
 | --- | --- |
@@ -32,6 +32,7 @@ encryption.
 | `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
 | `SMB.Core_Negotiate` | The SMB 3.1.1 NEGOTIATE request body with its preauth integrity and encryption contexts, and the checks on a 3.1.1 response's negotiate contexts; run-time safety and a cipher of `No_Cipher` on failure |
 | `SMB.Core_Preauth` | The SMB 3.1.1 preauth integrity hash step, SHA-512 of the previous value and a message; run-time safety |
+| `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-128-CCM or GCM, and checking and opening a received one; the header fields and nonce field written, the checks that pass on success, and no message bytes left after any failure |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
