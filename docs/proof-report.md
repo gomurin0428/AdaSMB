@@ -4809,3 +4809,69 @@ changes nothing, and only a fresh operation, which already holds the
 initial hash, can prepare a NEGOTIATE. `Fail_Connection` and the 3.1.1
 fields that `Invalidate` resets were suppressed as unreachable; hostile
 input reaches them now, so they are mutated and tested.
+
+## SMB 3.x transform header (`SMB.Core_Transform`)
+
+`SMB.Core_Transform` seals a message into an SMB2 TRANSFORM_HEADER with
+AES-128-CCM or AES-128-GCM, and checks and opens a received one (MS-SMB2
+2.2.41, 3.1.4.3, 3.2.4.1.8 and 3.2.5.1.1.1). Nothing in the library calls
+it yet; the engine will in the second half of phase 4.
+
+* `Seal`'s postcondition gives the result's length, the ProtocolId, the
+  Nonce field (the bytes of the given nonce that the cipher uses, then
+  zeros), OriginalMessageSize, Reserved, Flags, SessionId and zeros after
+  the result. An output too short fails with `Invalid_Length` and is all
+  zero.
+* `Unwrap`'s postcondition names its five statuses. On `Ok` it gives the
+  checked header fields and the ProtocolId and SessionId of the decrypted
+  SMB2 header (the tag check is not a property a contract can state); on
+  any failure, every byte after the transform header is zero.
+* `Counter_Nonce` writes a 64-bit counter in little-endian order, then
+  zeros, which is the same nonce under either cipher.
+
+```sh
+gnatprove -P proof.gpr -u smb-core_transform.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
+```
+
+GNATprove 16.1.0 proved all **138 checks** in about two and a half minutes
+on the Mac, with no `pragma Assume` or justification. The AEAD calls get the nonce, the
+associated data and the tag as copies, so no in-out slice of the packet
+aliases an input.
+
+`test_suite`:
+
+* `Check_Transform_Vector` reproduces each of the eight transformed
+  messages of Microsoft's SMB 3.1.1 encryption blog (A.1 with GCM, A.2
+  with CCM: a WRITE and a READ, each request and response) byte for byte
+  from its plaintext, key, Nonce field and SessionId. The output is placed
+  at bounds from 0, at bounds that end at `Natural'Last`, and with spare
+  bytes, which must be zero. It then opens each message again.
+* `Test_Transform` runs, for each cipher:
+  * the nonce field and header fields of a message sealed with a nonce
+    whose every byte is set;
+  * a round trip that ends at `Natural'Last`, and the 64-byte minimum
+    message;
+  * an output one byte short;
+  * 43 rejections, each of which must also leave the header and zero
+    the rest:
+    * an empty packet, a bare header, and a bare header with an SMB2
+      ProtocolId (length is checked first);
+    * each ProtocolId byte;
+    * Flags 0 and `0x0101`;
+    * OriginalMessageSize one larger, one smaller and above 2**24;
+    * a truncated message;
+    * another SessionId outside, and outside alone;
+    * every tag byte, the nonce, the last byte of the Nonce field (which
+      neither cipher uses, but the tag covers), Reserved, the ciphertext,
+      another key and the other cipher;
+    * a decrypted message shorter than an SMB2 header, another transform,
+      each other ProtocolId byte, and another SessionId inside.
+
+That is 8 published messages and 86 rejections.
+
+An AdaMutant run on `smb-core_transform.adb` detected all 126 mutants (20
+more did not compile) and marks none. The first run left two. Both are now
+tests: a bare header with an SMB2 ProtocolId, which shows that length is
+checked first, and a message whose header alone carries another SessionId,
+which shows that the header's SessionId is checked, not just the one
+inside.

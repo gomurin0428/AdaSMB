@@ -132,7 +132,8 @@ ApplicationKey is not needed.
   * SessionId is not the session's;
   * OriginalMessageSize does not equal the ciphertext length;
   * the tag does not verify;
-  * the decrypted message starts with `FD 'SMB'`;
+  * the decrypted message is not an SMB2 message (`FE 'SMB'`), such as a
+    nested transform (`FD 'SMB'`);
   * the decrypted header's SessionId differs.
 * Signatures inside a decrypted message are not checked; the AEAD tag
   already authenticates it.

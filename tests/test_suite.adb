@@ -13,6 +13,7 @@ with SMB.Core_Connection;
 with SMB.Core_Framing;
 with SMB.Core_Negotiate;
 with SMB.Core_Preauth;
+with SMB.Core_Transform;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
@@ -1770,6 +1771,56 @@ procedure Test_Suite is
       Ada.Text_IO.Put_Line ("SMB 3.1.1 KDF: 12 published keys passed");
    end Test_KDF;
 
+   --  Published transformed messages that SMB.Core_Transform must
+   --  reproduce from their plaintext and open again; Test_AES_CCM and
+   --  Test_AES_GCM pass theirs here.
+   Transform_Vectors : Natural := 0;
+
+   procedure Check_Transform_Vector
+     (Name : String;
+      Cipher : SMB.Core_Transform.AEAD_Cipher;
+      Key : SMB.AES.Key_128;
+      Transformed, Plain : SMB.Bytes)
+   is
+      Nonce : constant SMB.Core_Transform.Nonce_Field :=
+        Transformed (Transformed'First + 20 .. Transformed'First + 35);
+      Session_Id : constant SMB.QWord := SMB.Wire.U64 (Transformed, 44);
+      Status : SMB.Core_Status;
+      Used : Natural;
+   begin
+      --  At the vector's bounds, at bounds that end at Natural'Last, and
+      --  with three spare bytes.
+      for Layout in 1 .. 3 loop
+         declare
+            Length : constant Natural :=
+              Transformed'Length + (if Layout = 3 then 3 else 0);
+            First : constant Natural :=
+              (if Layout = 2 then Natural'Last - Length + 1 else 0);
+            Output : SMB.Bytes (First .. First + (Length - 1)) :=
+              (others => 16#A5#);
+         begin
+            SMB.Core_Transform.Seal
+              (Cipher, Key, Nonce, Session_Id, Plain, Output, Used, Status);
+            Assert (Status = SMB.Ok and then Used = Transformed'Length,
+                    Name & " transform status");
+            Assert_Equal
+              (Output (First .. First + (Used - 1)), Transformed,
+               Name & " transform");
+            Assert ((for all Index in Output'Range =>
+                       (if Index - First >= Used then Output (Index) = 0)),
+                    Name & " transform spare bytes");
+            SMB.Core_Transform.Unwrap
+              (Cipher, Key, Session_Id, Output (First .. First + (Used - 1)),
+               Status);
+            Assert (Status = SMB.Ok, Name & " unwrap status");
+            Assert_Equal
+              (Output (First + 52 .. First + (Used - 1)), Plain,
+               Name & " unwrapped");
+         end;
+      end loop;
+      Transform_Vectors := Transform_Vectors + 1;
+   end Check_Transform_Vector;
+
    procedure Test_AES_CCM is
       --  The four AES-128-CCM messages of Microsoft's SMB 3.1.1 encryption
       --  blog, appendix A.2: a WRITE request and its response, then a READ
@@ -1864,6 +1915,8 @@ procedure Test_Suite is
          end;
          Reject ("a shorter message", AAD, Nonce,
                  Cipher (Cipher'First .. Cipher'Last - 1), Signature);
+         Check_Transform_Vector
+           (Name, SMB.Core_Negotiate.AES_128_CCM, Key, Transformed, Plain);
       end Check;
 
       --  SMB always has 32 bytes of associated data and a nonempty message,
@@ -2056,6 +2109,8 @@ procedure Test_Suite is
          end;
          Reject ("a shorter message", AAD, Nonce,
                  Cipher (Cipher'First .. Cipher'Last - 1), Signature);
+         Check_Transform_Vector
+           (Name, SMB.Core_Negotiate.AES_128_GCM, Key, Transformed, Plain);
       end Check;
 
       --  SMB always has 32 bytes of associated data and a nonempty message,
@@ -2181,6 +2236,229 @@ procedure Test_Suite is
         ("AES-GCM: 4 published SMB messages and 5 other messages,"
          & Natural'Image (Count) & " seal, open and rejection checks passed");
    end Test_AES_GCM;
+
+   --  SMB.Core_Transform's checks, nonce field and buffer handling, with
+   --  messages sealed here; Check_Transform_Vector covers the published
+   --  bytes.
+   procedure Test_Transform is
+      Key : constant SMB.AES.Key_128 := (others => 16#4B#);
+      Session_Id : constant SMB.QWord := 16#1122_3344_5566_7788#;
+      Spread_Nonce : constant SMB.Core_Transform.Nonce_Field :=
+        (others => 16#EE#);
+      Count : Natural := 0;
+
+      --  Length bytes of an SMB2 message for Session; only ProtocolId and
+      --  SessionId matter here.
+      function Message
+        (Length : Natural;
+         Session : SMB.QWord := Session_Id;
+         Changed_Byte : Natural := 4;
+         Protocol_First : SMB.Byte := 16#FE#) return SMB.Bytes
+      is
+         Result : SMB.Bytes (0 .. Length - 1);
+      begin
+         for Index in Result'Range loop
+            Result (Index) := SMB.Byte (Index mod 251);
+         end loop;
+         Result (0 .. 3) := (Protocol_First, 16#53#, 16#4D#, 16#42#);
+         SMB.Wire.Put_U64 (Result, 40, Session);
+         if Changed_Byte < 4 then
+            Result (Changed_Byte) := Result (Changed_Byte) xor 16#01#;
+         end if;
+         return Result;
+      end Message;
+
+      function Sealed
+        (Cipher : SMB.Core_Transform.AEAD_Cipher;
+         Plain : SMB.Bytes;
+         Nonce : SMB.Core_Transform.Nonce_Field :=
+           SMB.Core_Transform.Counter_Nonce (7)) return SMB.Bytes
+      is
+         Output : SMB.Bytes (0 .. 51 + Plain'Length);
+         Used : Natural;
+         Status : SMB.Core_Status;
+      begin
+         SMB.Core_Transform.Seal
+           (Cipher, Key, Nonce, Session_Id, Plain, Output, Used, Status);
+         Assert (Status = SMB.Ok and then Used = Output'Length, "seal");
+         return Output;
+      end Sealed;
+
+      --  Unwrap must fail with Expected, leave the header and zero the rest.
+      procedure Reject
+        (Name : String;
+         Cipher : SMB.Core_Transform.AEAD_Cipher;
+         Packet : SMB.Bytes;
+         Expected : SMB.Core_Status;
+         Session : SMB.QWord := Session_Id;
+         With_Key : SMB.AES.Key_128 := Key)
+      is
+         Data : SMB.Bytes := Packet;
+         Status : SMB.Core_Status;
+         Kept : constant Natural := Natural'Min (52, Packet'Length);
+      begin
+         SMB.Core_Transform.Unwrap (Cipher, With_Key, Session, Data, Status);
+         Assert (Status = Expected,
+                 "transform " & Name & ": " & SMB.Core_Status'Image (Status));
+         Assert (Data (Data'First .. Data'First + Kept - 1) =
+                   Packet (Packet'First .. Packet'First + Kept - 1)
+                 and then
+                   (for all Index in Data'First + Kept .. Data'Last =>
+                      Data (Index) = 0),
+                 "transform " & Name & " left message bytes");
+         Count := Count + 1;
+      end Reject;
+   begin
+      Assert (Transform_Vectors = 8, "published transformed messages");
+      Assert (SMB.Core_Transform.Nonce_Length
+                (SMB.Core_Negotiate.AES_128_CCM) = 11
+              and then SMB.Core_Transform.Nonce_Length
+                (SMB.Core_Negotiate.AES_128_GCM) = 12,
+              "nonce lengths");
+      Assert (SMB.Core_Transform.Counter_Nonce (16#0102_0304_0506_0708#) =
+                (8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0),
+              "counter nonce");
+      Assert (SMB.Core_Transform.Is_Transformed
+                (SMB.Bytes'(16#FD#, 16#53#, 16#4D#, 16#42#))
+              and then not SMB.Core_Transform.Is_Transformed
+                (SMB.Bytes'(16#FD#, 16#53#, 16#4D#))
+              and then not SMB.Core_Transform.Is_Transformed
+                (SMB.Bytes'(16#FE#, 16#53#, 16#4D#, 16#42#)),
+              "transform ProtocolId");
+      for Cipher in SMB.Core_Transform.AEAD_Cipher loop
+         declare
+            Other : constant SMB.Core_Transform.AEAD_Cipher :=
+              (if SMB.Core_Negotiate."=" (Cipher, SMB.Core_Negotiate.AES_128_GCM)
+               then SMB.Core_Negotiate.AES_128_CCM
+               else SMB.Core_Negotiate.AES_128_GCM);
+            Used_Nonce : constant Natural :=
+              SMB.Core_Transform.Nonce_Length (Cipher);
+            Plain : constant SMB.Bytes := Message (100);
+            Good : constant SMB.Bytes := Sealed (Cipher, Plain, Spread_Nonce);
+            Status : SMB.Core_Status;
+            Used : Natural;
+
+            procedure Change_And_Reject
+              (Name : String; Position : Natural; Value : SMB.Byte;
+               Expected : SMB.Core_Status)
+            is
+               Changed : SMB.Bytes := Good;
+            begin
+               Changed (Position) := Value;
+               Reject (Name, Cipher, Changed, Expected);
+            end Change_And_Reject;
+         begin
+            --  The nonce field keeps only the bytes the cipher uses.
+            Assert ((for all Index in 0 .. 15 =>
+                       Good (20 + Index) =
+                         (if Index < Used_Nonce then 16#EE# else 0)),
+                    "transform nonce field");
+            Assert (Good (0 .. 3) = (16#FD#, 16#53#, 16#4D#, 16#42#)
+                    and then SMB.Wire.U32 (Good, 36) = 100
+                    and then SMB.Wire.U16 (Good, 40) = 0
+                    and then SMB.Wire.U16 (Good, 42) = 1
+                    and then SMB.Wire.U64 (Good, 44) = Session_Id,
+                    "transform header fields");
+            --  A round trip ending at Natural'Last, and the shortest
+            --  message accepted.
+            declare
+               Data : SMB.Bytes
+                 (Natural'Last - Good'Length + 1 .. Natural'Last) := Good;
+            begin
+               SMB.Core_Transform.Unwrap
+                 (Cipher, Key, Session_Id, Data, Status);
+               Assert (Status = SMB.Ok
+                       and then Data (Data'First + 52 .. Data'Last) = Plain,
+                       "transform at Natural'Last");
+            end;
+            declare
+               Data : SMB.Bytes := Sealed (Cipher, Message (64));
+            begin
+               SMB.Core_Transform.Unwrap
+                 (Cipher, Key, Session_Id, Data, Status);
+               Assert (Status = SMB.Ok, "transform of an SMB2 header");
+            end;
+            --  Seal into too little room.
+            declare
+               Output : SMB.Bytes (0 .. 150) := (others => 16#A5#);
+            begin
+               SMB.Core_Transform.Seal
+                 (Cipher, Key, Spread_Nonce, Session_Id, Plain, Output, Used,
+                  Status);
+               Assert (Status = SMB.Invalid_Length and then Used = 0
+                       and then (for all Value of Output => Value = 0),
+                       "transform into a short buffer");
+            end;
+            Reject ("empty", Cipher, SMB.Bytes'(1 .. 0 => 0),
+                    SMB.Invalid_Length);
+            Reject ("header only", Cipher, Good (0 .. 51),
+                    SMB.Invalid_Length);
+            --  Length comes first, even before the ProtocolId.
+            declare
+               Changed : SMB.Bytes := Good (0 .. 51);
+            begin
+               Changed (0) := 16#FE#;
+               Reject ("header only, of SMB2", Cipher, Changed,
+                       SMB.Invalid_Length);
+            end;
+            for Position in 0 .. 3 loop
+               Change_And_Reject ("ProtocolId", Position,
+                                  Good (Position) xor 16#01#,
+                                  SMB.Invalid_Protocol);
+            end loop;
+            Change_And_Reject ("Flags 0", 42, 0, SMB.Invalid_Protocol);
+            Change_And_Reject ("Flags 16#0101#", 43, 1, SMB.Invalid_Protocol);
+            Change_And_Reject ("a larger size", 36, 101, SMB.Invalid_Length);
+            Change_And_Reject ("a smaller size", 36, 99, SMB.Invalid_Length);
+            Change_And_Reject ("a size above 2**24", 39, 1,
+                               SMB.Invalid_Length);
+            Reject ("a truncated message", Cipher, Good (0 .. Good'Last - 1),
+                    SMB.Invalid_Length);
+            Reject ("another session", Cipher, Good, SMB.Correlation_Error,
+                    Session => Session_Id xor 16#0100_0000_0000_0000#);
+            for Position in Natural range 4 .. 19 loop
+               Change_And_Reject ("a changed tag", Position,
+                                  Good (Position) xor 16#80#,
+                                  SMB.Signature_Error);
+            end loop;
+            Change_And_Reject ("a changed nonce", 20, Good (20) xor 1,
+                               SMB.Signature_Error);
+            Change_And_Reject ("a byte after the nonce", 35, 1,
+                               SMB.Signature_Error);
+            Change_And_Reject ("Reserved", 40, 1, SMB.Signature_Error);
+            Change_And_Reject ("a changed message", Good'Last,
+                               Good (Good'Last) xor 1, SMB.Signature_Error);
+            Reject ("another key", Cipher, Good, SMB.Signature_Error,
+                    With_Key => (others => 16#4C#));
+            Reject ("another cipher", Other, Good, SMB.Signature_Error);
+            Reject ("a message shorter than an SMB2 header", Cipher,
+                    Sealed (Cipher, Message (63)), SMB.Invalid_Length);
+            Reject ("a nested transform", Cipher,
+                    Sealed (Cipher, Message (100, Protocol_First => 16#FD#)),
+                    SMB.Invalid_Protocol);
+            for Position in 1 .. 3 loop
+               Reject ("a message that is not SMB2", Cipher,
+                       Sealed (Cipher, Message (100, Changed_Byte => Position)),
+                       SMB.Invalid_Protocol);
+            end loop;
+            Reject ("another session inside", Cipher,
+                    Sealed (Cipher,
+                            Message (100, Session => Session_Id + 2**56)),
+                    SMB.Correlation_Error);
+            --  The header's SessionId is checked on its own: here only the
+            --  message inside carries the expected one.
+            Reject ("another session outside", Cipher,
+                    Sealed (Cipher,
+                            Message (100, Session => Session_Id + 2**56)),
+                    SMB.Correlation_Error,
+                    Session => Session_Id + 2**56);
+         end;
+      end loop;
+      Ada.Text_IO.Put_Line
+        ("SMB 3.x transform:" & Natural'Image (Transform_Vectors)
+         & " published messages and" & Natural'Image (Count)
+         & " rejections passed");
+   end Test_Transform;
 
    type Word_List is array (Positive range <>) of SMB.Word;
    type DWord_List is array (Positive range <>) of SMB.DWord;
@@ -10566,6 +10844,7 @@ begin
    Test_KDF;
    Test_AES_CCM;
    Test_AES_GCM;
+   Test_Transform;
    Test_Negotiate_311;
    Test_Preauth_311;
    Test_CMAC_Signing;
