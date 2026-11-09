@@ -1,6 +1,7 @@
 with SMB.AES;
 with SMB.Core_Negotiate;
 with SMB.Core_Preauth;
+with SMB.Core_Transform;
 with SMB.Core_Wire;
 with SMB.Core_Protocol;
 with SMB.KDF;
@@ -90,6 +91,19 @@ is
    function Has_SMB3_Signing_Key (State : Engine_State) return Boolean;
    function Current_SMB3_Signing_Key
      (State : Engine_State) return SMB.AES.Key_128;
+   --  With a cipher, a 3.1.1 session also derives the keys that encrypt
+   --  requests and decrypt responses. Encryption starts once the session is
+   --  authenticated; from then on every request is sealed with the next
+   --  nonce, and only a response that Unwrap_Response decrypted is
+   --  accepted.
+   function Has_Cipher_Keys (State : Engine_State) return Boolean;
+   function Current_Encryption_Key
+     (State : Engine_State) return SMB.AES.Key_128;
+   function Current_Decryption_Key
+     (State : Engine_State) return SMB.AES.Key_128;
+   function Is_Encrypting (State : Engine_State) return Boolean;
+   function Next_Nonce (State : Engine_State) return SMB.QWord;
+   function Holds_Decrypted_Response (State : Engine_State) return Boolean;
    function Current_Owner_Id (State : Engine_State) return SMB.QWord;
    function Current_Epoch (State : Engine_State) return SMB.QWord;
    function Connection_Context_Equivalent
@@ -246,6 +260,12 @@ is
           and not Has_Signing_Key (State)
           and Current_Async_Id (State) = 0
           and Signing_Key_Is_Zero (State)
+          and not Has_Cipher_Keys (State)
+          and Current_Encryption_Key (State) = SMB.AES.Key_128'(others => 0)
+          and Current_Decryption_Key (State) = SMB.AES.Key_128'(others => 0)
+          and Next_Nonce (State) = 0
+          and not Is_Encrypting (State)
+          and not Holds_Decrypted_Response (State)
         else State = State'Old
           and (if Current_Phase (State)'Old /= Disconnected
                  or else Has_Pending_Request (State)'Old
@@ -337,14 +357,15 @@ is
         else State = State'Old);
 
    --  True when After differs from Before at most in the 3.1.1 signing key.
-   function Only_SMB3_Key_Changed (Before, After : Engine_State) return Boolean
+   function Only_SMB3_Keys_Changed (Before, After : Engine_State) return Boolean
    with Ghost;
 
    --  Derives the 3.1.1 signing key from the session key and Preauth, the
    --  session's final preauth integrity hash, once the last SESSION_SETUP
    --  request that enters it is built (MS-SMB2 3.2.5.3.1). The final
-   --  response is verified with it.
-   procedure Derive_SMB3_Signing_Key
+   --  response is verified with it. With a cipher it also derives the
+   --  encryption and decryption keys and starts the nonce counter at 1.
+   procedure Derive_SMB3_Keys
      (State : in out Engine_State;
       Preauth : SMB.Core_Preauth.Hash_Value;
       Status : out SMB.Core_Status)
@@ -354,7 +375,8 @@ is
           Current_Dialect (State)'Old = SMB.SMB2_Dialect_0311
           and Has_Signing_Key (State)'Old
           and not Has_SMB3_Signing_Key (State)'Old
-          and Only_SMB3_Key_Changed (State'Old, State)
+          and not Has_Cipher_Keys (State)'Old
+          and Only_SMB3_Keys_Changed (State'Old, State)
           and Next_Request_Id (State) = Next_Request_Id (State)'Old
           and Last_Allocated_Handle_Ticket (State) =
             Last_Allocated_Handle_Ticket (State)'Old
@@ -381,6 +403,28 @@ is
           and Current_SMB3_Signing_Key (State) =
             SMB.KDF.Derive
               (Current_Signing_Key (State), SMB.KDF.Signing, Preauth)
+          and Is_Encrypting (State) = Is_Encrypting (State)'Old
+          and Holds_Decrypted_Response (State) =
+            Holds_Decrypted_Response (State)'Old
+          and
+            (if Current_Cipher (State) = SMB.Core_Negotiate.No_Cipher then
+               not Has_Cipher_Keys (State)
+               and Current_Encryption_Key (State) =
+                 Current_Encryption_Key (State)'Old
+               and Current_Decryption_Key (State) =
+                 Current_Decryption_Key (State)'Old
+               and Next_Nonce (State) = Next_Nonce (State)'Old
+             else
+               Has_Cipher_Keys (State)
+               and Current_Encryption_Key (State) =
+                 SMB.KDF.Derive
+                   (Current_Signing_Key (State), SMB.KDF.Encryption,
+                    Preauth)
+               and Current_Decryption_Key (State) =
+                 SMB.KDF.Derive
+                   (Current_Signing_Key (State), SMB.KDF.Decryption,
+                    Preauth)
+               and Next_Nonce (State) = 1)
         else State = State'Old and Status = SMB.Invalid_State_Status);
 
    procedure Install_Session_Key
@@ -446,6 +490,8 @@ is
               (SMB.Crypto.Digest_128 (Current_Signing_Key (State)'Old), True)
           and not Has_Validated_Response (State)
           and not Has_Pending_Request (State)
+          --  Encryption starts with the first request after authentication.
+          and Is_Encrypting (State) = Has_Cipher_Keys (State)'Old
         else State = State'Old and Status = SMB.Invalid_State_Status);
 
    procedure Mark_Share_Connected
@@ -590,7 +636,93 @@ is
           and then not Has_Pending_Request (State)
           and then not Has_Validated_Response (State)
           and then not Has_Open_Handles (State)
-          and then Signing_Key_Is_Zero (State));
+          and then Signing_Key_Is_Zero (State))
+       --  While encrypting, an interim response must have been decrypted,
+       --  and the final one is decrypted on its own.
+       and then
+         (if Status = SMB.Ok and then Is_Interim then
+            (if Is_Encrypting (State)'Old then
+               Holds_Decrypted_Response (State)'Old)
+            and then not Holds_Decrypted_Response (State)
+            and then Is_Encrypting (State) = Is_Encrypting (State)'Old
+            and then Next_Nonce (State) = Next_Nonce (State)'Old);
+
+   function Only_Nonce_Advanced (Before, After : Engine_State) return Boolean
+   with Ghost;
+   function Only_Decryption_Recorded
+     (Before, After : Engine_State) return Boolean
+   with Ghost;
+
+   --  Seals Message, a request ready to send, into a transform header with
+   --  the encryption key and the next nonce (MS-SMB2 3.1.4.3), and advances
+   --  the counter, so no nonce is used twice under a key. It fails when
+   --  encryption is off, and with Counter_Exhausted rather than wrap.
+   procedure Seal_Request
+     (State : in out Engine_State;
+      Message : SMB.Bytes;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Message'Length in 1 .. SMB.Core_Transform.Maximum_Message_Size
+       and then Output'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Status in SMB.Ok | SMB.Invalid_State_Status | SMB.Counter_Exhausted
+                | SMB.Invalid_Length
+       and then
+         (if Status = SMB.Ok then
+            Is_Encrypting (State)'Old
+            and then Next_Nonce (State)'Old < SMB.QWord'Last
+            and then Next_Nonce (State) = Next_Nonce (State)'Old + 1
+            and then Only_Nonce_Advanced (State'Old, State)
+            and then Used = SMB.Core_Transform.Header_Size + Message'Length
+            and then Used <= Output'Length
+            and then SMB.Core_Transform.Is_Transformed (Output)
+            and then
+              (for all Index in SMB.Core_Transform.Nonce_Field'Range =>
+                 Output (Output'First + 20 + Index) =
+                   SMB.Core_Transform.Counter_Nonce
+                     (Next_Nonce (State)'Old) (Index))
+            and then SMB.Core_Wire.Encoded_U64 (Output, 44) =
+              Current_Session_Id (State)
+          else State = State'Old and then Used = 0);
+
+   --  Checks and decrypts Packet, a whole received frame, in place with the
+   --  decryption key (SMB.Core_Transform.Unwrap), for the pending request:
+   --  on Ok the message after the transform header is what Accept_Response
+   --  or Inspect_Interim_Response may take, without a signature. It needs
+   --  encryption on, a pending request and no decrypted response held; any
+   --  failure, a plaintext frame included, invalidates the engine and leaves
+   --  no bytes after the transform header.
+   procedure Unwrap_Response
+     (State : in out Engine_State;
+      Packet : in out SMB.Bytes;
+      Status : out SMB.Core_Status)
+   with
+     Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       (if Status = SMB.Ok then
+          Is_Encrypting (State)'Old
+          and then Has_Pending_Request (State)'Old
+          and then not Holds_Decrypted_Response (State)'Old
+          and then Holds_Decrypted_Response (State)
+          and then Only_Decryption_Recorded (State'Old, State)
+          and then Packet'Length - SMB.Core_Transform.Header_Size >=
+            SMB.Core_Transform.SMB2_Header_Size
+          and then SMB.Core_Wire.Encoded_U64
+            (Packet, SMB.Core_Transform.Header_Size + 40) =
+              Current_Session_Id (State)
+        else
+          Current_Phase (State) = Disconnected
+          and then not Has_Pending_Request (State)
+          and then not Has_Validated_Response (State)
+          and then not Has_Signing_Key (State)
+          and then not Is_Encrypting (State)
+          and then not Holds_Decrypted_Response (State)
+          and then
+            (for all Index in Packet'Range =>
+               (if Index - Packet'First >= SMB.Core_Transform.Header_Size
+                then Packet (Index) = 0)));
 
    function Final_Token_MIC_Matches
      (Packet : SMB.Bytes;
@@ -769,7 +901,20 @@ is
                and then
                  (if Pending_Command (State)'Old = 17 then
                     Current_Phase (State) = Current_Phase (State)'Old
-                    and then Handle_Table_Equivalent (State'Old, State)));
+                    and then Handle_Table_Equivalent (State'Old, State)))
+       --  While encrypting, only a decrypted response is taken; the flag is
+       --  consumed either way, and only a successful LOGOFF, which ends the
+       --  session, stops encryption or moves the nonce counter.
+       and then not Holds_Decrypted_Response (State)
+       and then
+         (if Status = SMB.Ok then
+            (if Is_Encrypting (State)'Old then
+               Holds_Decrypted_Response (State)'Old)
+            and then
+              (if not (Pending_Command (State)'Old = 2
+                       and then Nt_Status = SMB.Success)
+               then Is_Encrypting (State) = Is_Encrypting (State)'Old
+                 and then Next_Nonce (State) = Next_Nonce (State)'Old));
    --  A failed wire/signature check invalidates the session and all handles.
 
    procedure Register_Handle
@@ -902,6 +1047,12 @@ is
        and Current_Max_Write (State) = 0
        and Next_Request_Id (State) = 0
        and Last_Allocated_Handle_Ticket (State) = 0
+       and not Has_Cipher_Keys (State)
+       and Current_Encryption_Key (State) = SMB.AES.Key_128'(others => 0)
+       and Current_Decryption_Key (State) = SMB.AES.Key_128'(others => 0)
+       and Next_Nonce (State) = 0
+       and not Is_Encrypting (State)
+       and not Holds_Decrypted_Response (State)
        and SMB.Core_Protocol."="
          (Current_Response_Info (State),
           SMB.Core_Protocol.Response_Info'(others => <>))
@@ -949,6 +1100,12 @@ private
       Has_Key : Boolean := False;
       SMB3_Key : SMB.AES.Key_128 := (others => 0);
       Has_SMB3_Key : Boolean := False;
+      Encryption_Key : SMB.AES.Key_128 := (others => 0);
+      Decryption_Key : SMB.AES.Key_128 := (others => 0);
+      Has_Cipher_Keys : Boolean := False;
+      Encrypting : Boolean := False;
+      Decrypted : Boolean := False;
+      Nonce_Counter : SMB.QWord := 0;
       Dialect : SMB.Word := 0;
       Cipher : SMB.Core_Negotiate.Cipher_Id := SMB.Core_Negotiate.No_Cipher;
       Preauth : SMB.Core_Preauth.Hash_Value := SMB.Core_Preauth.Initial;
@@ -965,7 +1122,7 @@ private
       Handles : Handle_Table;
    end record;
 
-   function Only_SMB3_Key_Changed (Before, After : Engine_State) return Boolean
+   function Only_SMB3_Keys_Changed (Before, After : Engine_State) return Boolean
    is (After.Current = Before.Current
        and then After.Owner_Id = Before.Owner_Id
        and then After.Epoch = Before.Epoch
@@ -977,6 +1134,79 @@ private
        and then After.Max_Write = Before.Max_Write
        and then After.Signing_Key = Before.Signing_Key
        and then After.Has_Key = Before.Has_Key
+       and then After.Dialect = Before.Dialect
+       and then After.Cipher = Before.Cipher
+       and then After.Preauth = Before.Preauth
+       and then After.Pending = Before.Pending
+       and then After.Pending_Async_Id = Before.Pending_Async_Id
+       and then After.Pending_Expected = Before.Pending_Expected
+       and then After.Receipt_Valid = Before.Receipt_Valid
+       and then After.Receipt_Command = Before.Receipt_Command
+       and then After.Receipt_Status = Before.Receipt_Status
+       and then After.Receipt_Signed = Before.Receipt_Signed
+       and then After.Receipt_MIC_Valid = Before.Receipt_MIC_Valid
+       and then After.Receipt_Close_Token = Before.Receipt_Close_Token
+       and then SMB.Core_Protocol."=" (After.Receipt_Info, Before.Receipt_Info)
+       and then After.Handles = Before.Handles
+       and then After.Encrypting = Before.Encrypting
+       and then After.Decrypted = Before.Decrypted);
+
+   --  Every field but the nonce counter.
+   function Only_Nonce_Advanced (Before, After : Engine_State) return Boolean
+   is (After.Current = Before.Current
+       and then After.Owner_Id = Before.Owner_Id
+       and then After.Epoch = Before.Epoch
+       and then After.Next_Message_Id = Before.Next_Message_Id
+       and then After.Next_Ticket = Before.Next_Ticket
+       and then After.Session_Id = Before.Session_Id
+       and then After.Tree_Id = Before.Tree_Id
+       and then After.Max_Read = Before.Max_Read
+       and then After.Max_Write = Before.Max_Write
+       and then After.Signing_Key = Before.Signing_Key
+       and then After.Has_Key = Before.Has_Key
+       and then After.SMB3_Key = Before.SMB3_Key
+       and then After.Has_SMB3_Key = Before.Has_SMB3_Key
+       and then After.Encryption_Key = Before.Encryption_Key
+       and then After.Decryption_Key = Before.Decryption_Key
+       and then After.Has_Cipher_Keys = Before.Has_Cipher_Keys
+       and then After.Encrypting = Before.Encrypting
+       and then After.Decrypted = Before.Decrypted
+       and then After.Dialect = Before.Dialect
+       and then After.Cipher = Before.Cipher
+       and then After.Preauth = Before.Preauth
+       and then After.Pending = Before.Pending
+       and then After.Pending_Async_Id = Before.Pending_Async_Id
+       and then After.Pending_Expected = Before.Pending_Expected
+       and then After.Receipt_Valid = Before.Receipt_Valid
+       and then After.Receipt_Command = Before.Receipt_Command
+       and then After.Receipt_Status = Before.Receipt_Status
+       and then After.Receipt_Signed = Before.Receipt_Signed
+       and then After.Receipt_MIC_Valid = Before.Receipt_MIC_Valid
+       and then After.Receipt_Close_Token = Before.Receipt_Close_Token
+       and then SMB.Core_Protocol."=" (After.Receipt_Info, Before.Receipt_Info)
+       and then After.Handles = Before.Handles);
+
+   --  Every field but the decrypted-response flag.
+   function Only_Decryption_Recorded
+     (Before, After : Engine_State) return Boolean
+   is (After.Current = Before.Current
+       and then After.Owner_Id = Before.Owner_Id
+       and then After.Epoch = Before.Epoch
+       and then After.Next_Message_Id = Before.Next_Message_Id
+       and then After.Next_Ticket = Before.Next_Ticket
+       and then After.Session_Id = Before.Session_Id
+       and then After.Tree_Id = Before.Tree_Id
+       and then After.Max_Read = Before.Max_Read
+       and then After.Max_Write = Before.Max_Write
+       and then After.Signing_Key = Before.Signing_Key
+       and then After.Has_Key = Before.Has_Key
+       and then After.SMB3_Key = Before.SMB3_Key
+       and then After.Has_SMB3_Key = Before.Has_SMB3_Key
+       and then After.Encryption_Key = Before.Encryption_Key
+       and then After.Decryption_Key = Before.Decryption_Key
+       and then After.Has_Cipher_Keys = Before.Has_Cipher_Keys
+       and then After.Encrypting = Before.Encrypting
+       and then After.Nonce_Counter = Before.Nonce_Counter
        and then After.Dialect = Before.Dialect
        and then After.Cipher = Before.Cipher
        and then After.Preauth = Before.Preauth
@@ -1054,8 +1284,9 @@ private
            and then
              (if State.Pending_Async_Id /= 0 then
                 SMB.Core_Wire.Encoded_U64 (Packet, 32) = State.Pending_Async_Id))
+      --  A decrypted response may carry the SIGNED flag or not.
       and then
-        (if not Interim then
+        (if not Interim and not State.Decrypted then
            ((SMB.Core_Wire.Encoded_U32 (Packet, 16) and 8) /= 0) =
              State.Pending_Expected.Signed));
 

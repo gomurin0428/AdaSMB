@@ -7,6 +7,7 @@ with SMB.Core_Auth;
 with SMB.Core_Client;
 with SMB.Core_Connection;
 with SMB.Core_Negotiate;
+with SMB.Core_Transform;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
 with SMB.Core_Wire;
@@ -77,20 +78,64 @@ package body SMB.Client is
    begin
       loop
          declare
-            Packet : constant SMB.Bytes :=
+            --  The function result is this object on the secondary stack,
+            --  so the frame is not copied, and an encrypted one is
+            --  decrypted where it is.
+            Packet : SMB.Bytes :=
               SMB.Transport.Receive_Frame (Client.Channel, Deadline);
+            First : Natural := Packet'First;
          begin
+            if SMB.Engine.Is_Encrypting (Client.Engine_Core) then
+               --  The engine accepts nothing else while encryption is on.
+               SMB.Engine.Unwrap_Response (Client.Engine_Core, Packet, Status);
+               if Status /= SMB.Ok then
+                  raise SMB.Protocol_Error with
+                    "SMB encrypted response: " & SMB.Core_Status'Image (Status);
+               end if;
+               First := Packet'First + SMB.Core_Transform.Header_Size;
+            end if;
             SMB.Engine.Inspect_Interim_Response
-              (Client.Engine_Core, Packet, Is_Interim, Status);
+              (Client.Engine_Core, Packet (First .. Packet'Last), Is_Interim,
+               Status);
             if Status /= SMB.Ok then
                raise SMB.Protocol_Error with
                  "SMB interim response: " & SMB.Core_Status'Image (Status);
             elsif not Is_Interim then
-               return Packet;
+               return Packet (First .. Packet'Last);
             end if;
          end;
       end loop;
    end Receive_Response;
+
+   --  Sends Packet, a whole request, sealed in a transform header once the
+   --  engine encrypts.
+   procedure Send_Request (Client : in out Connection; Packet : SMB.Bytes) is
+      Used : Natural;
+      Status : SMB.Core_Status;
+   begin
+      if not SMB.Engine.Is_Encrypting (Client.Engine_Core) then
+         SMB.Transport.Send_Frame (Client.Channel, Packet);
+         return;
+      end if;
+      if Packet'Length = 0
+        or else Packet'Length > SMB.Core_Transform.Maximum_Message_Size
+      then
+         raise SMB.Protocol_Error with "SMB request too large to encrypt";
+      end if;
+      declare
+         Sealed : Bytes_Owners.Owner;
+      begin
+         Sealed.Item := new SMB.Bytes
+           (0 .. SMB.Core_Transform.Header_Size + Packet'Length - 1);
+         SMB.Engine.Seal_Request
+           (Client.Engine_Core, Packet, Sealed.Item.all, Used, Status);
+         if Status /= SMB.Ok then
+            raise SMB.Protocol_Error with "cannot encrypt SMB request";
+         end if;
+         SMB.Transport.Send_Frame
+           (Client.Channel, Sealed.Item (0 .. Used - 1));
+      end;
+   end Send_Request;
 
    procedure Get_Entropy (Client : Connection; Output : out SMB.Bytes) is
    begin
@@ -282,7 +327,7 @@ package body SMB.Client is
          end if;
          raise SMB.Protocol_Error with "SMB CREATE request exceeds limits";
       end if;
-      SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
+      Send_Request (Client, Packet (0 .. Used - 1));
       SMB.Core_Client.Send_Succeeded
         (Operation, Client.Engine_Core, Core_Status);
       if Core_Status /= SMB.Ok then
@@ -333,7 +378,7 @@ package body SMB.Client is
       if Core_Status /= SMB.Ok then
          raise SMB.Invalid_State with "SMB handle rejected for CLOSE";
       end if;
-      SMB.Transport.Send_Frame (Client.Channel, Packet (0 .. Used - 1));
+      Send_Request (Client, Packet (0 .. Used - 1));
       SMB.Core_Client.Send_Succeeded
         (Operation, Client.Engine_Core, Core_Status);
       if Core_Status /= SMB.Ok then
@@ -394,8 +439,8 @@ package body SMB.Client is
       Used : Natural) is
       Core_Status : SMB.Core_Status;
    begin
-      SMB.Transport.Send_Frame
-        (Client.Channel, Packet (Packet'First .. Packet'First + Used - 1));
+      Send_Request
+        (Client, Packet (Packet'First .. Packet'First + Used - 1));
       SMB.Core_Client.Metadata_Send_Succeeded
         (Operation, Client.Engine_Core, Core_Status);
       if Core_Status /= SMB.Ok then
@@ -439,8 +484,8 @@ package body SMB.Client is
       Nt_Status : SMB.DWord;
    begin
       Client.Last_Status := SMB.Success;
-      SMB.Transport.Send_Frame
-        (Client.Channel, Packet (Packet'First .. Packet'First + Used - 1));
+      Send_Request
+        (Client, Packet (Packet'First .. Packet'First + Used - 1));
       SMB.Core_Connection.Send_Succeeded
         (Operation, Client.Engine_Core, Core_Status);
       if Core_Status /= SMB.Ok then
@@ -524,7 +569,8 @@ package body SMB.Client is
       Port : Positive := 445;
       Timeout_Seconds : Duration := 10.0;
       Entropy : Entropy_Source := null;
-      Dialects : Dialect_Policy := SMB_311_Only) is
+      Dialects : Dialect_Policy := SMB_311_Only;
+      Require_Encryption : Boolean := False) is
       --  The client GUID, then the preauth integrity salt.
       Seed : SMB.Bytes (0 .. 47);
       Packet : SMB.Bytes
@@ -559,6 +605,14 @@ package body SMB.Client is
       end if;
       Execute_Connection (Client, Operation, Packet, Used);
       Require_Status (Client, Client.Last_Status);
+      if Require_Encryption
+        and then SMB.Core_Negotiate."="
+          (SMB.Engine.Current_Cipher (Client.Engine_Core),
+           SMB.Core_Negotiate.No_Cipher)
+      then
+         raise SMB.Protocol_Error with
+           "server did not negotiate SMB 3.1.1 encryption";
+      end if;
    exception
       when E : others =>
          if SMB.Core_Connection.Stage_Of (Operation) in
@@ -613,8 +667,8 @@ package body SMB.Client is
       Require_Authentication_Status
         (Engine_Status, "cannot prepare SMB authentication negotiate");
       Started := True;
-      SMB.Transport.Send_Frame
-        (Client.Channel,
+      Send_Request
+        (Client,
          Request.Item (Request.Item'First .. Request.Item'First + Used - 1));
       SMB.Core_Client.Authentication_Send_Succeeded
         (Authentication.Item.all, Client.Engine_Core, Engine_Status);
@@ -650,8 +704,8 @@ package body SMB.Client is
          Engine_Status);
       Require_Authentication_Status
         (Engine_Status, "cannot construct NTLM authentication token");
-      SMB.Transport.Send_Frame
-        (Client.Channel,
+      Send_Request
+        (Client,
          Request.Item (Request.Item'First .. Request.Item'First + Used - 1));
       SMB.Core_Client.Authentication_Send_Succeeded
         (Authentication.Item.all, Client.Engine_Core, Engine_Status);
@@ -836,7 +890,7 @@ package body SMB.Client is
            (Transfer.Item.all, Client.Engine_Core, Packet.Item.all, Used,
             Core_Status);
          Require_Transfer_Status (Core_Status, "SMB READ preparation");
-         SMB.Transport.Send_Frame (Client.Channel, Packet.Item (0 .. Used - 1));
+         Send_Request (Client, Packet.Item (0 .. Used - 1));
          SMB.Core_Client.Transfer_Send_Succeeded
            (Transfer.Item.all, Client.Engine_Core, Core_Status);
          Require_Transfer_Status (Core_Status, "SMB READ send acknowledgement");
@@ -914,7 +968,7 @@ package body SMB.Client is
            (Transfer.Item.all, Client.Engine_Core, Packet.Item.all, Used,
             Core_Status);
          Require_Transfer_Status (Core_Status, "SMB WRITE preparation");
-         SMB.Transport.Send_Frame (Client.Channel, Packet.Item (0 .. Used - 1));
+         Send_Request (Client, Packet.Item (0 .. Used - 1));
          SMB.Core_Client.Transfer_Send_Succeeded
            (Transfer.Item.all, Client.Engine_Core, Core_Status);
          Require_Transfer_Status
@@ -996,8 +1050,8 @@ package body SMB.Client is
                      Core_Status);
                   Require_Transfer_Status
                     (Core_Status, "cannot prepare SMB directory query");
-                  SMB.Transport.Send_Frame
-                    (Client.Channel,
+                  Send_Request
+                    (Client,
                      Request (Request'First .. Request'First + Used - 1));
                   SMB.Core_Client.Directory_Send_Succeeded
                     (Enumeration, Client.Engine_Core, Core_Status);
@@ -1336,6 +1390,9 @@ package body SMB.Client is
 
    function Is_Connected (Client : Connection) return Boolean is
      (SMB.Engine.Current_Phase (Client.Engine_Core) /= Disconnected);
+
+   function Is_Encrypted (Client : Connection) return Boolean is
+     (SMB.Engine.Is_Encrypting (Client.Engine_Core));
 
    function Negotiated_Dialect (Client : Connection) return SMB.Word is
      (SMB.Engine.Current_Dialect (Client.Engine_Core));

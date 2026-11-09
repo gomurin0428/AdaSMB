@@ -4875,3 +4875,111 @@ tests: a bare header with an SMB2 ProtocolId, which shows that length is
 checked first, and a message whose header alone carries another SessionId,
 which shows that the header's SessionId is checked, not just the one
 inside.
+
+## SMB 3.1.1 encryption in the engine
+
+With a cipher negotiated, the client now encrypts every request after the
+final SESSION_SETUP response and accepts only encrypted responses (MS-SMB2
+3.1.4.3, 3.2.4.1.8 and 3.2.5.1.1.1).
+
+* `Derive_SMB3_Keys` (renamed from `Derive_SMB3_Signing_Key`) also derives
+  the encryption and decryption keys with `SMB.KDF` and sets the nonce
+  counter to 1. Its postcondition states both keys and the counter. With
+  no cipher, it states that none of them changed.
+* `Mark_Authenticated`'s postcondition: encryption is on exactly when the
+  cipher keys exist.
+* `Seal_Request`'s postcondition: on `Ok`, encryption was on, the counter
+  was below `QWord'Last` and advanced by one, nothing else changed, and the
+  output's Nonce field is `Counter_Nonce` of the old counter. Otherwise the
+  state is unchanged.
+* `Unwrap_Response`'s postcondition: on `Ok`, encryption was on, a request
+  was pending and no decrypted response was held; now one is held and
+  nothing else changed. Otherwise the engine is invalidated and no message
+  bytes are left.
+* `Accept_Response` and `Inspect_Interim_Response`'s postconditions:
+  * while encrypting, `Ok` means the response had been decrypted;
+  * the decrypted mark is consumed;
+  * only a successful LOGOFF stops encryption or moves the counter.
+* `Initialize` and `Invalidate` state that the keys are zero, the counter is
+  0 and encryption is off.
+
+The first Samba run with `server smb encrypt = required` failed after
+TREE_CONNECT: Samba copies the request's flags into the response, so an
+encrypted response claimed a signature. Microsoft's published examples
+clear the flag. A decrypted response is now taken with either flag, and its
+signature field is not read. `Parse_Response` first also stated the
+accepted SessionFlags in its postcondition; that contract case timed out at
+300 seconds, and the rule is left to the tests.
+
+```sh
+gnatprove -P proof.gpr -u <unit> --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
+```
+
+GNATprove 16.1.0 on the Mac proved every check of the changed units, with
+no `pragma Assume` or justification:
+
+| Unit | Checks | Time |
+| --- | ---: | ---: |
+| `smb-engine.adb` | 323 | 12 min |
+| `smb-core_protocol.adb` | 912 | 19 min |
+| `smb-core_connection.adb` | 479 | 9 min |
+| `smb-core_client.adb` | 1,486 | 26 min |
+
+The full proof workflow (`proof.yml`) on GitHub Actions also passed on
+this branch: every unit at its `proof.gpr` timeouts, in 91 minutes, with
+nothing unproved.
+
+`test_suite`'s 3.1.1 test now has 114 checks. With each cipher it covers:
+
+* the derived cipher keys and the start of encryption;
+* sealed TREE_CONNECT, CREATE and CLOSE requests under nonces 1, 2 and 3,
+  which the server side opens with the encryption key;
+* sealed responses that clear the SIGNED flag, and an async CREATE
+  response that sets it with a meaningless signature, with an encrypted
+  STATUS_PENDING interim before it;
+* the session and share ENCRYPT_DATA flags, which are accepted;
+* rejections, each of which invalidates the engine:
+  * a plaintext interim response;
+  * a plaintext response;
+  * `Unwrap_Response` without encryption, without a pending request,
+    twice, on a plaintext frame, under the wrong key and on a changed
+    message;
+* refused seals, which leave the state and the output untouched;
+* short frames that end at `Natural'Last`.
+
+Without a cipher, the session and share flags are refused, and an unsigned
+response that claims a signature fails. `Parse_Response` accepts only
+SessionFlags 0 and 4, and reports the share flag.
+
+CI's Linux job runs Samba four times: 2.1 with the proxy tests, and 3.1.1
+with `server smb encrypt` set to `off`, `default` and `required`. The
+integration client checks `Is_Encrypted` in each run. It passes
+`Require_Encryption` when encryption is required, and checks that the
+option refuses the servers without a cipher. All four passed.
+
+`make check` (including the stack check) and `make test` passed.
+`Receive_Response` decrypts the received frame in place. The frame is a
+variable initialized by `Receive_Frame`, which GNAT keeps on the secondary
+stack. An earlier version returned a slice of a heap copy from inside the
+copy's owner, and the stack check rejected it: the result had to be copied
+to a runtime-sized frame before the owner freed the buffer.
+
+A changed-line AdaMutant run on GitHub Actions detected all 118 mutants.
+Earlier runs left eleven survivors, and each was resolved:
+
+* tests now cover:
+  * the cleared cipher keys after invalidation;
+  * the zeroed output of a refused seal;
+  * short frames at `Natural'Last`;
+  * an unsigned response that claims a signature (which
+    showed that the SIGNED flag of a plaintext response is still checked);
+* two are equivalent and annotated:
+  * the cleared NTSTATUS of a flag rejection, which only success responses
+    reach;
+  * the length guard before reading a decrypted response's flags.
+
+Defensive checks that no test can reach were annotated from the start:
+the cipher-key check in `Derive_SMB3_Keys` (the keys exist only with the
+signing key), the cipher check in `Seal_Request` and `Unwrap_Response`
+(encryption needs the keys), and the counter at `QWord'Last` (2**64
+requests).

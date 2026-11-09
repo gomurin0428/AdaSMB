@@ -173,8 +173,26 @@ begin
          SMB.Client.Close (Client, File);
       end Check_Handle_Capacity;
    begin
+      --  A server without a cipher (2.1, or 3.1.1 with encryption off)
+      --  fails Require_Encryption and leaves nothing connected.
+      if not Test_Dialects.Encrypted then
+         declare
+            Refused : SMB.Client.Connection;
+         begin
+            SMB.Client.Connect (Refused, Host, Port,
+               Dialects => Test_Dialects.Policy,
+               Require_Encryption => True);
+            raise Program_Error with
+              "Require_Encryption accepted a server without a cipher";
+         exception
+            when SMB.Protocol_Error =>
+               Assert (not SMB.Client.Is_Connected (Refused),
+                       "refused encryption left a connection");
+         end;
+      end if;
       SMB.Client.Connect (Client, Host, Port,
-         Dialects => Test_Dialects.Policy);
+         Dialects => Test_Dialects.Policy,
+         Require_Encryption => Test_Dialects.Required);
       --  The 3.1.1-only run talks to a 3.1.1-only server; the other run's
       --  server speaks only 2.1.
       Assert
@@ -182,8 +200,15 @@ begin
            (if SMB.Client."=" (Test_Dialects.Policy, SMB.Client.SMB_311_Only)
             then SMB.SMB2_Dialect_0311 else SMB.SMB2_Dialect_0210),
          "negotiated dialect");
+      Assert (not SMB.Client.Is_Encrypted (Client),
+              "encrypted before authentication");
       Check_Invalid_Credentials;
       SMB.Client.Authenticate (Client, User, Password);
+      --  Everything after authentication, the share included, is
+      --  encrypted exactly when the server negotiated a cipher, which the
+      --  encrypting run requires.
+      Assert (SMB.Client.Is_Encrypted (Client) = Test_Dialects.Encrypted,
+              "encryption after authentication");
       begin
          SMB.Client.Authenticate (Client, User, Password);
          raise Program_Error with

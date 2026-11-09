@@ -619,7 +619,7 @@ is
       if SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311 then
          SMB.Core_Preauth.Update
            (Value.Preauth, Output (Output'First .. Output'First + (Used - 1)));
-         SMB.Engine.Derive_SMB3_Signing_Key
+         SMB.Engine.Derive_SMB3_Keys
            (State, Value.Preauth, Engine_Status);
          --  adamutant:disable-next-line ConditionalExpression: Install_Session_Key has just installed the session key on a 3.1.1 connection
          if Engine_Status /= SMB.Ok then

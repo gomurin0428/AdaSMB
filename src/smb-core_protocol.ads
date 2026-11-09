@@ -24,6 +24,12 @@ package SMB.Core_Protocol is
       Count : Natural := 0;
       --  The dialect a NEGOTIATE response selected: 2.1 or 3.1.1.
       Dialect : SMB.Word := 0;
+      --  The server encrypts the session (SESSION_SETUP's SessionFlags is
+      --  SMB2_SESSION_FLAG_ENCRYPT_DATA, the only nonzero SessionFlags
+      --  accepted; guest and null fail) or the share (TREE_CONNECT's
+      --  SMB2_SHAREFLAG_ENCRYPT_DATA). The engine accepts either only with
+      --  a cipher. Tested, not stated in Parse_Response's postcondition.
+      Encrypt_Data : Boolean := False;
    end record;
 
    type Directory_Info is record

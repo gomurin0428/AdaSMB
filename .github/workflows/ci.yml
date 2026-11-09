@@ -51,6 +51,10 @@ jobs:
         run: sudo env "PATH=$PATH" python3 tests/samba_integration.py
       - name: Samba integration (SMB 3.1.1 only, signing required)
         run: sudo env "PATH=$PATH" ADASMB_SMB311_ONLY=1 python3 tests/samba_integration.py
+      - name: Samba integration (SMB 3.1.1 only, cipher offered, encryption not required)
+        run: sudo env "PATH=$PATH" ADASMB_SMB311_ONLY=1 ADASMB_SMB_ENCRYPT=default python3 tests/samba_integration.py
+      - name: Samba integration (SMB 3.1.1 only, encryption required)
+        run: sudo env "PATH=$PATH" ADASMB_SMB311_ONLY=1 ADASMB_SMB_ENCRYPT=required python3 tests/samba_integration.py
 
   mutation:
     name: Mutation testing (changed lines)

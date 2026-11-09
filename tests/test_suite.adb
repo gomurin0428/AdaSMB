@@ -3160,12 +3160,13 @@ procedure Test_Suite is
         (Packet : out SMB.Bytes;
          Command : SMB.Wire.Command_Code;
          Reply_Id : SMB.QWord;
-         Reply_Tree_Id : SMB.DWord) is
+         Reply_Tree_Id : SMB.DWord;
+         Signed : Boolean := True) is
       begin
          Packet := (others => 0);
          SMB.Wire.Initialize_Header
            (Packet, Command, Reply_Id, Reply_Tree_Id, Session_Id);
-         SMB.Wire.Put_U32 (Packet, 16, 9);
+         SMB.Wire.Put_U32 (Packet, 16, (if Signed then 9 else 1));
       end Prepare_Reply;
 
       procedure Sign_Reply (Packet : in out SMB.Bytes; With_Signer : Signer)
@@ -3184,8 +3185,11 @@ procedure Test_Suite is
          Assert (Sign_Status = SMB.Ok, "3.1.1 operations: sign a reply");
       end Sign_Reply;
 
-      --  A fresh engine that negotiated Dialect, offered GCM.
-      procedure Negotiate (Dialect : SMB.Word) is
+      --  A fresh engine that negotiated Dialect, with Cipher offered.
+      procedure Negotiate
+        (Dialect : SMB.Word;
+         Cipher : SMB.Core_Negotiate.Cipher_Id :=
+           SMB.Core_Negotiate.No_Cipher) is
          Packet : SMB.Bytes (0 .. 127) := (others => 0);
       begin
          SMB.Engine.Invalidate (State, Status);
@@ -3203,8 +3207,7 @@ procedure Test_Suite is
          SMB.Engine.Accept_Response (State, Packet, Nt_Status, Status);
          Assert (Status = SMB.Ok, "3.1.1 operations: negotiate response");
          SMB.Engine.Mark_Negotiated
-           (State, 65_536, 65_536, SMB.Core_Negotiate.AES_128_GCM, Preauth,
-            Status);
+           (State, 65_536, 65_536, Cipher, Preauth, Status);
          Assert (Status = SMB.Ok, "3.1.1 operations: negotiated");
       end Negotiate;
 
@@ -3228,7 +3231,8 @@ procedure Test_Suite is
       --  Accept_Response's.
       procedure Final_Exchange
         (With_Signer : Signer;
-         Final_Status : SMB.DWord := SMB.Success)
+         Final_Status : SMB.DWord := SMB.Success;
+         Session_Flags : SMB.Word := 0)
       is
          Packet : SMB.Bytes (0 .. 100);
       begin
@@ -3238,6 +3242,7 @@ procedure Test_Suite is
          Prepare_Reply (Packet, 1, Message_Id, 0);
          SMB.Wire.Put_U32 (Packet, 8, Final_Status);
          Packet (64) := 9;
+         SMB.Wire.Put_U16 (Packet, 66, Session_Flags);
          SMB.Wire.Put_U16 (Packet, 68, 72);
          SMB.Wire.Put_U16 (Packet, 70, Engine_Fixtures.Final_Token'Length);
          Packet (72 .. 100) := Engine_Fixtures.Final_Token;
@@ -3248,7 +3253,7 @@ procedure Test_Suite is
       procedure Reject_Derive (Message : String) is
          Before : constant SMB.Engine.Engine_State := State;
       begin
-         SMB.Engine.Derive_SMB3_Signing_Key (State, Preauth, Status);
+         SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
          Check (Status = SMB.Invalid_State_Status
                 and then SMB.Engine."=" (State, Before),
                 Message);
@@ -3267,12 +3272,40 @@ procedure Test_Suite is
               SMB.Core_Preauth.Initial
             and then not SMB.Engine.Has_SMB3_Signing_Key (State)
             and then SMB.Engine.Current_SMB3_Signing_Key (State) =
-              SMB.AES.Key_128'(others => 0),
+              SMB.AES.Key_128'(others => 0)
+            and then not SMB.Engine.Has_Cipher_Keys (State)
+            and then SMB.Engine.Current_Encryption_Key (State) =
+              SMB.AES.Key_128'(others => 0)
+            and then SMB.Engine.Current_Decryption_Key (State) =
+              SMB.AES.Key_128'(others => 0)
+            and then not SMB.Engine.Is_Encrypting (State)
+            and then SMB.Engine.Next_Nonce (State) = 0,
             Message);
       end Check_Cleared;
    begin
+      --  Outside encryption, a response the request expects unsigned may
+      --  not claim a signature.
+      declare
+         Packet : SMB.Bytes (0 .. 127) := (others => 0);
+      begin
+         SMB.Engine.Initialize (State, Status);
+         SMB.Engine.Mark_Connected (State, Status);
+         SMB.Engine.Begin_Request
+           (State, 0, False, False, Message_Id, Expected, Status);
+         SMB.Wire.Initialize_Header (Packet, 0, Message_Id, 0, 0);
+         SMB.Wire.Put_U32 (Packet, 16, 9);
+         Packet (64) := 65;
+         Packet (66) := 1;
+         SMB.Wire.Put_U16 (Packet, 68, SMB.SMB2_Dialect_0311);
+         Packet (98) := 1;
+         Packet (102) := 1;
+         SMB.Engine.Accept_Response (State, Packet, Nt_Status, Status);
+         Check (Status = SMB.Signature_Error,
+                "unsigned response that claims a signature");
+      end;
+
       --  2.1 keeps no cipher and has no 3.1.1 key to derive.
-      Negotiate (SMB.SMB2_Dialect_0210);
+      Negotiate (SMB.SMB2_Dialect_0210, SMB.Core_Negotiate.AES_128_GCM);
       Check (SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0210
              and then SMB.Core_Negotiate."="
                (SMB.Engine.Current_Cipher (State),
@@ -3284,7 +3317,7 @@ procedure Test_Suite is
       --  3.1.1 derives only from a session key. Before the derivation a
       --  signed response fails even with the CMAC of the all-zero key the
       --  engine holds, and its NTSTATUS is not reported.
-      Negotiate (SMB.SMB2_Dialect_0311);
+      Negotiate (SMB.SMB2_Dialect_0311, SMB.Core_Negotiate.AES_128_GCM);
       Check (SMB.Core_Negotiate."="
                (SMB.Engine.Current_Cipher (State),
                 SMB.Core_Negotiate.AES_128_GCM),
@@ -3298,7 +3331,7 @@ procedure Test_Suite is
 
       Negotiate (SMB.SMB2_Dialect_0311);
       Challenge_And_Key;
-      SMB.Engine.Derive_SMB3_Signing_Key (State, Preauth, Status);
+      SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
       Check (Status = SMB.Ok
              and then SMB.Engine.Has_SMB3_Signing_Key (State)
              and then SMB.Engine.Current_SMB3_Signing_Key (State) = SMB3_Key,
@@ -3382,8 +3415,375 @@ procedure Test_Suite is
             Check_Cleared ("signature failure after authentication");
          end;
       end;
+
+      --  Encryption, with each cipher. Requests are sealed with the
+      --  encryption key under nonces 1, 2, ...; responses must arrive sealed
+      --  with the decryption key and carry no signature of their own.
+      for Cipher in SMB.Core_Transform.AEAD_Cipher loop
+         declare
+            Encryption_Key : constant SMB.AES.Key_128 :=
+              SMB.KDF.Derive (Key, SMB.KDF.Encryption, Preauth);
+            Decryption_Key : constant SMB.AES.Key_128 :=
+              SMB.KDF.Derive (Key, SMB.KDF.Decryption, Preauth);
+            Name : constant String := SMB.Core_Negotiate.Cipher_Id'Image (Cipher);
+
+            --  Plain as the server would send it, sealed under Seal_Key.
+            function Server_Sealed
+              (Plain : SMB.Bytes;
+               Seal_Key : SMB.AES.Key_128 := Decryption_Key) return SMB.Bytes
+            is
+               Output : SMB.Bytes (0 .. 51 + Plain'Length);
+               Used : Natural;
+               Seal_Status : SMB.Core_Status;
+            begin
+               SMB.Core_Transform.Seal
+                 (Cipher, Seal_Key, SMB.Core_Transform.Counter_Nonce (16#5E5E#),
+                  Session_Id, Plain, Output, Used, Seal_Status);
+               Assert (Seal_Status = SMB.Ok, "3.1.1 operations: server seal");
+               return Output;
+            end Server_Sealed;
+
+            --  Seals Request (Request'First .. Request'First + Used - 1)
+            --  with the engine and checks it as the server would.
+            procedure Seal_And_Check
+              (Request : SMB.Bytes; Used : Natural; Nonce : SMB.QWord;
+               Message : String)
+            is
+               Output : SMB.Bytes (0 .. 51 + Used);
+               Sealed_Used : Natural;
+               Opened : SMB.Core_Status;
+            begin
+               SMB.Engine.Seal_Request
+                 (State, Request (Request'First .. Request'First + Used - 1),
+                  Output, Sealed_Used, Status);
+               Check (Status = SMB.Ok and then Sealed_Used = 52 + Used
+                      and then SMB.Engine.Next_Nonce (State) = Nonce + 1
+                      and then Output (20 .. 35) =
+                        SMB.Core_Transform.Counter_Nonce (Nonce),
+                      Name & " " & Message & " sealed");
+               SMB.Core_Transform.Unwrap
+                 (Cipher, Encryption_Key, Session_Id,
+                  Output (0 .. Sealed_Used - 1), Opened);
+               Check (Opened = SMB.Ok
+                      and then Output (52 .. Sealed_Used - 1) =
+                        Request (Request'First .. Request'First + Used - 1),
+                      Name & " " & Message & " opened by the server");
+            end Seal_And_Check;
+
+            procedure Authenticate_Encrypted is
+            begin
+               Negotiate (SMB.SMB2_Dialect_0311, Cipher);
+               Challenge_And_Key;
+               SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
+               Check (Status = SMB.Ok
+                      and then SMB.Engine.Has_Cipher_Keys (State)
+                      and then SMB.Engine.Current_Encryption_Key (State) =
+                        Encryption_Key
+                      and then SMB.Engine.Current_Decryption_Key (State) =
+                        Decryption_Key
+                      and then SMB.Engine.Next_Nonce (State) = 1
+                      and then not SMB.Engine.Is_Encrypting (State),
+                      Name & " cipher keys");
+               --  The server may mark the session encrypted.
+               Final_Exchange (CMAC, Session_Flags => 4);
+               Check (Status = SMB.Ok, Name & " final response");
+               SMB.Engine.Mark_Authenticated (State, Status);
+               Check (Status = SMB.Ok and then SMB.Engine.Is_Encrypting (State),
+                      Name & " encryption starts");
+            end Authenticate_Encrypted;
+         begin
+            Authenticate_Encrypted;
+            --  An encrypted TREE_CONNECT to a share the server encrypts.
+            declare
+               Operation : SMB.Core_Connection.Connection_Operation;
+               Request : SMB.Bytes (0 .. 255) := (others => 0);
+               Used : Natural;
+               Response : SMB.Bytes (0 .. 79);
+            begin
+               SMB.Core_Connection.Prepare_Tree_Connect
+                 (Operation, State, SMB.Bytes'(16#5C#, 0, 16#73#, 0), Request,
+                  Used, Status);
+               Seal_And_Check (Request, Used, 1, "TREE_CONNECT");
+               SMB.Core_Connection.Send_Succeeded (Operation, State, Status);
+               Prepare_Reply
+                 (Response, 3, SMB.Wire.U64 (Request, 24), Tree_Id,
+                  Signed => False);
+               Response (64) := 16;
+               Response (66) := 1;
+               SMB.Wire.Put_U32 (Response, 68, 16#8000#);
+               declare
+                  Frame : SMB.Bytes := Server_Sealed (Response);
+               begin
+                  SMB.Engine.Unwrap_Response (State, Frame, Status);
+                  Check (Status = SMB.Ok
+                         and then SMB.Engine.Holds_Decrypted_Response (State)
+                         and then Frame (52 .. Frame'Last) = Response,
+                         Name & " TREE_CONNECT response unwrapped");
+                  SMB.Core_Connection.Complete
+                    (Operation, State, Frame (52 .. Frame'Last), Nt_Status,
+                     Status);
+                  Check (Status = SMB.Ok
+                         and then SMB.Engine.Current_Phase (State) =
+                           SMB.Engine.Share_Connected
+                         and then not SMB.Engine.Holds_Decrypted_Response
+                           (State),
+                         Name & " encrypted TREE_CONNECT response");
+               end;
+            end;
+            --  An encrypted CREATE whose response goes pending first; then
+            --  a CLOSE answered in plaintext, which tears the session down.
+            declare
+               Operation : SMB.Core_Client.Operation;
+               Request : SMB.Bytes (0 .. 255) := (others => 0);
+               Used : Natural;
+               Interim : SMB.Bytes (0 .. 72) := (others => 0);
+               Response : SMB.Bytes (0 .. 151);
+               Token : SMB.Engine.Handle_Token;
+               Is_Interim : Boolean;
+            begin
+               SMB.Core_Client.Prepare_Create
+                 (Operation, State, SMB.Bytes'(65, 0), SMB.Engine.Read_Only,
+                  False, 1, False, Request, Used, Status);
+               Seal_And_Check (Request, Used, 2, "CREATE");
+               SMB.Core_Client.Send_Succeeded (Operation, State, Status);
+               SMB.Wire.Initialize_Header
+                 (Interim, 5, SMB.Wire.U64 (Request, 24), 0, Session_Id);
+               SMB.Wire.Put_U32 (Interim, 8, SMB.Status_Pending);
+               SMB.Wire.Put_U32 (Interim, 16, 16#3#);
+               SMB.Wire.Put_U64 (Interim, 32, 16#77#);
+               Interim (64) := 9;
+               --  A plaintext interim is refused like any plaintext.
+               declare
+                  Saved : constant SMB.Engine.Engine_State := State;
+               begin
+                  SMB.Engine.Inspect_Interim_Response
+                    (State, Interim, Is_Interim, Status);
+                  Check (Status = SMB.Signature_Error
+                         and then SMB.Engine.Current_Phase (State) =
+                           SMB.Engine.Disconnected,
+                         Name & " plaintext interim response");
+                  State := Saved;
+               end;
+               declare
+                  Frame : SMB.Bytes := Server_Sealed (Interim);
+               begin
+                  SMB.Engine.Unwrap_Response (State, Frame, Status);
+                  SMB.Engine.Inspect_Interim_Response
+                    (State, Frame (52 .. Frame'Last), Is_Interim, Status);
+                  Check (Status = SMB.Ok and then Is_Interim
+                         and then not SMB.Engine.Holds_Decrypted_Response
+                           (State),
+                         Name & " encrypted interim response");
+               end;
+               --  The final response of an async request: the AsyncId,
+               --  no credit. Like Samba, which copies the request's flags,
+               --  it claims a signature, here a meaningless one; the
+               --  TREE_CONNECT response above did not, like Windows.
+               Response := (others => 0);
+               SMB.Wire.Initialize_Header
+                 (Response, 5, SMB.Wire.U64 (Request, 24), 0, Session_Id,
+                  Credit => 0);
+               SMB.Wire.Put_U32 (Response, 16, 16#B#);
+               SMB.Wire.Put_U64 (Response, 32, 16#77#);
+               Response (48 .. 63) := (others => 16#AA#);
+               Response (64) := 89;
+               Response (128 .. 143) := Engine_Fixtures.File_Id;
+               declare
+                  Frame : SMB.Bytes := Server_Sealed (Response);
+               begin
+                  SMB.Engine.Unwrap_Response (State, Frame, Status);
+                  SMB.Engine.Inspect_Interim_Response
+                    (State, Frame (52 .. Frame'Last), Is_Interim, Status);
+                  Check (Status = SMB.Ok and then not Is_Interim
+                         and then SMB.Engine.Holds_Decrypted_Response (State),
+                         Name & " encrypted final response");
+                  SMB.Core_Client.Complete
+                    (Operation, State, Frame (52 .. Frame'Last), Nt_Status,
+                     Token, Status);
+                  Check (Status = SMB.Ok, Name & " encrypted CREATE");
+               end;
+               declare
+                  Close : SMB.Core_Client.Operation;
+                  Close_Response : SMB.Bytes (0 .. 123);
+                  Ignored_Token : SMB.Engine.Handle_Token;
+               begin
+                  SMB.Core_Client.Prepare_Close
+                    (Close, State, Token, Request, Used, Status);
+                  Seal_And_Check (Request, Used, 3, "CLOSE");
+                  SMB.Core_Client.Send_Succeeded (Close, State, Status);
+                  Prepare_Reply
+                    (Close_Response, 6, SMB.Wire.U64 (Request, 24), Tree_Id);
+                  SMB.Wire.Put_U32 (Close_Response, 8, Logon_Failure);
+                  Close_Response (64) := 60;
+                  Sign_Reply (Close_Response, CMAC);
+                  SMB.Core_Client.Complete
+                    (Close, State, Close_Response, Nt_Status, Ignored_Token,
+                     Status);
+                  Check (Status = SMB.Signature_Error and then Nt_Status = 0
+                         and then not SMB.Engine.Is_Encrypting (State)
+                         and then not SMB.Engine.Has_Cipher_Keys (State)
+                         and then SMB.Engine.Next_Nonce (State) = 0,
+                         Name & " plaintext response while encrypting");
+                  Check_Cleared (Name & " plaintext response");
+               end;
+            end;
+
+            --  Unwrap_Response refuses, tearing the session down: without
+            --  encryption, without a pending request, twice, and any frame
+            --  that SMB.Core_Transform.Unwrap rejects.
+            declare
+               Plain : SMB.Bytes (0 .. 99) := (others => 0);
+
+               procedure Refuse_Unwrap
+                 (Label : String; Frame : SMB.Bytes;
+                  Expected : SMB.Core_Status)
+               is
+                  Data : SMB.Bytes := Frame;
+               begin
+                  SMB.Engine.Unwrap_Response (State, Data, Status);
+                  Check (Status = Expected
+                         and then SMB.Engine.Current_Phase (State) =
+                           SMB.Engine.Disconnected
+                         and then not SMB.Engine.Is_Encrypting (State)
+                         and then not SMB.Engine.Holds_Decrypted_Response
+                           (State)
+                         and then
+                           (for all Index in 52 .. Data'Last =>
+                              Data (Index) = 0),
+                         Name & " unwrap " & Label);
+               end Refuse_Unwrap;
+
+               --  An authenticated, encrypting session with a request
+               --  pending.
+               procedure Pending is
+               begin
+                  Authenticate_Encrypted;
+                  SMB.Engine.Begin_Request
+                    (State, 3, True, True, Message_Id, Expected, Status);
+                  Assert (Status = SMB.Ok, "3.1.1 operations: pending");
+               end Pending;
+            begin
+               SMB.Wire.Initialize_Header (Plain, 3, 0, 0, Session_Id);
+               Negotiate (SMB.SMB2_Dialect_0311, Cipher);
+               SMB.Engine.Begin_Request
+                 (State, 1, False, False, Message_Id, Expected, Status);
+               Refuse_Unwrap ("without encryption", Server_Sealed (Plain),
+                              SMB.Invalid_State_Status);
+               --  Frames no longer than a transform header, ending at
+               --  Natural'Last, have nothing after the header to clear.
+               for Length in Natural range 51 .. 52 loop
+                  declare
+                     Short : SMB.Bytes
+                       (Natural'Last - Length + 1 .. Natural'Last) :=
+                         (others => 16#FD#);
+                  begin
+                     SMB.Engine.Unwrap_Response (State, Short, Status);
+                     Check (Status = SMB.Invalid_State_Status
+                            and then (for all Value of Short => Value = 16#FD#),
+                            Name & " unwrap of a short frame");
+                  end;
+               end loop;
+               Authenticate_Encrypted;
+               Refuse_Unwrap ("without a pending request",
+                              Server_Sealed (Plain), SMB.Invalid_State_Status);
+               Pending;
+               declare
+                  Frame : SMB.Bytes := Server_Sealed (Plain);
+               begin
+                  SMB.Engine.Unwrap_Response (State, Frame, Status);
+                  Check (Status = SMB.Ok, Name & " first unwrap");
+               end;
+               Refuse_Unwrap ("twice", Server_Sealed (Plain),
+                              SMB.Invalid_State_Status);
+               Pending;
+               Refuse_Unwrap ("a plaintext frame", Plain, SMB.Invalid_Protocol);
+               Pending;
+               Refuse_Unwrap ("under the encryption key",
+                              Server_Sealed (Plain, Encryption_Key),
+                              SMB.Signature_Error);
+               Pending;
+               declare
+                  Frame : SMB.Bytes := Server_Sealed (Plain);
+               begin
+                  Frame (Frame'Last) := Frame (Frame'Last) xor 1;
+                  Refuse_Unwrap ("a changed message", Frame,
+                                 SMB.Signature_Error);
+               end;
+            end;
+
+            --  Seal_Request refuses without encryption and into too little
+            --  room, and changes nothing.
+            declare
+               Request : constant SMB.Bytes (0 .. 63) := (others => 16#FE#);
+               Output : SMB.Bytes (0 .. 114) := (others => 16#A5#);
+               Used : Natural;
+            begin
+               Negotiate (SMB.SMB2_Dialect_0311, Cipher);
+               declare
+                  Saved : constant SMB.Engine.Engine_State := State;
+               begin
+                  SMB.Engine.Seal_Request (State, Request, Output, Used, Status);
+                  Check (Status = SMB.Invalid_State_Status and then Used = 0
+                         and then SMB.Engine."=" (State, Saved)
+                         and then (for all Value of Output => Value = 0),
+                         Name & " seal without encryption");
+               end;
+               Authenticate_Encrypted;
+               declare
+                  Saved : constant SMB.Engine.Engine_State := State;
+               begin
+                  SMB.Engine.Seal_Request (State, Request, Output, Used, Status);
+                  Check (Status = SMB.Invalid_Length and then Used = 0
+                         and then SMB.Engine."=" (State, Saved),
+                         Name & " seal into too little room");
+               end;
+            end;
+         end;
+      end loop;
+
+      --  Without a cipher, a session or share that the server encrypts is
+      --  refused.
+      Negotiate (SMB.SMB2_Dialect_0311);
+      Challenge_And_Key;
+      SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
+      Check (Status = SMB.Ok and then not SMB.Engine.Has_Cipher_Keys (State),
+             "no cipher keys without a cipher");
+      Final_Exchange (CMAC, Session_Flags => 4);
+      Check (Status = SMB.Unsupported_Feature
+             and then SMB.Engine.Current_Phase (State) =
+               SMB.Engine.Disconnected,
+             "encrypted session without a cipher");
+      Negotiate (SMB.SMB2_Dialect_0311);
+      Challenge_And_Key;
+      SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
+      Final_Exchange (CMAC);
+      SMB.Engine.Mark_Authenticated (State, Status);
+      Check (Status = SMB.Ok and then not SMB.Engine.Is_Encrypting (State),
+             "no encryption without a cipher");
+      declare
+         Operation : SMB.Core_Connection.Connection_Operation;
+         Request : SMB.Bytes (0 .. 255) := (others => 0);
+         Used : Natural;
+         Response : SMB.Bytes (0 .. 79);
+      begin
+         SMB.Core_Connection.Prepare_Tree_Connect
+           (Operation, State, SMB.Bytes'(16#5C#, 0, 16#73#, 0), Request,
+            Used, Status);
+         SMB.Core_Connection.Send_Succeeded (Operation, State, Status);
+         Prepare_Reply (Response, 3, SMB.Wire.U64 (Request, 24), Tree_Id);
+         Response (64) := 16;
+         Response (66) := 1;
+         SMB.Wire.Put_U32 (Response, 68, 16#8000#);
+         Sign_Reply (Response, CMAC);
+         SMB.Core_Connection.Complete
+           (Operation, State, Response, Nt_Status, Status);
+         Check (Status = SMB.Unsupported_Feature
+                and then SMB.Engine.Current_Phase (State) =
+                  SMB.Engine.Disconnected,
+                "encrypted share without a cipher");
+      end;
       Ada.Text_IO.Put_Line
-        ("SMB 3.1.1 signed operations:" & Natural'Image (Checks)
+        ("SMB 3.1.1 signed and encrypted operations:" & Natural'Image (Checks)
          & " checks passed");
    end Test_SMB311_Signed_Operations;
 
@@ -5362,10 +5762,17 @@ procedure Test_Suite is
         (Tree, SMB.Core_Wire.Command_Code (3), SMB.Success, Info, Status);
       Assert (Status /= SMB.Ok, "TREE_CONNECT accepted unsupported share type");
       Tree (Tree'First + 66) := 1;
-      SMB.Wire.Put_U32 (Tree, 68, 16#8000#);
-      SMB.Core_Protocol.Parse_Response
-        (Tree, SMB.Core_Wire.Command_Code (3), SMB.Success, Info, Status);
-      Assert (Status /= SMB.Ok, "TREE_CONNECT accepted encryption requirement");
+      --  SMB2_SHAREFLAG_ENCRYPT_DATA is reported for the engine to judge;
+      --  the other share flags are not.
+      Assert (not Info.Encrypt_Data, "TREE_CONNECT reported encryption");
+      for Flags of DWord_List'(16#8000#, 16#FFFF_FFFF#, 16#7FFF#) loop
+         SMB.Wire.Put_U32 (Tree, 68, Flags);
+         SMB.Core_Protocol.Parse_Response
+           (Tree, SMB.Core_Wire.Command_Code (3), SMB.Success, Info, Status);
+         Assert (Status = SMB.Ok
+                 and then Info.Encrypt_Data = ((Flags and 16#8000#) /= 0),
+                 "TREE_CONNECT share encryption flag");
+      end loop;
       SMB.Wire.Put_U32 (Tree, 68, 0);
       SMB.Wire.Put_U32 (Tree, 36, 0);
       SMB.Core_Protocol.Parse_Response
@@ -6033,9 +6440,15 @@ procedure Test_Suite is
       Session (64) := 9;
       Session (40) := 1;
       Parse (Session, 1, SMB.Ok, "SESSION_SETUP reply");
-      Session (66) := 1;
-      Parse (Session, 1, SMB.Invalid_Protocol, "SESSION_SETUP reply with flags");
-      Session (66) := 0;
+      --  Guest, null and anything beside ENCRYPT_DATA (4) alone fail.
+      for Flags of Word_List'(1, 2, 3, 5, 6, 8, 16#0104#) loop
+         SMB.Wire.Put_U16 (Session, 66, Flags);
+         Parse (Session, 1, SMB.Invalid_Protocol,
+                "SESSION_SETUP reply with flags");
+      end loop;
+      SMB.Wire.Put_U16 (Session, 66, 4);
+      Parse (Session, 1, SMB.Ok, "SESSION_SETUP reply with ENCRYPT_DATA");
+      SMB.Wire.Put_U16 (Session, 66, 0);
       Session (68) := 72;
       Session (70) := 1;
       Parse (Session, 1, SMB.Invalid_Offset, "SESSION_SETUP token past the end");

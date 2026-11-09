@@ -10,17 +10,34 @@ tree connect の順に遷移します。negotiate は SMB 3.1.1 を提示し、
 `Dialects => SMB_311_Or_21` のときだけ SMB 2.1 も提示します。dialect が
 提示したものでない、3.1.1 の negotiate context が不正（
 `SMB.Core_Negotiate.Check_Response_Contexts`）、signing が有効でない、
-I/O 最大値が 0、または暗号化 share を要求された場合は遷移を完了しません。
+I/O 最大値が 0、または cipher がないのに暗号化 share を要求された場合は
+遷移を完了しません。
 3.1.1 では NEGOTIATE と SESSION_SETUP の要求・応答（最終の成功応答を除く）
 を SHA-512 の preauth integrity hash に入れ、その値とセッション鍵から
 署名鍵を導出して、最終応答以降を AES-128-CMAC で署名・検証します。セッション setup の成功応答にも
-署名を要求し、guest、null、session encryption を拒否します。
+署名を要求し、guest と null を拒否します。session encryption の要求は
+cipher があるときだけ受け入れます。
+
+cipher（AES-128-GCM または CCM）をネゴシエーションした 3.1.1 セッションは、
+同じ preauth hash から暗号化鍵・復号鍵も導出し、認証後のすべての要求を
+SMB2 TRANSFORM_HEADER に封入します（`SMB.Core_Transform`、
+`SMB.Engine.Seal_Request`）。nonce は先頭 8 byte がセッションごとに 1 から
+始まるカウンター、残りが 0 で、カウンターが尽きると封入を拒否します。
+封入した要求の中身も AES-128-CMAC で署名したままです（MS-SMB2 3.2.4.1.1 は
+暗号化する要求の署名を任意とし、サーバーは暗号化された要求の署名を検証
+しません）。暗号化中の応答は `SMB.Engine.Unwrap_Response` を通ったものだけ
+を受け入れます。transform header の長さ、ProtocolId、Flags、
+OriginalMessageSize、SessionId、tag、復号後の SMB2 ProtocolId と SessionId
+のどれかが合わない場合や、平文の応答が来た場合は状態を破棄します。復号した
+応答は tag で認証済みなので、中の署名は要求も検証もしません。SIGNED flag も
+問いません（Windows は暗号化した応答で flag を下ろし、Samba は要求の flag を
+そのまま写します）。
 
 各 request は単調な message id と 1 credit で送信します。応答の magic、
 structure size、command、message id、session/tree id、zero credit、
-response flag、async flag、`NextCommand` を検査します。SMB 2 transform
-header、compression、compound response、未実装の async 応答は、状態を
-破棄して `SMB.Protocol_Error` になります。認証後の NTSTATUS は署名を検証した
+response flag、async flag、`NextCommand` を検査します。暗号化していない
+ときの SMB 2 transform header、compression、compound response、未実装の
+async 応答は、状態を破棄して `SMB.Protocol_Error` になります。認証後の NTSTATUS は署名を検証した
 後に限り `SMB.NT_Status_Error` として呼び出し元へ渡します。
 ネゴシエーションと最初の challenge 応答は署名鍵確立前なので unsigned
 です。これだけで認証済み状態へ進むことはできません。
@@ -74,7 +91,7 @@ negotiate context の位置として検査します。TREE_CONNECT の `Reserved
 受信時に無視します。2.1 の応答が SMB 3 の capability（multichannel、
 persistent handle、directory leasing、encryption）を主張すると拒否し、
 3.1.1 の応答では使わないだけで受け入れます。署名有効、セキュリティバッファの境界、
-共有種別、TreeId、暗号化要求の拒否は引き続き検査します。
+共有種別、TreeId、cipher がない場合の暗号化要求の拒否は引き続き検査します。
 
 * [MS-SMB2 2.2.4 NEGOTIATE Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/63abf97c-0d09-47e2-88d6-6bfa552949a5)
 * [MS-SMB2 2.2.10 TREE_CONNECT Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/dd34e26c-a75e-47fa-aab2-6efc27502e96)
