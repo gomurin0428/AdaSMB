@@ -374,6 +374,7 @@ is
       --  SMB 3.1.1: the session's preauth integrity hash continues the
       --  connection's with this request (MS-SMB2 3.2.5.3.1).
       Value.Preauth := SMB.Engine.Current_Preauth (State);
+      --  adamutant:disable-next-line ConditionalExpression: nothing reads the session's preauth hash on 2.1
       if SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311 then
          SMB.Core_Preauth.Update
            (Value.Preauth, Output (Output'First .. Output'First + (Used - 1)));
@@ -477,6 +478,7 @@ is
       end if;
       Value.Challenge_Length := Info.Data_Length;
       Value.Session_Id := Info.Session_Id;
+      --  adamutant:disable-next-line ConditionalExpression: nothing reads the session's preauth hash on 2.1
       if SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311 then
          SMB.Core_Preauth.Update (Value.Preauth, Packet);
       end if;

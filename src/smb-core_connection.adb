@@ -765,6 +765,7 @@ is
       if Status = SMB.Ok then
          --  The request is not signed, so these are its final bytes.
          Value.Allow_21 := Allow_21;
+         --  adamutant:disable-next-line StatementDeletion: only a fresh operation, which holds the initial hash, can be prepared
          Value.Request_Preauth := SMB.Core_Preauth.Initial;
          SMB.Core_Preauth.Update
            (Value.Request_Preauth,
