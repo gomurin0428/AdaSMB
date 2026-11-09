@@ -6,7 +6,6 @@ with SMB.Entropy;
 with SMB.Core_Auth;
 with SMB.Core_Client;
 with SMB.Core_Connection;
-with SMB.Core_Negotiate;
 with SMB.Core_Transform;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
@@ -1396,6 +1395,10 @@ package body SMB.Client is
 
    function Negotiated_Dialect (Client : Connection) return SMB.Word is
      (SMB.Engine.Current_Dialect (Client.Engine_Core));
+
+   function Negotiated_Cipher
+     (Client : Connection) return SMB.Core_Negotiate.Cipher_Id is
+     (SMB.Engine.Current_Cipher (Client.Engine_Core));
 
    overriding procedure Finalize (Client : in out Connection) is
    begin

@@ -323,8 +323,9 @@ opens a received one. It is a stateless SPARK unit, like
   `Response_Header_Matches_Request` does not constrain the flag of a
   decrypted response. `Receipt_Signed` still records the request's
   expectation, so the phase transitions are unchanged.
-* Requests stay CMAC-signed inside the transform: MS-SMB2 3.2.4.1.1 lets the
-  client sign, and servers check signatures only on unencrypted requests.
+* Requests stay CMAC-signed inside the transform: MS-SMB2 3.2.4.1.1 requires
+  signing unless both the session and the share are encrypted, and does not
+  forbid it then; servers check signatures only on unencrypted requests.
 * `Response_Info.Encrypt_Data` reports SESSION_SETUP's ENCRYPT_DATA session
   flag (the only nonzero SessionFlags accepted; guest and null still fail)
   and TREE_CONNECT's ENCRYPT_DATA share flag. The engine refuses either with

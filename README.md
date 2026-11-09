@@ -22,9 +22,10 @@ directory operations.
   and pass its tag check, or the connection is torn down. `Is_Encrypted`
   reports it, and `Connect (..., Require_Encryption => True)` refuses a
   server that negotiates no cipher (or 2.1). A server that wants the
-  session or share encrypted is accepted only with a cipher. CI tests this
-  against Samba and against the Windows runner's own SMB server (Windows
-  Server 2025), with encryption required under each cipher.
+  session or share encrypted is accepted only with a cipher. CI runs the
+  integration client with encryption against Samba, and against the Windows
+  runner's own SMB server (Windows Server 2025) with each cipher in turn as
+  the only one allowed. `Negotiated_Cipher` reports the cipher.
 * NTLMv2 inside SPNEGO only. User names are limited to ASCII, because the
   library does not carry the complete Windows upper-case table for Unicode
   user names. Passwords, domains and file names are converted strictly from

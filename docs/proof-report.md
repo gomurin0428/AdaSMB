@@ -5012,11 +5012,24 @@ GNATprove 16.1.0 on the Mac proved every check of `smb-engine.adb` (323, in
 10 minutes), the only unit whose body changed, with no `pragma Assume` or
 justification. No specification changed.
 
-On GitHub Actions all three runs passed. The server's own cipher list was
-`AES_128_GCM, AES_128_CCM, AES_256_GCM, AES_256_CCM`; in the required runs
-only the named cipher was allowed, so each run shows that the client and
-Windows agree on that cipher: the keys, the nonce, the transform header and
-the tag. Windows accepted encrypted requests that keep SMB2_FLAGS_SIGNED and
-a CMAC signature inside, and a NEGOTIATE without NETNAME.
+The facade gains `Negotiated_Cipher`. The integration client prints it,
+checks that a cipher was negotiated exactly when the run encrypts, and in
+the required runs checks that it is the one cipher the server allows
+(`SMB_TEST_CIPHER`). On GitHub Actions all three runs passed. The server's
+own cipher list was `AES_128_GCM, AES_128_CCM, AES_256_GCM, AES_256_CCM`.
+So the client and Windows agree on each cipher: the keys, the nonce, the
+transform header and the tag. Windows accepted encrypted requests that keep
+SMB2_FLAGS_SIGNED and a CMAC signature inside, and a NEGOTIATE without
+NETNAME.
 
-MUTATION_RESULT
+The review before merging found that the CCM run did not check which
+cipher was used, which `Negotiated_Cipher` now does. It also found that the
+harness switched `EncryptData` off instead of restoring it, and that a
+failure in one cleanup step could skip the others. The harness now refuses
+to start when its account or share already exists or the server has no
+`EncryptionCiphers` setting. It restores both settings to their old values
+and runs each cleanup step even if an earlier one fails.
+
+A changed-line AdaMutant run on GitHub Actions detected all 4 mutants of
+`smb-engine.adb`, including the `Nt_Status := 0` whose annotation was
+removed.

@@ -7,8 +7,9 @@ random password generated here and never printed, and a share holding the
 same fixture as the Samba test. It then runs the integration client over SMB
 3.1.1 three times: with a cipher negotiated but not required, then with the
 server requiring encryption and allowing only AES-128-GCM, then only
-AES-128-CCM. It removes the share and the account and restores the server
-settings afterwards.
+AES-128-CCM, where the client must report that cipher. It then puts the
+server's EncryptData and EncryptionCiphers settings back as they were and
+removes the share and the account.
 
 It refuses to run anywhere but Windows, and without ADASMB_WINDOWS_SERVER=1,
 so that it never changes a developer's own machine by accident.
@@ -71,7 +72,8 @@ def populate(share: pathlib.Path) -> None:
         (share / f"pagination-{index:04}.txt").touch()
 
 
-def run_client(password: str, encryption: str, label: str) -> None:
+def run_client(password: str, encryption: str, label: str,
+               cipher: str | None = None) -> None:
     env = os.environ.copy()
     env.update(
         SMB_TEST_HOST="127.0.0.1",
@@ -82,19 +84,50 @@ def run_client(password: str, encryption: str, label: str) -> None:
         SMB_TEST_DIALECTS="311",
         SMB_TEST_ENCRYPTION=encryption,
     )
+    env.pop("SMB_TEST_CIPHER", None)
+    if cipher is not None:
+        # The client checks that it negotiated this cipher.
+        env["SMB_TEST_CIPHER"] = cipher
     subprocess.run([str(CLIENT)], check=True, env=env, timeout=600)
     print(f"Windows SMB server, SMB 3.1.1, {label}: passed", flush=True)
+
+
+def cleanup(steps: list[str]) -> None:
+    """Run every step, even after one fails, then report the failures."""
+    failed = []
+    for step in steps:
+        try:
+            powershell(step)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            failed.append(step)
+    if failed:
+        raise RuntimeError("windows_integration: cleanup failed: " + "; ".join(failed))
 
 
 def main() -> int:
     if sys.platform != "win32" or os.environ.get("ADASMB_WINDOWS_SERVER") != "1":
         print("windows_integration: set ADASMB_WINDOWS_SERVER=1 on a disposable "
-              "Windows machine; this test adds a local account and a share",
+              "Windows machine; this test adds a local account and a share and "
+              "changes the SMB server's encryption settings while it runs",
               file=sys.stderr)
         return 2
     if not CLIENT.exists():
         print(f"windows_integration: build {CLIENT} first", file=sys.stderr)
         return 2
+    if powershell_output(
+            f"[bool](Get-LocalUser -Name {USER} -ErrorAction SilentlyContinue)"
+            f" -or [bool](Get-SmbShare -Name {SHARE} -ErrorAction SilentlyContinue)"
+            ) != "False":
+        print(f"windows_integration: the account or share {USER} already exists",
+              file=sys.stderr)
+        return 2
+    encrypt_data = powershell_output("(Get-SmbServerConfiguration).EncryptData")
+    ciphers = powershell_output("(Get-SmbServerConfiguration).EncryptionCiphers")
+    if encrypt_data not in ("True", "False") or not ciphers:
+        print("windows_integration: needs an SMB server with the EncryptionCiphers "
+              "setting (Windows Server 2022, Windows 11 or later)", file=sys.stderr)
+        return 2
+    print(f"server ciphers: {ciphers}", flush=True)
     # A fresh random password for a throwaway account on a throwaway
     # machine; the prefix meets the complexity rule.
     password = "Aa1-" + secrets.token_urlsafe(24)
@@ -109,11 +142,11 @@ def main() -> int:
             " { Start-Service LanmanServer };"
             f" New-LocalUser -Name {USER} -AccountNeverExpires"
             " -PasswordNeverExpires -Password (ConvertTo-SecureString"
-            " $env:ADASMB_TEST_ACCOUNT_PASSWORD -AsPlainText -Force) | Out-Null;"
-            # Builtin Users, by SID so that a localized name does not matter.
-            f" Add-LocalGroupMember -SID S-1-5-32-545 -Member {USER}",
+            " $env:ADASMB_TEST_ACCOUNT_PASSWORD -AsPlainText -Force) | Out-Null",
             env=secret_env)
         try:
+            # Builtin Users, by SID so that a localized name does not matter.
+            powershell(f"Add-LocalGroupMember -SID S-1-5-32-545 -Member {USER}")
             subprocess.run(
                 ["icacls", str(share), "/grant", f"{USER}:(OI)(CI)M"],
                 check=True, stdout=subprocess.DEVNULL, timeout=120)
@@ -121,30 +154,26 @@ def main() -> int:
             powershell(
                 f"New-SmbShare -Name {SHARE} -Path '{share}'"
                 f" -ChangeAccess {USER} | Out-Null")
-            ciphers = powershell_output(
-                "(Get-SmbServerConfiguration).EncryptionCiphers")
-            print(f"server ciphers: {ciphers}", flush=True)
             try:
-                try:
-                    run_client(password, "on", "cipher negotiated, not required")
-                    powershell("Set-SmbServerConfiguration -EncryptData $true -Force")
-                    # With one cipher allowed, a passing run shows that the
-                    # client and Windows agree on that cipher.
-                    for cipher in ("AES_128_GCM", "AES_128_CCM"):
-                        powershell("Set-SmbServerConfiguration"
-                                   f" -EncryptionCiphers '{cipher}' -Force")
-                        run_client(password, "required",
-                                   f"encryption required, {cipher} only")
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                    diagnostics()
-                    raise
+                run_client(password, "on", "cipher negotiated, not required")
+                powershell("Set-SmbServerConfiguration -EncryptData $true -Force")
+                # With one cipher allowed, the client must negotiate it.
+                for cipher in ("AES_128_GCM", "AES_128_CCM"):
+                    powershell("Set-SmbServerConfiguration"
+                               f" -EncryptionCiphers '{cipher}' -Force")
+                    run_client(password, "required",
+                               f"encryption required, {cipher} only", cipher)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                diagnostics()
+                raise
             finally:
-                powershell(
-                    "Set-SmbServerConfiguration -EncryptData $false"
-                    f" -EncryptionCiphers '{ciphers}' -Force;"
-                    f" Remove-SmbShare -Name {SHARE} -Force")
+                cleanup([
+                    f"Set-SmbServerConfiguration -EncryptData ${encrypt_data}"
+                    f" -EncryptionCiphers '{ciphers}' -Force",
+                    f"Remove-SmbShare -Name {SHARE} -Force",
+                ])
         finally:
-            powershell(f"Remove-LocalUser -Name {USER}")
+            cleanup([f"Remove-LocalUser -Name {USER}"])
             readonly = share / "readonly.txt"
             if readonly.exists():
                 readonly.chmod(0o644)

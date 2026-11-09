@@ -141,10 +141,11 @@ and restored, which would replay a counter. `Engine_State` is a private,
 non-limited type (the contracts compare states and use `'Old`), but the
 public `SMB.Client.Connection` that holds it is limited.
 
-The request inside a transform stays CMAC-signed. MS-SMB2 3.2.4.1.1 lets the
-client sign it, and servers verify signatures only on unencrypted requests.
-A session or share the server marks encrypted is accepted only with the
-cipher keys.
+The request inside a transform stays CMAC-signed. MS-SMB2 3.2.4.1.1 requires
+the client to sign unless both the session and the share are encrypted, and
+does not forbid signing then; servers verify signatures only on unencrypted
+requests. A session or share the server marks encrypted is accepted only
+when a cipher was negotiated.
 
 The facade passes every frame to `Unwrap_Response` before anything else
 reads it, and seals every request through `Seal_Request`. Both are trusted

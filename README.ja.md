@@ -24,8 +24,10 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   `Is_Encrypted` で確認でき、`Connect (..., Require_Encryption => True)`
   は cipher をネゴシエーションしないサーバー（と 2.1）を拒否します。
   session や share の暗号化を求めるサーバーは、cipher があるときだけ
-  受け入れます。CI では Samba と、Windows ランナー自身の SMB サーバー
-  （Windows Server 2025）を相手に、暗号化を必須にして各 cipher で試験します。
+  受け入れます。CI では統合試験クライアントを、Samba と Windows ランナー
+  自身の SMB サーバー（Windows Server 2025）を相手に暗号化して動かし、
+  Windows では各 cipher を順に唯一の cipher にして試験します。
+  `Negotiated_Cipher` で cipher が分かります。
 * SPNEGO 内の NTLMv2 のみ。Unicode ユーザー名の完全な Windows
   大文字化表を持たないため、ユーザー名は ASCII に限定します。
   パスワード、ドメイン、ファイル名は UTF-8 から厳密に UTF-16LE に

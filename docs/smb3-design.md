@@ -120,9 +120,10 @@ ApplicationKey is not needed.
   collide.
 * With a cipher negotiated, every request after the final SESSION_SETUP
   response is encrypted, TREE_CONNECT included. Inside an encrypted request
-  we keep SMB2_FLAGS_SIGNED and the AES-CMAC signature (MS-SMB2 3.2.4.1.1
-  lets the client sign; the Windows client sets the flag with a zero
-  signature). Samba and Windows Server 2025 accept such requests.
+  we keep SMB2_FLAGS_SIGNED and the AES-CMAC signature. MS-SMB2 3.2.4.1.1
+  requires signing unless both the session and the share are encrypted, and
+  does not forbid it then; the Windows client sets the flag with a zero
+  signature. Samba and Windows Server 2025 accept such requests.
 * Every response to an encrypted request must arrive encrypted. The
   connection is torn down when any of these holds:
   * a plaintext response arrives once encryption is active (ours; the spec
