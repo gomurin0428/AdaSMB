@@ -69,7 +69,9 @@ package SMB.Core_Transform is
    --  Writes Message, encrypted with Cipher and Key, after its transform
    --  header into Output, and zeros after them. The Nonce field holds the
    --  bytes of Nonce the cipher uses, then zeros. Output too short for the
-   --  result fails with Invalid_Length and is all zero.
+   --  result fails with Invalid_Length and is all zero. Message and Output
+   --  must not overlap: Output is cleared before Message is read. SPARK
+   --  callers cannot pass overlapping arrays; other callers must not.
    procedure Seal
      (Cipher : AEAD_Cipher;
       Key : SMB.AES.Key_128;
@@ -98,8 +100,13 @@ package SMB.Core_Transform is
                     else 0))
             and then SMB.Core_Wire.Encoded_U32 (Output, 36) =
               SMB.DWord (Message'Length)
+            and then SMB.Core_Wire.Encoded_U16 (Output, 40) = 0
             and then SMB.Core_Wire.Encoded_U16 (Output, 42) = 1
-            and then SMB.Core_Wire.Encoded_U64 (Output, 44) = Session_Id);
+            and then SMB.Core_Wire.Encoded_U64 (Output, 44) = Session_Id
+            and then
+              (for all Index in Output'Range =>
+                 (if Index - Output'First >= Used
+                  then Output (Index) = 0)));
 
    --  Checks the transform header of Packet, a whole received message, and
    --  decrypts the message after it in place. Status is, from the first
@@ -135,6 +142,10 @@ package SMB.Core_Transform is
               SMB.DWord (Packet'Length - Header_Size)
             and then SMB.Core_Wire.Encoded_U16 (Packet, 42) = 1
             and then SMB.Core_Wire.Encoded_U64 (Packet, 44) = Session_Id
+            and then Packet (Packet'First + Header_Size) = 16#FE#
+            and then Packet (Packet'First + Header_Size + 1) = 16#53#
+            and then Packet (Packet'First + Header_Size + 2) = 16#4D#
+            and then Packet (Packet'First + Header_Size + 3) = 16#42#
             and then SMB.Core_Wire.Encoded_U64
               (Packet, Header_Size + 40) = Session_Id
           else

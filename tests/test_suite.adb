@@ -2309,6 +2309,12 @@ procedure Test_Suite is
          Count := Count + 1;
       end Reject;
    begin
+      Assert (Transform_Vectors = 8, "published transformed messages");
+      Assert (SMB.Core_Transform.Nonce_Length
+                (SMB.Core_Negotiate.AES_128_CCM) = 11
+              and then SMB.Core_Transform.Nonce_Length
+                (SMB.Core_Negotiate.AES_128_GCM) = 12,
+              "nonce lengths");
       Assert (SMB.Core_Transform.Counter_Nonce (16#0102_0304_0506_0708#) =
                 (8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0),
               "counter nonce");

@@ -4819,12 +4819,13 @@ it yet; the engine will in the second half of phase 4.
 
 * `Seal`'s postcondition gives the result's length, the ProtocolId, the
   Nonce field (the bytes of the given nonce that the cipher uses, then
-  zeros), OriginalMessageSize, Flags and SessionId. An output too short
-  fails with `Invalid_Length` and is all zero, as are the bytes after the
-  result.
+  zeros), OriginalMessageSize, Reserved, Flags, SessionId and zeros after
+  the result. An output too short fails with `Invalid_Length` and is all
+  zero.
 * `Unwrap`'s postcondition names its five statuses. On `Ok` it gives the
-  checked header fields and the SessionId of the decrypted SMB2 header;
-  on any failure, every byte after the transform header is zero.
+  checked header fields and the ProtocolId and SessionId of the decrypted
+  SMB2 header (the tag check is not a property a contract can state); on
+  any failure, every byte after the transform header is zero.
 * `Counter_Nonce` writes a 64-bit counter in little-endian order, then
   zeros, which is the same nonce under either cipher.
 
@@ -4832,8 +4833,8 @@ it yet; the engine will in the second half of phase 4.
 gnatprove -P proof.gpr -u smb-core_transform.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
 ```
 
-GNATprove 16.1.0 proved all **124 checks** in 30 seconds on the Mac, with
-no `pragma Assume` or justification. The AEAD calls get the nonce, the
+GNATprove 16.1.0 proved all **138 checks** in about two and a half minutes
+on the Mac, with no `pragma Assume` or justification. The AEAD calls get the nonce, the
 associated data and the tag as copies, so no in-out slice of the packet
 aliases an input.
 
@@ -4860,8 +4861,9 @@ aliases an input.
     * OriginalMessageSize one larger, one smaller and above 2**24;
     * a truncated message;
     * another SessionId outside, and outside alone;
-    * every tag byte, the nonce, the byte after a GCM nonce, Reserved, the
-      ciphertext, another key and the other cipher;
+    * every tag byte, the nonce, the last byte of the Nonce field (which
+      neither cipher uses, but the tag covers), Reserved, the ciphertext,
+      another key and the other cipher;
     * a decrypted message shorter than an SMB2 header, another transform,
       each other ProtocolId byte, and another SessionId inside.
 
