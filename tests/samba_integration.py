@@ -186,10 +186,12 @@ def main() -> int:
         smb311_only = os.environ.get("ADASMB_SMB311_ONLY") == "1"
         protocol = "SMB3_11" if smb311_only else "SMB2_10"
         # ADASMB_SMB_ENCRYPT sets "server smb encrypt": "off" leaves 3.1.1
-        # signed but not encrypted, "required" encrypts every session.
+        # signed but not encrypted; "default" negotiates a cipher without
+        # requiring it, and the client encrypts anyway; "required" encrypts
+        # every session and share.
         encrypt = os.environ.get("ADASMB_SMB_ENCRYPT", "off")
-        if encrypt not in ("off", "required"):
-            raise SystemExit("ADASMB_SMB_ENCRYPT must be off or required")
+        if encrypt not in ("off", "default", "required"):
+            raise SystemExit("ADASMB_SMB_ENCRYPT must be off, default or required")
         config = work / "smb.conf"
         config.write_text(
             f"""\
@@ -278,7 +280,8 @@ def main() -> int:
                 )
                 if smb311_only:
                     env["SMB_TEST_DIALECTS"] = "311"
-                    env["SMB_TEST_ENCRYPTION"] = "on" if encrypt == "required" else "off"
+                    env["SMB_TEST_ENCRYPTION"] = {
+                        "off": "off", "default": "on", "required": "required"}[encrypt]
                     try:
                         run([str(ROOT / "build/bin/integration_client")], env=env)
                     except subprocess.CalledProcessError:

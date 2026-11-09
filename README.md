@@ -57,13 +57,15 @@ directory operations.
 
 The public API is synchronous and sends one request at a time. After
 authentication, LOGOFF, TREE_DISCONNECT, CREATE, CLOSE, READ, WRITE,
-QUERY_DIRECTORY and SET_INFO handle SMB 2.1 `STATUS_PENDING` interim responses
+QUERY_DIRECTORY and SET_INFO handle SMB 2.x `STATUS_PENDING` interim responses
 and the matching async final responses. As the specification says, interim
 responses are not signature-checked; only their correlation with the request,
 a non-zero AsyncId and the mandatory fields of the ERROR body are checked. An
 interim response is never taken as success, authenticated data or an NTSTATUS.
 The final response is signature-checked as usual over the original bytes
-received. References to the official specification and the verification
+received. On an encrypted session the interim and the final response must
+both arrive encrypted, and the tag of each is checked instead of a
+signature. References to the official specification and the verification
 results are in the
 [proof report](docs/proof-report.md#smb-21-asynchronous-interim-responses).
 

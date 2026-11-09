@@ -260,6 +260,12 @@ is
           and not Has_Signing_Key (State)
           and Current_Async_Id (State) = 0
           and Signing_Key_Is_Zero (State)
+          and not Has_Cipher_Keys (State)
+          and Current_Encryption_Key (State) = SMB.AES.Key_128'(others => 0)
+          and Current_Decryption_Key (State) = SMB.AES.Key_128'(others => 0)
+          and Next_Nonce (State) = 0
+          and not Is_Encrypting (State)
+          and not Holds_Decrypted_Response (State)
         else State = State'Old
           and (if Current_Phase (State)'Old /= Disconnected
                  or else Has_Pending_Request (State)'Old
@@ -403,6 +409,10 @@ is
           and
             (if Current_Cipher (State) = SMB.Core_Negotiate.No_Cipher then
                not Has_Cipher_Keys (State)
+               and Current_Encryption_Key (State) =
+                 Current_Encryption_Key (State)'Old
+               and Current_Decryption_Key (State) =
+                 Current_Decryption_Key (State)'Old
                and Next_Nonce (State) = Next_Nonce (State)'Old
              else
                Has_Cipher_Keys (State)
@@ -626,7 +636,16 @@ is
           and then not Has_Pending_Request (State)
           and then not Has_Validated_Response (State)
           and then not Has_Open_Handles (State)
-          and then Signing_Key_Is_Zero (State));
+          and then Signing_Key_Is_Zero (State))
+       --  While encrypting, an interim response must have been decrypted,
+       --  and the final one is decrypted on its own.
+       and then
+         (if Status = SMB.Ok and then Is_Interim then
+            (if Is_Encrypting (State)'Old then
+               Holds_Decrypted_Response (State)'Old)
+            and then not Holds_Decrypted_Response (State)
+            and then Is_Encrypting (State) = Is_Encrypting (State)'Old
+            and then Next_Nonce (State) = Next_Nonce (State)'Old);
 
    function Only_Nonce_Advanced (Before, After : Engine_State) return Boolean
    with Ghost;
@@ -882,7 +901,20 @@ is
                and then
                  (if Pending_Command (State)'Old = 17 then
                     Current_Phase (State) = Current_Phase (State)'Old
-                    and then Handle_Table_Equivalent (State'Old, State)));
+                    and then Handle_Table_Equivalent (State'Old, State)))
+       --  While encrypting, only a decrypted response is taken; the flag is
+       --  consumed either way, and only a successful LOGOFF, which ends the
+       --  session, stops encryption or moves the nonce counter.
+       and then not Holds_Decrypted_Response (State)
+       and then
+         (if Status = SMB.Ok then
+            (if Is_Encrypting (State)'Old then
+               Holds_Decrypted_Response (State)'Old)
+            and then
+              (if not (Pending_Command (State)'Old = 2
+                       and then Nt_Status = SMB.Success)
+               then Is_Encrypting (State) = Is_Encrypting (State)'Old
+                 and then Next_Nonce (State) = Next_Nonce (State)'Old));
    --  A failed wire/signature check invalidates the session and all handles.
 
    procedure Register_Handle
@@ -1016,6 +1048,9 @@ is
        and Next_Request_Id (State) = 0
        and Last_Allocated_Handle_Ticket (State) = 0
        and not Has_Cipher_Keys (State)
+       and Current_Encryption_Key (State) = SMB.AES.Key_128'(others => 0)
+       and Current_Decryption_Key (State) = SMB.AES.Key_128'(others => 0)
+       and Next_Nonce (State) = 0
        and not Is_Encrypting (State)
        and not Holds_Decrypted_Response (State)
        and SMB.Core_Protocol."="

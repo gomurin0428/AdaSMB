@@ -336,17 +336,22 @@ opens a received one. It is a stateless SPARK unit, like
   the owner freed it. `Send_Request` replaces every direct `Send_Frame` and
   seals into a heap buffer once the engine encrypts. `Connect` gains
   `Require_Encryption` and the client `Is_Encrypted`.
-* Samba runs three times in CI. The 3.1.1 runs set
-  `server smb encrypt = off` (signing only, as before) and `= required`
-  (with `SMB_TEST_ENCRYPTION=on`, the integration client passes
-  `Require_Encryption` and checks `Is_Encrypted`).
+* Samba runs four times in CI. The 3.1.1 runs set
+  `server smb encrypt = off` (signing only; the integration client also
+  checks that `Require_Encryption` refuses the server), `= default` (a
+  cipher is negotiated but not required, and the client encrypts anyway)
+  and `= required` (the client passes `Require_Encryption`). The client
+  checks `Is_Encrypted` in each.
 
 ## Next steps
 
 Phase 5 of `docs/smb3-design.md`: interoperability with a Windows SMB
 server on the Windows CI runner, if a local share can be set up there, then
 release 0.2.0. Hostile transform headers are covered by unit tests through
-the engine; the adversarial proxy still speaks 2.1 only.
+the engine; the adversarial proxy still speaks 2.1 only. Watch for a
+Windows server that answers LOGOFF unencrypted after ending the session:
+`Unwrap_Response` refuses plaintext, so `Disconnect` would raise
+`Protocol_Error` there (Samba encrypts the LOGOFF response).
 
 ## Checklist for a new primitive
 

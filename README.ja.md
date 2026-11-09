@@ -56,11 +56,13 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
 
 公開 API は同期型で、一度に 1 要求だけを送信します。認証後の
 LOGOFF、TREE_DISCONNECT、CREATE、CLOSE、READ、WRITE、QUERY_DIRECTORY、
-SET_INFO では SMB 2.1 の `STATUS_PENDING` interim と対応する async final
+SET_INFO では SMB 2.x の `STATUS_PENDING` interim と対応する async final
 response を扱います。interim は仕様に従って署名検証を行わず、要求との
 相関、非ゼロ AsyncId、ERROR 本文の必須フィールドだけを確認します。interim は成功、
 認証済みデータ、NTSTATUS として扱いません。最終応答は受信した元の
-バイト列に対して通常どおり署名検証します。
+バイト列に対して通常どおり署名検証します。暗号化したセッションでは interim
+も最終応答も暗号化されていなければならず、署名の代わりにそれぞれの tag を
+検査します。
 公式仕様への参照と検証結果は
 [proof report](docs/proof-report.md#smb-21-asynchronous-interim-responses) に記載しています。
 

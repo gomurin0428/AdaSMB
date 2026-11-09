@@ -119,16 +119,27 @@ states, and `Mark_Authenticated` turns encryption on. From then on:
   and changed nothing else, and that a counter at `QWord'Last` fails with
   `Counter_Exhausted` instead of wrapping. The counter is written only by
   `Initialize`, `Invalidate` (which also clear the keys and stop
-  encryption), `Derive_SMB3_Keys` (with new keys) and `Seal_Request`. So no
-  nonce repeats under a key; this last step is reviewed, not proved.
+  encryption), `Derive_SMB3_Keys` (with new keys) and `Seal_Request`, and
+  the engine refuses to derive keys twice. So no nonce repeats under a key;
+  this whole-program step is reviewed, not proved.
 * `Engine.Unwrap_Response` decrypts a received frame in place with
   `SMB.Core_Transform.Unwrap`. It needs a pending request, and it fails on a
   plaintext frame or any transform check, invalidating the engine and zeroing
   the bytes after the header.
 * `Accept_Response` and `Inspect_Interim_Response` take only a response that
-  `Unwrap_Response` decrypted while encryption is on. No signature in it is
-  read, whatever its SIGNED flag says (Windows clears the flag, Samba copies
-  the request's): the AEAD tag authenticated it.
+  `Unwrap_Response` decrypted while encryption is on, and consume that mark.
+  Their postconditions state this, and that only a successful LOGOFF ends
+  encryption or moves the nonce counter. No signature in a decrypted
+  response is read, whatever its SIGNED flag says (Microsoft's examples
+  clear the flag; Samba copies the request's): the AEAD tag authenticated
+  it.
+* `Initialize` and `Invalidate` state that the cipher keys are zero, the
+  counter is 0 and encryption is off.
+
+The "no nonce repeats" argument assumes that the engine state is not copied
+and restored, which would replay a counter. `Engine_State` is a private,
+non-limited type (the contracts compare states and use `'Old`), but the
+public `SMB.Client.Connection` that holds it is limited.
 
 The request inside a transform stays CMAC-signed. MS-SMB2 3.2.4.1.1 lets the
 client sign it, and servers verify signatures only on unencrypted requests.

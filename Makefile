@@ -22,6 +22,7 @@ integration: test
 	$(PYTHON) tests/transport_integration.py
 	$(PYTHON) tests/samba_integration.py
 	ADASMB_SMB311_ONLY=1 $(PYTHON) tests/samba_integration.py
+	ADASMB_SMB311_ONLY=1 ADASMB_SMB_ENCRYPT=default $(PYTHON) tests/samba_integration.py
 	ADASMB_SMB311_ONLY=1 ADASMB_SMB_ENCRYPT=required $(PYTHON) tests/samba_integration.py
 
 unicode-test:
