@@ -1,13 +1,15 @@
 # Handover
 
-State of the SMB 3.1.1 work after #126, for whoever picks it up. Fold what
+State of the SMB 3.1.1 work at release 0.2.0, for whoever picks it up. Fold what
 stays useful into the other documents, and delete this file, once it is out
 of date.
 
 ## Where things stand
 
-* 0.1.0 (SMB 2.1) is released and on Alire as the crate `smb`.
-* The work toward 0.2.0 follows [smb3-design.md](smb3-design.md); read it
+* 0.1.0 (SMB 2.1) is released and on Alire as the crate `smb`. 0.2.0 (SMB
+  3.1.1 with signing and encryption) is tagged `v0.2.0` with a GitHub
+  release; its Alire index submission is the next step.
+* The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
   * 3.1.1 is required by default. The client offers 2.1 only when the
@@ -36,7 +38,7 @@ of date.
 | 4 | Transform header (`SMB.Core_Transform`) | merged (#124) |
 | 4 | Engine: encryption keys, nonce counter, encryption policy | merged (#125) |
 | 5 | Windows server interop (`tests/windows_integration.py`) | merged (#126) |
-| 5 | Release 0.2.0 | not started |
+| 5 | Release 0.2.0 (`alire.toml`, tag, GitHub release) | merged (#127) |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -375,11 +377,15 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-Release 0.2.0: bump `alire.toml`, tag `v0.2.0`, write the GitHub release
-notes (0.1.0's are the template), and submit the new version to the Alire
-community index as 0.1.0 was (alire-project/alire-index#2316). Hostile
-transform headers are covered by unit tests through the engine; the
-adversarial proxy still speaks 2.1 only.
+* Submit 0.2.0 to the Alire community index as 0.1.0 was
+  (alire-project/alire-index#2316), once the maintainer agrees: it is a pull
+  request to a third-party repository. The manifest is `alire.toml` at
+  `v0.2.0`; the origin is the tag's commit.
+* Hostile transform headers are covered by unit tests through the engine;
+  the adversarial proxy still speaks 2.1 only. Teaching it 3.1.1 would let
+  the proxy tests run against the 3.1.1 Samba.
+* AES-256 ciphers can be added now that a Windows server is available in
+  CI to test against (see the design document).
 
 ## Checklist for a new primitive
 
