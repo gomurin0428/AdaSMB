@@ -266,7 +266,13 @@ Phase 3 is complete: `Connect` offers SMB 3.1.1 by default and signs a
 * Every request signer (`Sign_Packet` in both units, and the direct call in
   `Prepare_Close`) picks HMAC-SHA256 or AES-CMAC by `Current_Dialect`.
 * The cipher is negotiated and recorded but not used; a share or session
-  that requires encryption is still refused. Phase 4 encrypts.
+  the server wants encrypted is refused. Because the request now offers
+  encryption, that includes servers that only prefer it (Samba's
+  `server smb encrypt = desired`, Windows' `EncryptData` without
+  `RejectUnencryptedAccess`), which accepted this client unencrypted over
+  2.1: the session flag fails SESSION_SETUP as `Invalid_Protocol`, the
+  share flag fails TREE_CONNECT as `Unsupported_Feature`. Phase 4 encrypts
+  and removes this regression.
 * Samba runs twice in CI: as before with 2.1 for the proxy tests (their
   proxies re-sign with the 2.1 key, and every integration client passes
   `Test_Dialects.Policy`), and with `ADASMB_SMB311_ONLY=1`, a 3.1.1-only

@@ -109,7 +109,8 @@ mechanism-list MIC. The proof does not show that the hash covers exactly the
 messages MS-SMB2 3.2.5.2 and 3.2.5.3 list, or that the derived key matches
 Windows'; the Microsoft test vectors in the unit tests and the 3.1.1 Samba run
 supply that evidence. The negotiated cipher is recorded but not used: there is
-no encryption yet, and a server that requires it is refused.
+no encryption yet, so a session or share the server wants encrypted, because it
+requires or only prefers encryption, is refused.
 
 For authenticated LOGOFF, TREE_DISCONNECT, CREATE, CLOSE, READ, WRITE,
 QUERY_DIRECTORY, and SET_INFO commands, the Engine records a nonzero AsyncId

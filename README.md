@@ -15,8 +15,11 @@ directory operations.
   the default `SMB_311_Only`, a server that selects 2.1 is refused.
   `Negotiated_Dialect` reports the outcome. The 3.1.1 negotiation is
   protected by its SHA-512 preauth integrity hash. Encryption is negotiated
-  (AES-128-GCM or AES-128-CCM) but not used yet, so a share or session that
-  requires it is refused.
+  (AES-128-GCM or AES-128-CCM) but not used yet, so a share or session the
+  server wants encrypted is refused: one that requires it, and also one
+  that only prefers it (Samba's `server smb encrypt = desired`, or Windows'
+  `EncryptData` without `RejectUnencryptedAccess`), which over SMB 2.1
+  would have gone unencrypted.
 * NTLMv2 inside SPNEGO only. User names are limited to ASCII, because the
   library does not carry the complete Windows upper-case table for Unicode
   user names. Passwords, domains and file names are converted strictly from

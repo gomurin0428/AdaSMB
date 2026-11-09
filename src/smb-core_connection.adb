@@ -403,14 +403,15 @@ is
    is
       Invalidate_Status : SMB.Core_Status;
    begin
-      --  Only the defensive branches above call this, and no input reaches
-      --  them.
-      --  adamutant:disable all
       SMB.Engine.Invalidate (State, Invalidate_Status);
       Value.Stage := Failed;
-      Status :=
-        (if Invalidate_Status = SMB.Ok then Failure else Invalidate_Status);
-      --  adamutant:enable all
+      --  adamutant:disable-next-line ConditionalExpression: Invalidate fails only after 2**64 reconnections
+      if Invalidate_Status = SMB.Ok then
+         Status := Failure;
+      else
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
+         Status := Invalidate_Status;
+      end if;
    end Fail_Connection;
 
    procedure Lemma_Body_Copy (Source, Packet : SMB.Bytes)

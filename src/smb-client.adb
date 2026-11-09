@@ -525,8 +525,8 @@ package body SMB.Client is
       Timeout_Seconds : Duration := 10.0;
       Entropy : Entropy_Source := null;
       Dialects : Dialect_Policy := SMB_311_Only) is
-      Guid : SMB.Bytes (0 .. 15);
-      Salt : SMB.Core_Negotiate.Salt_Bytes;
+      --  The client GUID, then the preauth integrity salt.
+      Seed : SMB.Bytes (0 .. 47);
       Packet : SMB.Bytes
         (0 .. SMB.Core_Wire.Header_Size + SMB.Core_Negotiate.Request_Length
               - 1) := (others => 0);
@@ -542,8 +542,8 @@ package body SMB.Client is
            & SMB.Core_Status'Image (Engine_Status);
       end if;
       Client.Entropy := Entropy;
-      Get_Entropy (Client, Guid);
-      Get_Entropy (Client, Salt);
+      --  Connect asks the entropy source once, as it did before the salt.
+      Get_Entropy (Client, Seed);
       SMB.Transport.Connect
         (Client.Channel, Host, Port, Timeout_Seconds);
       Client.Host := Ada.Strings.Unbounded.To_Unbounded_String (Host);
@@ -552,7 +552,7 @@ package body SMB.Client is
          raise SMB.Invalid_State with "session engine rejected transport connection";
       end if;
       SMB.Core_Connection.Prepare_Negotiate
-        (Operation, Client.Engine_Core, Guid, Salt,
+        (Operation, Client.Engine_Core, Seed (0 .. 15), Seed (16 .. 47),
          Dialects = SMB_311_Or_21, Packet, Used, Engine_Status);
       if Engine_Status /= SMB.Ok then
          raise SMB.Protocol_Error with "cannot build SMB negotiate request";

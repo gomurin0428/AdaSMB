@@ -464,12 +464,9 @@ is
       State.Has_Key := False;
       State.SMB3_Key := (others => 0);
       State.Has_SMB3_Key := False;
-      --  Nothing reads these before the next negotiation sets them.
-      --  adamutant:disable StatementDeletion, NumericLiteral
       State.Dialect := 0;
       State.Cipher := SMB.Core_Negotiate.No_Cipher;
       State.Preauth := SMB.Core_Preauth.Initial;
-      --  adamutant:enable StatementDeletion, NumericLiteral
       State.Max_Read := 0;
       State.Max_Write := 0;
       State.Receipt_Valid := False;

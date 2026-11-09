@@ -17,7 +17,11 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   結果は `Negotiated_Dialect` で分かります。3.1.1 のネゴシエーションは
   SHA-512 の preauth integrity hash で保護します。暗号化（AES-128-GCM
   または AES-128-CCM）はネゴシエーションしますがまだ使わないため、
-  暗号化を要求する share や session は拒否します。
+  サーバーが暗号化しようとする share や session は拒否します。暗号化を
+  必須にしたサーバーだけでなく、暗号化を望むだけのサーバー（Samba の
+  `server smb encrypt = desired`、Windows の `RejectUnencryptedAccess`
+  なしの `EncryptData`）も対象です。SMB 2.1 なら暗号化なしで接続できた
+  構成です。
 * SPNEGO 内の NTLMv2 のみ。Unicode ユーザー名の完全な Windows
   大文字化表を持たないため、ユーザー名は ASCII に限定します。
   パスワード、ドメイン、ファイル名は UTF-8 から厳密に UTF-16LE に
