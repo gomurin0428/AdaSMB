@@ -1,5 +1,6 @@
 with Ada.Finalization;
 with Ada.Strings.Unbounded;
+with SMB.Core_Negotiate;
 with SMB.Engine;
 with SMB.Transport;
 
@@ -78,6 +79,10 @@ package SMB.Client is
    --  succeeds; Connect with Require_Encryption fails when there is no
    --  cipher.
    function Is_Encrypted (Client : Connection) return Boolean;
+   --  The cipher Connect negotiated: AES_128_GCM or AES_128_CCM when a 3.1.1
+   --  server supports one, No_Cipher otherwise and before Connect.
+   function Negotiated_Cipher
+     (Client : Connection) return SMB.Core_Negotiate.Cipher_Id;
    overriding procedure Finalize (Client : in out Connection);
 
 private

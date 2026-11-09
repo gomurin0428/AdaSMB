@@ -24,7 +24,10 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   `Is_Encrypted` で確認でき、`Connect (..., Require_Encryption => True)`
   は cipher をネゴシエーションしないサーバー（と 2.1）を拒否します。
   session や share の暗号化を求めるサーバーは、cipher があるときだけ
-  受け入れます。
+  受け入れます。CI では統合試験クライアントを、Samba と Windows ランナー
+  自身の SMB サーバー（Windows Server 2025）を相手に暗号化して動かし、
+  Windows では各 cipher を順に唯一の cipher にして試験します。
+  `Negotiated_Cipher` で cipher が分かります。
 * SPNEGO 内の NTLMv2 のみ。Unicode ユーザー名の完全な Windows
   大文字化表を持たないため、ユーザー名は ASCII に限定します。
   パスワード、ドメイン、ファイル名は UTF-8 から厳密に UTF-16LE に
@@ -185,7 +188,7 @@ make mutation-diff          # 同じことを origin/main から変わった行�
 `cryptography` パッケージを含む）が必要です。契約・
 pragma・ghost コードは GNATprove が検査するので変更しません。
 `src/smb-client.adb` と `src/smb-transport.adb` は対象外です。動作中の
-サーバーが必要で、Samba 統合試験と転送試験でしか動かせず、それらを
+サーバーが必要で、統合試験（Samba と Windows）と転送試験でしか動かせず、それらを
 ミュータントごとに実行するには時間がかかりすぎるためです。設定は
 [`adamutant.toml`](adamutant.toml) にあり、HTML と JSON のレポートは
 `.adamutant/reports` に出ます。
@@ -260,6 +263,14 @@ SMB_USER=alice SMB_PASSWORD='...' SMB_DOMAIN=WORKGROUP \
 ホストへ接続するテストではありません。
 `smbd`、`smbpasswd`、Python 3 が必要です。
 
+[`tests/windows_integration.py`](tests/windows_integration.py) は、同じ統合
+試験クライアントを、実行したマシン自身の Windows SMB サーバーに対して動かし
+ます。CI ランナーのように管理者として動く使い捨ての Windows マシン向けで、
+`ADASMB_WINDOWS_SERVER=1` がなければ起動しません。自分で生成して表示しない
+ランダムなパスワードを持つ `adasmb_test_only` ローカルアカウントと共有を
+作り、試験のあいだサーバーの暗号化設定を変え、最後にアカウントと共有を削除
+して設定を元に戻します。
+
 ## CI
 
 GitHub Actions（`.github/workflows`）で次を実行します。ツールチェーンは
@@ -271,7 +282,9 @@ Alire 2.1.1 で GNAT 16.1.0・gprbuild 26.0.1・gnatprove 16.1.0 を導入しま
   * Linux: `make check`（`stack-check` を含む）、`make test`、各照合試験、
     `make transport-test`、使い捨ての VM 上での Samba 統合試験
   * Windows: 警告をエラー扱いにしたビルド、ソース・スタック検査、単体試験、
-    各照合試験、TCP 転送試験
+    ランナー自身の SMB サーバーに対する統合試験（cipher をネゴシエーション
+    した SMB 3.1.1、続いて AES-128-GCM と AES-128-CCM それぞれで暗号化を
+    必須にした場合）、各照合試験、TCP 転送試験
   * macOS（ARM64）: 警告をエラー扱いにしたビルド
   * pull request のみ: その pull request が変えた `src/*.adb` の行に対する
     ミューテーションテスト（`make mutation-diff`）。どの試験も検出しなかった

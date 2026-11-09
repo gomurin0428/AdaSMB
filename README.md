@@ -22,7 +22,10 @@ directory operations.
   and pass its tag check, or the connection is torn down. `Is_Encrypted`
   reports it, and `Connect (..., Require_Encryption => True)` refuses a
   server that negotiates no cipher (or 2.1). A server that wants the
-  session or share encrypted is accepted only with a cipher.
+  session or share encrypted is accepted only with a cipher. CI runs the
+  integration client with encryption against Samba, and against the Windows
+  runner's own SMB server (Windows Server 2025) with each cipher in turn as
+  the only one allowed. `Negotiated_Cipher` reports the cipher.
 * NTLMv2 inside SPNEGO only. User names are limited to ASCII, because the
   library does not carry the complete Windows upper-case table for Unicode
   user names. Passwords, domains and file names are converted strictly from
@@ -202,8 +205,8 @@ misses survive. The unmutated baseline runs every comparison test, so
 `make mutation` and `make mutation-diff` need what those tests need, including
 Python's `cryptography` package. Contracts, pragmas and ghost code are not
 mutated, because GNATprove checks them. `src/smb-client.adb` and `src/smb-transport.adb` are left out:
-they need a live server, so only the Samba integration and transport tests
-exercise them, and those are too slow to run once per mutant. The settings are
+they need a live server, so only the integration tests (Samba and Windows)
+and the transport tests exercise them, and those are too slow to run once per mutant. The settings are
 in [`adamutant.toml`](adamutant.toml), and the HTML and JSON reports go to
 `.adamutant/reports`. [`tests/mutation_survivors.py`](tests/mutation_survivors.py)
 lists the mutants no test detected; `make mutation-diff` fails if there is one.
@@ -279,6 +282,15 @@ creates a dedicated temporary Samba configuration, a share and an
 at the end. It does not connect to remote hosts. It needs `smbd`, `smbpasswd`
 and Python 3.
 
+[`tests/windows_integration.py`](tests/windows_integration.py) runs the same
+integration client against the Windows SMB server of the machine it runs on.
+It is meant for a disposable Windows machine where it runs as an
+administrator, such as the CI runner, and refuses to start unless
+`ADASMB_WINDOWS_SERVER=1` is set. It adds an `adasmb_test_only` local account
+with a random password it generates and never prints, and a share. It
+changes the server's encryption settings for the runs, then removes the
+account and the share and restores the settings.
+
 ## CI
 
 GitHub Actions (`.github/workflows`) runs the following. The toolchain (GNAT
@@ -292,7 +304,10 @@ cached).
     tests, `make transport-test` and the Samba integration test on the
     disposable VM
   * Windows: build with warnings as errors, source and stack checks, unit
-    tests, the comparison tests and the TCP transport test
+    tests, the integration client against the runner's own SMB server
+    (SMB 3.1.1 with a cipher negotiated, then with encryption required under
+    AES-128-GCM and under AES-128-CCM), the comparison tests and the TCP
+    transport test
   * macOS (ARM64): build with warnings as errors
   * Pull requests only: mutation testing of the `src/*.adb` lines the pull
     request changes (`make mutation-diff`); a mutant no test detects fails

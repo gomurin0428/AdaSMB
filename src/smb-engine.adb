@@ -791,11 +791,14 @@ is
          Status := Parse_Status;
          return;
       end if;
-      --  A session or share that the server encrypts needs the cipher keys;
-      --  with them every request is encrypted anyway.
-      if Parsed.Encrypt_Data and then not State.Has_Cipher_Keys then
+      --  A session or share that the server encrypts needs a cipher; with
+      --  one, every request after authentication is encrypted anyway.
+      --  Windows sets the session flag in the challenge response already,
+      --  before the keys exist, so the test is on the cipher, not the keys.
+      if Parsed.Encrypt_Data
+        and then State.Cipher = SMB.Core_Negotiate.No_Cipher
+      then
          Invalidate (State, Ignore_Status);
-         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: only success responses carry the flags, and Success is 0
          Nt_Status := 0;
          Status := SMB.Unsupported_Feature;
          return;

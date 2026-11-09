@@ -1,6 +1,6 @@
 # Handover
 
-State of the SMB 3.1.1 work after #115, for whoever picks it up. Fold what
+State of the SMB 3.1.1 work after #126, for whoever picks it up. Fold what
 stays useful into the other documents, and delete this file, once it is out
 of date.
 
@@ -35,7 +35,8 @@ of date.
 | 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | merged (#123) |
 | 4 | Transform header (`SMB.Core_Transform`) | merged (#124) |
 | 4 | Engine: encryption keys, nonce counter, encryption policy | merged (#125) |
-| 5 | Windows server interop, release 0.2.0 | not started |
+| 5 | Windows server interop (`tests/windows_integration.py`) | merged (#126) |
+| 5 | Release 0.2.0 | not started |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -322,12 +323,14 @@ opens a received one. It is a stateless SPARK unit, like
   `Response_Header_Matches_Request` does not constrain the flag of a
   decrypted response. `Receipt_Signed` still records the request's
   expectation, so the phase transitions are unchanged.
-* Requests stay CMAC-signed inside the transform: MS-SMB2 3.2.4.1.1 lets the
-  client sign, and servers check signatures only on unencrypted requests.
+* Requests stay CMAC-signed inside the transform: MS-SMB2 3.2.4.1.1 requires
+  signing unless both the session and the share are encrypted, and does not
+  forbid it then; servers check signatures only on unencrypted requests.
 * `Response_Info.Encrypt_Data` reports SESSION_SETUP's ENCRYPT_DATA session
   flag (the only nonzero SessionFlags accepted; guest and null still fail)
   and TREE_CONNECT's ENCRYPT_DATA share flag. The engine refuses either with
-  `Unsupported_Feature` unless it holds the cipher keys.
+  `Unsupported_Feature` when no cipher was negotiated. (#125 tested for the
+  cipher keys instead, which Windows broke; see #126.)
 * The facade: `Receive_Response` declares the received frame as a variable
   initialized by `Receive_Frame`. GNAT leaves that object on the secondary
   stack, so it can be decrypted in place without a frame-sized primary
@@ -343,15 +346,40 @@ opens a received one. It is a stateless SPARK unit, like
   and `= required` (the client passes `Require_Encryption`). The client
   checks `Is_Encrypted` in each.
 
+## Windows server interop (#126)
+
+* The Windows CI job runs `tests/windows_integration.py` against the
+  runner's own SMB server (Windows Server 2025; the job is an
+  administrator on a disposable VM). The harness adds a local account with
+  a random password it generates and never prints, and a share with the
+  Samba test's fixture. It runs `integration_client` (3.1.1 only) three
+  times:
+  * a cipher negotiated but not required;
+  * `EncryptData` on and only `AES_128_GCM` allowed;
+  * the same with only `AES_128_CCM`.
+  Then it restores the server settings and removes the share and account.
+  It refuses to run without `ADASMB_WINDOWS_SERVER=1`.
+* The first run passed as it was. The required run failed: Windows sets
+  SMB2_SESSION_FLAG_ENCRYPT_DATA in the challenge response already, and the
+  engine refused that flag whenever the cipher keys did not exist yet. The
+  rule now tests for a negotiated cipher. Its `Nt_Status := 0` had been
+  annotated as unreachable for a non-success response; a unit test now
+  covers an encrypted challenge without a cipher.
+* Windows encrypts the LOGOFF response, as Samba does, so `Disconnect`
+  passes; the watch item from #125 is closed. Windows accepts encrypted
+  requests that keep SMB2_FLAGS_SIGNED and a CMAC signature, and a
+  NEGOTIATE without NETNAME.
+* With its default settings, a Windows server negotiates a cipher whenever
+  a 3.1.1 client offers one, so the signing-only 3.1.1 path is tested
+  against Samba only, as is 2.1.
+
 ## Next steps
 
-Phase 5 of `docs/smb3-design.md`: interoperability with a Windows SMB
-server on the Windows CI runner, if a local share can be set up there, then
-release 0.2.0. Hostile transform headers are covered by unit tests through
-the engine; the adversarial proxy still speaks 2.1 only. Watch for a
-Windows server that answers LOGOFF unencrypted after ending the session:
-`Unwrap_Response` refuses plaintext, so `Disconnect` would raise
-`Protocol_Error` there (Samba encrypts the LOGOFF response).
+Release 0.2.0: bump `alire.toml`, tag `v0.2.0`, write the GitHub release
+notes (0.1.0's are the template), and submit the new version to the Alire
+community index as 0.1.0 was (alire-project/alire-index#2316). Hostile
+transform headers are covered by unit tests through the engine; the
+adversarial proxy still speaks 2.1 only.
 
 ## Checklist for a new primitive
 
@@ -486,7 +514,7 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Open items
 
-* The design document's open questions: SMB2_FLAGS_SIGNED inside encrypted
-  requests, and whether `Connect` should send NETNAME.
+* The design document's open question: whether `Connect` should send
+  NETNAME. Samba and Windows Server 2025 do not need it.
 * One AdaMutant survivor seen on macOS did not reproduce on Windows and was
   never investigated. The weekly mutation run shows whether it comes back.

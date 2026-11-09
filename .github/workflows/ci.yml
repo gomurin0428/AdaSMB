@@ -119,6 +119,14 @@ jobs:
           python tests/check_stack_usage.py
       - name: Unit tests
         run: ./build/bin/test_suite.exe
+      - name: Windows SMB server integration
+        # The runner is a disposable virtual machine whose job is an
+        # administrator. The harness adds a test-only local account and
+        # share, runs the integration client over SMB 3.1.1 with and without
+        # required encryption, and removes them.
+        env:
+          ADASMB_WINDOWS_SERVER: "1"
+        run: python tests/windows_integration.py
       - name: Install Python cryptography
         # The AES, AES-CMAC, AES-CCM, AES-GCM, KDF and signing comparison tests' reference; a test-only dependency.
         run: python -m pip install --disable-pip-version-check cryptography==50.0.2

@@ -120,9 +120,10 @@ ApplicationKey is not needed.
   collide.
 * With a cipher negotiated, every request after the final SESSION_SETUP
   response is encrypted, TREE_CONNECT included. Inside an encrypted request
-  the Signature field is zero. Whether SMB2_FLAGS_SIGNED is set there is
-  left to interoperability testing: the Windows client sets it with a zero
-  signature, and the spec has no rule.
+  we keep SMB2_FLAGS_SIGNED and the AES-CMAC signature. MS-SMB2 3.2.4.1.1
+  requires signing unless both the session and the share are encrypted, and
+  does not forbid it then; the Windows client sets the flag with a zero
+  signature. Samba and Windows Server 2025 accept such requests.
 * Every response to an encrypted request must arrive encrypted. The
   connection is torn down when any of these holds:
   * a plaintext response arrives once encryption is active (ours; the spec
@@ -141,6 +142,9 @@ ApplicationKey is not needed.
   SMB2_SHAREFLAG_ENCRYPT_DATA (`0x00008000`) change nothing for us, because
   we already encrypt everything. Without a cipher, either flag fails the
   connection, since the server would reject our unencrypted requests.
+  Windows Server 2025 sets the session flag in the challenge response
+  already, before the keys exist, so the rule tests for a cipher, not for
+  the keys.
 
 ### AES-256
 
@@ -279,6 +283,6 @@ Each phase is one or more pull requests, each with its proofs passing.
 
 ## Open questions
 
-* SMB2_FLAGS_SIGNED inside encrypted requests (see Encryption).
 * Whether `Connect` should send NETNAME, which Windows 10 1809 and earlier
-  omit and servers ignore.
+  omit and servers ignore. Samba and Windows Server 2025 accept a NEGOTIATE
+  without it.

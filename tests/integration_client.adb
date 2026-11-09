@@ -6,6 +6,7 @@ with Authentication_Test_Support;
 with SMB;
 with SMB.Client;
 with SMB.Core_Auth;
+with SMB.Core_Negotiate;
 with SMB.Engine;
 
 procedure Integration_Client is
@@ -202,6 +203,23 @@ begin
          "negotiated dialect");
       Assert (not SMB.Client.Is_Encrypted (Client),
               "encrypted before authentication");
+      --  SMB_TEST_CIPHER names the one cipher the server allows.
+      Ada.Text_IO.Put_Line
+        ("negotiated cipher: "
+         & SMB.Core_Negotiate.Cipher_Id'Image
+             (SMB.Client.Negotiated_Cipher (Client)));
+      if Ada.Environment_Variables.Exists ("SMB_TEST_CIPHER") then
+         Assert
+           (SMB.Core_Negotiate.Cipher_Id'Image
+              (SMB.Client.Negotiated_Cipher (Client)) =
+                Env ("SMB_TEST_CIPHER"),
+            "negotiated cipher is not " & Env ("SMB_TEST_CIPHER"));
+      end if;
+      Assert
+        (SMB.Core_Negotiate."="
+           (SMB.Client.Negotiated_Cipher (Client),
+            SMB.Core_Negotiate.No_Cipher) = not Test_Dialects.Encrypted,
+         "a cipher exactly when the run encrypts");
       Check_Invalid_Credentials;
       SMB.Client.Authenticate (Client, User, Password);
       --  Everything after authentication, the share included, is
@@ -615,5 +633,5 @@ begin
       SMB.Client.Disconnect (Client);
       end;
    end;
-   Ada.Text_IO.Put_Line ("AdaSMB Samba integration client passed");
+   Ada.Text_IO.Put_Line ("AdaSMB integration client passed");
 end Integration_Client;

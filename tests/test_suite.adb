@@ -3211,8 +3211,8 @@ procedure Test_Suite is
          Assert (Status = SMB.Ok, "3.1.1 operations: negotiated");
       end Negotiate;
 
-      --  The challenge, then the session key.
-      procedure Challenge_And_Key is
+      --  The challenge response, with Session_Flags, and its status.
+      procedure Challenge_Exchange (Session_Flags : SMB.Word := 0) is
          Packet : SMB.Bytes (0 .. 71) := (others => 0);
       begin
          SMB.Engine.Begin_Request
@@ -3221,7 +3221,14 @@ procedure Test_Suite is
          SMB.Wire.Put_U32 (Packet, 16, 1);
          SMB.Wire.Put_U32 (Packet, 8, SMB.Status_More_Processing_Required);
          Packet (64) := 9;
+         SMB.Wire.Put_U16 (Packet, 66, Session_Flags);
          SMB.Engine.Accept_Response (State, Packet, Nt_Status, Status);
+      end Challenge_Exchange;
+
+      --  The challenge, then the session key.
+      procedure Challenge_And_Key (Session_Flags : SMB.Word := 0) is
+      begin
+         Challenge_Exchange (Session_Flags);
          Assert (Status = SMB.Ok, "3.1.1 operations: challenge response");
          SMB.Engine.Install_Session_Key (State, Session_Id, Key, Status);
          Assert (Status = SMB.Ok, "3.1.1 operations: session key");
@@ -3473,7 +3480,9 @@ procedure Test_Suite is
             procedure Authenticate_Encrypted is
             begin
                Negotiate (SMB.SMB2_Dialect_0311, Cipher);
-               Challenge_And_Key;
+               --  Windows marks a session that it encrypts in the challenge
+               --  response already, before the keys exist.
+               Challenge_And_Key (Session_Flags => 4);
                SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
                Check (Status = SMB.Ok
                       and then SMB.Engine.Has_Cipher_Keys (State)
@@ -3742,7 +3751,13 @@ procedure Test_Suite is
       end loop;
 
       --  Without a cipher, a session or share that the server encrypts is
-      --  refused.
+      --  refused, from the challenge response on.
+      Negotiate (SMB.SMB2_Dialect_0311);
+      Challenge_Exchange (Session_Flags => 4);
+      Check (Status = SMB.Unsupported_Feature and then Nt_Status = 0
+             and then SMB.Engine.Current_Phase (State) =
+               SMB.Engine.Disconnected,
+             "encrypted challenge without a cipher");
       Negotiate (SMB.SMB2_Dialect_0311);
       Challenge_And_Key;
       SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);

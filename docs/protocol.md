@@ -16,7 +16,9 @@ I/O 最大値が 0、または cipher がないのに暗号化 share を要求�
 を SHA-512 の preauth integrity hash に入れ、その値とセッション鍵から
 署名鍵を導出して、最終応答以降を AES-128-CMAC で署名・検証します。セッション setup の成功応答にも
 署名を要求し、guest と null を拒否します。session encryption の要求は
-cipher があるときだけ受け入れます。
+cipher があるときだけ受け入れます。Windows Server 2025 は鍵を導出する前の
+challenge 応答ですでにこの flag を立てるので、判定は鍵ではなく cipher の
+有無で行います。
 
 cipher（AES-128-GCM または CCM）をネゴシエーションした 3.1.1 セッションは、
 同じ preauth hash から暗号化鍵・復号鍵も導出し、認証後のすべての要求を
@@ -24,14 +26,18 @@ SMB2 TRANSFORM_HEADER に封入します（`SMB.Core_Transform`、
 `SMB.Engine.Seal_Request`）。nonce は先頭 8 byte がセッションごとに 1 から
 始まるカウンター、残りが 0 で、カウンターが尽きると封入を拒否します。
 封入した要求の中身も AES-128-CMAC で署名したままです（MS-SMB2 3.2.4.1.1 は
-暗号化する要求の署名を任意とし、サーバーは暗号化された要求の署名を検証
+session と share の両方が暗号化されている場合を除いて署名を必須とし、その
+場合も署名を禁じていません。サーバーは暗号化された要求の署名を検証
 しません）。暗号化中の応答は `SMB.Engine.Unwrap_Response` を通ったものだけ
 を受け入れます。transform header の長さ、ProtocolId、Flags、
 OriginalMessageSize、SessionId、tag、復号後の SMB2 ProtocolId と SessionId
 のどれかが合わない場合や、平文の応答が来た場合は状態を破棄します。復号した
 応答は tag で認証済みなので、中の署名は要求も検証もしません。SIGNED flag も
 問いません（Windows は暗号化した応答で flag を下ろし、Samba は要求の flag を
-そのまま写します）。
+そのまま写します）。CI では Samba と Windows Server 2025 の SMB サーバーを
+相手に暗号化を試験します。Windows では暗号化を必須にしたうえで、
+AES-128-GCM と AES-128-CCM をそれぞれ唯一の cipher にして、クライアントが
+その cipher をネゴシエーションしたことも確かめます。
 
 各 request は単調な message id と 1 credit で送信します。応答の magic、
 structure size、command、message id、session/tree id、zero credit、
