@@ -314,10 +314,14 @@ opens a received one. It is a stateless SPARK unit, like
 * `Unwrap_Response` decrypts a frame in place and sets
   `Holds_Decrypted_Response`. `Accept_Response` and
   `Inspect_Interim_Response` refuse anything else while encrypting, and
-  consume the flag. For a decrypted response the header must not claim a
-  signature (`Response_Header_Matches_Request` and `Validate_Header` get
-  `Signed and not Decrypted`), and `Receipt_Signed` still records the
-  request's expectation, so the phase transitions are unchanged.
+  consume the flag. A decrypted response may claim a signature or not:
+  Windows clears SMB2_FLAGS_SIGNED in encrypted responses, while Samba copies
+  the request's flags (`smbd_smb2_request_setup_out`) and so claims one it
+  never computes. The first Samba run failed on exactly that. So
+  `Validate_Header` gets the packet's own flag, no signature is read, and
+  `Response_Header_Matches_Request` does not constrain the flag of a
+  decrypted response. `Receipt_Signed` still records the request's
+  expectation, so the phase transitions are unchanged.
 * Requests stay CMAC-signed inside the transform: MS-SMB2 3.2.4.1.1 lets the
   client sign, and servers check signatures only on unencrypted requests.
 * `Response_Info.Encrypt_Data` reports SESSION_SETUP's ENCRYPT_DATA session

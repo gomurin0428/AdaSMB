@@ -126,8 +126,9 @@ states, and `Mark_Authenticated` turns encryption on. From then on:
   plaintext frame or any transform check, invalidating the engine and zeroing
   the bytes after the header.
 * `Accept_Response` and `Inspect_Interim_Response` take only a response that
-  `Unwrap_Response` decrypted while encryption is on. Such a response must
-  not claim a signature, and none is verified: the AEAD tag authenticated it.
+  `Unwrap_Response` decrypted while encryption is on. No signature in it is
+  read, whatever its SIGNED flag says (Windows clears the flag, Samba copies
+  the request's): the AEAD tag authenticated it.
 
 The request inside a transform stays CMAC-signed. MS-SMB2 3.2.4.1.1 lets the
 client sign it, and servers verify signatures only on unencrypted requests.

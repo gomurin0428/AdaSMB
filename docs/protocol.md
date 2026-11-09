@@ -29,7 +29,9 @@ SMB2 TRANSFORM_HEADER に封入します（`SMB.Core_Transform`、
 を受け入れます。transform header の長さ、ProtocolId、Flags、
 OriginalMessageSize、SessionId、tag、復号後の SMB2 ProtocolId と SessionId
 のどれかが合わない場合や、平文の応答が来た場合は状態を破棄します。復号した
-応答は tag で認証済みなので、中の署名は要求も検証もしません。
+応答は tag で認証済みなので、中の署名は要求も検証もしません。SIGNED flag も
+問いません（Windows は暗号化した応答で flag を下ろし、Samba は要求の flag を
+そのまま写します）。
 
 各 request は単調な message id と 1 credit で送信します。応答の magic、
 structure size、command、message id、session/tree id、zero credit、

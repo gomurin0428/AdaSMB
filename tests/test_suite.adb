@@ -3283,6 +3283,27 @@ procedure Test_Suite is
             Message);
       end Check_Cleared;
    begin
+      --  Outside encryption, a response the request expects unsigned may
+      --  not claim a signature.
+      declare
+         Packet : SMB.Bytes (0 .. 127) := (others => 0);
+      begin
+         SMB.Engine.Initialize (State, Status);
+         SMB.Engine.Mark_Connected (State, Status);
+         SMB.Engine.Begin_Request
+           (State, 0, False, False, Message_Id, Expected, Status);
+         SMB.Wire.Initialize_Header (Packet, 0, Message_Id, 0, 0);
+         SMB.Wire.Put_U32 (Packet, 16, 9);
+         Packet (64) := 65;
+         Packet (66) := 1;
+         SMB.Wire.Put_U16 (Packet, 68, SMB.SMB2_Dialect_0311);
+         Packet (98) := 1;
+         Packet (102) := 1;
+         SMB.Engine.Accept_Response (State, Packet, Nt_Status, Status);
+         Check (Status = SMB.Signature_Error,
+                "unsigned response that claims a signature");
+      end;
+
       --  2.1 keeps no cipher and has no 3.1.1 key to derive.
       Negotiate (SMB.SMB2_Dialect_0210, SMB.Core_Negotiate.AES_128_GCM);
       Check (SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0210

@@ -721,6 +721,7 @@ is
         State.Pending_Expected.Signed and then not State.Decrypted;
       Header_Signed :=
         (if State.Decrypted
+         --  adamutant:disable-next-line EqualityOperator: a response of a bare header fails parsing either way
          then Packet'Length >= SMB.Core_Wire.Header_Size
            and then (SMB.Core_Wire.Encoded_U32 (Packet, 16) and 8) /= 0
          else State.Pending_Expected.Signed);
