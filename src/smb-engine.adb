@@ -695,6 +695,7 @@ is
       Parsed : SMB.Core_Protocol.Response_Info;
       Mic_Status : SMB.Core_Status;
       Expect_Signature : Boolean;
+      Header_Signed : Boolean;
       Initial_Command : constant SMB.Core_Wire.Command_Code :=
         State.Pending_Expected.Command
       with Ghost;
@@ -713,8 +714,16 @@ is
          Status := SMB.Signature_Error;
          return;
       end if;
+      --  Servers differ on the SIGNED flag of an encrypted response:
+      --  Windows clears it, Samba copies the request's flags. Either is
+      --  taken, and the Signature field is not read.
       Expect_Signature :=
         State.Pending_Expected.Signed and then not State.Decrypted;
+      Header_Signed :=
+        (if State.Decrypted
+         then Packet'Length >= SMB.Core_Wire.Header_Size
+           and then (SMB.Core_Wire.Encoded_U32 (Packet, 16) and 8) /= 0
+         else State.Pending_Expected.Signed);
       State.Decrypted := False;
       SMB.Core_Wire.Validate_Header
         (Packet,
@@ -724,7 +733,7 @@ is
           Session_Id => State.Pending_Expected.Session_Id,
           Match_Tree => State.Pending_Expected.Match_Tree,
           Match_Session => State.Pending_Expected.Match_Session,
-          Signed => Expect_Signature),
+          Signed => Header_Signed),
          Nt_Status, Wire_Status,
          Async_Id => State.Pending_Async_Id);
       if Wire_Status /= SMB.Ok then
@@ -785,6 +794,7 @@ is
       --  with them every request is encrypted anyway.
       if Parsed.Encrypt_Data and then not State.Has_Cipher_Keys then
          Invalidate (State, Ignore_Status);
+         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: only success responses carry the flags, and Success is 0
          Nt_Status := 0;
          Status := SMB.Unsupported_Feature;
          return;

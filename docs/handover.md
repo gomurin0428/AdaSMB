@@ -34,7 +34,7 @@ of date.
 | 3 | AES-CMAC message signing in `SMB.Core_Wire` | merged (#122) |
 | 3 | Engine: 3.1.1 negotiation, keys, CMAC signing, dialect policy | merged (#123) |
 | 4 | Transform header (`SMB.Core_Transform`) | merged (#124) |
-| 4 | Engine: encryption keys, nonce counter, encryption policy | next |
+| 4 | Engine: encryption keys, nonce counter, encryption policy | merged (#125) |
 | 5 | Windows server interop, release 0.2.0 | not started |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
@@ -253,7 +253,7 @@ Phase 3 is complete: `Connect` offers SMB 3.1.1 by default and signs a
   hash (`Mark_Negotiated`). `Current_Signing_Key` stays the NTLM session
   key, which also keys the SPNEGO mechListMIC; a 3.1.1 session signs with a
   separate key, `Current_SMB3_Signing_Key`, that
-  `Derive_SMB3_Signing_Key` sets to `SMB.KDF.Derive` of the session key and
+  `Derive_SMB3_Signing_Key` (now `Derive_SMB3_Keys`) sets to `SMB.KDF.Derive` of the session key and
   the session's preauth hash. Its postcondition proves that provenance and
   lists every other accessor as unchanged, because the accessors are
   completed in the body and callers cannot see that they depend only on
@@ -300,19 +300,49 @@ opens a received one. It is a stateless SPARK unit, like
   transformed messages to `Check_Transform_Vector`, which seals the
   plaintext back into the published bytes and opens them.
 
+## Encryption in the engine (#125)
+
+* `Derive_SMB3_Keys` (renamed from `Derive_SMB3_Signing_Key`) also derives
+  the encryption (`SMBC2SCipherKey`) and decryption (`SMBS2CCipherKey`)
+  keys when a cipher was negotiated, and sets the nonce counter to 1.
+  `Mark_Authenticated` turns encryption on (`Is_Encrypting`), so the final
+  SESSION_SETUP exchange is the last one in the clear.
+* `Seal_Request` seals with `Counter_Nonce (Next_Nonce)` and advances the
+  counter; `Counter_Exhausted` at `QWord'Last`. The counter is assigned in
+  four places only (`Initialize`, `Invalidate`, `Derive_SMB3_Keys`,
+  `Seal_Request`).
+* `Unwrap_Response` decrypts a frame in place and sets
+  `Holds_Decrypted_Response`. `Accept_Response` and
+  `Inspect_Interim_Response` refuse anything else while encrypting, and
+  consume the flag. For a decrypted response the header must not claim a
+  signature (`Response_Header_Matches_Request` and `Validate_Header` get
+  `Signed and not Decrypted`), and `Receipt_Signed` still records the
+  request's expectation, so the phase transitions are unchanged.
+* Requests stay CMAC-signed inside the transform: MS-SMB2 3.2.4.1.1 lets the
+  client sign, and servers check signatures only on unencrypted requests.
+* `Response_Info.Encrypt_Data` reports SESSION_SETUP's ENCRYPT_DATA session
+  flag (the only nonzero SessionFlags accepted; guest and null still fail)
+  and TREE_CONNECT's ENCRYPT_DATA share flag. The engine refuses either with
+  `Unsupported_Feature` unless it holds the cipher keys.
+* The facade: `Receive_Response` declares the received frame as a variable
+  initialized by `Receive_Frame`. GNAT leaves that object on the secondary
+  stack, so it can be decrypted in place without a frame-sized primary
+  stack frame. A heap copy that was returned from inside its owner's scope
+  made the frame runtime-sized, because the result had to be copied before
+  the owner freed it. `Send_Request` replaces every direct `Send_Frame` and
+  seals into a heap buffer once the engine encrypts. `Connect` gains
+  `Require_Encryption` and the client `Is_Encrypted`.
+* Samba runs three times in CI. The 3.1.1 runs set
+  `server smb encrypt = off` (signing only, as before) and `= required`
+  (with `SMB_TEST_ENCRYPTION=on`, the integration client passes
+  `Require_Encryption` and checks `Is_Encrypted`).
+
 ## Next steps
 
-The engine half of phase 4 of `docs/smb3-design.md`:
-
-* derive the encryption and decryption keys from `SMB.KDF` with the same
-  preauth hash as the signing key, when a cipher was negotiated;
-* add a nonce counter that starts at 1 for each session and never wraps;
-* seal every request after the final SESSION_SETUP response, and unwrap
-  every response from then on, rejecting plaintext;
-* add `Require_Encryption` and `Is_Encrypted`.
-
-The tests are Samba with `smb encrypt = required` and hostile transform
-headers through the adversarial proxy.
+Phase 5 of `docs/smb3-design.md`: interoperability with a Windows SMB
+server on the Windows CI runner, if a local share can be set up there, then
+release 0.2.0. Hostile transform headers are covered by unit tests through
+the engine; the adversarial proxy still speaks 2.1 only.
 
 ## Checklist for a new primitive
 

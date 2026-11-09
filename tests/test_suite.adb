@@ -3272,7 +3272,14 @@ procedure Test_Suite is
               SMB.Core_Preauth.Initial
             and then not SMB.Engine.Has_SMB3_Signing_Key (State)
             and then SMB.Engine.Current_SMB3_Signing_Key (State) =
-              SMB.AES.Key_128'(others => 0),
+              SMB.AES.Key_128'(others => 0)
+            and then not SMB.Engine.Has_Cipher_Keys (State)
+            and then SMB.Engine.Current_Encryption_Key (State) =
+              SMB.AES.Key_128'(others => 0)
+            and then SMB.Engine.Current_Decryption_Key (State) =
+              SMB.AES.Key_128'(others => 0)
+            and then not SMB.Engine.Is_Encrypting (State)
+            and then SMB.Engine.Next_Nonce (State) = 0,
             Message);
       end Check_Cleared;
    begin
@@ -3548,13 +3555,16 @@ procedure Test_Suite is
                          Name & " encrypted interim response");
                end;
                --  The final response of an async request: the AsyncId,
-               --  no credit.
+               --  no credit. Like Samba, which copies the request's flags,
+               --  it claims a signature, here a meaningless one; the
+               --  TREE_CONNECT response above did not, like Windows.
                Response := (others => 0);
                SMB.Wire.Initialize_Header
                  (Response, 5, SMB.Wire.U64 (Request, 24), 0, Session_Id,
                   Credit => 0);
-               SMB.Wire.Put_U32 (Response, 16, 16#3#);
+               SMB.Wire.Put_U32 (Response, 16, 16#B#);
                SMB.Wire.Put_U64 (Response, 32, 16#77#);
+               Response (48 .. 63) := (others => 16#AA#);
                Response (64) := 89;
                Response (128 .. 143) := Engine_Fixtures.File_Id;
                declare
@@ -3638,6 +3648,20 @@ procedure Test_Suite is
                  (State, 1, False, False, Message_Id, Expected, Status);
                Refuse_Unwrap ("without encryption", Server_Sealed (Plain),
                               SMB.Invalid_State_Status);
+               --  Frames no longer than a transform header, ending at
+               --  Natural'Last, have nothing after the header to clear.
+               for Length in Natural range 51 .. 52 loop
+                  declare
+                     Short : SMB.Bytes
+                       (Natural'Last - Length + 1 .. Natural'Last) :=
+                         (others => 16#FD#);
+                  begin
+                     SMB.Engine.Unwrap_Response (State, Short, Status);
+                     Check (Status = SMB.Invalid_State_Status
+                            and then (for all Value of Short => Value = 16#FD#),
+                            Name & " unwrap of a short frame");
+                  end;
+               end loop;
                Authenticate_Encrypted;
                Refuse_Unwrap ("without a pending request",
                               Server_Sealed (Plain), SMB.Invalid_State_Status);
@@ -3670,7 +3694,7 @@ procedure Test_Suite is
             --  room, and changes nothing.
             declare
                Request : constant SMB.Bytes (0 .. 63) := (others => 16#FE#);
-               Output : SMB.Bytes (0 .. 114);
+               Output : SMB.Bytes (0 .. 114) := (others => 16#A5#);
                Used : Natural;
             begin
                Negotiate (SMB.SMB2_Dialect_0311, Cipher);
@@ -3679,7 +3703,8 @@ procedure Test_Suite is
                begin
                   SMB.Engine.Seal_Request (State, Request, Output, Used, Status);
                   Check (Status = SMB.Invalid_State_Status and then Used = 0
-                         and then SMB.Engine."=" (State, Saved),
+                         and then SMB.Engine."=" (State, Saved)
+                         and then (for all Value of Output => Value = 0),
                          Name & " seal without encryption");
                end;
                Authenticate_Encrypted;

@@ -15,13 +15,16 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   その場合は能動的な攻撃者が要求から 3.1.1 を取り除いて 2.1 を強制でき
   ます。既定の `SMB_311_Only` では、2.1 を選んだサーバーを拒否します。
   結果は `Negotiated_Dialect` で分かります。3.1.1 のネゴシエーションは
-  SHA-512 の preauth integrity hash で保護します。暗号化（AES-128-GCM
-  または AES-128-CCM）はネゴシエーションしますがまだ使わないため、
-  サーバーが暗号化しようとする share や session は拒否します。暗号化を
-  必須にしたサーバーだけでなく、暗号化を望むだけのサーバー（Samba の
-  `server smb encrypt = desired`、Windows の `RejectUnencryptedAccess`
-  なしの `EncryptData`）も対象です。SMB 2.1 なら暗号化なしで接続できた
-  構成です。
+  SHA-512 の preauth integrity hash で保護します。
+* サーバーが cipher をネゴシエーションしたときは、SMB 3.1.1 の暗号化
+  （AES-128-GCM または AES-128-CCM）を使います。認証後の要求は share の
+  TREE_CONNECT も含めてすべて transform header に封入し、nonce は
+  繰り返さないカウンターから取ります。応答はすべて封入されていて tag の
+  検査に通らなければならず、そうでなければ接続を破棄します。
+  `Is_Encrypted` で確認でき、`Connect (..., Require_Encryption => True)`
+  は cipher をネゴシエーションしないサーバー（と 2.1）を拒否します。
+  session や share の暗号化を求めるサーバーは、cipher があるときだけ
+  受け入れます。
 * SPNEGO 内の NTLMv2 のみ。Unicode ユーザー名の完全な Windows
   大文字化表を持たないため、ユーザー名は ASCII に限定します。
   パスワード、ドメイン、ファイル名は UTF-8 から厳密に UTF-16LE に
@@ -31,7 +34,7 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   導出（SP 800-108）した鍵の AES-128-CMAC で署名し、SMB 2.1 は
   セッション鍵の HMAC-SHA256 の先頭 16 byte を検証します。署名検証に失敗したフレーム
   や不正な相関番号は接続を破棄します。
-  署名は改ざん検知であり、ファイル内容を暗号化するものではありません。
+  署名は改ざん検知であり、ファイル内容を隠すのは暗号化だけです。
 * 1 接続につき 1 share、未完了の操作は 1 つだけです。接続・ハンドル
   はスレッドセーフではありません。異なる接続の `Connect` 呼び出しも、
   owner ID の割当てを共有するため外部で直列化してください。
@@ -40,7 +43,7 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   I/O より前に拒否します。
 * フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
   受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB 3.0・3.0.2、
-  encryption、compression、compound、Kerberos、guest/null fallback、
+  AES-256 の cipher、compression、compound、Kerberos、guest/null fallback、
   large-MTU negotiation は実装していません。
 * スタック使用量は証明の対象外です。フレーム・転送・要求・ディレクトリ
   一覧のバッファはヒープに置き、ソケットは 16 KiB 単位で読みます。応答の

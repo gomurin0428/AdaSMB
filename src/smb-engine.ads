@@ -1249,9 +1249,10 @@ private
            and then
              (if State.Pending_Async_Id /= 0 then
                 SMB.Core_Wire.Encoded_U64 (Packet, 32) = State.Pending_Async_Id))
+      --  A decrypted response may carry the SIGNED flag or not.
       and then
-        (if not Interim then
+        (if not Interim and not State.Decrypted then
            ((SMB.Core_Wire.Encoded_U32 (Packet, 16) and 8) /= 0) =
-             (State.Pending_Expected.Signed and not State.Decrypted)));
+             State.Pending_Expected.Signed));
 
 end SMB.Engine;
