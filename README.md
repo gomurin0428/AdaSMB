@@ -2,21 +2,33 @@
 
 English | [日本語](README.ja.md)
 
-AdaSMB is a synchronous SMB 2.1 (dialect `0x0210`) client library implemented
-with only GNAT's regular Ada runtime. It is not a sample that merely builds SMB
+AdaSMB is a synchronous SMB 3.1.1 (dialect `0x0311`) and SMB 2.1 (`0x0210`)
+client library implemented with only GNAT's regular Ada runtime. It is not a sample that merely builds SMB
 packets: it implements NTLMv2 authentication, signed sessions, file I/O and
 directory operations.
 
 ## Scope
 
-* SMB 2.1 only, over TCP port 445 (the API can change the port).
+* SMB 3.1.1 by default, over TCP port 445 (the API can change the port).
+  `Connect (..., Dialects => SMB_311_Or_21)` also offers SMB 2.1, which an
+  active attacker can then force by stripping 3.1.1 from the request; with
+  the default `SMB_311_Only`, a server that selects 2.1 is refused.
+  `Negotiated_Dialect` reports the outcome. The 3.1.1 negotiation is
+  protected by its SHA-512 preauth integrity hash. Encryption is negotiated
+  (AES-128-GCM or AES-128-CCM) but not used yet, so a share or session the
+  server wants encrypted is refused: one that requires it, and also one
+  that only prefers it (Samba's `server smb encrypt = desired`, or Windows'
+  `EncryptData` without `RejectUnencryptedAccess`), which over SMB 2.1
+  would have gone unencrypted.
 * NTLMv2 inside SPNEGO only. User names are limited to ASCII, because the
   library does not carry the complete Windows upper-case table for Unicode
   user names. Passwords, domains and file names are converted strictly from
   UTF-8 to UTF-16LE, including surrogate pairs for non-BMP characters.
 * SMB signing is required for the final Session Setup response and for all
-  traffic after authentication, and the first 16 bytes of the SMB 2.1
-  HMAC-SHA256 are verified. A frame that fails signature verification or
+  traffic after authentication. SMB 3.1.1 signs with AES-128-CMAC under a
+  key derived (SP 800-108) from the session key and the session's preauth
+  integrity hash; SMB 2.1 verifies the first 16 bytes of HMAC-SHA256 under
+  the session key. A frame that fails signature verification or
   carries a wrong correlation number tears the connection down.
   Signing detects tampering; it does not encrypt file contents.
 * One share per connection and one outstanding operation. Connections and
@@ -26,8 +38,9 @@ directory operations.
   ticket, and foreign, stale or closed handles are rejected before any network
   I/O.
 * Frames are limited to 1 MiB and single read/write requests to 64 KiB, and
-  received offsets, lengths and their sums are range-checked. SMB1, SMB3,
-  encryption, compression, compound requests, Kerberos, guest/null fallback
+  received offsets, lengths and their sums are range-checked. SMB1, SMB 3.0
+  and 3.0.2, encryption, compression, compound requests, Kerberos,
+  guest/null fallback
   and large-MTU negotiation are not implemented.
 * Stack usage is outside the proofs. Frame, transfer, request and directory
   listing buffers live on the heap, and the socket is read 16 KiB at a time.

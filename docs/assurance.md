@@ -10,10 +10,9 @@ replace a successful GNATprove run.
 
 `proof.gpr` explicitly includes twenty units (nineteen bodies plus `SMB`'s
 types). These are the implementations called by `SMB.Client` and
-`SMB.Transport`, not a parallel model, plus `SMB.AES`, `SMB.AES.CMAC`,
-`SMB.AES.CCM`, `SMB.AES.GCM`, `SMB.KDF`, `SMB.Core_Negotiate` and
-`SMB.Core_Preauth`, which nothing in the library calls yet: they are the
-cryptography and negotiation for the SMB 3.1.1 work.
+`SMB.Transport`, not a parallel model, plus `SMB.AES.CCM` and `SMB.AES.GCM`,
+which nothing in the library calls yet: they are the ciphers for SMB 3.1.1
+encryption.
 
 | Unit | Runtime responsibility |
 | --- | --- |
@@ -34,9 +33,9 @@ cryptography and negotiation for the SMB 3.1.1 work.
 | `SMB.Core_Negotiate` | The SMB 3.1.1 NEGOTIATE request body with its preauth integrity and encryption contexts, and the checks on a 3.1.1 response's negotiate contexts; run-time safety and a cipher of `No_Cipher` on failure |
 | `SMB.Core_Preauth` | The SMB 3.1.1 preauth integrity hash step, SHA-512 of the previous value and a message; run-time safety |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
-| `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
-| `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions |
-| `SMB.Engine` | Phases, pending requests, signed final-response acceptance, SMB 2.1 async-interim correlation, single-use response receipts and handle identity/lifetime |
+| `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
+| `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
+| `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC with the derived key for 3.1.1), the negotiated dialect, cipher and preauth hash, SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime |
 
 Supported response bodies are parsed in the core after header/correlation and
 required signature validation. A successful final Session Setup also needs the
@@ -56,7 +55,7 @@ snapshot, and accumulated READ bytes; each chunk is at most 64 KiB and a transfe
 is at most 1 MiB. READ short/zero responses finish normally, while positive
 partial WRITE counts advance only by the validated response count. Reserved
 fields in NEGOTIATE, TREE_CONNECT, READ, ERROR, CLOSE, TREE_DISCONNECT and LOGOFF
-are ignored as required for SMB 2.1. Except for the unsigned SMB 2.1 NEGOTIATE
+are ignored as required for SMB 2.1. Except for the unsigned NEGOTIATE
 response, their bytes remain covered by response MAC verification. No zero-value
 property is claimed for these ignored fields. Nonzero ERROR context counts and
 unsupported CLOSE flags remain rejected. An uncertain
@@ -92,6 +91,27 @@ NTSTATUS errors consume one receipt while preserving the connection context.
 Malformed or uncertain responses invalidate local state. No remote rollback or
 exactly-once behavior is claimed.
 
+SMB 3.1.1 is negotiated by default. `Core_Connection.Prepare_Negotiate` sends
+`SMB.Core_Negotiate.Request`, which offers 3.1.1 (and 2.1 only when the caller
+allows it) with a preauth integrity context (SHA-512 and a fresh salt) and an
+encryption context (AES-128-GCM, then CCM). `Complete`'s postcondition proves
+that a successful NEGOTIATE leaves the Engine on 3.1.1, or on 2.1 only when 2.1
+was offered; a 3.1.1 response must pass `Check_Response_Contexts`. The
+connection starts the preauth integrity hash with the request and response,
+and `Core_Client` extends it with the SESSION_SETUP messages up to the final
+request. After writing that request's header, `Core_Client` derives the
+3.1.1 signing key with `SMB.KDF` through `Engine.Derive_SMB3_Signing_Key`,
+whose postcondition states the key and that nothing else in the Engine
+changes. From then on requests are signed with AES-128-CMAC and the Engine
+accepts a signed response only if its CMAC under that key verifies, including
+the final SESSION_SETUP response. The NTLM session key still keys the SPNEGO
+mechanism-list MIC. The proof does not show that the hash covers exactly the
+messages MS-SMB2 3.2.5.2 and 3.2.5.3 list, or that the derived key matches
+Windows'; the Microsoft test vectors in the unit tests and the 3.1.1 Samba run
+supply that evidence. The negotiated cipher is recorded but not used: there is
+no encryption yet, so a session or share the server wants encrypted, because it
+requires or only prefers encryption, is refused.
+
 For authenticated LOGOFF, TREE_DISCONNECT, CREATE, CLOSE, READ, WRITE,
 QUERY_DIRECTORY, and SET_INFO commands, the Engine records a nonzero AsyncId
 only after validating the correlated `STATUS_PENDING` header and bounded ERROR
@@ -109,7 +129,7 @@ does not renew it. Credit handling remains the existing single-request profile:
 first interim credit must be positive, a repeat may grant zero, an async final
 must grant zero, and synchronous responses must grant positive credit. This is
 not a full credit-window implementation. Async NEGOTIATE, SESSION_SETUP, and
-TREE_CONNECT, SMB3, compounds, cancellation, concurrent requests, and transport
+TREE_CONNECT, SMB 3.x encryption, compounds, cancellation, concurrent requests, and transport
 timing guarantees are outside this proof boundary.
 Normative references and observed validation results are listed in the
 [proof report](proof-report.md#smb-21-asynchronous-interim-responses).
@@ -248,7 +268,7 @@ does not make the above bodies formally verified.
   static frame chain below each public `SMB.Client` subprogram from GCC
   call-graph data (GNAT runtime frames and the indirect entropy callback are not
   counted) and enforces 256 KiB per call (the largest is `Authenticate` at
-  about 229 KiB), all with runtime contract checks enabled. `Core_Auth` writes
+  about 230 KiB), all with runtime contract checks enabled. `Core_Auth` writes
   the SPNEGO wrapping and the NTLMv2 blob in place and computes HMAC-MD5 over
   the challenge, the blob and the Type1/Type2/Type3 messages incrementally, so
   no stack frame on the NTLM path grows with the server's challenge or target

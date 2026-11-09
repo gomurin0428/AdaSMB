@@ -179,6 +179,12 @@ def main() -> int:
         readonly.chmod(0o444)
         for index in range(1_200):
             (share / f"pagination-{index:04}.txt").touch()
+        # ADASMB_SMB311_ONLY=1 runs the integration client in its default,
+        # 3.1.1-only policy against a server that speaks only 3.1.1. The
+        # proxy tests below need the 2.1 server, as their proxies re-sign
+        # with the 2.1 key.
+        smb311_only = os.environ.get("ADASMB_SMB311_ONLY") == "1"
+        protocol = "SMB3_11" if smb311_only else "SMB2_10"
         config = work / "smb.conf"
         config.write_text(
             f"""\
@@ -197,8 +203,8 @@ def main() -> int:
     bind interfaces only = yes
     disable netbios = yes
     log file = {work}/smbd.log
-    min protocol = SMB2_10
-    max protocol = SMB2_10
+    min protocol = {protocol}
+    max protocol = {protocol}
     server signing = mandatory
     map to guest = never
     log level = 3
@@ -264,6 +270,18 @@ def main() -> int:
                     SMB_TEST_PASSWORD=PASSWORD,
                     SMB_TEST_PATH=str(share),
                 )
+                if smb311_only:
+                    env["SMB_TEST_DIALECTS"] = "311"
+                    try:
+                        run([str(ROOT / "build/bin/integration_client")], env=env)
+                    except subprocess.CalledProcessError:
+                        log = work / "smbd.log"
+                        if log.exists():
+                            print(log.read_text(encoding="utf-8", errors="replace"),
+                                  file=sys.stderr)
+                        raise
+                    print("local Samba SMB 3.1.1 integration tests passed")
+                    return 0
                 if os.environ.get("ADASMB_DIRECTORY_ONLY") == "1":
                     run_directory_mutation_cases(env)
                     print("local Samba directory mutation/recovery tests passed")

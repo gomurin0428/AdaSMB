@@ -1,3 +1,4 @@
+with Test_Dialects;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Text_IO;
@@ -34,7 +35,8 @@ begin
    begin
       SMB.Client.Connect
         (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_PORT")), 5.0,
-         Entropy => Authentication_Test_Support.Generate'Access);
+         Entropy => Authentication_Test_Support.Generate'Access,
+         Dialects => Test_Dialects.Policy);
       if On_Call = 2 then
          Authenticate;
       end if;
@@ -64,7 +66,8 @@ begin
       raise Program_Error with "missing entropy failure observation";
    end if;
    SMB.Client.Connect
-     (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_BACKEND_PORT")), 5.0);
+     (Client, Env ("SMB_TEST_HOST"), Positive'Value (Env ("SMB_TEST_BACKEND_PORT")), 5.0,
+         Dialects => Test_Dialects.Policy);
    Authenticate;
    SMB.Client.Connect_Share (Client, Env ("SMB_TEST_SHARE"));
    declare

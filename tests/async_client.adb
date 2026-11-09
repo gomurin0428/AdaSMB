@@ -1,3 +1,4 @@
+with Test_Dialects;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Real_Time;
@@ -28,7 +29,8 @@ procedure Async_Client is
      Ada.Environment_Variables.Value ("SMB_TEST_PASSWORD");
    Client : SMB.Client.Connection;
 begin
-   SMB.Client.Connect (Client, Host, Port, (if Mode = "repeat-pending" then 0.5 else 5.0));
+   SMB.Client.Connect (Client, Host, Port, (if Mode = "repeat-pending" then 0.5 else 5.0),
+         Dialects => Test_Dialects.Policy);
    SMB.Client.Authenticate (Client, User, Password);
    SMB.Client.Connect_Share (Client, Share);
    if Mode = "async-success" then
@@ -124,7 +126,8 @@ begin
       if SMB.Client.Last_NT_Status (Client) /= Original_Status then
          raise Program_Error with "interim response changed public NTSTATUS";
       end if;
-      SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+      SMB.Client.Connect (Client, Host, Backend_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
       SMB.Client.Authenticate (Client, User, Password);
       SMB.Client.Connect_Share (Client, Share);
       begin

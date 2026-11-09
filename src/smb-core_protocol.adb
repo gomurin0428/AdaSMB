@@ -865,16 +865,22 @@ package body SMB.Core_Protocol with SPARK_Mode is
             Status := SMB.Invalid_Protocol;
             return;
          end if;
-         Read_U16 (Packet, 68, Word_Value, Header_Status);
-         if Word_Value /= SMB.SMB2_Dialect_0210 then
+         Read_U16 (Packet, 68, Info.Dialect, Header_Status);
+         if Info.Dialect /= SMB.SMB2_Dialect_0210
+           and then Info.Dialect /= SMB.SMB2_Dialect_0311
+         then
             Status := SMB.Unsupported_Feature;
             return;
          end if;
          Read_U64 (Packet, 40, Info.Session_Id, Header_Status);
          Read_U32 (Packet, 36, Info.Tree_Id, Header_Status);
          Read_U32 (Packet, 88, DWord_Value, Header_Status);
+         --  Multichannel, persistent handles, directory leasing and
+         --  encryption (16#78#) are SMB 3 capabilities: a 2.1 server must
+         --  not claim them, and a 3.1.1 server may, though we use none.
          if Info.Session_Id /= 0 or else Info.Tree_Id /= 0
-           or else (DWord_Value and 16#78#) /= 0
+           or else (Info.Dialect = SMB.SMB2_Dialect_0210
+                    and then (DWord_Value and 16#78#) /= 0)
          then
             Status := SMB.Invalid_Protocol;
             return;

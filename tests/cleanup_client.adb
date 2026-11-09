@@ -1,3 +1,4 @@
+with Test_Dialects;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Strings.Fixed;
@@ -29,7 +30,8 @@ procedure Cleanup_Client is
    Reached_Create : Boolean := False;
    Client : SMB.Client.Connection;
 begin
-   SMB.Client.Connect (Client, Host, Proxy_Port, 5.0);
+   SMB.Client.Connect (Client, Host, Proxy_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
    SMB.Client.Authenticate (Client, User, Password);
    SMB.Client.Connect_Share (Client, Share);
    if Mode = "handle-capacity" then
@@ -254,7 +256,8 @@ begin
             raise Program_Error with
               "interrupted READ did not invalidate the client";
          end if;
-      SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+      SMB.Client.Connect (Client, Host, Backend_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
       SMB.Client.Authenticate (Client, User, Password);
       SMB.Client.Connect_Share (Client, Share);
       declare
@@ -334,7 +337,8 @@ begin
               "stale handle operations were not rejected";
          end if;
 
-         SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+         SMB.Client.Connect (Client, Host, Backend_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
          SMB.Client.Authenticate (Client, User, Password);
          SMB.Client.Connect_Share (Client, Share);
          declare
@@ -401,7 +405,8 @@ begin
             if not Rejected or else SMB.Client.Is_Connected (Client) then
                raise Program_Error with "directory exhaustion did not disconnect";
             end if;
-            SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+            SMB.Client.Connect (Client, Host, Backend_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
             SMB.Client.Authenticate (Client, User, Password);
             SMB.Client.Connect_Share (Client, Share);
             declare
@@ -478,7 +483,8 @@ begin
               "malformed directory page did not invalidate the client";
          end if;
       end;
-      SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+      SMB.Client.Connect (Client, Host, Backend_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
       SMB.Client.Authenticate (Client, User, Password);
       SMB.Client.Connect_Share (Client, Share);
       declare
@@ -516,7 +522,8 @@ begin
               "malformed SET_INFO response did not disconnect the client";
          end if;
       end;
-      SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+      SMB.Client.Connect (Client, Host, Backend_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
       SMB.Client.Authenticate (Client, User, Password);
       SMB.Client.Connect_Share (Client, Share);
       declare
@@ -566,7 +573,8 @@ begin
             raise Program_Error with
               "malformed TREE_DISCONNECT did not disconnect the client";
          end if;
-         SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+         SMB.Client.Connect (Client, Host, Backend_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
          SMB.Client.Authenticate (Client, User, Password);
          SMB.Client.Connect_Share (Client, Share);
          begin
@@ -616,7 +624,8 @@ begin
       if not Reached_Create or else SMB.Client.Is_Connected (Client) then
          raise Program_Error with "malformed CREATE did not invalidate the client";
       end if;
-      SMB.Client.Connect (Client, Host, Backend_Port, 5.0);
+      SMB.Client.Connect (Client, Host, Backend_Port, 5.0,
+         Dialects => Test_Dialects.Policy);
       SMB.Client.Authenticate (Client, User, Password);
       SMB.Client.Connect_Share (Client, Share);
       declare

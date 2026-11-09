@@ -1,3 +1,4 @@
+with Test_Dialects;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Strings.Fixed;
@@ -23,7 +24,8 @@ begin
    begin
       if Is_Early_Failure then
          begin
-            SMB.Client.Connect (Client, Host, Port, 2.0);
+            SMB.Client.Connect (Client, Host, Port, 2.0,
+         Dialects => Test_Dialects.Policy);
          exception
             when E : SMB.Transport_Error =>
                if Mode = "dribble-timeout"
@@ -42,7 +44,8 @@ begin
             Authenticated : Boolean := False;
          begin
             begin
-               SMB.Client.Connect (Client, Host, Port, 5.0);
+               SMB.Client.Connect (Client, Host, Port, 5.0,
+         Dialects => Test_Dialects.Policy);
                SMB.Client.Authenticate
                  (Client,
                   Ada.Environment_Variables.Value ("SMB_TEST_USER"),

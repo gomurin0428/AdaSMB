@@ -4697,3 +4697,115 @@ around CMAC's block boundaries, 64 KiB and the frame limit, and one-bit
 changes in a message and its key. With the HMAC fixtures that makes 3,990
 fixtures, each at two lower bounds of the key and of the data, and six
 sensitivity checks. A changed-line AdaMutant run detected all 43 mutants.
+
+## SMB 3.1.1 in the engine
+
+The library now negotiates SMB 3.1.1 by default and signs with AES-128-CMAC
+under the key derived from the preauth integrity hash (MS-SMB2 3.2.5.2,
+3.2.5.3 and 3.1.4.1); `SMB.Client.Connect` offers 2.1 too only with
+`Dialects => SMB_311_Or_21`. `SMB.Core_Negotiate`, `SMB.Core_Preauth`,
+`SMB.KDF` and the CMAC procedures of `SMB.Core_Wire` are now called from the
+library; the AES-CCM and AES-GCM ciphers still are not.
+
+* `Core_Protocol.Parse_Response` accepts a NEGOTIATE response for 2.1 or
+  3.1.1 and returns the dialect; the SMB 3 capability bits are rejected only
+  with 2.1. `Engine.Accept_Response` passes the dialect fact on.
+* `Engine.Mark_Negotiated` records the dialect, the cipher (only with
+  3.1.1) and the connection's preauth hash, and clears any SMB 3 key.
+  `Derive_SMB3_Signing_Key` succeeds only on 3.1.1 with a session key and
+  no SMB 3 key yet; its postcondition states the key,
+  `SMB.KDF.Derive (Current_Signing_Key, Signing, Preauth)`, and lists every
+  other accessor as unchanged. With 3.1.1 a signed response must carry a
+  valid CMAC under that key, or it fails as `Signature_Error` and the
+  engine is invalidated.
+* `Core_Connection.Prepare_Negotiate` sends `SMB.Core_Negotiate.Request`
+  and starts the preauth hash with it. `Complete` checks a 3.1.1
+  response's negotiate contexts, extends the hash with the response, and
+  fails a 2.1 response that was not offered with `Unsupported_Feature`. Its
+  postcondition proves that the dialect after a successful NEGOTIATE is
+  3.1.1, or 2.1 only when 2.1 was offered.
+* `Core_Client` extends the hash with the first SESSION_SETUP request, the
+  challenge response and the final request, then derives the key. Every
+  request is signed with HMAC-SHA256 or AES-CMAC according to the dialect.
+
+Two checks in `smb-core_connection.adb` were left unproved by the first
+run. `Prepare`'s precondition on the NEGOTIATE body timed out: the provers
+had to index into the 30-piece concatenation of `Core_Negotiate.Request`.
+`Request` now has a postcondition with the fixed fields byte by byte,
+proved once in `smb-core_negotiate.adb`. `Complete`'s postcondition could
+not show that a dialect other than 3.1.1 is 2.1, because nothing said the
+Engine's response information held one of the two; `Accept_Response`'s
+postcondition now says so for a successful NEGOTIATE, as it already did for
+the I/O limits.
+
+```sh
+gnatprove -P proof.gpr -u <unit> --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
+```
+
+GNATprove 16.1.0 on the Mac, one unit at a time with the `proof.gpr`
+timeouts, proved every check, with no `pragma Assume` or justification:
+
+| Unit | Checks | Time |
+| --- | ---: | ---: |
+| `smb-core_negotiate.adb` | 73 | 25 s |
+| `smb-core_protocol.adb` | 912 | 14 min |
+| `smb-engine.adb` | 282 | 5 min |
+| `smb-core_connection.adb` | 479 | 8 min |
+| `smb-core_client.adb` | 1,486 | 42 min |
+
+`test_suite` adds:
+
+* the parse of NEGOTIATE responses for every dialect: 2.1 and 3.1.1 are
+  accepted, 2.0.2, 3.0, 3.0.2 and the neighbours of 2.1 and 3.1.1 are
+  `Unsupported_Feature`, and SMB 3
+  capability bits are accepted with 3.1.1 and rejected with 2.1;
+* six NEGOTIATE exchanges through `Core_Connection`: the A.1 and A.2
+  responses of Microsoft's SMB 3.1.1 encryption blog with 3.1.1 alone and
+  with 2.1 allowed (GCM and CCM, and the blog's preauth hash after the
+  request and response), 2.1 when it was offered, 2.1 when it was not
+  (`Unsupported_Feature`), and 3.1.1 responses without contexts or with a
+  signing context (`Invalid_Protocol`);
+* a 3.1.1 authentication through `Core_Client`, whose derived key equals
+  `SMB.KDF` over an independently computed hash of the three SESSION_SETUP
+  messages; the final response signed with that key's CMAC is accepted,
+  and one signed with HMAC is rejected as `Signature_Error` and
+  disconnects;
+* 17 checks on 3.1.1 after authentication. TREE_CONNECT, CREATE and
+  CLOSE requests carry the CMAC of the derived key, not the HMAC of the
+  session key. Derivation is refused on 2.1, without a session key and a
+  second time, and 2.1 records no cipher. A signed response before the
+  derivation fails even with the CMAC of the all-zero key the engine
+  holds, an HMAC-signed CLOSE response fails, and both report no
+  NTSTATUS and clear the dialect, cipher, preauth hash and 3.1.1 key.
+
+The Samba integration test now runs twice. The first run is the SMB 2.1
+test as before, since its proxies re-sign responses with SMB 2.1 HMAC.
+The second limits Samba to SMB3_11 with signing required and runs
+`integration_client` with `Dialects => SMB_311_Only`, which checks that
+`Negotiated_Dialect` is 3.1.1. Both passed on GitHub Actions (Ubuntu
+24.04's Samba): Samba accepted the CMAC-signed requests, so it derived the
+same key from the same preauth hash, and the client verified Samba's
+signed responses, the final SESSION_SETUP response included.
+
+The review before merging found that drawing the salt as a second entropy
+request moved the integration tests' injected failure, meant for the
+authentication nonce, onto the salt. `Connect` now draws the GUID and the
+salt in one 48-byte request.
+
+`make check`, `make test`, and the CMAC, CCM, GCM, KDF, signing, crypto,
+AES, NTLM, Unicode, clock and transport tests passed. The stack check
+passed: `SMB.Client.Connect` is now 124,032 bytes and `Authenticate`
+235,120, below the 262,144-byte budget.
+
+A changed-line AdaMutant run on GitHub Actions detected all 148 mutants.
+The first run left eleven. Eight became tests: the three conditions of
+`Derive_SMB3_Signing_Key`'s guard, the cipher dropped on 2.1, the
+missing-key check (an absent key is all zero, so only a response signed
+with the zero key's CMAC tells the check apart), and the cleared NTSTATUS
+after a signature failure, which the earlier tests could not see because
+their responses reported success. Three are equivalent and annotated: the
+session's preauth hash is read only on 3.1.1, so updating it on 2.1
+changes nothing, and only a fresh operation, which already holds the
+initial hash, can prepare a NEGOTIATE. `Fail_Connection` and the 3.1.1
+fields that `Invalidate` resets were suppressed as unreachable; hostile
+input reaches them now, so they are mutated and tested.

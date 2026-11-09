@@ -1,3 +1,4 @@
+with SMB.AES;
 package body SMB.Core_Connection
   with SPARK_Mode
 is
@@ -22,7 +23,7 @@ is
      Post =>
        Body_Length'Result =
          (case Kind is
-            when Negotiate => 38,
+            when Negotiate => SMB.Core_Negotiate.Request_Length,
             when Tree_Connect => 8 + Path_Length,
             when Tree_Disconnect | Logoff => 4,
             when No_Connection => 0)
@@ -32,7 +33,7 @@ is
    begin
       return
         (case Kind is
-           when Negotiate => 38,
+           when Negotiate => SMB.Core_Negotiate.Request_Length,
            when Tree_Connect => 8 + Path_Length,
            when Tree_Disconnect | Logoff => 4,
            --  adamutant:disable-next-line NumericLiteral: no caller asks for No_Connection
@@ -48,19 +49,22 @@ is
       Path_Length : Natural;
       Buffer : SMB.Bytes) return Boolean is
       (case Kind is
+        --  The fixed part of SMB.Core_Negotiate.Request; the contexts and
+        --  the salt are its own business.
         when Negotiate =>
-          Buffer'Length = 38
+          Buffer'Length = SMB.Core_Negotiate.Request_Length
           and then SMB.Core_Wire.Encoded_U16 (Buffer, 0) = 36
-          and then SMB.Core_Wire.Encoded_U16 (Buffer, 2) = 1
+          and then SMB.Core_Wire.Encoded_U16 (Buffer, 2) in 1 .. 2
           and then SMB.Core_Wire.Encoded_U16 (Buffer, 4) = 3
           and then SMB.Core_Wire.Encoded_U16 (Buffer, 6) = 0
-          and then SMB.Core_Wire.Encoded_U32 (Buffer, 8) = 0
+          and then SMB.Core_Wire.Encoded_U32 (Buffer, 8) = 16#40#
           and then
             (for all Index in 0 .. 15 =>
                Buffer (12 + Index) = Guid (Guid'First + Index))
-          and then SMB.Core_Wire.Encoded_U64 (Buffer, 28) = 0
+          and then SMB.Core_Wire.Encoded_U32 (Buffer, 28) = 104
+          and then SMB.Core_Wire.Encoded_U16 (Buffer, 32) = 2
           and then SMB.Core_Wire.Encoded_U16
-            (Buffer, 36) = SMB.SMB2_Dialect_0210,
+            (Buffer, 36) = SMB.SMB2_Dialect_0311,
         when Tree_Connect =>
           Buffer'Length = 8 + Path_Length
           and then Path_Length > 0
@@ -205,21 +209,24 @@ is
       and then
         (case Value.Kind is
            when Negotiate =>
-             Packet'Length >= Header_Length + 38
+             Packet'Length >=
+               Header_Length + SMB.Core_Negotiate.Request_Length
              and then SMB.Core_Wire.Encoded_U16
                (Packet, Header_Length) = 36
              and then SMB.Core_Wire.Encoded_U16
-               (Packet, Header_Length + 2) = 1
+               (Packet, Header_Length + 2) in 1 .. 2
              and then SMB.Core_Wire.Encoded_U16
                (Packet, Header_Length + 4) = 3
              and then SMB.Core_Wire.Encoded_U16
                (Packet, Header_Length + 6) = 0
              and then SMB.Core_Wire.Encoded_U32
-               (Packet, Header_Length + 8) = 0
-             and then SMB.Core_Wire.Encoded_U64
-               (Packet, Header_Length + 28) = 0
+               (Packet, Header_Length + 8) = 16#40#
+             and then SMB.Core_Wire.Encoded_U32
+               (Packet, Header_Length + 28) = 104
              and then SMB.Core_Wire.Encoded_U16
-               (Packet, Header_Length + 36) = SMB.SMB2_Dialect_0210
+               (Packet, Header_Length + 32) = 2
+             and then SMB.Core_Wire.Encoded_U16
+               (Packet, Header_Length + 36) = SMB.SMB2_Dialect_0311
              and then Value.Expected.Tree_Id = 0
              and then Value.Expected.Session_Id = 0
              and then Packet_Guid_Matches (Packet, Value.Guid),
@@ -316,10 +323,14 @@ is
       Status := SMB.Ok;
    end Prepare_Header;
 
+   --  Signs with HMAC-SHA256 and Key for SMB 2.1, and with AES-128-CMAC and
+   --  SMB3_Key for 3.1.1.
    procedure Sign_Packet
      (Packet : in out SMB.Bytes;
       Used : Natural;
       Key : SMB.Bytes;
+      Dialect : SMB.Word;
+      SMB3_Key : SMB.AES.Key_128;
      Status : out SMB.Core_Status)
    with Pre =>
      Packet'Length <= SMB.Maximum_Frame_Size
@@ -361,9 +372,15 @@ is
          Status := SMB.Invalid_Length;
          return;
       end if;
-      SMB.Core_Wire.Sign
-        (Packet
-           (Packet'First .. Packet'First + (Used - 1)), Key, Status);
+      if Dialect = SMB.SMB2_Dialect_0311 then
+         SMB.Core_Wire.Sign_CMAC
+           (Packet
+              (Packet'First .. Packet'First + (Used - 1)), SMB3_Key, Status);
+      else
+         SMB.Core_Wire.Sign
+           (Packet
+              (Packet'First .. Packet'First + (Used - 1)), Key, Status);
+      end if;
    end Sign_Packet;
 
    procedure Fail_Connection
@@ -386,14 +403,15 @@ is
    is
       Invalidate_Status : SMB.Core_Status;
    begin
-      --  Only the defensive branches above call this, and no input reaches
-      --  them.
-      --  adamutant:disable all
       SMB.Engine.Invalidate (State, Invalidate_Status);
       Value.Stage := Failed;
-      Status :=
-        (if Invalidate_Status = SMB.Ok then Failure else Invalidate_Status);
-      --  adamutant:enable all
+      --  adamutant:disable-next-line ConditionalExpression: Invalidate fails only after 2**64 reconnections
+      if Invalidate_Status = SMB.Ok then
+         Status := Failure;
+      else
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
+         Status := Invalidate_Status;
+      end if;
    end Fail_Connection;
 
    procedure Lemma_Body_Copy (Source, Packet : SMB.Bytes)
@@ -420,8 +438,10 @@ is
          (if Source'Length >= 38 then
             SMB.Core_Wire.Encoded_U32 (Packet, 72) =
               SMB.Core_Wire.Encoded_U32 (Source, 8)
-            and then SMB.Core_Wire.Encoded_U64 (Packet, 92) =
-              SMB.Core_Wire.Encoded_U64 (Source, 28)
+            and then SMB.Core_Wire.Encoded_U32 (Packet, 92) =
+              SMB.Core_Wire.Encoded_U32 (Source, 28)
+            and then SMB.Core_Wire.Encoded_U16 (Packet, 96) =
+              SMB.Core_Wire.Encoded_U16 (Source, 32)
             and then SMB.Core_Wire.Encoded_U16 (Packet, 100) =
               SMB.Core_Wire.Encoded_U16 (Source, 36))
    is
@@ -673,6 +693,8 @@ is
                       Body_Buffer (Body_Buffer'First + Index));
                Sign_Packet
                  (Output, Used, SMB.Engine.Current_Signing_Key (State),
+                  SMB.Engine.Current_Dialect (State),
+                  SMB.Engine.Current_SMB3_Signing_Key (State),
                   Field_Status);
                Lemma_Copies_Compose
                  (Body_Buffer, Before_Signing, Output, 64, 64);
@@ -727,32 +749,28 @@ is
      (Value : in out Connection_Operation;
       State : in out SMB.Engine.Engine_State;
       Guid : SMB.Bytes;
+      Salt : SMB.Core_Negotiate.Salt_Bytes;
+      Allow_21 : Boolean;
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
       State_At_Entry : constant SMB.Engine.Engine_State := State with Ghost;
       Snapshot_At_Entry : constant Connection_State_Snapshot :=
         Snapshot_Of (Value) with Ghost;
-      Body_Buffer : SMB.Bytes (0 .. 37);
-      Body_Used : Natural;
-      Build_Status : SMB.Core_Status;
+      Body_Buffer : constant SMB.Core_Negotiate.Request_Bytes :=
+        SMB.Core_Negotiate.Request (Guid, Salt, Allow_21);
    begin
-      SMB.Core_Protocol.Build_Negotiate
-        (Guid, Body_Buffer, Body_Used, Build_Status);
-      --  adamutant:disable-next-line ConditionalExpression: the body buffer always fits a NEGOTIATE body
-      if Build_Status /= SMB.Ok then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
-         Clear_Output (Output);
-         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
-         Used := 0;
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
-         Status := Build_Status;
-         return;
-      end if;
       Prepare
-        (Value, State, Negotiate, Guid, 0,
-         Body_Buffer (0 .. Body_Used - 1),
-               Output, Used, Status);
+        (Value, State, Negotiate, Guid, 0, Body_Buffer, Output, Used, Status);
+      if Status = SMB.Ok then
+         --  The request is not signed, so these are its final bytes.
+         Value.Allow_21 := Allow_21;
+         --  adamutant:disable-next-line StatementDeletion: only a fresh operation, which holds the initial hash, can be prepared
+         Value.Request_Preauth := SMB.Core_Preauth.Initial;
+         SMB.Core_Preauth.Update
+           (Value.Request_Preauth,
+            Output (Output'First .. Output'First + (Used - 1)));
+      end if;
       --  Prepare's postcondition is large enough that GNATprove 16 times out
       --  on even direct consequences of it, so keep only what the
       --  postcondition needs, as Prepare_Tree_Connect does. The GUID's place
@@ -769,8 +787,10 @@ is
            (Status = SMB.Ok
             and then Guid'Length = 16
             and then Used <= Output'Length
-            and then Used = SMB.Core_Wire.Header_Size + 38
-            and then Output'Length >= SMB.Core_Wire.Header_Size + 38
+            and then Used =
+              SMB.Core_Wire.Header_Size + SMB.Core_Negotiate.Request_Length
+            and then Output'Length >=
+              SMB.Core_Wire.Header_Size + SMB.Core_Negotiate.Request_Length
             and then Preparation_Context_Matches
               (Snapshot_At_Entry, State_At_Entry, Negotiate)
             and then Stage_Of (Value) = Prepared
@@ -788,7 +808,8 @@ is
               (for all Index in 0 .. 15 =>
                  Snapshot_Of (Value).Guid (Index) =
                    Guid (Guid'First + Index))
-            and then Snapshot_Of (Value).Path_Length = 0);
+            and then Snapshot_Of (Value).Path_Length = 0
+            and then Snapshot_Of (Value).Allow_21 = Allow_21);
          Lemma_Guid_Place (Output, Value.Guid, Guid);
       else
          pragma Assert_And_Cut
@@ -797,7 +818,9 @@ is
             and then
               (if not Preparation_Context_Matches
                     (Snapshot_At_Entry, State_At_Entry, Negotiate)
-                  or else Output'Length < SMB.Core_Wire.Header_Size + 38
+                  or else Output'Length <
+                    SMB.Core_Wire.Header_Size
+                    + SMB.Core_Negotiate.Request_Length
                   or else Status = SMB.Counter_Exhausted
                then
                  Snapshot_Of (Value) = Snapshot_At_Entry
@@ -966,7 +989,8 @@ is
           Starting_Session_Id => Value.Starting_Session_Id,
           Starting_Tree_Id => Value.Starting_Tree_Id,
           Expected => Value.Expected, Guid => Value.Guid,
-          Path_Length => Value.Path_Length), State)
+          Path_Length => Value.Path_Length,
+          Allow_21 => Value.Allow_21), State)
       then
          Status := SMB.Invalid_State_Status;
          pragma Assert (Snapshot_Of (Value) = Old);
@@ -986,6 +1010,8 @@ is
       Receipt_Status : SMB.Core_Status;
       Mark_Status : SMB.Core_Status;
       Info : SMB.Core_Protocol.Response_Info;
+      Cipher : SMB.Core_Negotiate.Cipher_Id := SMB.Core_Negotiate.No_Cipher;
+      Preauth : SMB.Core_Preauth.Hash_Value := SMB.Core_Preauth.Initial;
       Old : constant Connection_State_Snapshot := Snapshot_Of (Value);
       State_At_Entry : constant SMB.Engine.Engine_State := State
         with Ghost;
@@ -1031,14 +1057,39 @@ is
       Before_Mark := State;
       if Value.Kind = Negotiate then
          Info := SMB.Engine.Current_Response_Info (State);
+         pragma Assert
+           (Info.Dialect in SMB.SMB2_Dialect_0210 | SMB.SMB2_Dialect_0311);
+         --  A 3.1.1 response must have valid negotiate contexts, and they
+         --  and the two messages start the preauth integrity hash. 2.1 is
+         --  accepted only when it was offered.
+         if Info.Dialect = SMB.SMB2_Dialect_0311 then
+            SMB.Core_Negotiate.Check_Response_Contexts
+              (Packet, Cipher, Mark_Status);
+            if Mark_Status /= SMB.Ok then
+               Fail_Connection (Value, State, Mark_Status, Status);
+               return;
+            end if;
+            Preauth := Value.Request_Preauth;
+            SMB.Core_Preauth.Update (Preauth, Packet);
+         elsif not Value.Allow_21 then
+            Fail_Connection
+              (Value, State, SMB.Unsupported_Feature, Status);
+            return;
+         end if;
          SMB.Engine.Mark_Negotiated
-           (State, Info.Max_Read, Info.Max_Write, Mark_Status);
+           (State, Info.Max_Read, Info.Max_Write, Cipher, Preauth,
+            Mark_Status);
          --  adamutant:disable-next-line ConditionalExpression: the phase and limits were checked when the response was accepted
          if Mark_Status /= SMB.Ok then
             --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Fail_Connection (Value, State, Mark_Status, Status);
             return;
          end if;
+         pragma Assert
+           (SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311
+            or else
+              (SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0210
+               and then Snapshot_Of (Value).Allow_21));
          pragma Assert (not SMB.Engine.Has_Validated_Response (State));
       elsif Value.Kind = Tree_Connect then
          Info := SMB.Engine.Current_Response_Info (State);
@@ -1077,7 +1128,8 @@ is
           Starting_Session_Id => Value.Starting_Session_Id,
           Starting_Tree_Id => Value.Starting_Tree_Id,
           Expected => Value.Expected, Guid => Value.Guid,
-          Path_Length => Value.Path_Length), State)
+          Path_Length => Value.Path_Length,
+          Allow_21 => Value.Allow_21), State)
         or else Value.Stage not in Prepared | Sent
       then
          Status := SMB.Invalid_State_Status;
@@ -1108,7 +1160,8 @@ is
        Starting_Tree_Id => Value.Starting_Tree_Id,
        Expected => Value.Expected,
        Guid => Value.Guid,
-       Path_Length => Value.Path_Length));
+       Path_Length => Value.Path_Length,
+       Allow_21 => Value.Allow_21));
 
    function Expected_Of
      (Value : Connection_Operation) return SMB.Engine.Request_Expectation is

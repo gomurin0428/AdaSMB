@@ -6,6 +6,7 @@
 package SMB.Core_Negotiate is
    pragma SPARK_Mode (On);
 
+   use type SMB.Byte;
    use type SMB.Word;
 
    subtype Guid_Bytes is SMB.Bytes (0 .. 15);
@@ -24,10 +25,30 @@ package SMB.Core_Negotiate is
    --  Capabilities is SMB2_GLOBAL_CAP_ENCRYPTION. The preauth integrity
    --  context offers SHA-512 with Salt, and the encryption context offers
    --  AES-128-GCM, then AES-128-CCM. Its completion in the private part
-   --  gives callers' proofs every byte.
+   --  gives callers' proofs every byte; the postcondition repeats the fixed
+   --  fields byte by byte, which provers find far more easily.
    function Request
      (Guid : Guid_Bytes; Salt : Salt_Bytes; Allow_21 : Boolean)
-      return Request_Bytes;
+      return Request_Bytes
+   with Post =>
+     --  StructureSize 36, DialectCount, SecurityMode 3, Reserved.
+     Request'Result (0) = 36 and then Request'Result (1) = 0
+     and then Request'Result (2) = (if Allow_21 then 2 else 1)
+     and then Request'Result (3) = 0
+     and then Request'Result (4) = 3 and then Request'Result (5) = 0
+     and then Request'Result (6) = 0 and then Request'Result (7) = 0
+     --  Capabilities: SMB2_GLOBAL_CAP_ENCRYPTION.
+     and then Request'Result (8) = 16#40# and then Request'Result (9) = 0
+     and then Request'Result (10) = 0 and then Request'Result (11) = 0
+     and then (for all Index in Guid_Bytes'Range =>
+                 Request'Result (12 + Index) = Guid (Index))
+     --  NegotiateContextOffset 104, NegotiateContextCount 2, Reserved2.
+     and then Request'Result (28) = 104 and then Request'Result (29) = 0
+     and then Request'Result (30) = 0 and then Request'Result (31) = 0
+     and then Request'Result (32) = 2 and then Request'Result (33) = 0
+     and then Request'Result (34) = 0 and then Request'Result (35) = 0
+     --  The first dialect: 3.1.1.
+     and then Request'Result (36) = 16#11# and then Request'Result (37) = 3;
 
    --  Checks the negotiate contexts of a NEGOTIATE response Packet (header
    --  included) that selected 3.1.1, and returns the cipher it chose.

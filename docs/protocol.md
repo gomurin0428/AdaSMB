@@ -5,10 +5,15 @@
 
 ## 接続状態
 
-`Disconnected` から TCP 接続、SMB2.1 negotiate、NTLMv2 session setup、
-tree connect の順に遷移します。ネゴシエーションで dialect が `0x0210`
-でない、signing が有効でない、I/O 最大値が 0、または暗号化 share を
-要求された場合は遷移を完了しません。セッション setup の成功応答にも
+`Disconnected` から TCP 接続、negotiate、NTLMv2 session setup、
+tree connect の順に遷移します。negotiate は SMB 3.1.1 を提示し、
+`Dialects => SMB_311_Or_21` のときだけ SMB 2.1 も提示します。dialect が
+提示したものでない、3.1.1 の negotiate context が不正（
+`SMB.Core_Negotiate.Check_Response_Contexts`）、signing が有効でない、
+I/O 最大値が 0、または暗号化 share を要求された場合は遷移を完了しません。
+3.1.1 では NEGOTIATE と SESSION_SETUP の要求・応答（最終の成功応答を除く）
+を SHA-512 の preauth integrity hash に入れ、その値とセッション鍵から
+署名鍵を導出して、最終応答以降を AES-128-CMAC で署名・検証します。セッション setup の成功応答にも
 署名を要求し、guest、null、session encryption を拒否します。
 
 各 request は単調な message id と 1 credit で送信します。応答の magic、
@@ -63,9 +68,12 @@ CLOSE の予約 DWORD、TREE_DISCONNECT／LOGOFF の予約 WORD も受信時に
 * [MS-SMB2 2.2.12 TREE_DISCONNECT Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/aeac92de-8db3-48f8-a8b7-bfee28b9fd9e)
 * [MS-SMB2 2.2.8 LOGOFF Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/7539feb4-6fbb-4996-81ac-06863bb1a89e)
 
-NEGOTIATE の `NegotiateContextCount/Reserved` と `NegotiateContextOffset/Reserved2`、
-TREE_CONNECT の `Reserved` も受信時に無視します。方言は 0x0210 だけを受理するため、
-SMB 3.1.1 のコンテキストとして解釈しません。署名有効、セキュリティバッファの境界、
+2.1 の NEGOTIATE 応答では `NegotiateContextCount/Reserved` と
+`NegotiateContextOffset/Reserved2` を無視し、3.1.1 の応答ではそれらを
+negotiate context の位置として検査します。TREE_CONNECT の `Reserved` も
+受信時に無視します。2.1 の応答が SMB 3 の capability（multichannel、
+persistent handle、directory leasing、encryption）を主張すると拒否し、
+3.1.1 の応答では使わないだけで受け入れます。署名有効、セキュリティバッファの境界、
 共有種別、TreeId、暗号化要求の拒否は引き続き検査します。
 
 * [MS-SMB2 2.2.4 NEGOTIATE Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/63abf97c-0d09-47e2-88d6-6bfa552949a5)

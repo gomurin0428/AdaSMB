@@ -1,3 +1,5 @@
+with SMB.Core_Negotiate;
+with SMB.Core_Preauth;
 package body Engine_Fixtures is
    use type SMB.DWord;
 
@@ -52,7 +54,8 @@ package body Engine_Fixtures is
         (Status = SMB.Ok,
          "async fixture negotiate response: " & SMB.Core_Status'Image (Status));
       SMB.Engine.Mark_Negotiated
-        (State, Maximum_Read, Maximum_Write, Status);
+        (State, Maximum_Read, Maximum_Write, SMB.Core_Negotiate.No_Cipher,
+         SMB.Core_Preauth.Initial, Status);
       Assert (Status = SMB.Ok, "async fixture negotiation state");
       if Stop_At = Negotiated then
          return;

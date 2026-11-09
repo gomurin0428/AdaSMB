@@ -1,3 +1,4 @@
+with Test_Dialects;
 with Ada.Environment_Variables;
 with Ada.Text_IO;
 with SMB.Client;
@@ -14,7 +15,8 @@ procedure Response_Mutation_Client is
 
    procedure Connect (Port : Positive) is
    begin
-      SMB.Client.Connect (Client, Env ("SMB_TEST_HOST"), Port, 5.0);
+      SMB.Client.Connect (Client, Env ("SMB_TEST_HOST"), Port, 5.0,
+         Dialects => Test_Dialects.Policy);
       SMB.Client.Authenticate (Client, Env ("SMB_TEST_USER"), Env ("SMB_TEST_PASSWORD"));
       SMB.Client.Connect_Share (Client, Env ("SMB_TEST_SHARE"));
    end Connect;

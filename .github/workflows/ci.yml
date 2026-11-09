@@ -46,9 +46,11 @@ jobs:
         run: make crypto-test aes-test cmac-test ccm-test gcm-test kdf-test signing-test ntlm-test unicode-test clock-test
       - name: Transport test
         run: make transport-test
-      - name: Samba integration
+      - name: Samba integration (SMB 2.1, proxy tests)
         # Creates a test-only account and a private smbd on 127.0.0.1:1445.
         run: sudo env "PATH=$PATH" python3 tests/samba_integration.py
+      - name: Samba integration (SMB 3.1.1 only, signing required)
+        run: sudo env "PATH=$PATH" ADASMB_SMB311_ONLY=1 python3 tests/samba_integration.py
 
   mutation:
     name: Mutation testing (changed lines)

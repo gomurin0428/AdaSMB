@@ -1,3 +1,5 @@
+with SMB.Core_Negotiate;
+with SMB.Core_Preauth;
 with SMB.Core_Protocol;
 with SMB.Core_Wire;
 with SMB.Engine;
@@ -29,6 +31,8 @@ is
       Expected : SMB.Engine.Request_Expectation;
       Guid : SMB.Bytes (0 .. 15) := (others => 0);
       Path_Length : Natural := 0;
+      --  Whether a NEGOTIATE offered SMB 2.1 next to 3.1.1.
+      Allow_21 : Boolean := False;
    end record;
 
    type Connection_Operation is limited private;
@@ -43,7 +47,8 @@ is
       and then Left.Starting_Tree_Id = Right.Starting_Tree_Id
       and then Left.Expected = Right.Expected
       and then Left.Guid = Right.Guid
-      and then Left.Path_Length = Right.Path_Length)
+      and then Left.Path_Length = Right.Path_Length
+      and then Left.Allow_21 = Right.Allow_21)
    with Ghost;
 
    function Invalidated (State : SMB.Engine.Engine_State) return Boolean is
@@ -84,10 +89,14 @@ is
        and then Snapshot_Of (Value).Path_Length <=
          SMB.Core_Protocol.Maximum_Name_Bytes;
 
+   --  An SMB 3.1.1 NEGOTIATE (SMB.Core_Negotiate.Request), which offers 2.1
+   --  too when Allow_21 is set. Salt is the preauth integrity salt.
    procedure Prepare_Negotiate
      (Value : in out Connection_Operation;
       State : in out SMB.Engine.Engine_State;
       Guid : SMB.Bytes;
+      Salt : SMB.Core_Negotiate.Salt_Bytes;
+      Allow_21 : Boolean;
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status)
@@ -99,7 +108,8 @@ is
        and then
          (if not Preparation_Context_Matches
                (Snapshot_Of (Value), State, Negotiate)'Old
-             or else Output'Length < SMB.Core_Wire.Header_Size + 38
+             or else Output'Length < SMB.Core_Wire.Header_Size
+                               + SMB.Core_Negotiate.Request_Length
           then Status /= SMB.Ok
             and then Snapshot_Of (Value) = Snapshot_Of (Value)'Old
             and then State = State'Old
@@ -116,7 +126,8 @@ is
             and then SMB.Engine.Connection_Context_Equivalent
               (State'Old, State)
             and then Continuation_Context_Matches (Snapshot_Of (Value), State)
-            and then Used = SMB.Core_Wire.Header_Size + 38
+            and then Used =
+              SMB.Core_Wire.Header_Size + SMB.Core_Negotiate.Request_Length
             and then Packet_Matches_Prepared (Value, State, Output, Used)
             and then
               (for all Index in 0 .. 15 =>
@@ -126,7 +137,8 @@ is
               (for all Index in 0 .. 15 =>
                  Snapshot_Of (Value).Guid (Index) =
                    Guid (Guid'First + Index))
-            and then Snapshot_Of (Value).Path_Length = 0);
+            and then Snapshot_Of (Value).Path_Length = 0
+            and then Snapshot_Of (Value).Allow_21 = Allow_21);
 
    procedure Prepare_Tree_Connect
      (Value : in out Connection_Operation;
@@ -299,6 +311,14 @@ is
                         Packet'Length >= 128
                         and then SMB.Engine.Current_Phase (State) =
                           SMB.Engine.Negotiated
+                        --  3.1.1, or 2.1 only when it was offered.
+                        and then
+                          (SMB.Engine.Current_Dialect (State) =
+                             SMB.SMB2_Dialect_0311
+                           or else
+                             (SMB.Engine.Current_Dialect (State) =
+                                SMB.SMB2_Dialect_0210
+                              and then Snapshot_Of (Value).Allow_21))
                         and then SMB.Engine.Current_Session_Id (State) = 0
                         and then SMB.Engine.Current_Tree_Id (State) = 0
                         and then SMB.Engine.Current_Max_Read (State) in
@@ -373,5 +393,9 @@ private
       Expected : SMB.Engine.Request_Expectation;
       Guid : SMB.Bytes (0 .. 15) := (others => 0);
       Path_Length : Natural := 0;
+      Allow_21 : Boolean := False;
+      --  The preauth integrity hash after a NEGOTIATE request.
+      Request_Preauth : SMB.Core_Preauth.Hash_Value :=
+        SMB.Core_Preauth.Initial;
    end record;
 end SMB.Core_Connection;
