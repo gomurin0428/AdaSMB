@@ -30,7 +30,7 @@ types). These are the implementations called by `SMB.Client` and
 | `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
 | `SMB.Core_Negotiate` | The SMB 3.1.1 NEGOTIATE request body with its preauth integrity and encryption contexts, and the checks on a 3.1.1 response's negotiate contexts; run-time safety and a cipher of `No_Cipher` on failure |
 | `SMB.Core_Preauth` | The SMB 3.1.1 preauth integrity hash step, SHA-512 of the previous value and a message; run-time safety |
-| `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-128-CCM or GCM, and checking and opening a received one; the header fields, nonce field and trailing zeros written, the header and inner SMB2 header checks that hold on success (the tag itself is tested, not stated), and no message bytes left after any failure |
+| `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-CCM or AES-GCM under a 16-byte (AES-128) or 32-byte (AES-256) key of the cipher's length, and checking and opening a received one; the header fields, nonce field and trailing zeros written, the header and inner SMB2 header checks that hold on success (the tag itself is tested, not stated), and no message bytes left after any failure |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
@@ -93,7 +93,7 @@ exactly-once behavior is claimed.
 SMB 3.1.1 is negotiated by default. `Core_Connection.Prepare_Negotiate` sends
 `SMB.Core_Negotiate.Request`, which offers 3.1.1 (and 2.1 only when the caller
 allows it) with a preauth integrity context (SHA-512 and a fresh salt) and an
-encryption context (AES-128-GCM, then CCM). `Complete`'s postcondition proves
+encryption context (AES-128-GCM, AES-128-CCM, AES-256-GCM, AES-256-CCM). `Complete`'s postcondition proves
 that a successful NEGOTIATE leaves the Engine on 3.1.1, or on 2.1 only when 2.1
 was offered; a 3.1.1 response must pass `Check_Response_Contexts`. The
 connection starts the preauth integrity hash with the request and response,
@@ -111,7 +111,9 @@ against Samba and against Windows Server 2025 supply that evidence.
 
 With a cipher negotiated, `Derive_SMB3_Keys` also derives the encryption and
 decryption keys and sets the nonce counter to 1, which its postcondition
-states, and `Mark_Authenticated` turns encryption on. From then on:
+states (`Engine.Cipher_Key`: 32 bytes with L = 256 under an AES-256 cipher,
+16 bytes with L = 128 and 16 zero bytes otherwise; the signing key is
+always L = 128), and `Mark_Authenticated` turns encryption on. From then on:
 
 * `Engine.Seal_Request` seals each request with `SMB.Core_Transform.Seal`.
   Its postcondition proves that the request goes out under the nonce
@@ -352,7 +354,7 @@ does not make the above bodies formally verified.
   conformance and transport tests (Linux and Windows), the Samba
   integration test (Linux) and the same integration client against the
   Windows runner's own SMB server (SMB 3.1.1, encryption required under
-  each AES-128 cipher) on pushes to `main` and pull requests, and the full
+  each of the four ciphers) on pushes to `main` and pull requests, and the full
   proof weekly and on demand; see `.github/workflows`.
 * Mutation testing (AdaMutant, configured in `adamutant.toml`) measures how
   much of the executable library code the unit and conformance tests

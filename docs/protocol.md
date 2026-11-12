@@ -20,8 +20,8 @@ cipher があるときだけ受け入れます。Windows Server 2025 は鍵を�
 challenge 応答ですでにこの flag を立てるので、判定は鍵ではなく cipher の
 有無で行います。
 
-cipher（AES-128-GCM または CCM）をネゴシエーションした 3.1.1 セッションは、
-同じ preauth hash から暗号化鍵・復号鍵も導出し、認証後のすべての要求を
+cipher をネゴシエーションした 3.1.1 セッションは、同じ preauth hash から
+暗号化鍵・復号鍵も導出し、認証後のすべての要求を
 SMB2 TRANSFORM_HEADER に封入します（`SMB.Core_Transform`、
 `SMB.Engine.Seal_Request`）。nonce は先頭 8 byte がセッションごとに 1 から
 始まるカウンター、残りが 0 で、カウンターが尽きると封入を拒否します。
@@ -35,9 +35,15 @@ OriginalMessageSize、SessionId、tag、復号後の SMB2 ProtocolId と Session
 応答は tag で認証済みなので、中の署名は要求も検証もしません。SIGNED flag も
 問いません（Windows は暗号化した応答で flag を下ろし、Samba は要求の flag を
 そのまま写します）。CI では Samba と Windows Server 2025 の SMB サーバーを
-相手に暗号化を試験します。Windows では暗号化を必須にしたうえで、
-AES-128-GCM と AES-128-CCM をそれぞれ唯一の cipher にして、クライアントが
-その cipher をネゴシエーションしたことも確かめます。
+相手に暗号化を試験します。Samba では AES-256-GCM と AES-256-CCM を、
+Windows では 4 つの cipher をそれぞれ唯一の cipher にし、暗号化を必須にした
+うえで、クライアントがその cipher をネゴシエーションしたことも確かめます。
+
+クライアントは AES-128-GCM、AES-128-CCM、AES-256-GCM、AES-256-CCM の順に
+提示し（Windows クライアントの既定と同じ順です）、サーバーが選びます。
+AES-256 の cipher では暗号化鍵・復号鍵を L = 256 で 32 byte 導出し
+（`SMB.KDF.Derive_256`）、署名鍵はどの cipher でも L = 128 の 16 byte
+（AES-128-CMAC）です。Samba も同じ導出をします。
 
 各 request は単調な message id と 1 credit で送信します。応答の magic、
 structure size、command、message id、session/tree id、zero credit、
@@ -136,8 +142,9 @@ Type 2、zero-MIC Type 3 全体で MIC を計算します。channel binding が
 
 ## 暗号と入力制限
 
-MD4、MD5、SHA-256、SHA-512、HMAC-MD5、HMAC-SHA256、AES-128（暗号化方向のみ）、
-AES-128-CMAC、AES-128-CCM、AES-128-GCM、SMB 3.1.1 の鍵導出（SP 800-108）は
+MD4、MD5、SHA-256、SHA-512、HMAC-MD5、HMAC-SHA256、AES-128 と AES-256
+（暗号化方向のみ）、AES-128-CMAC、AES-CCM、AES-GCM、SMB 3.1.1 の鍵導出
+（SP 800-108）は
 Ada の整数演算だけで実装しています。既定エントロピーはUnixで `/dev/urandom`、Windowsで
 `BCryptGenRandom(NULL, buffer, length, BCRYPT_USE_SYSTEM_PREFERRED_RNG)`です。
 短い読み取りやOS API失敗を成功扱いにせず、疑似乱数にフォールバックしません。UTF-8 の overlong、surrogate、範囲外 scalar、

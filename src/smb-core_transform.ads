@@ -1,5 +1,4 @@
 with Interfaces;
-with SMB.AES;
 with SMB.Core_Negotiate;
 with SMB.Core_Wire;
 
@@ -16,8 +15,10 @@ with SMB.Core_Wire;
 --     52  the encrypted message
 --
 --  Bytes 20 to 51 are the associated data, and the message is the whole SMB2
---  message from its header on. The proof covers run-time safety and the
---  contracts below; Microsoft's worked examples cover the bytes.
+--  message from its header on. The cipher is AES-CCM or AES-GCM with a
+--  16-byte key (AES-128) or a 32-byte key (AES-256). The proof covers
+--  run-time safety and the contracts below; Microsoft's worked examples
+--  cover the bytes of the AES-128 ciphers.
 package SMB.Core_Transform is
    pragma SPARK_Mode (On);
 
@@ -34,7 +35,7 @@ package SMB.Core_Transform is
    SMB2_Header_Size : constant := 64;
 
    subtype AEAD_Cipher is SMB.Core_Negotiate.Cipher_Id
-     range SMB.Core_Negotiate.AES_128_CCM .. SMB.Core_Negotiate.AES_128_GCM;
+     range SMB.Core_Negotiate.AES_128_CCM .. SMB.Core_Negotiate.AES_256_GCM;
 
    --  The contents of the Nonce field.
    subtype Nonce_Field is SMB.Bytes (0 .. 15);
@@ -42,8 +43,24 @@ package SMB.Core_Transform is
    --  How many bytes of the Nonce field the cipher uses.
    function Nonce_Length (Cipher : AEAD_Cipher) return Positive is
      (case Cipher is
-        when SMB.Core_Negotiate.AES_128_CCM => 11,
-        when SMB.Core_Negotiate.AES_128_GCM => 12);
+        when SMB.Core_Negotiate.AES_128_CCM
+           | SMB.Core_Negotiate.AES_256_CCM => 11,
+        when SMB.Core_Negotiate.AES_128_GCM
+           | SMB.Core_Negotiate.AES_256_GCM => 12);
+
+   --  The length of the cipher's key.
+   function Key_Length (Cipher : AEAD_Cipher) return Positive is
+     (case Cipher is
+        when SMB.Core_Negotiate.AES_128_CCM
+           | SMB.Core_Negotiate.AES_128_GCM => 16,
+        when SMB.Core_Negotiate.AES_256_CCM
+           | SMB.Core_Negotiate.AES_256_GCM => 32);
+
+   --  Whether Key has the cipher's key length. Key'Length is compared with
+   --  literals only: an SMB.Bytes can be Natural'Last + 1 long, so
+   --  comparing its length with an Integer would need a range check.
+   function Fits_Key (Cipher : AEAD_Cipher; Key : SMB.Bytes) return Boolean is
+     (if Key_Length (Cipher) = 16 then Key'Length = 16 else Key'Length = 32);
 
    --  Counter in little-endian order, then zeros: unique for each counter
    --  value with either cipher.
@@ -74,7 +91,7 @@ package SMB.Core_Transform is
    --  callers cannot pass overlapping arrays; other callers must not.
    procedure Seal
      (Cipher : AEAD_Cipher;
-      Key : SMB.AES.Key_128;
+      Key : SMB.Bytes;
       Nonce : Nonce_Field;
       Session_Id : SMB.QWord;
       Message : SMB.Bytes;
@@ -82,7 +99,8 @@ package SMB.Core_Transform is
       Used : out Natural;
       Status : out SMB.Core_Status)
    with
-     Pre => Message'Length in 1 .. Maximum_Message_Size
+     Pre => Fits_Key (Cipher, Key)
+       and then Message'Length in 1 .. Maximum_Message_Size
        and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
        Status in SMB.Ok | SMB.Invalid_Length
@@ -125,12 +143,13 @@ package SMB.Core_Transform is
    --  byte after the header is zero; on Ok they are the message.
    procedure Unwrap
      (Cipher : AEAD_Cipher;
-      Key : SMB.AES.Key_128;
+      Key : SMB.Bytes;
       Session_Id : SMB.QWord;
       Packet : in out SMB.Bytes;
       Status : out SMB.Core_Status)
    with
-     Pre => Packet'Length <= SMB.Maximum_Frame_Size,
+     Pre => Fits_Key (Cipher, Key)
+       and then Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
        Status in SMB.Ok | SMB.Invalid_Length | SMB.Invalid_Protocol
                 | SMB.Correlation_Error | SMB.Signature_Error

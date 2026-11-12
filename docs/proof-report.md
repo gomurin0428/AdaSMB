@@ -5082,3 +5082,40 @@ come from `cryptography`. The comparison tests now cover:
 
 The AEAD sensitivity checks now also change each half of a 32-byte key and
 the nonce after it. The stack check still passes.
+
+A changed-line AdaMutant run on GitHub Actions detected all 77 mutants of
+`smb-aes.adb` (69) and `smb-kdf.adb` (8); 5 did not compile. The CCM and
+GCM bodies changed only in their parameter types, which AdaMutant does not
+mutate.
+
+## AES-256 in negotiation, the transform and the engine
+
+The client now offers all four SMB 3.1.1 ciphers: AES-128-GCM, AES-128-CCM,
+AES-256-GCM and AES-256-CCM, in the order a Windows client offers them by
+default. `SMB.Core_Negotiate.Cipher_Id` gains `AES_256_CCM` and
+`AES_256_GCM`, and a response may select cipher 3 or 4. The request's
+encryption context grows by four bytes, so `Request_Length` is 106 and the
+NEGOTIATE packet 170 bytes. `SMB.Core_Transform` accepts all four ciphers.
+`Key_Length (Cipher)` is 16 or 32, and `Seal` and `Unwrap` require a key of
+that length through `Fits_Key`. `Fits_Key` compares `Key'Length` only with
+literals: an `SMB.Bytes` can be `Natural'Last + 1` long, so the first
+version, `Key'Length = Key_Length (Cipher)`, left four range checks
+unproved. The engine keeps 32-byte cipher keys. `Engine.Cipher_Key` gives
+`SMB.KDF.Derive_256` under an AES-256 cipher, and `SMB.KDF.Derive` followed
+by 16 zero bytes otherwise. `Derive_SMB3_Keys` states its keys through it,
+and `Seal_Request` and `Unwrap_Response` pass the first `Key_Length` bytes.
+The signing key is `SMB.KDF.Derive` (L = 128) under every cipher.
+
+GNATPROVE_RESULTS
+
+`test_suite`:
+
+* The negotiate tests check the new request bytes and accept ciphers 3 and
+  4. They refuse 5 and `0xFFFF`. Microsoft's A.1 request offers only the
+  AES-128 ciphers, so only its preauth context is compared with ours.
+* The transform tests run under all four ciphers (176 rejections). They
+  add a check that the same mode under the other key length fails.
+* The engine's encryption tests run under all four ciphers (207 checks),
+  with keys derived in the test itself.
+
+CI_RESULTS

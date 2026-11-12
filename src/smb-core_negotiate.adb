@@ -86,6 +86,8 @@ package body SMB.Core_Negotiate is
                when 0 => null;
                when CCM_Id => Selected := AES_128_CCM;
                when GCM_Id => Selected := AES_128_GCM;
+               when CCM_256_Id => Selected := AES_256_CCM;
+               when GCM_256_Id => Selected := AES_256_GCM;
                when others =>
                   Status := SMB.Invalid_Protocol;
                   return;

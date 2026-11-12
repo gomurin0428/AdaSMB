@@ -12,40 +12,46 @@ package body SMB.Core_Transform is
 
    procedure Encrypt
      (Cipher : AEAD_Cipher;
-      Key : SMB.AES.Key_128;
+      Key : SMB.Bytes;
       Nonce : Nonce_Field;
       AAD : SMB.Bytes;
       Data : in out SMB.Bytes;
       Tag : out Tag_Bytes)
-   with Pre => AAD'Length = 32 and then Data'Length <= SMB.Maximum_Frame_Size
+   with Pre => Fits_Key (Cipher, Key)
+     and then AAD'Length = 32 and then Data'Length <= SMB.Maximum_Frame_Size
    is
    begin
       case Cipher is
-         when SMB.Core_Negotiate.AES_128_CCM =>
+         when SMB.Core_Negotiate.AES_128_CCM
+            | SMB.Core_Negotiate.AES_256_CCM =>
             SMB.AES.CCM.Seal (Key, Nonce (0 .. 10), AAD, Data, Tag);
-         when SMB.Core_Negotiate.AES_128_GCM =>
+         when SMB.Core_Negotiate.AES_128_GCM
+            | SMB.Core_Negotiate.AES_256_GCM =>
             SMB.AES.GCM.Seal (Key, Nonce (0 .. 11), AAD, Data, Tag);
       end case;
    end Encrypt;
 
    procedure Decrypt
      (Cipher : AEAD_Cipher;
-      Key : SMB.AES.Key_128;
+      Key : SMB.Bytes;
       Nonce : Nonce_Field;
       AAD : SMB.Bytes;
       Data : in out SMB.Bytes;
       Tag : Tag_Bytes;
       Authentic : out Boolean)
    with
-     Pre => AAD'Length = 32 and then Data'Length <= SMB.Maximum_Frame_Size,
+     Pre => Fits_Key (Cipher, Key)
+       and then AAD'Length = 32 and then Data'Length <= SMB.Maximum_Frame_Size,
      Post => (if not Authentic then (for all Value of Data => Value = 0))
    is
    begin
       case Cipher is
-         when SMB.Core_Negotiate.AES_128_CCM =>
+         when SMB.Core_Negotiate.AES_128_CCM
+            | SMB.Core_Negotiate.AES_256_CCM =>
             SMB.AES.CCM.Open
               (Key, Nonce (0 .. 10), AAD, Data, Tag, Authentic);
-         when SMB.Core_Negotiate.AES_128_GCM =>
+         when SMB.Core_Negotiate.AES_128_GCM
+            | SMB.Core_Negotiate.AES_256_GCM =>
             SMB.AES.GCM.Open
               (Key, Nonce (0 .. 11), AAD, Data, Tag, Authentic);
       end case;
@@ -53,7 +59,7 @@ package body SMB.Core_Transform is
 
    procedure Seal
      (Cipher : AEAD_Cipher;
-      Key : SMB.AES.Key_128;
+      Key : SMB.Bytes;
       Nonce : Nonce_Field;
       Session_Id : SMB.QWord;
       Message : SMB.Bytes;
@@ -102,7 +108,7 @@ package body SMB.Core_Transform is
 
    procedure Unwrap
      (Cipher : AEAD_Cipher;
-      Key : SMB.AES.Key_128;
+      Key : SMB.Bytes;
       Session_Id : SMB.QWord;
       Packet : in out SMB.Bytes;
       Status : out SMB.Core_Status)

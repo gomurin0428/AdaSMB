@@ -92,15 +92,33 @@ is
    function Current_SMB3_Signing_Key
      (State : Engine_State) return SMB.AES.Key_128;
    --  With a cipher, a 3.1.1 session also derives the keys that encrypt
-   --  requests and decrypt responses. Encryption starts once the session is
-   --  authenticated; from then on every request is sealed with the next
-   --  nonce, and only a response that Unwrap_Response decrypted is
-   --  accepted.
+   --  requests and decrypt responses, as Cipher_Key gives them. Encryption
+   --  starts once the session is authenticated; from then on every request
+   --  is sealed with the next nonce, and only a response that
+   --  Unwrap_Response decrypted is accepted.
    function Has_Cipher_Keys (State : Engine_State) return Boolean;
    function Current_Encryption_Key
-     (State : Engine_State) return SMB.AES.Key_128;
+     (State : Engine_State) return SMB.AES.Key_256;
    function Current_Decryption_Key
-     (State : Engine_State) return SMB.AES.Key_128;
+     (State : Engine_State) return SMB.AES.Key_256;
+
+   --  The cipher key a 3.1.1 session derives for Purpose under Cipher, in
+   --  32 bytes: SMB.KDF.Derive_256 (L = 256) for AES-256-CCM and
+   --  AES-256-GCM, and otherwise SMB.KDF.Derive (L = 128) followed by 16
+   --  zero bytes. Seal_Request and Unwrap_Response use the first
+   --  SMB.Core_Transform.Key_Length (Cipher) bytes. The signing key is
+   --  SMB.KDF.Derive (L = 128) under every cipher, since 3.1.1 signs with
+   --  AES-128-CMAC; Samba derives it the same way.
+   function Cipher_Key
+     (Session_Key : SMB.Crypto.Digest_128;
+      Purpose : SMB.KDF.Key_Purpose;
+      Preauth : SMB.Core_Preauth.Hash_Value;
+      Cipher : SMB.Core_Negotiate.Cipher_Id) return SMB.AES.Key_256 is
+     (if Cipher in SMB.Core_Negotiate.AES_256_CCM
+                 | SMB.Core_Negotiate.AES_256_GCM
+      then SMB.KDF.Derive_256 (Session_Key, Purpose, Preauth)
+      else SMB.KDF.Derive (Session_Key, Purpose, Preauth)
+           & SMB.Crypto.Digest_128'(others => 0));
    function Is_Encrypting (State : Engine_State) return Boolean;
    function Next_Nonce (State : Engine_State) return SMB.QWord;
    function Holds_Decrypted_Response (State : Engine_State) return Boolean;
@@ -261,8 +279,8 @@ is
           and Current_Async_Id (State) = 0
           and Signing_Key_Is_Zero (State)
           and not Has_Cipher_Keys (State)
-          and Current_Encryption_Key (State) = SMB.AES.Key_128'(others => 0)
-          and Current_Decryption_Key (State) = SMB.AES.Key_128'(others => 0)
+          and Current_Encryption_Key (State) = SMB.AES.Key_256'(others => 0)
+          and Current_Decryption_Key (State) = SMB.AES.Key_256'(others => 0)
           and Next_Nonce (State) = 0
           and not Is_Encrypting (State)
           and not Holds_Decrypted_Response (State)
@@ -417,13 +435,13 @@ is
              else
                Has_Cipher_Keys (State)
                and Current_Encryption_Key (State) =
-                 SMB.KDF.Derive
+                 Cipher_Key
                    (Current_Signing_Key (State), SMB.KDF.Encryption,
-                    Preauth)
+                    Preauth, Current_Cipher (State))
                and Current_Decryption_Key (State) =
-                 SMB.KDF.Derive
+                 Cipher_Key
                    (Current_Signing_Key (State), SMB.KDF.Decryption,
-                    Preauth)
+                    Preauth, Current_Cipher (State))
                and Next_Nonce (State) = 1)
         else State = State'Old and Status = SMB.Invalid_State_Status);
 
@@ -1048,8 +1066,8 @@ is
        and Next_Request_Id (State) = 0
        and Last_Allocated_Handle_Ticket (State) = 0
        and not Has_Cipher_Keys (State)
-       and Current_Encryption_Key (State) = SMB.AES.Key_128'(others => 0)
-       and Current_Decryption_Key (State) = SMB.AES.Key_128'(others => 0)
+       and Current_Encryption_Key (State) = SMB.AES.Key_256'(others => 0)
+       and Current_Decryption_Key (State) = SMB.AES.Key_256'(others => 0)
        and Next_Nonce (State) = 0
        and not Is_Encrypting (State)
        and not Holds_Decrypted_Response (State)
@@ -1100,8 +1118,8 @@ private
       Has_Key : Boolean := False;
       SMB3_Key : SMB.AES.Key_128 := (others => 0);
       Has_SMB3_Key : Boolean := False;
-      Encryption_Key : SMB.AES.Key_128 := (others => 0);
-      Decryption_Key : SMB.AES.Key_128 := (others => 0);
+      Encryption_Key : SMB.AES.Key_256 := (others => 0);
+      Decryption_Key : SMB.AES.Key_256 := (others => 0);
       Has_Cipher_Keys : Boolean := False;
       Encrypting : Boolean := False;
       Decrypted : Boolean := False;

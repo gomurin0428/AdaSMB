@@ -192,6 +192,18 @@ def main() -> int:
         encrypt = os.environ.get("ADASMB_SMB_ENCRYPT", "off")
         if encrypt not in ("off", "default", "required"):
             raise SystemExit("ADASMB_SMB_ENCRYPT must be off, default or required")
+        # ADASMB_SMB_CIPHER limits the server to one cipher ("server smb3
+        # encryption algorithms"), and the client must report negotiating
+        # it. Samba names them AES-128-GCM and so on, the client AES_128_GCM.
+        cipher = os.environ.get("ADASMB_SMB_CIPHER")
+        ciphers = {"AES-128-CCM", "AES-128-GCM", "AES-256-CCM", "AES-256-GCM"}
+        if cipher is not None and (cipher not in ciphers or not smb311_only
+                                   or encrypt == "off"):
+            raise SystemExit("ADASMB_SMB_CIPHER must be one of "
+                             + ", ".join(sorted(ciphers))
+                             + ", with ADASMB_SMB311_ONLY=1 and encryption on")
+        algorithms = (f"    server smb3 encryption algorithms = {cipher}\n"
+                      if cipher is not None else "")
         config = work / "smb.conf"
         config.write_text(
             f"""\
@@ -214,7 +226,7 @@ def main() -> int:
     max protocol = {protocol}
     server signing = mandatory
     server smb encrypt = {encrypt}
-    map to guest = never
+{algorithms}    map to guest = never
     log level = 3
 
 [adasmb_test]
@@ -282,6 +294,8 @@ def main() -> int:
                     env["SMB_TEST_DIALECTS"] = "311"
                     env["SMB_TEST_ENCRYPTION"] = {
                         "off": "off", "default": "on", "required": "required"}[encrypt]
+                    if cipher is not None:
+                        env["SMB_TEST_CIPHER"] = cipher.replace("-", "_")
                     try:
                         run([str(ROOT / "build/bin/integration_client")], env=env)
                     except subprocess.CalledProcessError:
