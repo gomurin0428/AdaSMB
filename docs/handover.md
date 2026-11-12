@@ -11,7 +11,8 @@ of date.
   release and submitted to the Alire index as
   alire-project/alire-index#2340, whose checks passed; it waits for the
   index maintainers to merge it. 0.3.0 (the AES-256 ciphers) is tagged
-  `v0.3.0` with a GitHub release; its index submission comes next.
+  `v0.3.0` with a GitHub release. It is not on the Alire index yet: the
+  maintainer will say when to submit it.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -383,8 +384,8 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Submit 0.3.0 to the Alire index and check that it and
-  alire-project/alire-index#2340 (smb 0.2.0) are merged. The index
+* Check that alire-project/alire-index#2340 (smb 0.2.0) is merged. Submit
+  0.3.0 to the index only when the maintainer says so. The index
   manifest is `alire.toml` at the release tag with an `[origin]` section
   added: `commit` is the tag's commit and `url` is
   `git+https://github.com/gomurin0428/AdaSMB.git`, as in the index's
