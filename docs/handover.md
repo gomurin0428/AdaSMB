@@ -10,7 +10,8 @@ of date.
   3.1.1 with signing and encryption) is tagged `v0.2.0` with a GitHub
   release and on the Alire index (alire-project/alire-index#2340, merged
   on 2026-11-14). 0.3.0 (the AES-256 ciphers and AES-GMAC signing) is
-  tagged `v0.3.0` with a GitHub release; its index submission comes next.
+  tagged `v0.3.0` with a GitHub release. It is not on the Alire index yet:
+  the maintainer will say when to submit it.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -386,9 +387,9 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Submit 0.3.0 to the Alire index. The index manifest is `alire.toml` at
-  the release tag with an `[origin]` section added: `commit` is the tag's
-  commit and `url` is
+* Submit 0.3.0 to the Alire index only when the maintainer says so. The
+  index manifest is `alire.toml` at the release tag with an `[origin]`
+  section added: `commit` is the tag's commit and `url` is
   `git+https://github.com/gomurin0428/AdaSMB.git`, as in the index's
   `index/sm/smb/smb-0.2.0.toml`. `alr publish` wrote that file for 0.1.0;
   later ones were written by hand in the same form. The index is a
