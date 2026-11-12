@@ -3,11 +3,13 @@
 
 cryptography is a test-only dependency. Its KBKDFHMAC (SP 800-108 counter
 mode, HMAC-SHA256, a 32-bit counter before the fixed input, a 32-bit L and a
-16-byte output) is the reference, and it adds the zero byte between label and
-context itself. The fixtures cover Microsoft's twelve published 3.1.1 keys;
-all-zero and all-one keys and hashes; and seeded random keys and hashes, each
-under all three labels. crypto_probe derives each fixture's key with
-SMB.KDF.Derive (see Check_KDF).
+16- or 32-byte output) is the reference, and it adds the zero byte between
+label and context itself. The fixtures cover Microsoft's twelve published
+3.1.1 keys; all-zero and all-one keys and hashes; and seeded random keys and
+hashes, each under all three labels, as 16-byte keys (L = 128) and as 32-byte
+keys (L = 256, for AES-256), for which no published keys exist. crypto_probe
+derives each fixture's key with SMB.KDF.Derive or SMB.KDF.Derive_256 (see
+Check_KDF).
 """
 
 from __future__ import annotations
@@ -71,9 +73,9 @@ PUBLISHED = (
 )
 
 
-def derive(key: bytes, purpose: str, context: bytes) -> bytes:
+def derive(key: bytes, purpose: str, context: bytes, length: int = 16) -> bytes:
     return KBKDFHMAC(
-        algorithm=hashes.SHA256(), mode=Mode.CounterMode, length=16,
+        algorithm=hashes.SHA256(), mode=Mode.CounterMode, length=length,
         rlen=4, llen=4, location=CounterLocation.BeforeFixed,
         label=LABELS[purpose], context=context, fixed=None,
     ).derive(key)
@@ -87,6 +89,8 @@ def fixtures() -> list[str]:
         if known is not None and result != known:
             raise AssertionError("cryptography differs from a published SMB 3.1.1 key")
         cases.append(f"K {key.hex()} {purpose} {context.hex()} {result}")
+        cases.append(f"K {key.hex()} {purpose} {context.hex()} "
+                     f"{derive(key, purpose, context, 32).hex()}")
 
     for key, context, published in PUBLISHED:
         for purpose in LABELS:
@@ -112,16 +116,22 @@ def main() -> None:
     if result.returncode != 0 or result.stdout.strip() != f"PASS {len(cases)}":
         print(result.stdout + result.stderr, file=sys.stderr)
         raise RuntimeError("SMB 3.1.1 KDF conformance failed")
-    # A corrupted key, hash or result must fail, and so must each of the
-    # twelve published keys checked under each of the other two labels.
-    example = cases[0].split()
+    # A corrupted key, hash or result must fail, at both output lengths, and
+    # so must each of the twelve published keys checked under each of the
+    # other two labels. L is part of the PRF input, so the first 16 bytes of
+    # a 32-byte key must fail as a 16-byte key, and the 16-byte key followed
+    # by the rest of the 32-byte one must fail as a 32-byte key.
     variants = []
-    for column in (1, 3, 4):
-        fields = list(example)
-        corrupted = bytearray.fromhex(fields[column])
-        corrupted[-1] ^= 0x80
-        fields[column] = corrupted.hex()
-        variants.append(fields)
+    for example in (cases[0].split(), cases[1].split()):
+        for column in (1, 3, 4):
+            fields = list(example)
+            corrupted = bytearray.fromhex(fields[column])
+            corrupted[-1] ^= 0x80
+            fields[column] = corrupted.hex()
+            variants.append(fields)
+    short, long = cases[0].split(), cases[1].split()
+    variants.append(short[:4] + [long[4][:32]])
+    variants.append(long[:4] + [short[4] + long[4][32:]])
     for key, context, published in PUBLISHED:
         for purpose, result in published.items():
             for other in LABELS:

@@ -1,9 +1,10 @@
 with Interfaces;
 
---  AES-128-GCM (NIST SP 800-38D) as SMB 3.1.1 encrypts messages (MS-SMB2
---  3.1.4.3): a 12-byte nonce and a 16-byte tag. SMB passes the 32 bytes of
---  the transform header from its Nonce field on as associated data, and the
---  tag is the header's Signature field.
+--  AES-GCM (NIST SP 800-38D) as SMB 3.1.1 encrypts messages (MS-SMB2
+--  3.1.4.3): a 16-byte key for AES-128-GCM or a 32-byte key for
+--  AES-256-GCM, a 12-byte nonce and a 16-byte tag. SMB passes the 32 bytes
+--  of the transform header from its Nonce field on as associated data, and
+--  the tag is the header's Signature field.
 --
 --  Data is encrypted and decrypted in place. Open releases nothing it has
 --  not authenticated: when the tag does not match, Data is all zeros.
@@ -30,24 +31,26 @@ package SMB.AES.GCM is
    subtype Tag_128 is SMB.Bytes (0 .. 15);
 
    procedure Seal
-     (Key : Key_128;
+     (Key : SMB.Bytes;
       Nonce : Nonce_96;
       AAD : SMB.Bytes;
       Data : in out SMB.Bytes;
       Tag : out Tag_128)
-   with Pre => AAD'Length <= SMB.Maximum_Frame_Size
+   with Pre => (Key'Length = 16 or else Key'Length = 32)
+       and then AAD'Length <= SMB.Maximum_Frame_Size
        and then Data'Length <= SMB.Maximum_Frame_Size;
 
    --  Authentic is True when Tag matches. When it does not, Data is all
    --  zeros.
    procedure Open
-     (Key : Key_128;
+     (Key : SMB.Bytes;
       Nonce : Nonce_96;
       AAD : SMB.Bytes;
       Data : in out SMB.Bytes;
       Tag : Tag_128;
       Authentic : out Boolean)
-   with Pre => AAD'Length <= SMB.Maximum_Frame_Size
+   with Pre => (Key'Length = 16 or else Key'Length = 32)
+       and then AAD'Length <= SMB.Maximum_Frame_Size
        and then Data'Length <= SMB.Maximum_Frame_Size,
      Post => (if not Authentic then (for all I in Data'Range => Data (I) = 0));
 

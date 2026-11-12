@@ -115,25 +115,33 @@ procedure Crypto_Probe is
       end loop;
    end Check_SHA512;
 
-   --  The schedule is used twice, to check that encrypting leaves it intact.
+   --  A 16-byte key is AES-128 and a 32-byte key AES-256. The key is
+   --  expanded with the bounds Hex gives it (1 ..) and again from zero, and
+   --  each schedule is used twice, to check that encrypting leaves it
+   --  intact.
    procedure Check_AES (Key, Plain, Cipher : SMB.Bytes) is
       Schedule : SMB.AES.Key_Schedule;
-      Key_Block : SMB.AES.Key_128;
+      Zero_Based : constant SMB.Bytes (0 .. Key'Length - 1) := Key;
       Plain_Block, Cipher_Block : SMB.AES.Block;
    begin
-      if Key'Length /= 16 or else Plain'Length /= 16
-        or else Cipher'Length /= 16
+      if (Key'Length /= 16 and then Key'Length /= 32)
+        or else Plain'Length /= 16 or else Cipher'Length /= 16
       then
          raise Program_Error with "invalid AES fixture";
       end if;
-      Key_Block := Key;
       Plain_Block := Plain;
       Cipher_Block := Cipher;
-      SMB.AES.Expand_Key (Key_Block, Schedule);
-      for Repeat in 1 .. 2 loop
-         if SMB.AES.Encrypt (Schedule, Plain_Block) /= Cipher_Block then
-            raise Program_Error with "AES mismatch";
+      for Rebased in Boolean loop
+         if Rebased then
+            SMB.AES.Expand_Key (Zero_Based, Schedule);
+         else
+            SMB.AES.Expand_Key (Key, Schedule);
          end if;
+         for Repeat in 1 .. 2 loop
+            if SMB.AES.Encrypt (Schedule, Plain_Block) /= Cipher_Block then
+               raise Program_Error with "AES mismatch";
+            end if;
+         end loop;
       end loop;
    end Check_AES;
 
@@ -268,19 +276,21 @@ procedure Crypto_Probe is
    --  ones and ending at Natural'Last at the odd ones. Open must then reject
    --  a changed tag and, when there is data, a changed last ciphertext byte,
    --  and leave only zeros; past 4,096 bytes only at the first bound.
-   --  Key_Nonce is the key and then the nonce, Sealed the ciphertext and
-   --  then the tag. Check_CCM and Check_GCM are its instances.
+   --  Key_Nonce is the key (16 bytes for AES-128, 32 for AES-256) and then
+   --  the nonce, Sealed the ciphertext and then the tag. The key keeps the
+   --  bounds it has in Key_Nonce, which start at 1 (Hex). Check_CCM and
+   --  Check_GCM are its instances.
    generic
       Name : String;
       Nonce_Length : Positive;
       with procedure Seal
-        (Key : SMB.AES.Key_128;
+        (Key : SMB.Bytes;
          Nonce : SMB.Bytes;
          AAD : SMB.Bytes;
          Data : in out SMB.Bytes;
          Tag : out SMB.Bytes);
       with procedure Open
-        (Key : SMB.AES.Key_128;
+        (Key : SMB.Bytes;
          Nonce : SMB.Bytes;
          AAD : SMB.Bytes;
          Data : in out SMB.Bytes;
@@ -290,7 +300,9 @@ procedure Crypto_Probe is
 
    procedure Check_AEAD (Key_Nonce, AAD, Plain, Sealed : SMB.Bytes) is
       Length : constant Natural := Plain'Length;
-      Key : SMB.AES.Key_128;
+      Key_Length : constant Integer := Key_Nonce'Length - Nonce_Length;
+      Key : SMB.Bytes renames
+        Key_Nonce (Key_Nonce'First .. Key_Nonce'First + Key_Length - 1);
       Nonce : SMB.Bytes (0 .. Nonce_Length - 1);
       Expected : SMB.Bytes (0 .. 15);
       Tag : SMB.Bytes (0 .. 15);
@@ -309,13 +321,12 @@ procedure Crypto_Probe is
          end if;
       end Reject;
    begin
-      if Key_Nonce'Length /= 16 + Nonce_Length
+      if (Key_Length /= 16 and then Key_Length /= 32)
         or else Sealed'Length /= Length + 16
       then
          raise Program_Error with "invalid " & Name & " fixture";
       end if;
-      Key := Key_Nonce (Key_Nonce'First .. Key_Nonce'First + 15);
-      Nonce := Key_Nonce (Key_Nonce'First + 16 .. Key_Nonce'Last);
+      Nonce := Key_Nonce (Key_Nonce'First + Key_Length .. Key_Nonce'Last);
       Expected := Sealed (Sealed'Last - 15 .. Sealed'Last);
       for Base in 0 .. 3 loop
          declare
@@ -375,18 +386,23 @@ procedure Crypto_Probe is
      ("GCM", 12, SMB.AES.GCM.Seal, SMB.AES.GCM.Open);
 
    --  The key and the hash arrive with the bounds Hex gives them (1 ..), so
-   --  each call also slides them onto Derive's zero-based subtypes.
+   --  each call also slides them onto Derive's zero-based subtypes. A
+   --  16-byte Expected is a key from Derive (L = 128), a 32-byte one from
+   --  Derive_256.
    procedure Check_KDF
      (Key : SMB.Bytes;
       Purpose : SMB.KDF.Key_Purpose;
       Hash, Expected : SMB.Bytes) is
    begin
       if Key'Length /= 16 or else Hash'Length /= 64
-        or else Expected'Length /= 16
+        or else (Expected'Length /= 16 and then Expected'Length /= 32)
       then
          raise Program_Error with "invalid KDF fixture";
       end if;
-      if SMB.KDF.Derive (Key, Purpose, Hash) /= Expected then
+      if (if Expected'Length = 16
+          then SMB.KDF.Derive (Key, Purpose, Hash) /= Expected
+          else SMB.KDF.Derive_256 (Key, Purpose, Hash) /= Expected)
+      then
          raise Program_Error with "KDF mismatch";
       end if;
    end Check_KDF;

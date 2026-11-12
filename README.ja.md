@@ -152,10 +152,10 @@ make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテスト
 make unicode-test           # Python 標準 codec との Unicode 全スカラー差分試験
 make ntlm-test              # NTLM challenge と認証出力の差分試験
 make crypto-test            # OpenSSL / Python と hash・HMAC の差分試験
-make aes-test               # Python の cryptography と AES-128 の差分試験
+make aes-test               # Python の cryptography と AES-128・AES-256 の差分試験
 make cmac-test              # Python の cryptography と AES-128-CMAC の差分試験
-make ccm-test               # Python の cryptography と AES-128-CCM の差分試験
-make gcm-test               # Python の cryptography と AES-128-GCM の差分試験
+make ccm-test               # Python の cryptography と AES-CCM（128・256 ビット鍵）の差分試験
+make gcm-test               # Python の cryptography と AES-GCM（128・256 ビット鍵）の差分試験
 make kdf-test               # Python の cryptography と SMB 3.1.1 の鍵導出の差分試験
 make signing-test           # SMB 2.1・3.1.1 の署名の組立て・改ざん拒否を Python と照合
 make clock-test             # FILETIME の全暦日・秒・100ns 端数を Python と照合
@@ -211,9 +211,9 @@ MD4 は OpenSSL、MD5/SHA-256/SHA-512 と HMAC は Python の `hashlib`/`hmac` �
 NTLM 互換用途以外の新しい設計に推奨するものでもありません。
 
 `make aes-test` は Python の `cryptography` パッケージ（これも試験専用）が
-必要です。SMB 3.1.1 対応のための AES-128 暗号化を、FIPS 197 の例、1 ビット
-だけを立てたすべての鍵と平文、すべての S-box 入力、シード固定の乱数ブロックで
-比較します。S-box は表引きではなく計算で求め、秘密データに依存する表の添字を
+必要です。SMB 3.1.1 対応のための AES-128 と AES-256 の暗号化を、FIPS 197 の例と
+SP 800-38A の AES-256 の例、さらに鍵長ごとに 1 ビットだけを立てたすべての鍵と
+平文、すべての S-box 入力、シード固定の乱数ブロックで比較します。S-box は表引きではなく計算で求め、秘密データに依存する表の添字を
 使いません。これはコーディング規則であり、試験や証明で確かめた性質では
 ありません。
 
@@ -229,7 +229,8 @@ NTLM 互換用途以外の新しい設計に推奨するものでもありませ
 5 ブロックまでのすべてのデータ長と大きなブロック境界前後の長さ、フレーム
 上限までのカウンターと長さフィールドが桁上がりする長さ、0 から 65,279
 バイトまでの関連データ、1 ビットの変更、シード固定の乱数メッセージを
-検査します。各メッセージを複数の配列境界で暗号化・復号し、tag や暗号文を
+検査します。SMB の例が公開されていない AES-256-CCM は、同じ種類のメッセージを
+数を減らして 32 バイト鍵で検査します。各メッセージを複数の配列境界で暗号化・復号し、tag や暗号文を
 変えたものは拒否してデータをゼロにすることも確かめます。
 
 `make gcm-test` は SMB 3.1.1 のメッセージ暗号である AES-128-GCM を同じ
@@ -238,14 +239,16 @@ NTLM 互換用途以外の新しい設計に推奨するものでもありませ
 5 ブロックまでのすべてのデータ長と大きなブロック境界前後の長さ、フレーム
 上限までのカウンターが桁上がりする長さ、3 ブロックまでのすべての長さと
 いくつかの長い関連データ、1 ビットの変更、シード固定の乱数メッセージを
-検査します。各メッセージを複数の配列境界で暗号化・復号し、tag や暗号文を
-変えたものは拒否してデータをゼロにすることも確かめます。
+検査します。AES-256-GCM は GCM 仕様の試験ケース 13〜16 と、同じ種類の
+メッセージを数を減らして 32 バイト鍵で検査します。各メッセージを複数の
+配列境界で暗号化・復号し、tag や暗号文を変えたものは拒否してデータを
+ゼロにすることも確かめます。
 
 `make kdf-test` は SMB 3.1.1 の鍵導出（HMAC-SHA256 を使うカウンターモードの
 SP 800-108）を同じパッケージの `KBKDFHMAC` と比較します。Microsoft が公開して
 いる 3.1.1 の署名鍵・暗号化鍵・復号鍵 12 個、全ビット 0 と全ビット 1 の入力、
-シード固定の乱数のセッション鍵と preauth ハッシュを、3 つのラベルすべてで
-検査します。
+シード固定の乱数のセッション鍵と preauth ハッシュを、3 つのラベルすべてで、
+16 バイト鍵と AES-256 用の 32 バイト鍵の両方について検査します。
 
 example はホスト、share、パスを引数に取れますが、パスワードを引数に
 取りません。`SMB_USER`、`SMB_DOMAIN`、`SMB_PASSWORD` 環境変数を使います。

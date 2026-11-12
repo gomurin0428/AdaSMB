@@ -120,7 +120,7 @@ package body SMB.AES.CCM is
    end Transform;
 
    procedure Seal
-     (Key : Key_128;
+     (Key : SMB.Bytes;
       Nonce : Nonce_88;
       AAD : SMB.Bytes;
       Data : in out SMB.Bytes;
@@ -133,7 +133,7 @@ package body SMB.AES.CCM is
    end Seal;
 
    procedure Open
-     (Key : Key_128;
+     (Key : SMB.Bytes;
       Nonce : Nonce_88;
       AAD : SMB.Bytes;
       Data : in out SMB.Bytes;

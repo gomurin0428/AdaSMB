@@ -15,7 +15,8 @@ package body SMB.AES is
    --  A product of two plane polynomials before reduction.
    type Product is array (0 .. 14) of U16;
 
-   subtype Round_Number is Natural range 0 .. 10;
+   subtype Round_Number is Natural range 0 .. 14;
+   subtype Four_Bytes is SMB.Bytes (0 .. 3);
 
    --  Each helper has a contract, if only Post => True, so that GNATprove
    --  proves it once on its own and its callers see only the contract.
@@ -179,43 +180,63 @@ package body SMB.AES is
      (16#01#, 16#02#, 16#04#, 16#08#, 16#10#,
       16#20#, 16#40#, 16#80#, 16#1B#, 16#36#);
 
-   procedure Expand_Key (Key : Key_128; Schedule : out Key_Schedule) is
-      --  adamutant:disable-next-line NumericLiteral: the key and the loop below write every byte; the value is for flow analysis
-      W : SMB.Bytes (0 .. 175) := (others => 0);
+   --  SubWord: the first four bytes of SubBytes of a block that starts with
+   --  the word.
+   function Sub_Word (Value : Four_Bytes) return Four_Bytes
+     with Post => True
+   is
+      Substituted : constant Block := Sub_Bytes
+        ((Value (0), Value (1), Value (2), Value (3),
+          --  adamutant:disable-next-line NumericLiteral: only the first four bytes are used
+          others => 0));
    begin
-      W (0 .. 15) := Key;
-      for Round in 1 .. 10 loop
+      return Substituted (0 .. 3);
+   end Sub_Word;
+
+   --  FIPS 197 5.2, word by word: word I is word I - Nk xor a function of
+   --  word I - 1, where Nk is the key's length in words, 4 or 8. Every
+   --  Nk-th word takes SubWord (RotWord (word I - 1)) xor a round constant,
+   --  and with AES-256 each word halfway between takes SubWord (word I - 1).
+   --  The branches depend on the key's length, not on its bytes.
+   procedure Expand_Key (Key : SMB.Bytes; Schedule : out Key_Schedule) is
+      Long : constant Boolean := Key'Length = 32;
+      Key_Words : constant Positive := (if Long then 8 else 4);
+      Rounds : constant Round_Count := (if Long then 14 else 10);
+      --  adamutant:disable-next-line NumericLiteral: the key and the loop below write every byte that Encrypt reads; the value is for flow analysis
+      W : SMB.Bytes (0 .. 239) := (others => 0);
+   begin
+      W (0 .. Key'Length - 1) := Key;
+      for I in Key_Words .. 4 * Rounds + 3 loop
          declare
-            Last : constant Natural := 16 * Round - 4;
-            --  SubWord (RotWord (previous word)): the first four bytes of
-            --  SubBytes of a block that starts with the rotated word.
-            Substituted : constant SMB.Bytes (0 .. 3) := Sub_Bytes
-              ((W (Last + 1), W (Last + 2), W (Last + 3), W (Last),
-                --  adamutant:disable-next-line NumericLiteral: only the first four bytes are used
-                others => 0))
-              (0 .. 3);
+            Previous : constant Four_Bytes := W (4 * I - 4 .. 4 * I - 1);
+            Position : constant Natural := (if Long then I mod 8 else I mod 4);
+            Temp : Four_Bytes := Previous;
          begin
-            for I in Substituted'Range loop
-               W (16 * Round + I) := W (16 * Round - 16 + I) xor Substituted (I);
-            end loop;
-            W (16 * Round) := W (16 * Round) xor Round_Constants (Round);
-            for I in 4 .. 15 loop
-               W (16 * Round + I) :=
-                 W (16 * Round - 16 + I) xor W (16 * Round + I - 4);
+            if Position = 0 then
+               Temp := Sub_Word
+                 ((Previous (1), Previous (2), Previous (3), Previous (0)));
+               Temp (0) := Temp (0)
+                 xor Round_Constants (if Long then I / 8 else I / 4);
+            elsif Long and then Position = 4 then
+               Temp := Sub_Word (Previous);
+            end if;
+            for K in Temp'Range loop
+               W (4 * I + K) := W (4 * (I - Key_Words) + K) xor Temp (K);
             end loop;
          end;
       end loop;
-      Schedule := (Round_Keys => W, Expanded => True);
+      Schedule := (Round_Keys => W, Rounds => Rounds);
    end Expand_Key;
 
    function Encrypt (Schedule : Key_Schedule; Plain : Block) return Block is
       State : Block := Add_Round_Key (Plain, Schedule, 0);
    begin
-      for Round in 1 .. 9 loop
+      for Round in 1 .. Schedule.Rounds - 1 loop
          State := Add_Round_Key
            (Mix_Columns (Shift_Rows (Sub_Bytes (State))), Schedule, Round);
       end loop;
-      return Add_Round_Key (Shift_Rows (Sub_Bytes (State)), Schedule, 10);
+      return Add_Round_Key
+        (Shift_Rows (Sub_Bytes (State)), Schedule, Schedule.Rounds);
    end Encrypt;
 
 end SMB.AES;

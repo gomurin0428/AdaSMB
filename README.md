@@ -170,10 +170,10 @@ make test                   # crypto, wire, UTF-8/UTF-16 and SPNEGO tests
 make unicode-test           # all Unicode scalars against Python's standard codecs
 make ntlm-test              # NTLM challenge handling and authentication output
 make crypto-test            # hashes and HMAC against OpenSSL / Python
-make aes-test               # AES-128 against Python's cryptography package
+make aes-test               # AES-128 and AES-256 against Python's cryptography package
 make cmac-test              # AES-128-CMAC against Python's cryptography package
-make ccm-test               # AES-128-CCM against Python's cryptography package
-make gcm-test               # AES-128-GCM against Python's cryptography package
+make ccm-test               # AES-CCM (128- and 256-bit keys) against Python's cryptography package
+make gcm-test               # AES-GCM (128- and 256-bit keys) against Python's cryptography package
 make kdf-test               # SMB 3.1.1 key derivation against Python's cryptography
 make signing-test           # SMB 2.1 and 3.1.1 signing and tamper rejection against Python
 make clock-test             # FILETIME for every day, second and 100 ns fraction
@@ -229,7 +229,8 @@ test does not prove cryptographic strength or constant-time behavior, and
 MD4/MD5 are not recommended for new designs beyond NTLM compatibility.
 
 `make aes-test` needs Python's `cryptography` package, also test-only. It
-compares AES-128 encryption (for the SMB 3.1.1 work) on the FIPS 197 examples,
+compares AES-128 and AES-256 encryption (for the SMB 3.1.1 work) on the FIPS
+197 examples and SP 800-38A's AES-256 example, and for each key length on
 every single-bit key and plaintext, every S-box input and seeded random
 blocks. The S-box is computed rather than looked up, so no table index depends
 on secret data; that is a coding rule, not a tested or proved property.
@@ -247,8 +248,10 @@ the four messages of Microsoft's SMB 3.1.1 encryption examples; every data
 length up to five blocks and the lengths around larger block boundaries; the
 lengths where the counter and the length field carry, up to the frame limit;
 associated data from none to 65,279 bytes; and single-bit changes and seeded
-random messages. Each message is sealed and opened at several array bounds,
-and a changed tag or ciphertext must be rejected with the data zeroed.
+random messages. AES-256-CCM, for which no SMB examples are published, gets
+the same kinds of messages under 32-byte keys, fewer of each. Each message
+is sealed and opened at several array bounds, and a changed tag or
+ciphertext must be rejected with the data zeroed.
 
 `make gcm-test` compares AES-128-GCM, the SMB 3.1.1 message cipher, with the
 same package's `AESGCM`, always with SMB's 12-byte nonce and 16-byte tag:
@@ -256,7 +259,9 @@ the four messages of Microsoft's SMB 3.1.1 encryption examples; every data
 length up to five blocks and the lengths around larger block boundaries; the
 lengths where the counter carries, up to the frame limit; associated data
 of every length up to three blocks and some longer; and single-bit changes
-and seeded random messages. Each message is sealed and opened at several
+and seeded random messages. AES-256-GCM gets test cases 13 to 16 of the GCM
+specification and the same kinds of messages under 32-byte keys, fewer of
+each. Each message is sealed and opened at several
 array bounds, and a changed tag or ciphertext must be rejected with the
 data zeroed.
 
@@ -264,7 +269,7 @@ data zeroed.
 mode with HMAC-SHA256) with the same package's `KBKDFHMAC`: Microsoft's twelve
 published 3.1.1 signing, encryption and decryption keys, all-zero and all-one
 inputs, and seeded random session keys and preauth hashes, each under all
-three labels.
+three labels, as 16-byte keys and as the 32-byte keys AES-256 needs.
 
 The example takes the host, share and path as arguments, but not the
 password. It reads the `SMB_USER`, `SMB_DOMAIN` and `SMB_PASSWORD` environment

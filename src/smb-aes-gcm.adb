@@ -181,7 +181,7 @@ package body SMB.AES.GCM is
    end Transform;
 
    procedure Seal
-     (Key : Key_128;
+     (Key : SMB.Bytes;
       Nonce : Nonce_96;
       AAD : SMB.Bytes;
       Data : in out SMB.Bytes;
@@ -194,7 +194,7 @@ package body SMB.AES.GCM is
    end Seal;
 
    procedure Open
-     (Key : Key_128;
+     (Key : SMB.Bytes;
       Nonce : Nonce_96;
       AAD : SMB.Bytes;
       Data : in out SMB.Bytes;

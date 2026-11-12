@@ -16,11 +16,11 @@ types). These are the implementations called by `SMB.Client` and
 | --- | --- |
 | `SMB` | Fixed-width integers, bytes, frame limit and statuses |
 | `SMB.Crypto` | MD4, MD5, SHA-256, SHA-512, HMACs and digest comparison; run-time safety, not cryptographic hardness |
-| `SMB.AES` | AES-128 encryption with a computed S-box, for SMB 3.1.1; run-time safety, not cryptographic hardness or timing |
+| `SMB.AES` | AES-128 and AES-256 encryption with a computed S-box, for SMB 3.1.1; run-time safety, not cryptographic hardness or timing |
 | `SMB.AES.CMAC` | AES-128-CMAC, one-shot and incremental, for SMB 3.1.1 signing; run-time safety, the `Ready`/`Length` contracts and a wiped context after `Finish`, not cryptographic hardness or timing |
-| `SMB.AES.CCM` | AES-128-CCM with SMB's 11-byte nonce and 16-byte tag, in place, for SMB 3.x encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
-| `SMB.AES.GCM` | AES-128-GCM with SMB's 12-byte nonce and 16-byte tag, in place, for SMB 3.1.1 encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
-| `SMB.KDF` | SMB 3.1.1 signing, encryption and decryption key derivation (SP 800-108, HMAC-SHA256) with every length fixed by its types; run-time safety, not cryptographic hardness |
+| `SMB.AES.CCM` | AES-CCM with a 16- or 32-byte key and SMB's 11-byte nonce and 16-byte tag, in place, for SMB 3.x encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
+| `SMB.AES.GCM` | AES-GCM with a 16- or 32-byte key and SMB's 12-byte nonce and 16-byte tag, in place, for SMB 3.1.1 encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
+| `SMB.KDF` | SMB 3.1.1 signing, encryption and decryption key derivation (SP 800-108, HMAC-SHA256), 128- or 256-bit, with every length fixed by its types; run-time safety, not cryptographic hardness |
 | `SMB.Core_Text` | Strict UTF-8/UTF-16 conversion, NTLM ASCII username uppercase; exact lexical path/share acceptance, byte-preserving slash normalization, and zeroed invalid-path output |
 | `SMB.Core_NTLM` | Strict DER/SPNEGO challenge extraction, directional mechanism-list MIC and final-token validation |
 | `SMB.Core_Auth` | Bounded credential preflight, Type 2/security-buffer/AV validation, NTLMv2 proof, Type 3 and its MIC, session key and SPNEGO output |

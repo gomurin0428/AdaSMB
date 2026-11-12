@@ -1541,6 +1541,49 @@ procedure Test_Suite is
       Ada.Text_IO.Put_Line ("AES-128: known answers and a 1,000-block chain passed");
    end Test_AES;
 
+   procedure Test_AES_256 is
+      --  FIPS 197 appendix C.3 and SP 800-38A F.1.5, then 1,000 encryptions
+      --  where the previous ciphertext is xor-ed into the key's first half
+      --  and the new one into its second half, and each ciphertext becomes
+      --  the next plaintext. The chain's expected values come from Python's
+      --  cryptography.
+      Schedule : SMB.AES.Key_Schedule;
+      Key : SMB.AES.Key_256 := (others => 0);
+      Text, Previous : SMB.AES.Block := (others => 0);
+   begin
+      SMB.AES.Expand_Key
+        (Hex ("000102030405060708090a0b0c0d0e0f"
+              & "101112131415161718191a1b1c1d1e1f"), Schedule);
+      Assert (SMB.AES.Ready (Schedule), "AES-256 schedule not ready after Expand_Key");
+      Assert_Equal
+        (SMB.AES.Encrypt (Schedule, Hex ("00112233445566778899aabbccddeeff")),
+         Hex ("8ea2b7ca516745bfeafc49904b496089"), "AES-256 FIPS 197 C.3");
+      SMB.AES.Expand_Key
+        (Hex ("603deb1015ca71be2b73aef0857d7781"
+              & "1f352c073b6108d72d9810a30914dff4"), Schedule);
+      Assert_Equal
+        (SMB.AES.Encrypt (Schedule, Hex ("6bc1bee22e409f96e93d7e117393172a")),
+         Hex ("f3eed1bdb5d2a03c064b5a7e3db181f8"), "AES-256 SP 800-38A F.1.5");
+      for Round in 1 .. 1_000 loop
+         SMB.AES.Expand_Key (Key, Schedule);
+         Previous := Text;
+         Text := SMB.AES.Encrypt (Schedule, Text);
+         for I in Text'Range loop
+            Key (I) := Key (I) xor Previous (I);
+            Key (16 + I) := Key (16 + I) xor Text (I);
+         end loop;
+      end loop;
+      Assert_Equal
+        (Text, Hex ("522127da230ffa4cbd524ee57e21cc9e"),
+         "AES-256 chain ciphertext");
+      Assert_Equal
+        (Key,
+         Hex ("42da286a5abe295e8c3dcfb566a25f4b"
+              & "10fb0fb079b1d312316f8150188393d5"),
+         "AES-256 chain key");
+      Ada.Text_IO.Put_Line ("AES-256: known answers and a 1,000-block chain passed");
+   end Test_AES_256;
+
    procedure Test_AES_CMAC is
       --  RFC 4493 section 4 (the same key and messages as SP 800-38B D.1)
       --  and the 20-byte example of NIST's CMAC examples, each one-shot, in
@@ -11268,6 +11311,7 @@ begin
    Test_Crypto;
    Test_SHA512;
    Test_AES;
+   Test_AES_256;
    Test_AES_CMAC;
    Test_KDF;
    Test_AES_CCM;

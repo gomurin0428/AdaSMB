@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AES-128-CCM differential tests against Python's cryptography package.
+"""AES-CCM differential tests against Python's cryptography package.
 
 cryptography is a test-only dependency. Every fixture uses SMB's parameters:
 an 11-byte nonce and a 16-byte tag. They cover the four AES-CCM messages of
@@ -9,7 +9,11 @@ to five blocks and the lengths around larger block boundaries, with SMB's
 length field carry into another byte, up to the frame limit; associated
 data around the first block, which holds its two-byte length and 14 bytes,
 and up to the longest the two-byte encoding allows; no associated data and
-no data; single-bit changes; and seeded random fixtures. crypto_probe seals
+no data; single-bit changes; and seeded random fixtures. Those use 16-byte
+keys (AES-128-CCM); the AES-256-CCM fixtures, for which no published
+messages exist, repeat the data lengths up to three blocks and the block
+and frame boundaries, a few associated-data lengths, single-bit changes in
+each byte of a 32-byte key, and seeded random fixtures. crypto_probe seals
 and opens each fixture at four lower bounds and checks that Open rejects a
 changed tag and ciphertext and leaves only zeros (see Check_CCM).
 """
@@ -150,6 +154,25 @@ def fixtures() -> list[str]:
         add(generator.randbytes(16), generator.randbytes(11),
             generator.randbytes(generator.randrange(65)),
             generator.randbytes(generator.randrange(301)))
+
+    # AES-256-CCM: the same mode under a 32-byte key.
+    for size in list(range(49)) + [127, 128, 129, 4095, 4096, 4097, FRAME]:
+        add(patterned(32, size), patterned(11, size + 1), smb_aad,
+            patterned(size, 11))
+    for aad_size in (0, 1, 14, 15, 32, 65279):
+        add(patterned(32, 7), patterned(11, aad_size),
+            patterned(aad_size, 17), patterned(37, 19))
+    long_key = patterned(32, 23)
+    add(long_key, nonce, aad, data)
+    for position in range(32):
+        changed = bytearray(long_key)
+        changed[position] ^= 0x80
+        add(bytes(changed), nonce, aad, data)
+    generator = random.Random(3611)
+    for _ in range(128):
+        add(generator.randbytes(32), generator.randbytes(11),
+            generator.randbytes(generator.randrange(65)),
+            generator.randbytes(generator.randrange(301)))
     return cases
 
 
@@ -162,7 +185,8 @@ def main() -> None:
         print(result.stdout + result.stderr, file=sys.stderr)
         raise RuntimeError("AES-CCM conformance failed")
     # A changed key, nonce, associated data, plaintext, ciphertext or tag in
-    # the first published message must fail.
+    # the first published message must fail, and so must a change in either
+    # half of the key, or in the nonce, of the first AES-256 fixture.
     example = cases[0].split()
     variants = []
     for column, position in ((1, 0), (1, 16), (2, 0), (3, 0), (4, 0), (4, -1)):
@@ -170,6 +194,14 @@ def main() -> None:
         changed = bytearray.fromhex(fields[column])
         changed[position] ^= 1
         fields[column] = changed.hex()
+        variants.append(fields)
+    long_example = next(case.split() for case in cases
+                        if len(case.split()[1]) == 2 * (32 + 11))
+    for position in (0, 31, 32):
+        fields = list(long_example)
+        changed = bytearray.fromhex(fields[1])
+        changed[position] ^= 1
+        fields[1] = changed.hex()
         variants.append(fields)
     for fields in variants:
         check = subprocess.run([str(probe)], input=" ".join(fields) + "\n",

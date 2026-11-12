@@ -150,8 +150,13 @@ ApplicationKey is not needed.
 
 AES-256-CCM and AES-256-GCM are not offered in 0.2.0. Microsoft publishes no
 test vectors for them, and the spec leaves open which key length applies to
-the signing key under an AES-256 cipher. They can be added once a Windows
-server is available to test against.
+the signing key under an AES-256 cipher. They can be added now that the
+Windows CI runner's SMB server is available to test against.
+
+The primitives come first: `SMB.AES` takes a 16- or 32-byte key, so do
+`SMB.AES.CCM` and `SMB.AES.GCM`, and `SMB.KDF.Derive_256` derives a 32-byte
+key (L = 256). Offering the ciphers in NEGOTIATE and using them in the
+engine follows separately.
 
 ## New cryptography
 
@@ -163,11 +168,11 @@ OpenSSL and `hashlib` as a test-only reference.
 | Primitive | Used for | Reference vectors |
 | --- | --- | --- |
 | SHA-512 | preauth integrity hash | FIPS 180-4 examples, `hashlib` |
-| AES-128 (encryption direction only) | CMAC, CCM, GCM | FIPS 197, NIST CAVP |
+| AES-128 and AES-256 (encryption direction only) | CMAC (AES-128 only), CCM, GCM | FIPS 197, SP 800-38A, NIST CAVP, `cryptography` |
 | AES-128-CMAC | 3.1.1 signing | RFC 4493, SP 800-38B |
-| SP 800-108 KDF (counter mode, HMAC-SHA256) | signing and cipher keys | Microsoft vectors, `cryptography` |
-| AES-128-CCM (11-byte nonce, 16-byte tag) | encryption | SP 800-38C, `cryptography` |
-| AES-128-GCM (12-byte nonce, 16-byte tag) | encryption | SP 800-38D, `cryptography` |
+| SP 800-108 KDF (counter mode, HMAC-SHA256, L = 128 or 256) | signing and cipher keys | Microsoft vectors (L = 128), `cryptography` |
+| AES-128-CCM and AES-256-CCM (11-byte nonce, 16-byte tag) | encryption | SP 800-38C (AES-128), `cryptography` |
+| AES-128-GCM and AES-256-GCM (12-byte nonce, 16-byte tag) | encryption | SP 800-38D, the GCM specification's test cases 13 to 16 (AES-256), `cryptography` |
 
 AES and GHASH are written without secret-dependent table indices or
 branches: the S-box is computed, not looked up, and the GF(2^128) multiply
