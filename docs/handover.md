@@ -8,7 +8,9 @@ of date.
 
 * 0.1.0 (SMB 2.1) is released and on Alire as the crate `smb`. 0.2.0 (SMB
   3.1.1 with signing and encryption) is tagged `v0.2.0` with a GitHub
-  release; its Alire index submission is the next step.
+  release and submitted to the Alire index as
+  alire-project/alire-index#2340, whose checks passed; it waits for the
+  index maintainers to merge it.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -377,10 +379,14 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Submit 0.2.0 to the Alire community index as 0.1.0 was
-  (alire-project/alire-index#2316), once the maintainer agrees: it is a pull
-  request to a third-party repository. The manifest is `alire.toml` at
-  `v0.2.0`; the origin is the tag's commit.
+* Check that alire-project/alire-index#2340 (smb 0.2.0) is merged. For a
+  later release, the index manifest is `alire.toml` at the release tag with
+  an `[origin]` section added: `commit` is the tag's commit and `url` is
+  `git+https://github.com/gomurin0428/AdaSMB.git`, as in the index's
+  `index/sm/smb/smb-0.2.0.toml`. `alr publish` wrote that file for 0.1.0;
+  the 0.2.0 one was written by hand in the same form. Submitting is a pull
+  request to a third-party repository, so it waits for the maintainer's
+  agreement.
 * Hostile transform headers are covered by unit tests through the engine;
   the adversarial proxy still speaks 2.1 only. Teaching it 3.1.1 would let
   the proxy tests run against the 3.1.1 Samba.
