@@ -79,8 +79,9 @@ package SMB.Client is
    --  succeeds; Connect with Require_Encryption fails when there is no
    --  cipher.
    function Is_Encrypted (Client : Connection) return Boolean;
-   --  The cipher Connect negotiated: AES_128_GCM or AES_128_CCM when a 3.1.1
-   --  server supports one, No_Cipher otherwise and before Connect.
+   --  The cipher Connect negotiated when a 3.1.1 server supports one of
+   --  those offered (AES_128_GCM, AES_128_CCM, AES_256_GCM, AES_256_CCM;
+   --  the server chooses), No_Cipher otherwise and before Connect.
    function Negotiated_Cipher
      (Client : Connection) return SMB.Core_Negotiate.Cipher_Id;
    overriding procedure Finalize (Client : in out Connection);

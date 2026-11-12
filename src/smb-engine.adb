@@ -223,10 +223,10 @@ is
         SMB.KDF.Derive (State.Signing_Key, SMB.KDF.Signing, Preauth);
       State.Has_SMB3_Key := True;
       if State.Cipher /= SMB.Core_Negotiate.No_Cipher then
-         State.Encryption_Key :=
-           SMB.KDF.Derive (State.Signing_Key, SMB.KDF.Encryption, Preauth);
-         State.Decryption_Key :=
-           SMB.KDF.Derive (State.Signing_Key, SMB.KDF.Decryption, Preauth);
+         State.Encryption_Key := Cipher_Key
+           (State.Signing_Key, SMB.KDF.Encryption, Preauth, State.Cipher);
+         State.Decryption_Key := Cipher_Key
+           (State.Signing_Key, SMB.KDF.Decryption, Preauth, State.Cipher);
          State.Has_Cipher_Keys := True;
          State.Nonce_Counter := 1;
       end if;
@@ -540,7 +540,9 @@ is
          return;
       end if;
       SMB.Core_Transform.Seal
-        (State.Cipher, State.Encryption_Key,
+        (State.Cipher,
+         State.Encryption_Key
+           (0 .. SMB.Core_Transform.Key_Length (State.Cipher) - 1),
          SMB.Core_Transform.Counter_Nonce (State.Nonce_Counter),
          State.Session_Id, Message, Output, Used, Status);
       if Status /= SMB.Ok then
@@ -564,8 +566,10 @@ is
          Status := SMB.Invalid_State_Status;
       else
          SMB.Core_Transform.Unwrap
-           (State.Cipher, State.Decryption_Key, State.Session_Id, Packet,
-            Status);
+           (State.Cipher,
+            State.Decryption_Key
+              (0 .. SMB.Core_Transform.Key_Length (State.Cipher) - 1),
+            State.Session_Id, Packet, Status);
          if Status = SMB.Ok then
             State.Decrypted := True;
             return;
@@ -1230,11 +1234,11 @@ is
      (State.Has_Cipher_Keys);
 
    function Current_Encryption_Key
-     (State : Engine_State) return SMB.AES.Key_128 is
+     (State : Engine_State) return SMB.AES.Key_256 is
      (State.Encryption_Key);
 
    function Current_Decryption_Key
-     (State : Engine_State) return SMB.AES.Key_128 is
+     (State : Engine_State) return SMB.AES.Key_256 is
      (State.Decryption_Key);
 
    function Is_Encrypting (State : Engine_State) return Boolean is

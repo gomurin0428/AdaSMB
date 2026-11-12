@@ -2357,7 +2357,13 @@ procedure Test_Suite is
    --  messages sealed here; Check_Transform_Vector covers the published
    --  bytes.
    procedure Test_Transform is
-      Key : constant SMB.AES.Key_128 := (others => 16#4B#);
+      --  The AES-128 ciphers use the first 16 bytes of Long_Key.
+      Long_Key : constant SMB.AES.Key_256 := Hex
+        ("404142434445464748494A4B4C4D4E4F505152535455565758595A5B5C5D5E5F");
+      No_Key : constant SMB.Bytes (1 .. 0) := (others => 0);
+
+      function Key (Cipher : SMB.Core_Transform.AEAD_Cipher) return SMB.Bytes is
+        (Long_Key (0 .. SMB.Core_Transform.Key_Length (Cipher) - 1));
       Session_Id : constant SMB.QWord := 16#1122_3344_5566_7788#;
       Spread_Nonce : constant SMB.Core_Transform.Nonce_Field :=
         (others => 16#EE#);
@@ -2395,7 +2401,8 @@ procedure Test_Suite is
          Status : SMB.Core_Status;
       begin
          SMB.Core_Transform.Seal
-           (Cipher, Key, Nonce, Session_Id, Plain, Output, Used, Status);
+           (Cipher, Key (Cipher), Nonce, Session_Id, Plain, Output, Used,
+            Status);
          Assert (Status = SMB.Ok and then Used = Output'Length, "seal");
          return Output;
       end Sealed;
@@ -2407,13 +2414,18 @@ procedure Test_Suite is
          Packet : SMB.Bytes;
          Expected : SMB.Core_Status;
          Session : SMB.QWord := Session_Id;
-         With_Key : SMB.AES.Key_128 := Key)
+         With_Key : SMB.Bytes := No_Key)
       is
          Data : SMB.Bytes := Packet;
          Status : SMB.Core_Status;
          Kept : constant Natural := Natural'Min (52, Packet'Length);
       begin
-         SMB.Core_Transform.Unwrap (Cipher, With_Key, Session, Data, Status);
+         if With_Key'Length = 0 then
+            SMB.Core_Transform.Unwrap
+              (Cipher, Key (Cipher), Session, Data, Status);
+         else
+            SMB.Core_Transform.Unwrap (Cipher, With_Key, Session, Data, Status);
+         end if;
          Assert (Status = Expected,
                  "transform " & Name & ": " & SMB.Core_Status'Image (Status));
          Assert (Data (Data'First .. Data'First + Kept - 1) =
@@ -2429,8 +2441,21 @@ procedure Test_Suite is
       Assert (SMB.Core_Transform.Nonce_Length
                 (SMB.Core_Negotiate.AES_128_CCM) = 11
               and then SMB.Core_Transform.Nonce_Length
-                (SMB.Core_Negotiate.AES_128_GCM) = 12,
+                (SMB.Core_Negotiate.AES_128_GCM) = 12
+              and then SMB.Core_Transform.Nonce_Length
+                (SMB.Core_Negotiate.AES_256_CCM) = 11
+              and then SMB.Core_Transform.Nonce_Length
+                (SMB.Core_Negotiate.AES_256_GCM) = 12,
               "nonce lengths");
+      Assert (SMB.Core_Transform.Key_Length
+                (SMB.Core_Negotiate.AES_128_CCM) = 16
+              and then SMB.Core_Transform.Key_Length
+                (SMB.Core_Negotiate.AES_128_GCM) = 16
+              and then SMB.Core_Transform.Key_Length
+                (SMB.Core_Negotiate.AES_256_CCM) = 32
+              and then SMB.Core_Transform.Key_Length
+                (SMB.Core_Negotiate.AES_256_GCM) = 32,
+              "key lengths");
       Assert (SMB.Core_Transform.Counter_Nonce (16#0102_0304_0506_0708#) =
                 (8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0),
               "counter nonce");
@@ -2443,10 +2468,28 @@ procedure Test_Suite is
               "transform ProtocolId");
       for Cipher in SMB.Core_Transform.AEAD_Cipher loop
          declare
+            --  The other mode with the same key length, and the same mode
+            --  with the other key length.
             Other : constant SMB.Core_Transform.AEAD_Cipher :=
-              (if SMB.Core_Negotiate."=" (Cipher, SMB.Core_Negotiate.AES_128_GCM)
-               then SMB.Core_Negotiate.AES_128_CCM
-               else SMB.Core_Negotiate.AES_128_GCM);
+              (case Cipher is
+                 when SMB.Core_Negotiate.AES_128_CCM =>
+                   SMB.Core_Negotiate.AES_128_GCM,
+                 when SMB.Core_Negotiate.AES_128_GCM =>
+                   SMB.Core_Negotiate.AES_128_CCM,
+                 when SMB.Core_Negotiate.AES_256_CCM =>
+                   SMB.Core_Negotiate.AES_256_GCM,
+                 when SMB.Core_Negotiate.AES_256_GCM =>
+                   SMB.Core_Negotiate.AES_256_CCM);
+            Resized : constant SMB.Core_Transform.AEAD_Cipher :=
+              (case Cipher is
+                 when SMB.Core_Negotiate.AES_128_CCM =>
+                   SMB.Core_Negotiate.AES_256_CCM,
+                 when SMB.Core_Negotiate.AES_128_GCM =>
+                   SMB.Core_Negotiate.AES_256_GCM,
+                 when SMB.Core_Negotiate.AES_256_CCM =>
+                   SMB.Core_Negotiate.AES_128_CCM,
+                 when SMB.Core_Negotiate.AES_256_GCM =>
+                   SMB.Core_Negotiate.AES_128_GCM);
             Used_Nonce : constant Natural :=
               SMB.Core_Transform.Nonce_Length (Cipher);
             Plain : constant SMB.Bytes := Message (100);
@@ -2482,7 +2525,7 @@ procedure Test_Suite is
                  (Natural'Last - Good'Length + 1 .. Natural'Last) := Good;
             begin
                SMB.Core_Transform.Unwrap
-                 (Cipher, Key, Session_Id, Data, Status);
+                 (Cipher, Key (Cipher), Session_Id, Data, Status);
                Assert (Status = SMB.Ok
                        and then Data (Data'First + 52 .. Data'Last) = Plain,
                        "transform at Natural'Last");
@@ -2491,7 +2534,7 @@ procedure Test_Suite is
                Data : SMB.Bytes := Sealed (Cipher, Message (64));
             begin
                SMB.Core_Transform.Unwrap
-                 (Cipher, Key, Session_Id, Data, Status);
+                 (Cipher, Key (Cipher), Session_Id, Data, Status);
                Assert (Status = SMB.Ok, "transform of an SMB2 header");
             end;
             --  Seal into too little room.
@@ -2499,8 +2542,8 @@ procedure Test_Suite is
                Output : SMB.Bytes (0 .. 150) := (others => 16#A5#);
             begin
                SMB.Core_Transform.Seal
-                 (Cipher, Key, Spread_Nonce, Session_Id, Plain, Output, Used,
-                  Status);
+                 (Cipher, Key (Cipher), Spread_Nonce, Session_Id, Plain,
+                  Output, Used, Status);
                Assert (Status = SMB.Invalid_Length and then Used = 0
                        and then (for all Value of Output => Value = 0),
                        "transform into a short buffer");
@@ -2545,8 +2588,11 @@ procedure Test_Suite is
             Change_And_Reject ("a changed message", Good'Last,
                                Good (Good'Last) xor 1, SMB.Signature_Error);
             Reject ("another key", Cipher, Good, SMB.Signature_Error,
-                    With_Key => (others => 16#4C#));
+                    With_Key => SMB.Bytes'
+                      (1 .. SMB.Core_Transform.Key_Length (Cipher) => 16#4C#));
             Reject ("another cipher", Other, Good, SMB.Signature_Error);
+            Reject ("the other key length", Resized, Good,
+                    SMB.Signature_Error);
             Reject ("a message shorter than an SMB2 header", Cipher,
                     Sealed (Cipher, Message (63)), SMB.Invalid_Length);
             Reject ("a nested transform", Cipher,
@@ -2806,9 +2852,12 @@ procedure Test_Suite is
          Count := Count + 1;
       end Expect;
 
+      --  The preauth integrity context, padding, and the encryption
+      --  context with AES-128-GCM, AES-128-CCM, AES-256-GCM, AES-256-CCM.
       Contexts : constant SMB.Bytes := Hex
         ("0100260000000000010020000100D1709D7196E1BD0B6EBF95213D7655343576"
-         & "3514392649FD6F216ED8BF269CD800000200060000000000020002000100");
+         & "3514392649FD6F216ED8BF269CD8000002000A00000000000400020001000400"
+         & "0300");
    begin
       Assert_Equal
         (SMB.Core_Negotiate.Request (Guid, Salt, False),
@@ -2820,9 +2869,11 @@ procedure Test_Suite is
          Hex ("240002000300000040000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
               & "680000000200000011031002") & Contexts,
          "3.1.1 and 2.1 NEGOTIATE request");
+      --  Windows offers only the AES-128 ciphers in A.1, so only the
+      --  preauth integrity context and its padding match.
       Assert_Equal
-        (SMB.Core_Negotiate.Request (Guid, Salt, False) (40 .. 101),
-         A1_Request (112 .. 173), "3.1.1 NEGOTIATE contexts");
+        (SMB.Core_Negotiate.Request (Guid, Salt, False) (40 .. 87),
+         A1_Request (112 .. 159), "3.1.1 NEGOTIATE preauth context");
 
       Expect ("A.1", A1_Response, SMB.Ok, SMB.Core_Negotiate.AES_128_GCM);
       Expect ("A.2", A2_Response, SMB.Ok, SMB.Core_Negotiate.AES_128_CCM);
@@ -2875,7 +2926,14 @@ procedure Test_Suite is
               Response (2, Padded (Preauth)
                         & Context (2, U16 (2) & U16 (2) & U16 (1))),
               SMB.Invalid_Protocol);
-      Expect ("cipher 3", Response (2, Padded (Preauth) & Cipher (3)),
+      Expect ("AES-256-CCM", Response (2, Padded (Preauth) & Cipher (3)),
+              SMB.Ok, SMB.Core_Negotiate.AES_256_CCM);
+      Expect ("AES-256-GCM", Response (2, Padded (Preauth) & Cipher (4)),
+              SMB.Ok, SMB.Core_Negotiate.AES_256_GCM);
+      Expect ("cipher 5", Response (2, Padded (Preauth) & Cipher (5)),
+              SMB.Invalid_Protocol);
+      Expect ("cipher 16#FFFF#",
+              Response (2, Padded (Preauth) & Cipher (16#FFFF#)),
               SMB.Invalid_Protocol);
       Expect ("short encryption",
               Response (2, Padded (Preauth) & Context (2, U16 (1) & (1 => 2))),
@@ -3162,7 +3220,7 @@ procedure Test_Suite is
       is
          State : SMB.Engine.Engine_State;
          Operation : SMB.Core_Connection.Connection_Operation;
-         Request : SMB.Bytes (0 .. 165) := (others => 0);
+         Request : SMB.Bytes (0 .. 169) := (others => 0);
          Used : Natural;
          Status : SMB.Core_Status;
          Nt_Status : SMB.DWord;
@@ -3173,8 +3231,8 @@ procedure Test_Suite is
          SMB.Core_Connection.Prepare_Negotiate
            (Operation, State, Guid, Test_Salt, Allow_21, Request, Used,
             Status);
-         Assert (Status = SMB.Ok and then Used = 166
-                 and then Request (64 .. 165) =
+         Assert (Status = SMB.Ok and then Used = 170
+                 and then Request (64 .. 169) =
                    SMB.Core_Negotiate.Request (Guid, Test_Salt, Allow_21),
                  Name & ": request");
          SMB.Core_Connection.Send_Succeeded (Operation, State, Status);
@@ -3398,9 +3456,9 @@ procedure Test_Suite is
               SMB.AES.Key_128'(others => 0)
             and then not SMB.Engine.Has_Cipher_Keys (State)
             and then SMB.Engine.Current_Encryption_Key (State) =
-              SMB.AES.Key_128'(others => 0)
+              SMB.AES.Key_256'(others => 0)
             and then SMB.Engine.Current_Decryption_Key (State) =
-              SMB.AES.Key_128'(others => 0)
+              SMB.AES.Key_256'(others => 0)
             and then not SMB.Engine.Is_Encrypting (State)
             and then SMB.Engine.Next_Nonce (State) = 0,
             Message);
@@ -3541,19 +3599,33 @@ procedure Test_Suite is
 
       --  Encryption, with each cipher. Requests are sealed with the
       --  encryption key under nonces 1, 2, ...; responses must arrive sealed
-      --  with the decryption key and carry no signature of their own.
+      --  with the decryption key and carry no signature of their own. The
+      --  AES-256 ciphers take 32-byte keys derived with L = 256, the AES-128
+      --  ones 16-byte keys derived with L = 128.
       for Cipher in SMB.Core_Transform.AEAD_Cipher loop
          declare
-            Encryption_Key : constant SMB.AES.Key_128 :=
-              SMB.KDF.Derive (Key, SMB.KDF.Encryption, Preauth);
-            Decryption_Key : constant SMB.AES.Key_128 :=
-              SMB.KDF.Derive (Key, SMB.KDF.Decryption, Preauth);
+            Long : constant Boolean :=
+              SMB.Core_Transform.Key_Length (Cipher) = 32;
+            Encryption_Key : constant SMB.Bytes :=
+              (if Long
+               then SMB.KDF.Derive_256 (Key, SMB.KDF.Encryption, Preauth)
+               else SMB.KDF.Derive (Key, SMB.KDF.Encryption, Preauth));
+            Decryption_Key : constant SMB.Bytes :=
+              (if Long
+               then SMB.KDF.Derive_256 (Key, SMB.KDF.Decryption, Preauth)
+               else SMB.KDF.Derive (Key, SMB.KDF.Decryption, Preauth));
             Name : constant String := SMB.Core_Negotiate.Cipher_Id'Image (Cipher);
+
+            --  Whether the engine holds Expected, then zeros to 32 bytes.
+            function Holds (Held, Expected : SMB.Bytes) return Boolean is
+              (Held (Held'First .. Held'First + Expected'Length - 1) = Expected
+               and then (for all Index in Held'First + Expected'Length
+                                          .. Held'Last => Held (Index) = 0));
 
             --  Plain as the server would send it, sealed under Seal_Key.
             function Server_Sealed
               (Plain : SMB.Bytes;
-               Seal_Key : SMB.AES.Key_128 := Decryption_Key) return SMB.Bytes
+               Seal_Key : SMB.Bytes := Decryption_Key) return SMB.Bytes
             is
                Output : SMB.Bytes (0 .. 51 + Plain'Length);
                Used : Natural;
@@ -3602,10 +3674,12 @@ procedure Test_Suite is
                SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
                Check (Status = SMB.Ok
                       and then SMB.Engine.Has_Cipher_Keys (State)
-                      and then SMB.Engine.Current_Encryption_Key (State) =
-                        Encryption_Key
-                      and then SMB.Engine.Current_Decryption_Key (State) =
-                        Decryption_Key
+                      and then Holds
+                        (SMB.Engine.Current_Encryption_Key (State),
+                         Encryption_Key)
+                      and then Holds
+                        (SMB.Engine.Current_Decryption_Key (State),
+                         Decryption_Key)
                       and then SMB.Engine.Next_Nonce (State) = 1
                       and then not SMB.Engine.Is_Encrypting (State),
                       Name & " cipher keys");
@@ -8371,7 +8445,7 @@ procedure Test_Suite is
            (16#00#, 16#01#, 16#02#, 16#03#, 16#04#, 16#05#, 16#06#, 16#07#,
             16#08#, 16#09#, 16#0A#, 16#0B#, 16#0C#, 16#0D#, 16#0E#, 16#0F#);
          Name : constant SMB.Bytes (9 .. 12) := (16#41#, 0, 16#42#, 0);
-         Request : SMB.Bytes (0 .. 165) := (others => 0);
+         Request : SMB.Bytes (0 .. 169) := (others => 0);
          Nonzero_Request : SMB.Bytes (5 .. 80) := (others => 0);
          Short_Request : SMB.Bytes (0 .. 74) := (others => 0);
          Response : SMB.Bytes (0 .. 127) := (others => 0);
@@ -8395,10 +8469,10 @@ procedure Test_Suite is
          SMB.Core_Connection.Prepare_Negotiate
            (Operation, State, Guid, Test_Salt, True, Request, Used, Status);
          Assert
-           (Status = SMB.Ok and then Used = 166
+           (Status = SMB.Ok and then Used = 170
             and then SMB.Wire.U16 (Request, 12) = 0
             and then Request (76 .. 91) = Guid
-            and then Request (64 .. 165) =
+            and then Request (64 .. 169) =
               SMB.Core_Negotiate.Request (Guid, Test_Salt, True),
             "connection NEGOTIATE packet fields and GUID");
          SMB.Core_Connection.Send_Succeeded (Operation, State, Status);
@@ -8759,7 +8833,7 @@ procedure Test_Suite is
             Owner_Operation, Foreign_Operation, Fresh_Operation :
               SMB.Core_Connection.Connection_Operation;
             Owner_Packet, Foreign_Packet, Fresh_Packet :
-              SMB.Bytes (0 .. 165) := (others => 0);
+              SMB.Bytes (0 .. 169) := (others => 0);
             Owner_Used, Foreign_Used, Fresh_Used : Natural;
             Owner_Id, Owner_Epoch : SMB.QWord;
             Owner_State_Before, Foreign_State_Before :
@@ -9035,7 +9109,7 @@ procedure Test_Suite is
          Name : constant SMB.Bytes (0 .. 3) := (16#41#, 0, 16#42#, 0);
          Negotiate, Second_Negotiate, Tree_One, Disconnect :
            SMB.Core_Connection.Connection_Operation;
-         Request : SMB.Bytes (0 .. 165);
+         Request : SMB.Bytes (0 .. 169);
          Response : SMB.Bytes (0 .. 127);
          Used : Natural;
          Response_Status : SMB.Core_Status;
@@ -9046,7 +9120,7 @@ procedure Test_Suite is
          SMB.Core_Connection.Prepare_Negotiate
            (Negotiate, State, Guid, Test_Salt, True, Request, Used, Status);
          Assert
-           (Status = SMB.Ok and then Used = 166
+           (Status = SMB.Ok and then Used = 170
             and then (for all Index in 48 .. 63 => Request (Index) = 0),
             "unsigned NEGOTIATE carries no signature");
          SMB.Core_Connection.Send_Succeeded (Negotiate, State, Status);

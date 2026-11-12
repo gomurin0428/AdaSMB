@@ -14,19 +14,23 @@ package SMB.Core_Negotiate is
 
    --  The request body: 36 fixed bytes, one or two dialects and padding to
    --  40, the preauth integrity context (46 bytes) and 2 bytes of padding,
-   --  then the encryption context (14 bytes).
-   Request_Length : constant := 102;
+   --  then the encryption context (18 bytes).
+   Request_Length : constant := 106;
    subtype Request_Bytes is SMB.Bytes (0 .. Request_Length - 1);
 
-   type Cipher_Id is (No_Cipher, AES_128_CCM, AES_128_GCM);
+   --  The ciphers in the order of their IDs on the wire, 1 to 4.
+   type Cipher_Id is
+     (No_Cipher, AES_128_CCM, AES_128_GCM, AES_256_CCM, AES_256_GCM);
 
    --  The body of a NEGOTIATE request that offers 3.1.1, and 2.1 too when
    --  Allow_21 is set. SecurityMode is 3 (signing enabled and required) and
    --  Capabilities is SMB2_GLOBAL_CAP_ENCRYPTION. The preauth integrity
    --  context offers SHA-512 with Salt, and the encryption context offers
-   --  AES-128-GCM, then AES-128-CCM. Its completion in the private part
-   --  gives callers' proofs every byte; the postcondition repeats the fixed
-   --  fields byte by byte, which provers find far more easily.
+   --  AES-128-GCM, AES-128-CCM, AES-256-GCM and AES-256-CCM, in the order a
+   --  Windows client offers them by default; the server chooses. Its
+   --  completion in the private part gives callers' proofs every byte; the
+   --  postcondition repeats the fixed fields byte by byte, which provers
+   --  find far more easily.
    function Request
      (Guid : Guid_Bytes; Salt : Salt_Bytes; Allow_21 : Boolean)
       return Request_Bytes
@@ -89,6 +93,8 @@ private
    SHA_512 : constant SMB.Word := 1;
    CCM_Id : constant SMB.Word := 1;
    GCM_Id : constant SMB.Word := 2;
+   CCM_256_Id : constant SMB.Word := 3;
+   GCM_256_Id : constant SMB.Word := 4;
 
    --  The request's first context sits at body offset 40, which is 104 from
    --  the start of the header.
@@ -120,12 +126,15 @@ private
       & LE16 (SHA_512)
       & Salt
       & LE16 (0)
-      --  ENCRYPTION_CAPABILITIES: two ciphers, GCM first.
+      --  ENCRYPTION_CAPABILITIES: four ciphers, AES-128 first, GCM before
+      --  CCM.
       & LE16 (Encryption)
-      & LE16 (6)
+      & LE16 (10)
       & LE16 (0) & Zero_High
-      & LE16 (2)
+      & LE16 (4)
       & LE16 (GCM_Id)
-      & LE16 (CCM_Id));
+      & LE16 (CCM_Id)
+      & LE16 (GCM_256_Id)
+      & LE16 (CCM_256_Id));
 
 end SMB.Core_Negotiate;

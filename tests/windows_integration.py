@@ -5,11 +5,12 @@ Meant for the Windows CI runner: a disposable virtual machine whose job runs
 as an administrator. The harness creates a test-only local account, with a
 random password generated here and never printed, and a share holding the
 same fixture as the Samba test. It then runs the integration client over SMB
-3.1.1 three times: with a cipher negotiated but not required, then with the
-server requiring encryption and allowing only AES-128-GCM, then only
-AES-128-CCM, where the client must report that cipher. It then puts the
-server's EncryptData and EncryptionCiphers settings back as they were and
-removes the share and the account.
+3.1.1 five times: with a cipher negotiated but not required, then with the
+server requiring encryption and allowing only one cipher, AES-128-GCM,
+AES-128-CCM, AES-256-GCM and AES-256-CCM in turn, where the client must
+report that cipher. It then puts the server's EncryptData and
+EncryptionCiphers settings back as they were and removes the share and the
+account.
 
 It refuses to run anywhere but Windows, and without ADASMB_WINDOWS_SERVER=1,
 so that it never changes a developer's own machine by accident.
@@ -158,7 +159,8 @@ def main() -> int:
                 run_client(password, "on", "cipher negotiated, not required")
                 powershell("Set-SmbServerConfiguration -EncryptData $true -Force")
                 # With one cipher allowed, the client must negotiate it.
-                for cipher in ("AES_128_GCM", "AES_128_CCM"):
+                for cipher in ("AES_128_GCM", "AES_128_CCM",
+                               "AES_256_GCM", "AES_256_CCM"):
                     powershell("Set-SmbServerConfiguration"
                                f" -EncryptionCiphers '{cipher}' -Force")
                     run_client(password, "required",

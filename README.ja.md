@@ -17,7 +17,8 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   結果は `Negotiated_Dialect` で分かります。3.1.1 のネゴシエーションは
   SHA-512 の preauth integrity hash で保護します。
 * サーバーが cipher をネゴシエーションしたときは、SMB 3.1.1 の暗号化
-  （AES-128-GCM または AES-128-CCM）を使います。認証後の要求は share の
+  （AES-128-GCM、AES-128-CCM、AES-256-GCM、AES-256-CCM。クライアントが
+  この順に提示し、サーバーが選びます）を使います。認証後の要求は share の
   TREE_CONNECT も含めてすべて transform header に封入し、nonce は
   繰り返さないカウンターから取ります。応答はすべて封入されていて tag の
   検査に通らなければならず、そうでなければ接続を破棄します。
@@ -25,9 +26,10 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   は cipher をネゴシエーションしないサーバー（と 2.1）を拒否します。
   session や share の暗号化を求めるサーバーは、cipher があるときだけ
   受け入れます。CI では統合試験クライアントを、Samba と Windows ランナー
-  自身の SMB サーバー（Windows Server 2025）を相手に暗号化して動かし、
-  Windows では各 cipher を順に唯一の cipher にして試験します。
-  `Negotiated_Cipher` で cipher が分かります。
+  自身の SMB サーバー（Windows Server 2025）を相手に暗号化して動かします。
+  Samba では AES-256 の各 cipher を、Windows では 4 つの cipher を順に
+  唯一の cipher にして試験します。`Negotiated_Cipher` で cipher が
+  分かります。署名鍵はどの cipher でも AES-128 です。
 * SPNEGO 内の NTLMv2 のみ。Unicode ユーザー名の完全な Windows
   大文字化表を持たないため、ユーザー名は ASCII に限定します。
   パスワード、ドメイン、ファイル名は UTF-8 から厳密に UTF-16LE に
@@ -46,7 +48,7 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   I/O より前に拒否します。
 * フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
   受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB 3.0・3.0.2、
-  AES-256 の cipher、compression、compound、Kerberos、guest/null fallback、
+  AES-GMAC 署名、compression、compound、Kerberos、guest/null fallback、
   large-MTU negotiation は実装していません。
 * スタック使用量は証明の対象外です。フレーム・転送・要求・ディレクトリ
   一覧のバッファはヒープに置き、ソケットは 16 KiB 単位で読みます。応答の
@@ -287,8 +289,9 @@ Alire 2.1.1 で GNAT 16.1.0・gprbuild 26.0.1・gnatprove 16.1.0 を導入しま
     `make transport-test`、使い捨ての VM 上での Samba 統合試験
   * Windows: 警告をエラー扱いにしたビルド、ソース・スタック検査、単体試験、
     ランナー自身の SMB サーバーに対する統合試験（cipher をネゴシエーション
-    した SMB 3.1.1、続いて AES-128-GCM と AES-128-CCM それぞれで暗号化を
-    必須にした場合）、各照合試験、TCP 転送試験
+    した SMB 3.1.1、続いて AES-128-GCM・AES-128-CCM・AES-256-GCM・
+    AES-256-CCM をそれぞれ唯一の cipher にして暗号化を必須にした場合）、
+    各照合試験、TCP 転送試験
   * macOS（ARM64）: 警告をエラー扱いにしたビルド
   * pull request のみ: その pull request が変えた `src/*.adb` の行に対する
     ミューテーションテスト（`make mutation-diff`）。どの試験も検出しなかった

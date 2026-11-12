@@ -15,17 +15,21 @@ directory operations.
   the default `SMB_311_Only`, a server that selects 2.1 is refused.
   `Negotiated_Dialect` reports the outcome. The 3.1.1 negotiation is
   protected by its SHA-512 preauth integrity hash.
-* SMB 3.1.1 encryption with AES-128-GCM or AES-128-CCM whenever the server
-  negotiates a cipher: every request after authentication, the share's
+* SMB 3.1.1 encryption with AES-128-GCM, AES-128-CCM, AES-256-GCM or
+  AES-256-CCM, whichever the server chooses from the four the client offers
+  (in that order), whenever the server negotiates a cipher: every request
+  after authentication, the share's
   TREE_CONNECT included, is sealed in a transform header under a nonce
   from a counter that never repeats, and every response must arrive sealed
   and pass its tag check, or the connection is torn down. `Is_Encrypted`
   reports it, and `Connect (..., Require_Encryption => True)` refuses a
   server that negotiates no cipher (or 2.1). A server that wants the
   session or share encrypted is accepted only with a cipher. CI runs the
-  integration client with encryption against Samba, and against the Windows
-  runner's own SMB server (Windows Server 2025) with each cipher in turn as
-  the only one allowed. `Negotiated_Cipher` reports the cipher.
+  integration client with encryption against Samba, there also with each
+  AES-256 cipher as the only one allowed, and against the Windows runner's
+  own SMB server (Windows Server 2025) with each of the four ciphers in turn
+  as the only one allowed. `Negotiated_Cipher` reports the cipher. The
+  signing key is AES-128 under every cipher.
 * NTLMv2 inside SPNEGO only. User names are limited to ASCII, because the
   library does not carry the complete Windows upper-case table for Unicode
   user names. Passwords, domains and file names are converted strictly from
@@ -45,9 +49,8 @@ directory operations.
   I/O.
 * Frames are limited to 1 MiB and single read/write requests to 64 KiB, and
   received offsets, lengths and their sums are range-checked. SMB1, SMB 3.0
-  and 3.0.2, AES-256 ciphers, compression, compound requests, Kerberos,
-  guest/null fallback
-  and large-MTU negotiation are not implemented.
+  and 3.0.2, AES-GMAC signing, compression, compound requests, Kerberos,
+  guest/null fallback and large-MTU negotiation are not implemented.
 * Stack usage is outside the proofs. Frame, transfer, request and directory
   listing buffers live on the heap, and the socket is read 16 KiB at a time.
   Response signature verification and NTLM authentication compute
@@ -311,8 +314,8 @@ cached).
   * Windows: build with warnings as errors, source and stack checks, unit
     tests, the integration client against the runner's own SMB server
     (SMB 3.1.1 with a cipher negotiated, then with encryption required under
-    AES-128-GCM and under AES-128-CCM), the comparison tests and the TCP
-    transport test
+    each of AES-128-GCM, AES-128-CCM, AES-256-GCM and AES-256-CCM as the
+    only cipher allowed), the comparison tests and the TCP transport test
   * macOS (ARM64): build with warnings as errors
   * Pull requests only: mutation testing of the `src/*.adb` lines the pull
     request changes (`make mutation-diff`); a mutant no test detects fails

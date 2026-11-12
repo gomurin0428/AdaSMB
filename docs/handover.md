@@ -19,7 +19,7 @@ of date.
     man-in-the-middle strip 3.1.1.
   * The client encrypts whenever the server supports a cipher, and a
     "require encryption" option refuses servers that do not.
-  * AES-128 only; AES-256 is not offered in 0.2.0.
+  * AES-128 only in 0.2.0; AES-256 is offered since #130.
   * Out of scope: AES-GMAC signing, compression, multichannel, Kerberos,
     and raising the 64 KiB I/O chunk.
 * Phase status (the phases are listed in the design document):
@@ -42,7 +42,7 @@ of date.
 | 5 | Windows server interop (`tests/windows_integration.py`) | merged (#126) |
 | 5 | Release 0.2.0 (`alire.toml`, tag, GitHub release) | merged (#127) |
 | after 0.2.0 | AES-256 primitives (`SMB.AES`, CCM, GCM, `SMB.KDF.Derive_256`) | merged (#129) |
-| after 0.2.0 | AES-256 in negotiation, the transform and the engine | next |
+| after 0.2.0 | AES-256 in negotiation, the transform and the engine | merged (#130) |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -392,12 +392,8 @@ opens a received one. It is a stateless SPARK unit, like
 * Hostile transform headers are covered by unit tests through the engine;
   the adversarial proxy still speaks 2.1 only. Teaching it 3.1.1 would let
   the proxy tests run against the 3.1.1 Samba.
-* AES-256 ciphers: the primitives are in (#129). Next, offer AES-256-GCM
-  and AES-256-CCM in the encryption context, use 32-byte cipher keys from
-  `SMB.KDF.Derive_256` in the transform and the engine, and run the Samba
-  and Windows integration tests with each AES-256 cipher as the only one
-  allowed. The signing key stays 16 bytes (L = 128) under an AES-256
-  cipher, as Samba derives it; the Windows run will confirm that.
+* Release 0.3.0 with AES-256 (#129, #130): bump `alire.toml`, tag, GitHub
+  release, then the Alire index as for 0.2.0.
 
 ## AES-256 primitives (#129)
 
@@ -421,6 +417,37 @@ opens a received one. It is a stateless SPARK unit, like
   test cases before using it; for CCM and the KDF it is the only reference.
 * `crypto_probe` tells the key length from the fixture: a 32-byte AES key,
   a 32-byte key before the AEAD nonce, or a 32-byte expected KDF result.
+
+## AES-256 in the protocol (#130)
+
+* `SMB.Core_Negotiate.Cipher_Id` gains `AES_256_CCM` and `AES_256_GCM`; the
+  enumeration's positions are the wire IDs 1 to 4. The request offers
+  AES-128-GCM, AES-128-CCM, AES-256-GCM, AES-256-CCM, the Windows client's
+  default order, so `Request_Length` grows from 102 to 106 and the
+  NEGOTIATE packet from 166 to 170 bytes. A response may select 3 or 4.
+* `SMB.Core_Transform.AEAD_Cipher` covers all four ciphers.
+  `Key_Length (Cipher)` is 16 or 32, and `Seal` and `Unwrap` take
+  `Key : SMB.Bytes` of that length (precondition).
+* The engine stores the cipher keys as `SMB.AES.Key_256`. `Cipher_Key`
+  (in the spec, so contracts can name it) is `Derive_256` under an AES-256
+  cipher and `Derive` followed by 16 zero bytes otherwise; `Seal_Request`
+  and `Unwrap_Response` pass the first `Key_Length` bytes. The signing key
+  is `Derive` (L = 128) under every cipher.
+* Tests: the transform tests loop over all four ciphers and add a check
+  that the same mode under the other key length fails; the engine's
+  encryption tests loop over all four with keys derived independently in
+  the test; the negotiate tests accept cipher IDs 3 and 4 and refuse 5 and
+  0xFFFF. Microsoft's A.1 request offers only the AES-128 ciphers, so only
+  its preauth context is compared with ours now.
+* Integration: `ADASMB_SMB_CIPHER` makes the Samba harness set
+  `server smb3 encryption algorithms` to one cipher, and CI runs Samba with
+  AES-256-GCM only and AES-256-CCM only. The Windows harness runs all four
+  ciphers as the only one allowed. All passed on the first try.
+* The signing key under AES-256 is L = 128, although MS-SMB2 3.1.4.2 reads
+  as L = 256 for every key: Windows Server 2025 and Samba both sign the
+  final SESSION_SETUP response with the L = 128 key, which the client
+  verifies. Requests after authentication are encrypted, so the servers
+  never check the client's signature under that key.
 
 ## Checklist for a new primitive
 

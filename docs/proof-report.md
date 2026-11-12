@@ -5082,3 +5082,78 @@ come from `cryptography`. The comparison tests now cover:
 
 The AEAD sensitivity checks now also change each half of a 32-byte key and
 the nonce after it. The stack check still passes.
+
+A changed-line AdaMutant run on GitHub Actions detected all 77 mutants of
+`smb-aes.adb` (69) and `smb-kdf.adb` (8); 5 did not compile. The CCM and
+GCM bodies changed only in their parameter types, which AdaMutant does not
+mutate.
+
+## AES-256 in negotiation, the transform and the engine
+
+The client now offers all four SMB 3.1.1 ciphers: AES-128-GCM, AES-128-CCM,
+AES-256-GCM and AES-256-CCM, in the order a Windows client offers them by
+default. `SMB.Core_Negotiate.Cipher_Id` gains `AES_256_CCM` and
+`AES_256_GCM`, and a response may select cipher 3 or 4. The request's
+encryption context grows by four bytes, so `Request_Length` is 106 and the
+NEGOTIATE packet 170 bytes. `SMB.Core_Transform` accepts all four ciphers.
+`Key_Length (Cipher)` is 16 or 32, and `Seal` and `Unwrap` require a key of
+that length through `Fits_Key`. `Fits_Key` compares `Key'Length` only with
+literals: an `SMB.Bytes` can be `Natural'Last + 1` long, so the first
+version, `Key'Length = Key_Length (Cipher)`, left four range checks
+unproved. The engine keeps 32-byte cipher keys. `Engine.Cipher_Key` gives
+`SMB.KDF.Derive_256` under an AES-256 cipher, and `SMB.KDF.Derive` followed
+by 16 zero bytes otherwise. `Derive_SMB3_Keys` states its keys through it,
+and `Seal_Request` and `Unwrap_Response` pass the first `Key_Length` bytes.
+The signing key is `SMB.KDF.Derive` (L = 128) under every cipher.
+
+GNATprove 16.1.0 on the Mac proved every check of the units whose code or
+whose callees' contracts changed, with no `pragma Assume` or justification:
+
+| Unit | Checks |
+| --- | --- |
+| `smb-core_negotiate.adb` | 75 |
+| `smb-core_transform.adb` | 140 |
+| `smb-engine.adb` | 330 |
+| `smb-core_connection.adb` | 479 |
+
+The engine's flow warning that `Validate_Header` sets `Nt_Status` without
+a later use predates this change.
+
+`test_suite`:
+
+* The negotiate tests check the new request bytes and accept ciphers 3 and
+  4. They refuse 5 and `0xFFFF`. Microsoft's A.1 request offers only the
+  AES-128 ciphers, so only its preauth context is compared with ours.
+* The transform tests run under all four ciphers (176 rejections). They
+  add a check that the same mode under the other key length fails.
+* The engine's encryption tests run under all four ciphers (207 checks),
+  with keys derived in the test itself.
+
+On GitHub Actions the Samba job adds two required-encryption runs, one with
+`server smb3 encryption algorithms = AES-256-GCM` and one with AES-256-CCM,
+and the Windows job runs Windows Server 2025's SMB server with
+`EncryptionCiphers` set to each of the four ciphers in turn. Every run
+negotiated the one cipher allowed and passed, and with a cipher offered but
+not required both servers chose AES-128-GCM. Under each AES-256 cipher the
+client verified the server's signature on the final SESSION_SETUP response
+with the signing key derived with L = 128. MS-SMB2 3.1.4.2 reads as if every
+key used L = 256 under an AES-256 cipher, but both servers derive the
+signing key with L = 128.
+
+A changed-line AdaMutant run detected all 12 mutants of
+`smb-core_negotiate.adb` (2) and `smb-engine.adb` (10).
+`smb-core_transform.adb` changed only in its parameter types, case choices
+and preconditions, which AdaMutant does not mutate.
+
+The review before merging found no code defects. It asked for the
+signing-key decision to wait for the Windows run, and for the design
+document to say that the evidence is the servers' signatures verified by
+the client, not the servers' acceptance of the client's signatures, since
+the requests after authentication are encrypted. It also asked the design
+document's key section to name the L = 256 exception, and the Samba harness
+to drop an `SMB_TEST_CIPHER` inherited from the caller's environment.
+
+The full proof workflow (`proof.yml`) on GitHub Actions also passed on this
+branch: every unit at its `proof.gpr` timeouts, in 72 minutes, with nothing
+unproved. That run was on the commit before the review fixes, which changed
+only a comment in `src/`.
