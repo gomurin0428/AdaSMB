@@ -19,10 +19,11 @@ with SMB.Crypto;
 --  or the ApplicationKey label.
 --
 --  The proof covers run-time safety, and the types fix every length.
---  Microsoft's worked examples and the comparison with Python's
+--  Microsoft's worked examples (L = 128) and the comparison with Python's
 --  cryptography cover the values. HMAC_SHA256_Finish wipes the HMAC
---  context; nothing else is wiped: not the 32-byte HMAC output in Derive's
---  frame, and not the copies the compiler leaves on the stack.
+--  context; nothing else is wiped: not the 32-byte PRF block in the body's
+--  frames, which Derive_256 returns whole, and not the copies the compiler
+--  leaves on the stack.
 package SMB.KDF is
    pragma SPARK_Mode (On);
 

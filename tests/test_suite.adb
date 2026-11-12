@@ -1762,6 +1762,21 @@ procedure Test_Suite is
             "SMB 3.1.1 KDF " & Name & " " & SMB.KDF.Key_Purpose'Image (Purpose));
       end Check;
 
+      --  L = 256, for which nothing is published: values from Python's
+      --  cryptography (KBKDFHMAC with a 32-byte output).
+      procedure Check_256
+        (Name, Session_Key, Preauth_Hash : String;
+         Purpose : SMB.KDF.Key_Purpose;
+         Expected : String) is
+      begin
+         Assert_Equal
+           (SMB.KDF.Derive_256
+              (Hex (Session_Key), Purpose, Hex (Preauth_Hash)),
+            Hex (Expected),
+            "SMB 3.1.1 KDF L = 256 " & Name & " "
+            & SMB.KDF.Key_Purpose'Image (Purpose));
+      end Check_256;
+
       Anatomy_Key : constant String := "270E1BA896585EEB7AF3472D3B4C75A7";
       Anatomy_Hash : constant String :=
         "0DD13628CC3ED218EF9DF9772D436D0887AB9814BFAE63A80AA845F36909DB79"
@@ -1811,7 +1826,17 @@ procedure Test_Suite is
              "DFAAA31AAE40A2485D47AC4DF09FDA1D");
       Check ("encryption A.2 (CCM)", CCM_Key, CCM_Hash, SMB.KDF.Decryption,
              "95C544AEF6072680DA1CE49A68A97FA6");
-      Ada.Text_IO.Put_Line ("SMB 3.1.1 KDF: 12 published keys passed");
+      Check_256 ("encryption A.1", GCM_Key, GCM_Hash, SMB.KDF.Encryption,
+                 "CB61EB110446FBCAEB6A83BEEDB92779"
+                 & "130B833A706E5B3495879D52195B90ED");
+      Check_256 ("encryption A.1", GCM_Key, GCM_Hash, SMB.KDF.Decryption,
+                 "F8CAE3069FFCDC7662E2941207AF4636"
+                 & "14D520A1A204AAF6B9EAD136DE931111");
+      Check_256 ("encryption A.1", GCM_Key, GCM_Hash, SMB.KDF.Signing,
+                 "C3CFABFAE897556AEB9CC60449460847"
+                 & "3BF8F01FF4863F94EA7B4E6F9997E508");
+      Ada.Text_IO.Put_Line
+        ("SMB 3.1.1 KDF: 12 published keys and 3 keys with L = 256 passed");
    end Test_KDF;
 
    --  Published transformed messages that SMB.Core_Transform must
@@ -1966,10 +1991,10 @@ procedure Test_Suite is
       --  so B0 without the Adata flag and empty data are checked against
       --  values from Python's cryptography (AESCCM) under one key and nonce.
       procedure Check_Generated
-        (Name, AAD_Hex, Plain_Hex, Cipher_Hex, Tag_Hex : String)
+        (Name, AAD_Hex, Plain_Hex, Cipher_Hex, Tag_Hex : String;
+         Key_Hex : String := "404142434445464748494A4B4C4D4E4F")
       is
-         Key : constant SMB.AES.Key_128 :=
-           Hex ("404142434445464748494A4B4C4D4E4F");
+         Key : constant SMB.Bytes := Hex (Key_Hex);
          Nonce : constant SMB.AES.CCM.Nonce_88 :=
            Hex ("101112131415161718191A");
          AAD : constant SMB.Bytes := Hex (AAD_Hex);
@@ -2056,8 +2081,19 @@ procedure Test_Suite is
          "", "", "14B18C670B8DD397EEDE7706C73ED26F");
       Check_Generated
         ("without either", "", "", "", "1E48FD18AC90A727B147C5E52697234A");
+      --  AES-256-CCM, for which nothing is published.
+      Check_Generated
+        ("AES-256",
+         "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
+         "FE534D42000102030405060708090A0B0C0D0E0F101112131415161718191A1B"
+         & "1C1D1E1F20212223",
+         "DBCC20C8A10CBD1690D4085CBE6D74F945339A15749B9B7484C4C8D5AF7DAA75"
+         & "8003A2BDB600992D",
+         "0EE5E13943EC619C8946D31670197D61",
+         Key_Hex => "404142434445464748494A4B4C4D4E4F"
+                    & "505152535455565758595A5B5C5D5E5F");
       Ada.Text_IO.Put_Line
-        ("AES-CCM: 4 published and 3 generated messages,"
+        ("AES-CCM: 4 published and 4 generated messages,"
          & Natural'Image (Count) & " seal, open and rejection checks passed");
    end Test_AES_CCM;
 
@@ -2164,7 +2200,7 @@ procedure Test_Suite is
         (Name, Key_Hex, Nonce_Hex, AAD_Hex, Plain_Hex, Cipher_Hex,
          Tag_Hex : String)
       is
-         Key : constant SMB.AES.Key_128 := Hex (Key_Hex);
+         Key : constant SMB.Bytes := Hex (Key_Hex);
          Nonce : constant SMB.AES.GCM.Nonce_96 := Hex (Nonce_Hex);
          AAD : constant SMB.Bytes := Hex (AAD_Hex);
          Plain : constant SMB.Bytes := Hex (Plain_Hex);
@@ -2275,8 +2311,45 @@ procedure Test_Suite is
          "",
          "",
          "AD3EB5686F56F210F66B3412106CC343");
+      --  Test cases 13 to 16 of the same paper: AES-256-GCM.
+      Check_Other
+        ("test case 13",
+         "00000000000000000000000000000000"
+         & "00000000000000000000000000000000",
+         "000000000000000000000000", "", "", "",
+         "530F8AFBC74536B9A963B4F1C4CB738B");
+      Check_Other
+        ("test case 14",
+         "00000000000000000000000000000000"
+         & "00000000000000000000000000000000",
+         "000000000000000000000000", "",
+         "00000000000000000000000000000000",
+         "CEA7403D4D606B6E074EC5D3BAF39D18",
+         "D0D1C8A799996BF0265B98B5D48AB919");
+      Check_Other
+        ("test case 15",
+         "FEFFE9928665731C6D6A8F9467308308"
+         & "FEFFE9928665731C6D6A8F9467308308",
+         "CAFEBABEFACEDBADDECAF888",
+         "",
+         "D9313225F88406E5A55909C5AFF5269A86A7A9531534F7DA2E4C303D8A318A72"
+         & "1C3C0C95956809532FCF0E2449A6B525B16AEDF5AA0DE657BA637B391AAFD255",
+         "522DC1F099567D07F47F37A32A84427D643A8CDCBFE5C0C97598A2BD2555D1AA"
+         & "8CB08E48590DBB3DA7B08B1056828838C5F61E6393BA7A0ABCC9F662898015AD",
+         "B094DAC5D93471BDEC1A502270E3CC6C");
+      Check_Other
+        ("test case 16",
+         "FEFFE9928665731C6D6A8F9467308308"
+         & "FEFFE9928665731C6D6A8F9467308308",
+         "CAFEBABEFACEDBADDECAF888",
+         "FEEDFACEDEADBEEFFEEDFACEDEADBEEFABADDAD2",
+         "D9313225F88406E5A55909C5AFF5269A86A7A9531534F7DA2E4C303D8A318A72"
+         & "1C3C0C95956809532FCF0E2449A6B525B16AEDF5AA0DE657BA637B39",
+         "522DC1F099567D07F47F37A32A84427D643A8CDCBFE5C0C97598A2BD2555D1AA"
+         & "8CB08E48590DBB3DA7B08B1056828838C5F61E6393BA7A0ABCC9F662",
+         "76FC6ECE0F4E1768CDDF8853BB2D551B");
       Ada.Text_IO.Put_Line
-        ("AES-GCM: 4 published SMB messages and 5 other messages,"
+        ("AES-GCM: 4 published SMB messages and 9 other messages,"
          & Natural'Image (Count) & " seal, open and rejection checks passed");
    end Test_AES_GCM;
 

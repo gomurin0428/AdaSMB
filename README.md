@@ -242,7 +242,7 @@ take every subkey-doubling path; the lengths around 64 KiB and the frame
 limit; messages that only the padding tells apart; and seeded random
 messages, each one-shot and fed in pieces.
 
-`make ccm-test` compares AES-128-CCM, an SMB 3.x message cipher, with the
+`make ccm-test` compares AES-CCM, an SMB 3.x message cipher, with the
 same package's `AESCCM`, always with SMB's 11-byte nonce and 16-byte tag:
 the four messages of Microsoft's SMB 3.1.1 encryption examples; every data
 length up to five blocks and the lengths around larger block boundaries; the
@@ -253,7 +253,7 @@ the same kinds of messages under 32-byte keys, fewer of each. Each message
 is sealed and opened at several array bounds, and a changed tag or
 ciphertext must be rejected with the data zeroed.
 
-`make gcm-test` compares AES-128-GCM, the SMB 3.1.1 message cipher, with the
+`make gcm-test` compares AES-GCM, the SMB 3.1.1 message cipher, with the
 same package's `AESGCM`, always with SMB's 12-byte nonce and 16-byte tag:
 the four messages of Microsoft's SMB 3.1.1 encryption examples; every data
 length up to five blocks and the lengths around larger block boundaries; the

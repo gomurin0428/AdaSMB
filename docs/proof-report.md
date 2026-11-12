@@ -5067,8 +5067,9 @@ the earlier full run; `Expand_Key` went from 11 to 26 checks. The flow
 warning about the HMAC context in `smb-kdf.adb` is the one reported above.
 
 `test_suite` adds FIPS 197 C.3, SP 800-38A F.1.5 and a 1,000-step AES-256
-chain whose values come from `cryptography`. The comparison tests now
-cover:
+chain, the GCM specification's AES-256 test cases 13 to 16, an AES-256-CCM
+message and three L = 256 keys; the chain, the CCM message and the keys
+come from `cryptography`. The comparison tests now cover:
 
 * `aes_conformance.py`: 2,701 fixtures, both key lengths, with six
   sensitivity checks;

@@ -168,7 +168,7 @@ OpenSSL and `hashlib` as a test-only reference.
 | Primitive | Used for | Reference vectors |
 | --- | --- | --- |
 | SHA-512 | preauth integrity hash | FIPS 180-4 examples, `hashlib` |
-| AES-128 and AES-256 (encryption direction only) | CMAC (AES-128 only), CCM, GCM | FIPS 197, SP 800-38A, NIST CAVP, `cryptography` |
+| AES-128 and AES-256 (encryption direction only) | CMAC (AES-128 only), CCM, GCM | FIPS 197, SP 800-38A (AES-256), NIST CAVP (AES-128), `cryptography` |
 | AES-128-CMAC | 3.1.1 signing | RFC 4493, SP 800-38B |
 | SP 800-108 KDF (counter mode, HMAC-SHA256, L = 128 or 256) | signing and cipher keys | Microsoft vectors (L = 128), `cryptography` |
 | AES-128-CCM and AES-256-CCM (11-byte nonce, 16-byte tag) | encryption | SP 800-38C (AES-128), `cryptography` |
