@@ -5033,3 +5033,52 @@ and runs each cleanup step even if an earlier one fails.
 A changed-line AdaMutant run on GitHub Actions detected all 4 mutants of
 `smb-engine.adb`, including the `Nt_Status := 0` whose annotation was
 removed.
+
+## AES-256 primitives
+
+`SMB.AES.Expand_Key` now takes a 16- or 32-byte key (precondition
+`Key'Length = 16 or else Key'Length = 32`) and expands it word by word as
+FIPS 197 5.2 describes, into AES-128's eleven round keys or AES-256's
+fifteen. A `Key_Schedule` holds 240 bytes and its round count, `Ready`
+means a count of 10 or 14, and `Encrypt` runs that many rounds. The
+expansion branches on the key's length and the word index, never on key
+bytes. `SMB.AES.CCM` and `SMB.AES.GCM` take the key as `SMB.Bytes` under the
+same precondition; CMAC keeps its 16-byte key. `SMB.KDF.Derive_256` returns
+the whole HMAC-SHA256 block with L = 256 (`00000100`). L is part of the PRF
+input, so a 128-bit key is not a prefix of the 256-bit key with the same
+label. Nothing in the protocol uses AES-256 yet.
+
+GNATprove 16.1.0 on the Mac (`--level=2`, cvc5, z3 and Alt-Ergo, the
+`proof.gpr` timeouts) proved every check of the units whose code or whose
+callees' contracts changed, with no `pragma Assume` or justification:
+
+| Unit | Checks |
+| --- | --- |
+| `smb-aes.adb` | 85 (20 flow, 65 prover) |
+| `smb-kdf.adb` | 17 |
+| `smb-aes-gcm.adb` | 128 |
+| `smb-aes-ccm.adb` | 72 |
+| `smb-aes-cmac.adb` | 44 |
+| `smb-core_transform.adb` | 138 |
+
+`smb-aes.adb` took about 8.5 minutes, the others under a minute each. Its
+hardest check is still the range check in `From_Planes` (14 seconds), as in
+the earlier full run; `Expand_Key` went from 11 to 26 checks. The flow
+warning about the HMAC context in `smb-kdf.adb` is the one reported above.
+
+`test_suite` adds FIPS 197 C.3, SP 800-38A F.1.5 and a 1,000-step AES-256
+chain, the GCM specification's AES-256 test cases 13 to 16, an AES-256-CCM
+message and three L = 256 keys; the chain, the CCM message and the keys
+come from `cryptography`. The comparison tests now cover:
+
+* `aes_conformance.py`: 2,701 fixtures, both key lengths, with six
+  sensitivity checks;
+* `gcm_conformance.py`: 909 fixtures, including the GCM specification's
+  AES-256 test cases 13 to 16, with nine sensitivity checks;
+* `ccm_conformance.py`: 710 fixtures, with nine sensitivity checks;
+* `kdf_conformance.py`: 660 fixtures, every one at L = 128 and L = 256,
+  with 32 sensitivity checks. Two of these check that the 128-bit and
+  256-bit keys are not interchangeable.
+
+The AEAD sensitivity checks now also change each half of a 32-byte key and
+the nonce after it. The stack check still passes.

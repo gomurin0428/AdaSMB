@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AES-128-GCM differential tests against Python's cryptography package.
+"""AES-GCM differential tests against Python's cryptography package.
 
 cryptography is a test-only dependency. Every fixture uses SMB's parameters:
 a 12-byte nonce and a 16-byte tag. They cover the four AES-GCM messages of
@@ -9,9 +9,14 @@ to five blocks and the lengths around larger block boundaries, with SMB's
 another byte, up to the frame limit; associated data of every length up to
 three blocks and some longer, up to the frame limit, with no data, one byte
 and a few blocks; the lengths at which the length block's bit counts carry;
-single-bit changes; and seeded random fixtures. crypto_probe seals and opens
-each fixture at four lower bounds and checks that Open rejects a changed tag
-and ciphertext and leaves only zeros (see Check_AEAD).
+single-bit changes; and seeded random fixtures. Those use 16-byte keys
+(AES-128-GCM). The AES-256-GCM fixtures, for which no SMB messages are
+published, start with test cases 13 to 16 of the GCM specification (McGrew
+and Viega), then repeat the data lengths up to three blocks and the block
+and frame boundaries, a few associated-data lengths, single-bit changes in
+each byte of a 32-byte key, and seeded random fixtures. crypto_probe seals
+and opens each fixture at four lower bounds and checks that Open rejects a
+changed tag and ciphertext and leaves only zeros (see Check_AEAD).
 """
 
 from __future__ import annotations
@@ -81,6 +86,26 @@ PUBLISHED = (
      "FFFE000001000000250000000010000000000000000000000000000000000000"
      "11005000170000000000000000000000536D623320656E637279707469"
      "6F6E2074657374696E67"),
+)
+
+
+# Test cases 13 to 16 of McGrew and Viega, "The Galois/Counter Mode of
+# Operation (GCM)": the key, the nonce, the associated data, the plaintext,
+# and the ciphertext followed by the tag.
+_GCM_KEY = "feffe9928665731c6d6a8f9467308308"
+_GCM_PLAIN = ("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72"
+              "1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255")
+_GCM_CIPHER = ("522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa"
+               "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad")
+AES_256_PUBLISHED = (
+    ("00" * 32, "00" * 12, "", "", "530f8afbc74536b9a963b4f1c4cb738b"),
+    ("00" * 32, "00" * 12, "", "00" * 16,
+     "cea7403d4d606b6e074ec5d3baf39d18" "d0d1c8a799996bf0265b98b5d48ab919"),
+    (_GCM_KEY * 2, "cafebabefacedbaddecaf888", "", _GCM_PLAIN,
+     _GCM_CIPHER + "b094dac5d93471bdec1a502270e3cc6c"),
+    (_GCM_KEY * 2, "cafebabefacedbaddecaf888",
+     "feedfacedeadbeeffeedfacedeadbeefabaddad2", _GCM_PLAIN[:120],
+     _GCM_CIPHER[:120] + "76fc6ece0f4e1768cddf8853bb2d551b"),
 )
 
 
@@ -161,6 +186,30 @@ def fixtures() -> list[str]:
         add(generator.randbytes(16), generator.randbytes(12),
             generator.randbytes(generator.randrange(65)),
             generator.randbytes(generator.randrange(301)))
+
+    # AES-256-GCM: test cases 13 to 16 of "The Galois/Counter Mode of
+    # Operation (GCM)", then the same families as above under a 32-byte key.
+    for key, nonce_hex, aad_hex, plain_hex, known in AES_256_PUBLISHED:
+        add(bytes.fromhex(key), bytes.fromhex(nonce_hex),
+            bytes.fromhex(aad_hex), bytes.fromhex(plain_hex),
+            known=bytes.fromhex(known))
+    for size in list(range(49)) + [127, 128, 129, 4095, 4096, 4097, FRAME]:
+        add(patterned(32, size), patterned(12, size + 1), smb_aad,
+            patterned(size, 11))
+    for aad_size in (0, 1, 15, 16, 17, 32, FRAME):
+        add(patterned(32, 7), patterned(12, aad_size),
+            patterned(aad_size, 17), patterned(37, 19))
+    long_key = patterned(32, 23)
+    add(long_key, nonce, aad, data)
+    for position in range(32):
+        changed = bytearray(long_key)
+        changed[position] ^= 0x80
+        add(bytes(changed), nonce, aad, data)
+    generator = random.Random(38_401)
+    for _ in range(128):
+        add(generator.randbytes(32), generator.randbytes(12),
+            generator.randbytes(generator.randrange(65)),
+            generator.randbytes(generator.randrange(301)))
     return cases
 
 
@@ -174,6 +223,8 @@ def main() -> None:
         raise RuntimeError("AES-GCM conformance failed")
     # A changed key, nonce, associated data, plaintext, ciphertext or tag in
     # the first published message must fail.
+    # A change in either half of the key, or in the nonce, of the first
+    # AES-256 fixture must fail too.
     example = cases[0].split()
     variants = []
     for column, position in ((1, 0), (1, 16), (2, 0), (3, 0), (4, 0), (4, -1)):
@@ -181,6 +232,14 @@ def main() -> None:
         changed = bytearray.fromhex(fields[column])
         changed[position] ^= 1
         fields[column] = changed.hex()
+        variants.append(fields)
+    long_example = next(case.split() for case in cases
+                        if len(case.split()[1]) == 2 * (32 + 12))
+    for position in (0, 31, 32):
+        fields = list(long_example)
+        changed = bytearray.fromhex(fields[1])
+        changed[position] ^= 1
+        fields[1] = changed.hex()
         variants.append(fields)
     for fields in variants:
         check = subprocess.run([str(probe)], input=" ".join(fields) + "\n",

@@ -41,6 +41,8 @@ of date.
 | 4 | Engine: encryption keys, nonce counter, encryption policy | merged (#125) |
 | 5 | Windows server interop (`tests/windows_integration.py`) | merged (#126) |
 | 5 | Release 0.2.0 (`alire.toml`, tag, GitHub release) | merged (#127) |
+| after 0.2.0 | AES-256 primitives (`SMB.AES`, CCM, GCM, `SMB.KDF.Derive_256`) | merged (#129) |
+| after 0.2.0 | AES-256 in negotiation, the transform and the engine | next |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -390,8 +392,35 @@ opens a received one. It is a stateless SPARK unit, like
 * Hostile transform headers are covered by unit tests through the engine;
   the adversarial proxy still speaks 2.1 only. Teaching it 3.1.1 would let
   the proxy tests run against the 3.1.1 Samba.
-* AES-256 ciphers can be added now that a Windows server is available in
-  CI to test against (see the design document).
+* AES-256 ciphers: the primitives are in (#129). Next, offer AES-256-GCM
+  and AES-256-CCM in the encryption context, use 32-byte cipher keys from
+  `SMB.KDF.Derive_256` in the transform and the engine, and run the Samba
+  and Windows integration tests with each AES-256 cipher as the only one
+  allowed. The signing key stays 16 bytes (L = 128) under an AES-256
+  cipher, as Samba derives it; the Windows run will confirm that.
+
+## AES-256 primitives (#129)
+
+* `SMB.AES.Expand_Key` takes a 16- or 32-byte `SMB.Bytes` key (its
+  precondition) and expands it word by word as FIPS 197 5.2 does, so one
+  loop serves both lengths: every Nk-th word takes SubWord (RotWord) and a
+  round constant, and with AES-256 the word halfway between takes SubWord.
+  The branches depend on the key's length, not its bytes. `Key_Schedule`
+  holds 240 bytes and the round count; `Ready` is a count of 10 or 14.
+* `SMB.AES.CCM` and `SMB.AES.GCM` take `Key : SMB.Bytes` with the same
+  length precondition; their bodies were already independent of the key
+  length. CMAC keeps `Key_128`: 3.1.1 signing is AES-128-CMAC under every
+  cipher.
+* `SMB.KDF.Derive_256` returns the whole HMAC-SHA256 block with L = 256
+  (`00000100`). Both `Derive` and `Derive_256` call one `PRF_Block`.
+* No AES-256 test vectors exist for SMB. The unit tests use FIPS 197 C.3,
+  SP 800-38A F.1.5 and a 1,000-step chain for AES, test cases 13 to 16 of
+  the GCM specification for GCM, and one CCM message and three L = 256 keys
+  computed with `cryptography`, so `make test` covers AES-256 without
+  Python. `gcm_conformance.py` checks `cryptography` against the same GCM
+  test cases before using it; for CCM and the KDF it is the only reference.
+* `crypto_probe` tells the key length from the fixture: a 32-byte AES key,
+  a 32-byte key before the AEAD nonce, or a 32-byte expected KDF result.
 
 ## Checklist for a new primitive
 
