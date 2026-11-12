@@ -1,6 +1,6 @@
 name = "smb"
 description = "Pure Ada SMB 3.1.1/2.1 client library with a SPARK-proved protocol core"
-version = "0.2.0"
+version = "0.3.0"
 long-description = """
 AdaSMB is a synchronous SMB client library written in Ada. It speaks SMB
 3.1.1 (dialect 0x0311) by default and SMB 2.1 (0x0210) only when the caller
