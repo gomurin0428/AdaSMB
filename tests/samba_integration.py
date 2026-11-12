@@ -290,6 +290,8 @@ def main() -> int:
                     SMB_TEST_PASSWORD=PASSWORD,
                     SMB_TEST_PATH=str(share),
                 )
+                # Only ADASMB_SMB_CIPHER below sets the cipher to check.
+                env.pop("SMB_TEST_CIPHER", None)
                 if smb311_only:
                     env["SMB_TEST_DIALECTS"] = "311"
                     env["SMB_TEST_ENCRYPTION"] = {

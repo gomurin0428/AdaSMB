@@ -108,7 +108,9 @@ is
    --  zero bytes. Seal_Request and Unwrap_Response use the first
    --  SMB.Core_Transform.Key_Length (Cipher) bytes. The signing key is
    --  SMB.KDF.Derive (L = 128) under every cipher, since 3.1.1 signs with
-   --  AES-128-CMAC; Samba derives it the same way.
+   --  AES-128-CMAC. MS-SMB2 3.1.4.2 sets L = 256 under an AES-256 cipher
+   --  without singling out the signing key, but Windows Server 2025 and
+   --  Samba sign the final SESSION_SETUP response with the L = 128 key.
    function Cipher_Key
      (Session_Key : SMB.Crypto.Digest_128;
       Purpose : SMB.KDF.Key_Purpose;

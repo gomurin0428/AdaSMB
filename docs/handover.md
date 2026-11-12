@@ -442,7 +442,12 @@ opens a received one. It is a stateless SPARK unit, like
 * Integration: `ADASMB_SMB_CIPHER` makes the Samba harness set
   `server smb3 encryption algorithms` to one cipher, and CI runs Samba with
   AES-256-GCM only and AES-256-CCM only. The Windows harness runs all four
-  ciphers as the only one allowed.
+  ciphers as the only one allowed. All passed on the first try.
+* The signing key under AES-256 is L = 128, although MS-SMB2 3.1.4.2 reads
+  as L = 256 for every key: Windows Server 2025 and Samba both sign the
+  final SESSION_SETUP response with the L = 128 key, which the client
+  verifies. Requests after authentication are encrypted, so the servers
+  never check the client's signature under that key.
 
 ## Checklist for a new primitive
 

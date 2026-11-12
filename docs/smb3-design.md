@@ -85,7 +85,10 @@ HMAC-SHA256 (Key, 00000001 || Label || 00 || Context || 00000080)
 ```
 
 truncated to 16 bytes, where Label includes its terminating NUL. Key is the
-NTLM ExportedSessionKey (16 bytes) and Context is H:
+NTLM ExportedSessionKey (16 bytes) and Context is H. Under an AES-256
+cipher the encryption and decryption keys use L = 256 (`00000100`) and the
+whole 32-byte block instead; see the AES-256 section below for them and for
+the signing key.
 
 | Key | Label |
 | --- | --- |
@@ -151,19 +154,22 @@ ApplicationKey is not needed.
 ### AES-256
 
 0.2.0 offered only AES-128-GCM and AES-128-CCM. Microsoft publishes no
-AES-256 test vectors for SMB, and the spec leaves open which key length
-applies to the signing key under an AES-256 cipher, so AES-256 waited for a
-server to test against. With the Windows CI runner's own SMB server
-available, the client now offers AES-256-GCM and AES-256-CCM after the
-AES-128 ciphers, and the server chooses. Under an AES-256 cipher:
+AES-256 test vectors for SMB, and MS-SMB2 3.1.4.2 sets L = 256 under an
+AES-256 cipher without singling out the signing key, although 3.1.1 signs
+with AES-128-CMAC and a 16-byte key. So AES-256 waited for a server to test
+against. With the Windows CI runner's own SMB server available, the client
+now offers AES-256-GCM and AES-256-CCM after the AES-128 ciphers, and the
+server chooses. Under an AES-256 cipher:
 
 * the encryption and decryption keys are 32 bytes, derived with L = 256
   (`SMB.KDF.Derive_256`, MS-SMB2 3.1.4.2), and the transform uses AES-256
   in CCM or GCM with the same nonce lengths and tag;
-* the signing key stays 16 bytes, derived with L = 128, because 3.1.1 signs
-  with AES-128-CMAC under every cipher. Samba derives it the same way, and
-  Windows and Samba both accept the client's signatures under each AES-256
-  cipher in CI;
+* the signing key stays 16 bytes, derived with L = 128, as under the
+  AES-128 ciphers. Windows Server 2025 and Samba derive it the same way:
+  in CI the client verifies each server's signature on the final
+  SESSION_SETUP response with that key, under each AES-256 cipher as the
+  only one allowed. (The requests after authentication are encrypted, so
+  the servers' acceptance of them says nothing about the signing key.);
 * the key derivation key is the session key. MS-SMB2 takes the full
   session key under AES-256; with NTLM it is the same 16 bytes.
 
