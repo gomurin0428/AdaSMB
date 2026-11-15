@@ -5157,3 +5157,103 @@ The full proof workflow (`proof.yml`) on GitHub Actions also passed on this
 branch: every unit at its `proof.gpr` timeouts, in 72 minutes, with nothing
 unproved. That run was on the commit before the review fixes, which changed
 only a comment in `src/`.
+
+## AES-GMAC signing
+
+The client now offers SMB 3.1.1 AES-GMAC signing. The NEGOTIATE request
+gains a SIGNING_CAPABILITIES context that offers AES-GMAC, then AES-CMAC, so
+`Request_Length` is 126 and the NEGOTIATE packet 190 bytes, with three
+contexts (`Request_Context_Count`). `Check_Response_Contexts` returns the
+server's choice as `SMB3_Signing_Id`, and `AES_CMAC` without a signing
+context or on any failure, which its postcondition states.
+`SMB.AES.GCM.MAC` is GMAC, GCM with no data, and `MAC_Context` its
+incremental form. `Update` requires the length so far to be a multiple of
+16, because GHASH pads only the last block. `Finish` leaves the context
+wiped and not `Ready`. `SMB.Core_Wire.Sign_SMB3` and
+`Verify_Signature_SMB3` replace the CMAC-only procedures, with an
+`Algorithm` parameter and the same contracts. `GMAC_Nonce` builds the nonce
+from the header. `Engine.Mark_Negotiated` records the algorithm, and its
+postcondition gives `Current_Signing`, which is HMAC-SHA256 unless 3.1.1 was
+negotiated (`Current_Signing`'s own postcondition). `Sign_Packet` in
+`Core_Client` and `Core_Connection` picks the MAC by `Current_Signing`
+instead of the dialect, and `Prepare_Close` and `Accept_Response` pass the
+recorded algorithm.
+
+GNATprove 16.1.0 proved every check of the changed units on the Mac, with
+no `pragma Assume` or justification:
+
+| Unit | Checks |
+| --- | --- |
+| `smb-aes-gcm.adb` | 154 |
+| `smb-core_negotiate.adb` | 89 |
+| `smb-core_wire.adb` | 448 |
+
+Another project's proofs were using the Mac's memory, so the engine and
+its callers (`smb-engine.adb`, `smb-core_connection.adb`,
+`smb-core_client.adb`) were proved only by the full proof workflow on
+GitHub Actions; see below. The first version of `MAC` finished a local
+context it then dropped, which GNATprove's flow analysis flagged; `MAC`
+and `Finish` now share a `Final_Tag` helper, as in `SMB.AES.CMAC`.
+
+`test_suite`:
+
+* GMAC against test case 1 of the GCM specification and the first
+  no-plaintext, 128-bit-AAD vectors of NIST's CAVP `gcmEncryptExtIV128` and
+  `gcmEncryptExtIV256`, one-shot, through `Seal` with no data, and
+  incrementally.
+* The nonce: the server and CANCEL bits, the command's byte order, the
+  last MessageId, and a header that ends at `Natural'Last`.
+* A.1's final SESSION_SETUP response signed with AES-GMAC under A.1's
+  signing key. No GMAC-signed SMB message is published, so the signature
+  was computed with Python's `cryptography`; a change to any byte, another
+  key, the CMAC and HMAC forms, and GMAC over the published CMAC signature
+  are rejected.
+* Negotiate contexts: AES-GMAC and AES-CMAC accepted, also before the
+  encryption context; HMAC-SHA256, 3, `0xFFFF`, two contexts, a count of 0
+  or 2 and a short context refused; and a failure after a signing context
+  reports AES-CMAC.
+* The 3.1.1 engine operations test runs under each algorithm, with a final
+  response signed with the other algorithm under the right key refused,
+  and a renegotiation on the same engine.
+
+`make gcm-test` adds 368 GMAC fixtures, checked one-shot at four lower
+bounds, against `Seal` with no data, and in pieces of whole blocks.
+`make signing-test` adds AES-GMAC signing and verification over the CMAC
+fixtures' lengths, every combination of six flag bytes, seven commands and
+four MessageIds, single-bit changes in the header, body and key, and
+messages signed with the other algorithms; 6,473 fixtures in all, HMAC
+and CMAC included, with
+three more sensitivity checks. The unit tests and the Python comparison
+share one reading of MS-SMB2 3.1.4.1's nonce, so they check the
+implementation of that reading, not the reading.
+
+The servers check the reading. On GitHub Actions:
+
+* Samba with `server smb3 signing algorithms` set to AES-128-GMAC, and then
+  to AES-128-CMAC, in the signing-only 3.1.1 configuration: the client
+  reported each algorithm and passed the integration client, every request
+  signed and every response verified with it. Samba's default list chose
+  AES-GMAC in every other 3.1.1 run.
+* Windows Server 2025 chose AES-GMAC in all five runs. With encryption on,
+  it signs only the final SESSION_SETUP response, which the client
+  verified; it verifies none of the client's signatures.
+
+A changed-line AdaMutant run detected all 124 mutants (one more did not
+compile): `smb-aes-gcm.adb` 20, `smb-core_client.adb` 11,
+`smb-core_connection.adb` 11, `smb-core_negotiate.adb` 22,
+`smb-core_wire.adb` 55 and `smb-engine.adb` 5. Two lines were written to
+avoid equivalent mutants: the engine's resets leave the recorded algorithm
+alone, because they set the dialect to 0, which hides it, and the response
+check's AES-CMAC case is `null`, because AES-CMAC is the initial value.
+
+The review before merging found no code defects. It asked the design and
+assurance documents to say which server checks what, as above, and not to
+call the work before this change 0.3.0, which is not released yet; for a
+test that negotiates the other algorithm on the same engine; and for long
+lines to be wrapped.
+
+The full proof workflow (`proof.yml`) on GitHub Actions passed on this
+branch: 6,134 checks in every unit at its `proof.gpr` timeouts, with
+nothing unproved. That run was on the first commit; the later commits
+changed only `smb-aes-gcm.adb`'s body in `src/`, proved again on the Mac
+above.
