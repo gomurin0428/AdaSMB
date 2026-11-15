@@ -62,7 +62,8 @@ is
             (for all Index in 0 .. 15 =>
                Buffer (12 + Index) = Guid (Guid'First + Index))
           and then SMB.Core_Wire.Encoded_U32 (Buffer, 28) = 104
-          and then SMB.Core_Wire.Encoded_U16 (Buffer, 32) = 2
+          and then SMB.Core_Wire.Encoded_U16 (Buffer, 32) =
+            SMB.Core_Negotiate.Request_Context_Count
           and then SMB.Core_Wire.Encoded_U16
             (Buffer, 36) = SMB.SMB2_Dialect_0311,
         when Tree_Connect =>
@@ -224,7 +225,8 @@ is
              and then SMB.Core_Wire.Encoded_U32
                (Packet, Header_Length + 28) = 104
              and then SMB.Core_Wire.Encoded_U16
-               (Packet, Header_Length + 32) = 2
+               (Packet, Header_Length + 32) =
+                 SMB.Core_Negotiate.Request_Context_Count
              and then SMB.Core_Wire.Encoded_U16
                (Packet, Header_Length + 36) = SMB.SMB2_Dialect_0311
              and then Value.Expected.Tree_Id = 0
@@ -323,13 +325,13 @@ is
       Status := SMB.Ok;
    end Prepare_Header;
 
-   --  Signs with HMAC-SHA256 and Key for SMB 2.1, and with AES-128-CMAC and
-   --  SMB3_Key for 3.1.1.
+   --  Signs with HMAC-SHA256 and Key for SMB 2.1, and with AES-128-CMAC or
+   --  AES-128-GMAC, as Signing says, and SMB3_Key for 3.1.1.
    procedure Sign_Packet
      (Packet : in out SMB.Bytes;
       Used : Natural;
       Key : SMB.Bytes;
-      Dialect : SMB.Word;
+      Signing : SMB.Core_Negotiate.Signing_Id;
       SMB3_Key : SMB.AES.Key_128;
      Status : out SMB.Core_Status)
    with Pre =>
@@ -372,15 +374,17 @@ is
          Status := SMB.Invalid_Length;
          return;
       end if;
-      if Dialect = SMB.SMB2_Dialect_0311 then
-         SMB.Core_Wire.Sign_CMAC
-           (Packet
-              (Packet'First .. Packet'First + (Used - 1)), SMB3_Key, Status);
-      else
-         SMB.Core_Wire.Sign
-           (Packet
-              (Packet'First .. Packet'First + (Used - 1)), Key, Status);
-      end if;
+      case Signing is
+         when SMB.Core_Negotiate.HMAC_SHA256 =>
+            SMB.Core_Wire.Sign
+              (Packet
+                 (Packet'First .. Packet'First + (Used - 1)), Key, Status);
+         when SMB.Core_Negotiate.AES_CMAC | SMB.Core_Negotiate.AES_GMAC =>
+            SMB.Core_Wire.Sign_SMB3
+              (Packet
+                 (Packet'First .. Packet'First + (Used - 1)), SMB3_Key,
+               Signing, Status);
+      end case;
    end Sign_Packet;
 
    procedure Fail_Connection
@@ -693,7 +697,7 @@ is
                       Body_Buffer (Body_Buffer'First + Index));
                Sign_Packet
                  (Output, Used, SMB.Engine.Current_Signing_Key (State),
-                  SMB.Engine.Current_Dialect (State),
+                  SMB.Engine.Current_Signing (State),
                   SMB.Engine.Current_SMB3_Signing_Key (State),
                   Field_Status);
                Lemma_Copies_Compose
@@ -1011,6 +1015,8 @@ is
       Mark_Status : SMB.Core_Status;
       Info : SMB.Core_Protocol.Response_Info;
       Cipher : SMB.Core_Negotiate.Cipher_Id := SMB.Core_Negotiate.No_Cipher;
+      Signing : SMB.Core_Negotiate.SMB3_Signing_Id :=
+        SMB.Core_Negotiate.AES_CMAC;
       Preauth : SMB.Core_Preauth.Hash_Value := SMB.Core_Preauth.Initial;
       Old : constant Connection_State_Snapshot := Snapshot_Of (Value);
       State_At_Entry : constant SMB.Engine.Engine_State := State
@@ -1064,7 +1070,7 @@ is
          --  accepted only when it was offered.
          if Info.Dialect = SMB.SMB2_Dialect_0311 then
             SMB.Core_Negotiate.Check_Response_Contexts
-              (Packet, Cipher, Mark_Status);
+              (Packet, Cipher, Signing, Mark_Status);
             if Mark_Status /= SMB.Ok then
                Fail_Connection (Value, State, Mark_Status, Status);
                return;
@@ -1077,7 +1083,7 @@ is
             return;
          end if;
          SMB.Engine.Mark_Negotiated
-           (State, Info.Max_Read, Info.Max_Write, Cipher, Preauth,
+           (State, Info.Max_Read, Info.Max_Write, Cipher, Signing, Preauth,
             Mark_Status);
          --  adamutant:disable-next-line ConditionalExpression: the phase and limits were checked when the response was accepted
          if Mark_Status /= SMB.Ok then

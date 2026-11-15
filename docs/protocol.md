@@ -14,7 +14,7 @@ I/O 最大値が 0、または cipher がないのに暗号化 share を要求�
 遷移を完了しません。
 3.1.1 では NEGOTIATE と SESSION_SETUP の要求・応答（最終の成功応答を除く）
 を SHA-512 の preauth integrity hash に入れ、その値とセッション鍵から
-署名鍵を導出して、最終応答以降を AES-128-CMAC で署名・検証します。セッション setup の成功応答にも
+署名鍵を導出して、最終応答以降を AES-128-GMAC か AES-128-CMAC（後述）で署名・検証します。セッション setup の成功応答にも
 署名を要求し、guest と null を拒否します。session encryption の要求は
 cipher があるときだけ受け入れます。Windows Server 2025 は鍵を導出する前の
 challenge 応答ですでにこの flag を立てるので、判定は鍵ではなく cipher の
@@ -25,7 +25,7 @@ cipher をネゴシエーションした 3.1.1 セッションは、同じ preau
 SMB2 TRANSFORM_HEADER に封入します（`SMB.Core_Transform`、
 `SMB.Engine.Seal_Request`）。nonce は先頭 8 byte がセッションごとに 1 から
 始まるカウンター、残りが 0 で、カウンターが尽きると封入を拒否します。
-封入した要求の中身も AES-128-CMAC で署名したままです（MS-SMB2 3.2.4.1.1 は
+封入した要求の中身も署名したままです（MS-SMB2 3.2.4.1.1 は
 session と share の両方が暗号化されている場合を除いて署名を必須とし、その
 場合も署名を禁じていません。サーバーは暗号化された要求の署名を検証
 しません）。暗号化中の応答は `SMB.Engine.Unwrap_Response` を通ったものだけ
@@ -43,7 +43,19 @@ Windows では 4 つの cipher をそれぞれ唯一の cipher にし、暗号�
 提示し（Windows クライアントの既定と同じ順です）、サーバーが選びます。
 AES-256 の cipher では暗号化鍵・復号鍵を L = 256 で 32 byte 導出し
 （`SMB.KDF.Derive_256`）、署名鍵はどの cipher でも L = 128 の 16 byte
-（AES-128-CMAC）です。Samba も同じ導出をします。
+です。Samba も同じ導出をします。
+
+署名アルゴリズムは SIGNING_CAPABILITIES コンテキストで AES-GMAC、AES-CMAC の
+順に提示し、サーバーが選びます。応答の署名コンテキストは、アルゴリズムが
+1 つで、こちらが提示したものでなければなりません（HMAC-SHA256 や未知の ID は
+接続を失敗させます）。署名コンテキストがなければ AES-CMAC です
+（MS-SMB2 3.1.4.1）。AES-GMAC は平文なしの GCM で、Signature field をゼロにした
+メッセージ全体を関連データとし、16 byte の署名鍵で tag を計算します。nonce は
+12 byte で、header の MessageId 8 byte のあとに、サーバーが送るメッセージなら
+bit 0、CANCEL 要求なら bit 1 を立てた 4 byte が続きます。bit 0 は Samba と同じく
+header の SMB2_FLAGS_SERVER_TO_REDIR から取ります。`Negotiated_Signing` で
+アルゴリズムが分かります。CI では Samba をそれぞれ唯一のアルゴリズムにして
+試験し、Windows Server 2025 が AES-GMAC を選ぶことも確かめます。
 
 各 request は単調な message id と 1 credit で送信します。応答の magic、
 structure size、command、message id、session/tree id、zero credit、
@@ -58,7 +70,8 @@ async 応答は、状態を破棄して `SMB.Protocol_Error` になります。�
 
 session base key の 16 byte を signing key とし、SMB2 header の
 signature field をゼロ化して HMAC-SHA256(message) を計算し、先頭 16
-byte を格納・比較します。認証後の request は全て署名し、期待する
+byte を格納・比較します（SMB 2.1）。SMB 3.1.1 は上記のとおり導出した鍵の
+AES-128-GMAC か AES-128-CMAC の 16 byte です。認証後の request は全て署名し、期待する
 response も全て署名されている必要があります。比較は
 `SMB.Crypto.Constant_Time_Equal` を使います。署名の不一致、相関不一致、
 パケット bounds 不正は socket を閉じます。
@@ -143,7 +156,7 @@ Type 2、zero-MIC Type 3 全体で MIC を計算します。channel binding が
 ## 暗号と入力制限
 
 MD4、MD5、SHA-256、SHA-512、HMAC-MD5、HMAC-SHA256、AES-128 と AES-256
-（暗号化方向のみ）、AES-128-CMAC、AES-CCM、AES-GCM、SMB 3.1.1 の鍵導出
+（暗号化方向のみ）、AES-128-CMAC、AES-CCM、AES-GCM（GMAC を含む）、SMB 3.1.1 の鍵導出
 （SP 800-108）は
 Ada の整数演算だけで実装しています。既定エントロピーはUnixで `/dev/urandom`、Windowsで
 `BCryptGenRandom(NULL, buffer, length, BCRYPT_USE_SYSTEM_PREFERRED_RNG)`です。

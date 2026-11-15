@@ -212,4 +212,60 @@ package body SMB.AES.GCM is
       end if;
    end Open;
 
+   procedure Start
+     (Context : out MAC_Context;
+      Key : SMB.Bytes;
+      Nonce : Nonce_96)
+   is
+      Schedule : Key_Schedule;
+   begin
+      Expand_Key (Key, Schedule);
+      Context :=
+        (Subkey => Encrypt (Schedule, (others => 0)),
+         Hash => (others => 0),
+         Mask => Encrypt (Schedule, Counter_Block (Nonce, 1)),
+         Total => 0,
+         Started => True);
+   end Start;
+
+   procedure Update (Context : in out MAC_Context; Message : SMB.Bytes) is
+      State : Element := To_Element (Context.Hash);
+   begin
+      Absorb_Bytes (State, To_Element (Context.Subkey), Message);
+      Context.Hash := To_Block (State);
+      Context.Total := Context.Total + Message'Length;
+   end Update;
+
+   --  The tag of the message so far: GHASH of the length block, which holds
+   --  the message's length in bits and a zero data length, masked with the
+   --  encrypted counter block 1.
+   function Final_Tag (Context : MAC_Context) return Tag_128
+     with Post => True
+   is
+      State : Element := To_Element (Context.Hash);
+   begin
+      Absorb
+        (State, To_Element (Context.Subkey),
+         To_Block ((8 * Word (Context.Total), 0)));
+      return To_Block (State xor To_Element (Context.Mask));
+   end Final_Tag;
+
+   procedure Finish (Context : in out MAC_Context; Tag : out Tag_128) is
+   begin
+      Tag := Final_Tag (Context);
+      Context := Cleared;
+   end Finish;
+
+   function MAC
+     (Key : SMB.Bytes;
+      Nonce : Nonce_96;
+      Message : SMB.Bytes) return Tag_128
+   is
+      Context : MAC_Context;
+   begin
+      Start (Context, Key, Nonce);
+      Update (Context, Message);
+      return Final_Tag (Context);
+   end MAC;
+
 end SMB.AES.GCM;

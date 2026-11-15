@@ -204,6 +204,17 @@ def main() -> int:
                              + ", with ADASMB_SMB311_ONLY=1 and encryption on")
         algorithms = (f"    server smb3 encryption algorithms = {cipher}\n"
                       if cipher is not None else "")
+        # ADASMB_SMB_SIGNING likewise limits the server to one signing
+        # algorithm ("server smb3 signing algorithms", Samba 4.15 or later),
+        # which the client must report as AES_128_GMAC is AES_GMAC and so on.
+        signing = os.environ.get("ADASMB_SMB_SIGNING")
+        signings = {"AES-128-CMAC": "AES_CMAC", "AES-128-GMAC": "AES_GMAC"}
+        if signing is not None and (signing not in signings or not smb311_only):
+            raise SystemExit("ADASMB_SMB_SIGNING must be one of "
+                             + ", ".join(sorted(signings))
+                             + ", with ADASMB_SMB311_ONLY=1")
+        if signing is not None:
+            algorithms += f"    server smb3 signing algorithms = {signing}\n"
         config = work / "smb.conf"
         config.write_text(
             f"""\
@@ -290,14 +301,18 @@ def main() -> int:
                     SMB_TEST_PASSWORD=PASSWORD,
                     SMB_TEST_PATH=str(share),
                 )
-                # Only ADASMB_SMB_CIPHER below sets the cipher to check.
+                # Only ADASMB_SMB_CIPHER and ADASMB_SMB_SIGNING below set the
+                # cipher and the signing algorithm to check.
                 env.pop("SMB_TEST_CIPHER", None)
+                env.pop("SMB_TEST_SIGNING", None)
                 if smb311_only:
                     env["SMB_TEST_DIALECTS"] = "311"
                     env["SMB_TEST_ENCRYPTION"] = {
                         "off": "off", "default": "on", "required": "required"}[encrypt]
                     if cipher is not None:
                         env["SMB_TEST_CIPHER"] = cipher.replace("-", "_")
+                    if signing is not None:
+                        env["SMB_TEST_SIGNING"] = signings[signing]
                     try:
                         run([str(ROOT / "build/bin/integration_client")], env=env)
                     except subprocess.CalledProcessError:

@@ -17,6 +17,16 @@ and frame boundaries, a few associated-data lengths, single-bit changes in
 each byte of a 32-byte key, and seeded random fixtures. crypto_probe seals
 and opens each fixture at four lower bounds and checks that Open rejects a
 changed tag and ciphertext and leaves only zeros (see Check_AEAD).
+
+GMAC, GCM with no data, is SMB 3.1.1's AES-GMAC signing MAC. Its GM
+fixtures start with three published tags (test case 1 of the GCM
+specification and the first 128-bit-AAD, no-plaintext vectors of NIST's
+CAVP gcmEncryptExtIV128 and gcmEncryptExtIV256), then every message length
+up to ten blocks, the lengths around larger block boundaries and the frame
+limit, single-bit changes in the key and nonce, and seeded random fixtures,
+mostly under 16-byte keys. crypto_probe checks each at four lower bounds,
+against Seal over no data, and through the incremental MAC context in
+pieces of whole blocks (see Check_GMAC).
 """
 
 from __future__ import annotations
@@ -106,6 +116,17 @@ AES_256_PUBLISHED = (
     (_GCM_KEY * 2, "cafebabefacedbaddecaf888",
      "feedfacedeadbeeffeedfacedeadbeefabaddad2", _GCM_PLAIN[:120],
      _GCM_CIPHER[:120] + "76fc6ece0f4e1768cddf8853bb2d551b"),
+)
+
+
+# Published GMAC tags: the key, the nonce, the message and the tag.
+GMAC_PUBLISHED = (
+    ("00" * 16, "00" * 12, "", "58e2fccefa7e3061367f1d57a4e7455a"),
+    ("77be63708971c4e240d1cb79e8d77feb", "e0e00f19fed7ba0136a797f3",
+     "7a43ec1d9c0a5a78a0b16533a6213cab", "209fcc8d3675ed938e9c7166709dd946"),
+    ("78dc4e0aaf52d935c3c01eea57428f00ca1fd475f5da86a49c8dd73d68c8e223",
+     "d79cf22d504cc793c3fb6c8a", "b96baa8c1c75a671bfb2d08d06be5f36",
+     "3e5d486aa2e30b22e040b85723a06e76"),
 )
 
 
@@ -210,6 +231,38 @@ def fixtures() -> list[str]:
         add(generator.randbytes(32), generator.randbytes(12),
             generator.randbytes(generator.randrange(65)),
             generator.randbytes(generator.randrange(301)))
+
+    # GMAC: the tag of a message given as associated data alone.
+    def gmac(key: bytes, nonce: bytes, message: bytes,
+             known: bytes | None = None) -> None:
+        tag = seal(key, nonce, message, b"")
+        if known is not None and tag != known:
+            raise AssertionError("cryptography differs from a published GMAC tag")
+        cases.append(f"GM {(key + nonce).hex()} {message.hex() or '-'} {tag.hex()} -")
+
+    for key, nonce_hex, message, known in GMAC_PUBLISHED:
+        gmac(bytes.fromhex(key), bytes.fromhex(nonce_hex),
+             bytes.fromhex(message), known=bytes.fromhex(known))
+    for size in list(range(161)) + [255, 256, 257, 4095, 4096, 4097,
+                                    8191, 8192, 8193, 65536, FRAME - 1, FRAME]:
+        gmac(patterned(16, size), patterned(12, size + 3), patterned(size, 41))
+    for size in (0, 1, 15, 16, 17, 64, 129, FRAME):
+        gmac(patterned(32, size), patterned(12, size + 3), patterned(size, 43))
+    key, nonce, message = patterned(16, 47), patterned(12, 53), patterned(129, 59)
+    for position in range(16):
+        for bit in (0x01, 0x80):
+            changed = bytearray(key)
+            changed[position] ^= bit
+            gmac(bytes(changed), nonce, message)
+    for position in range(12):
+        for bit in (0x01, 0x80):
+            changed = bytearray(nonce)
+            changed[position] ^= bit
+            gmac(key, bytes(changed), message)
+    generator = random.Random(38_402)
+    for _ in range(128):
+        gmac(generator.randbytes(16), generator.randbytes(12),
+             generator.randbytes(generator.randrange(301)))
     return cases
 
 
@@ -241,13 +294,26 @@ def main() -> None:
         changed[position] ^= 1
         fields[1] = changed.hex()
         variants.append(fields)
+    # A changed key, nonce, message or tag of the first published GMAC tag
+    # must fail.
+    gmac_example = next(case.split() for case in cases
+                        if case.startswith("GM ") and case.split()[2] != "-")
+    for column, position in ((1, 0), (1, 15), (1, 16), (1, -1), (2, 0),
+                             (2, -1), (3, 0), (3, -1)):
+        fields = list(gmac_example)
+        changed = bytearray.fromhex(fields[column])
+        changed[position] ^= 1
+        fields[column] = changed.hex()
+        variants.append(fields)
     for fields in variants:
         check = subprocess.run([str(probe)], input=" ".join(fields) + "\n",
                                text=True, capture_output=True, timeout=30)
         if check.returncode == 0 or "raised PROGRAM_ERROR" not in check.stderr:
             raise RuntimeError("AES-GCM probe sensitivity check failed or could not execute")
-    print(f"PASS: {len(cases)} AES-GCM fixtures, each sealed and opened at four lower "
-          f"bounds with rejection checks; {len(variants)} sensitivity checks")
+    gmac_count = sum(case.startswith("GM ") for case in cases)
+    print(f"PASS: {len(cases) - gmac_count} AES-GCM fixtures, each sealed and opened at "
+          f"four lower bounds with rejection checks; {gmac_count} GMAC fixtures, one-shot "
+          f"and incremental; {len(variants)} sensitivity checks")
 
 
 if __name__ == "__main__":

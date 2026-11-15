@@ -1,5 +1,5 @@
 --  SMB 3.1.1 negotiation (MS-SMB2 2.2.3, 2.2.4 and 3.2.5.2; the profile is in
---  docs/smb3-design.md): the NEGOTIATE request body with its two negotiate
+--  docs/smb3-design.md): the NEGOTIATE request body with its three negotiate
 --  contexts, and the checks on the negotiate contexts of a response that
 --  selected 3.1.1. Packet offsets count from the start of the SMB2 header, as
 --  the protocol's offset fields do.
@@ -14,20 +14,29 @@ package SMB.Core_Negotiate is
 
    --  The request body: 36 fixed bytes, one or two dialects and padding to
    --  40, the preauth integrity context (46 bytes) and 2 bytes of padding,
-   --  then the encryption context (18 bytes).
-   Request_Length : constant := 106;
+   --  the encryption context (18 bytes) and 6 bytes of padding, then the
+   --  signing context (14 bytes).
+   Request_Length : constant := 126;
+   Request_Context_Count : constant := 3;
    subtype Request_Bytes is SMB.Bytes (0 .. Request_Length - 1);
 
    --  The ciphers in the order of their IDs on the wire, 1 to 4.
    type Cipher_Id is
      (No_Cipher, AES_128_CCM, AES_128_GCM, AES_256_CCM, AES_256_GCM);
 
+   --  The signing algorithms in the order of their IDs on the wire, 0 to 2.
+   --  2.1 signs with HMAC-SHA256, and 3.1.1 with AES-CMAC or AES-GMAC
+   --  (MS-SMB2 3.1.4.1).
+   type Signing_Id is (HMAC_SHA256, AES_CMAC, AES_GMAC);
+   subtype SMB3_Signing_Id is Signing_Id range AES_CMAC .. AES_GMAC;
+
    --  The body of a NEGOTIATE request that offers 3.1.1, and 2.1 too when
    --  Allow_21 is set. SecurityMode is 3 (signing enabled and required) and
    --  Capabilities is SMB2_GLOBAL_CAP_ENCRYPTION. The preauth integrity
    --  context offers SHA-512 with Salt, and the encryption context offers
    --  AES-128-GCM, AES-128-CCM, AES-256-GCM and AES-256-CCM, in the order a
-   --  Windows client offers them by default; the server chooses. Its
+   --  Windows client offers them by default. The signing context offers
+   --  AES-GMAC, then AES-CMAC. The server chooses from each. Its
    --  completion in the private part gives callers' proofs every byte; the
    --  postcondition repeats the fixed fields byte by byte, which provers
    --  find far more easily.
@@ -46,16 +55,18 @@ package SMB.Core_Negotiate is
      and then Request'Result (10) = 0 and then Request'Result (11) = 0
      and then (for all Index in Guid_Bytes'Range =>
                  Request'Result (12 + Index) = Guid (Index))
-     --  NegotiateContextOffset 104, NegotiateContextCount 2, Reserved2.
+     --  NegotiateContextOffset 104, NegotiateContextCount 3, Reserved2.
      and then Request'Result (28) = 104 and then Request'Result (29) = 0
      and then Request'Result (30) = 0 and then Request'Result (31) = 0
-     and then Request'Result (32) = 2 and then Request'Result (33) = 0
+     and then Request'Result (32) = Request_Context_Count
+     and then Request'Result (33) = 0
      and then Request'Result (34) = 0 and then Request'Result (35) = 0
      --  The first dialect: 3.1.1.
      and then Request'Result (36) = 16#11# and then Request'Result (37) = 3;
 
    --  Checks the negotiate contexts of a NEGOTIATE response Packet (header
-   --  included) that selected 3.1.1, and returns the cipher it chose.
+   --  included) that selected 3.1.1, and returns the cipher and the signing
+   --  algorithm it chose.
    --  The connection must fail unless Status is Ok, which requires:
    --  * a first context at an 8-byte-aligned offset after the fixed body,
    --    and every context, each 8-byte aligned, inside the packet;
@@ -63,18 +74,22 @@ package SMB.Core_Negotiate is
    --    SHA-512, and a salt that fits its data;
    --  * at most one encryption context, with one cipher that is 0 (none) or
    --    one we offered;
-   --  * no compression, transport, RDMA or signing context: a server sends
-   --    one only in answer to the client's, and we offer none.
+   --  * at most one signing context, with one algorithm that we offered;
+   --  * no compression, transport or RDMA context: a server sends one only
+   --    in answer to the client's, and we offer none.
    --  Other context types are ignored. Without an encryption context, or
-   --  with cipher 0, Cipher is No_Cipher.
+   --  with cipher 0, Cipher is No_Cipher. Without a signing context,
+   --  Signing is AES_CMAC, as MS-SMB2 3.1.4.1 signs then.
    procedure Check_Response_Contexts
      (Packet : SMB.Bytes;
       Cipher : out Cipher_Id;
+      Signing : out SMB3_Signing_Id;
       Status : out SMB.Core_Status)
    with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post => Status in SMB.Ok | SMB.Invalid_Length | SMB.Invalid_Offset
                      | SMB.Invalid_Protocol
-       and then (if Status /= SMB.Ok then Cipher = No_Cipher);
+       and then (if Status /= SMB.Ok
+                 then Cipher = No_Cipher and then Signing = AES_CMAC);
 
 private
 
@@ -90,11 +105,14 @@ private
    --  Negotiate context types (MS-SMB2 2.2.3.1) and the IDs we offer.
    Preauth_Integrity : constant SMB.Word := 1;
    Encryption : constant SMB.Word := 2;
+   Signing_Capabilities : constant SMB.Word := 8;
    SHA_512 : constant SMB.Word := 1;
    CCM_Id : constant SMB.Word := 1;
    GCM_Id : constant SMB.Word := 2;
    CCM_256_Id : constant SMB.Word := 3;
    GCM_256_Id : constant SMB.Word := 4;
+   CMAC_Id : constant SMB.Word := 1;
+   GMAC_Id : constant SMB.Word := 2;
 
    --  The request's first context sits at body offset 40, which is 104 from
    --  the start of the header.
@@ -111,7 +129,7 @@ private
       & LE16 (16#40#) & Zero_High
       & Guid
       & LE16 (Request_Context_Offset) & Zero_High
-      & LE16 (2)
+      & LE16 (Request_Context_Count)
       & LE16 (0)
       & LE16 (SMB.SMB2_Dialect_0311)
       --  The second dialect, or padding to the first context.
@@ -135,6 +153,15 @@ private
       & LE16 (GCM_Id)
       & LE16 (CCM_Id)
       & LE16 (GCM_256_Id)
-      & LE16 (CCM_256_Id));
+      & LE16 (CCM_256_Id)
+      --  Padding to the next context.
+      & LE16 (0) & Zero_High & LE16 (0)
+      --  SIGNING_CAPABILITIES: two algorithms, AES-GMAC first.
+      & LE16 (Signing_Capabilities)
+      & LE16 (6)
+      & LE16 (0) & Zero_High
+      & LE16 (2)
+      & LE16 (GMAC_Id)
+      & LE16 (CMAC_Id));
 
 end SMB.Core_Negotiate;

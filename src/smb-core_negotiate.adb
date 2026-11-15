@@ -9,7 +9,6 @@ package body SMB.Core_Negotiate is
    Compression : constant SMB.Word := 3;
    Transport : constant SMB.Word := 6;
    RDMA_Transform : constant SMB.Word := 7;
-   Signing : constant SMB.Word := 8;
 
    --  The NEGOTIATE response's fixed part: 64 header bytes and 64 body
    --  bytes, with NegotiateContextCount at body offset 6 and
@@ -21,6 +20,7 @@ package body SMB.Core_Negotiate is
    procedure Check_Response_Contexts
      (Packet : SMB.Bytes;
       Cipher : out Cipher_Id;
+      Signing : out SMB3_Signing_Id;
       Status : out SMB.Core_Status)
    is
       Count : SMB.Word;
@@ -30,10 +30,13 @@ package body SMB.Core_Negotiate is
       Kind : SMB.Word;
       Length : Natural;
       Selected : Cipher_Id := No_Cipher;
+      Chosen : SMB3_Signing_Id := AES_CMAC;
       Seen_Preauth : Boolean := False;
       Seen_Encryption : Boolean := False;
+      Seen_Signing : Boolean := False;
    begin
       Cipher := No_Cipher;
+      Signing := AES_CMAC;
       if Packet'Length < Fixed_Response_Length then
          Status := SMB.Invalid_Length;
          return;
@@ -93,10 +96,27 @@ package body SMB.Core_Negotiate is
                   return;
             end case;
             Seen_Encryption := True;
+         elsif Kind = Signing_Capabilities then
+            --  SigningAlgorithmCount, then the algorithms.
+            if Seen_Signing
+              or else Length < 4
+              or else SMB.Core_Wire.Encoded_U16 (Packet, Data) /= 1
+            then
+               Status := SMB.Invalid_Protocol;
+               return;
+            end if;
+            case SMB.Core_Wire.Encoded_U16 (Packet, Data + 2) is
+               --  Chosen is already AES_CMAC, as without a signing context.
+               when CMAC_Id => null;
+               when GMAC_Id => Chosen := AES_GMAC;
+               when others =>
+                  Status := SMB.Invalid_Protocol;
+                  return;
+            end case;
+            Seen_Signing := True;
          elsif Kind = Compression
            or else Kind = Transport
            or else Kind = RDMA_Transform
-           or else Kind = Signing
          then
             Status := SMB.Invalid_Protocol;
             return;
@@ -116,6 +136,7 @@ package body SMB.Core_Negotiate is
          return;
       end if;
       Cipher := Selected;
+      Signing := Chosen;
       Status := SMB.Ok;
    end Check_Response_Contexts;
 

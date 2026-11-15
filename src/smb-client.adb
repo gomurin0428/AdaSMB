@@ -1400,6 +1400,10 @@ package body SMB.Client is
      (Client : Connection) return SMB.Core_Negotiate.Cipher_Id is
      (SMB.Engine.Current_Cipher (Client.Engine_Core));
 
+   function Negotiated_Signing
+     (Client : Connection) return SMB.Core_Negotiate.Signing_Id is
+     (SMB.Engine.Current_Signing (Client.Engine_Core));
+
    overriding procedure Finalize (Client : in out Connection) is
    begin
       Disconnect (Client);

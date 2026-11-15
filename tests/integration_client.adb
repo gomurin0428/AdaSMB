@@ -220,6 +220,25 @@ begin
            (SMB.Client.Negotiated_Cipher (Client),
             SMB.Core_Negotiate.No_Cipher) = not Test_Dialects.Encrypted,
          "a cipher exactly when the run encrypts");
+      --  SMB_TEST_SIGNING names the signing algorithm the server must have
+      --  chosen.
+      Ada.Text_IO.Put_Line
+        ("negotiated signing: "
+         & SMB.Core_Negotiate.Signing_Id'Image
+             (SMB.Client.Negotiated_Signing (Client)));
+      if Ada.Environment_Variables.Exists ("SMB_TEST_SIGNING") then
+         Assert
+           (SMB.Core_Negotiate.Signing_Id'Image
+              (SMB.Client.Negotiated_Signing (Client)) =
+                Env ("SMB_TEST_SIGNING"),
+            "negotiated signing is not " & Env ("SMB_TEST_SIGNING"));
+      end if;
+      Assert
+        (SMB.Core_Negotiate."="
+           (SMB.Client.Negotiated_Signing (Client),
+            SMB.Core_Negotiate.HMAC_SHA256)
+         = (SMB.Client.Negotiated_Dialect (Client) /= SMB.SMB2_Dialect_0311),
+         "HMAC-SHA256 signing exactly under 2.1");
       Check_Invalid_Credentials;
       SMB.Client.Authenticate (Client, User, Password);
       --  Everything after authentication, the share included, is

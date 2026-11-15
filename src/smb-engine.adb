@@ -163,6 +163,7 @@ is
      (State : in out Engine_State;
       Maximum_Read, Maximum_Write : Natural;
       Cipher : SMB.Core_Negotiate.Cipher_Id;
+      Signing : SMB.Core_Negotiate.SMB3_Signing_Id;
       Preauth : SMB.Core_Preauth.Hash_Value;
       Status : out SMB.Core_Status) is
    begin
@@ -197,6 +198,7 @@ is
       State.Cipher :=
         (if State.Dialect = SMB.SMB2_Dialect_0311 then Cipher
          else SMB.Core_Negotiate.No_Cipher);
+      State.Signing := Signing;
       State.Preauth := Preauth;
       --  adamutant:disable-next-line StatementDeletion, BooleanLiteral: no session, so no key, exists before negotiation
       State.Has_SMB3_Key := False;
@@ -759,8 +761,8 @@ is
             Status := SMB.Signature_Error;
             return;
          end if;
-         SMB.Core_Wire.Verify_Signature_CMAC
-           (Packet, State.SMB3_Key, Valid, Verify_Status);
+         SMB.Core_Wire.Verify_Signature_SMB3
+           (Packet, State.SMB3_Key, State.Signing, Valid, Verify_Status);
          if Verify_Status /= SMB.Ok or else not Valid then
             Invalidate (State, Ignore_Status);
             Nt_Status := 0;
@@ -1218,6 +1220,11 @@ is
    function Current_Cipher
      (State : Engine_State) return SMB.Core_Negotiate.Cipher_Id is
      (State.Cipher);
+
+   function Current_Signing
+     (State : Engine_State) return SMB.Core_Negotiate.Signing_Id is
+     (if State.Dialect = SMB.SMB2_Dialect_0311 then State.Signing
+      else SMB.Core_Negotiate.HMAC_SHA256);
 
    function Current_Preauth
      (State : Engine_State) return SMB.Core_Preauth.Hash_Value is

@@ -1,4 +1,5 @@
 with SMB.AES;
+with SMB.Core_Negotiate;
 package body SMB.Core_Client
   with SPARK_Mode
 is
@@ -8,7 +9,7 @@ is
      (Packet : in out SMB.Bytes;
       Used : Natural;
       Key : SMB.Bytes;
-      Dialect : SMB.Word;
+      Signing : SMB.Core_Negotiate.Signing_Id;
       SMB3_Key : SMB.AES.Key_128;
       Status : out SMB.Core_Status)
    with
@@ -49,18 +50,19 @@ is
    is
    begin
       --  SMB 2.1 signs with HMAC-SHA256 and the session key, 3.1.1 with
-      --  AES-128-CMAC and the derived signing key.
-      if Dialect = SMB.SMB2_Dialect_0311 then
-         SMB.Core_Wire.Sign_CMAC
-           (Packet
-              (Packet'First .. Packet'Last - (Packet'Length - Used)),
-            SMB3_Key, Status);
-      else
-         SMB.Core_Wire.Sign
-           (Packet
-              (Packet'First .. Packet'Last - (Packet'Length - Used)),
-            Key, Status);
-      end if;
+      --  AES-128-CMAC or AES-128-GMAC and the derived signing key.
+      case Signing is
+         when SMB.Core_Negotiate.HMAC_SHA256 =>
+            SMB.Core_Wire.Sign
+              (Packet
+                 (Packet'First .. Packet'Last - (Packet'Length - Used)),
+               Key, Status);
+         when SMB.Core_Negotiate.AES_CMAC | SMB.Core_Negotiate.AES_GMAC =>
+            SMB.Core_Wire.Sign_SMB3
+              (Packet
+                 (Packet'First .. Packet'Last - (Packet'Length - Used)),
+               SMB3_Key, Signing, Status);
+      end case;
    end Sign_Packet;
 
    procedure Fail_Transfer
@@ -1200,7 +1202,7 @@ is
          --  adamutant:disable-next-line ConditionalExpression: the precondition leaves room for the header
          if Status = SMB.Ok then
             Sign_Packet
-              (Output, Need, Key, SMB.Engine.Current_Dialect (State),
+              (Output, Need, Key, SMB.Engine.Current_Signing (State),
                SMB.Engine.Current_SMB3_Signing_Key (State), E);
             --  adamutant:disable-next-line StatementDeletion: Sign_Packet cannot fail on a whole request
             Status := E;
@@ -1844,7 +1846,7 @@ is
            SMB.Engine.Current_Signing_Key (State);
       begin
          Sign_Packet
-           (Output, Used, Key, SMB.Engine.Current_Dialect (State),
+           (Output, Used, Key, SMB.Engine.Current_Signing (State),
             SMB.Engine.Current_SMB3_Signing_Key (State), Sign_Status);
       end;
       --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
@@ -2244,7 +2246,7 @@ is
              SMB.Core_Wire.U32_Byte
                ((if Value.Directory then 1 else 16#40#), Index));
       Sign_Packet
-        (Output, Required, Key, SMB.Engine.Current_Dialect (State),
+        (Output, Required, Key, SMB.Engine.Current_Signing (State),
          SMB.Engine.Current_SMB3_Signing_Key (State), Field_Status);
       --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
       if Field_Status /= SMB.Ok then
@@ -2363,9 +2365,10 @@ is
          return;
       end if;
       if SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311 then
-         SMB.Core_Wire.Sign_CMAC
+         SMB.Core_Wire.Sign_SMB3
            (Output (Output'First .. Output'First + (Required - 1)),
-            SMB.Engine.Current_SMB3_Signing_Key (State), Field_Status);
+            SMB.Engine.Current_SMB3_Signing_Key (State),
+            SMB.Engine.Current_Signing (State), Field_Status);
       else
          SMB.Core_Wire.Sign
            (Output (Output'First .. Output'First + (Required - 1)),
@@ -2844,7 +2847,7 @@ is
         (SMB.Core_Wire.Encoded_U32 (Output, 36) =
            Expected.Tree_Id);
       Sign_Packet
-        (Output, Used, Key, SMB.Engine.Current_Dialect (State),
+        (Output, Used, Key, SMB.Engine.Current_Signing (State),
          SMB.Engine.Current_SMB3_Signing_Key (State), Field_Status);
       --  adamutant:disable-next-line ConditionalExpression: Sign_Packet cannot fail on a whole request
       if Field_Status /= SMB.Ok then

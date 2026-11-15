@@ -84,6 +84,11 @@ package SMB.Client is
    --  the server chooses), No_Cipher otherwise and before Connect.
    function Negotiated_Cipher
      (Client : Connection) return SMB.Core_Negotiate.Cipher_Id;
+   --  The algorithm that signs messages on the connection: AES_GMAC or
+   --  AES_CMAC under 3.1.1, as the server chose from those offered (AES-GMAC
+   --  first), and HMAC_SHA256 under 2.1 and before Connect.
+   function Negotiated_Signing
+     (Client : Connection) return SMB.Core_Negotiate.Signing_Id;
    overriding procedure Finalize (Client : in out Connection);
 
 private
