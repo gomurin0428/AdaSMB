@@ -16,6 +16,7 @@ is
    use type SMB.Byte;
    use type SMB.Word;
    use type SMB.Core_Negotiate.Cipher_Id;
+   use type SMB.Core_Negotiate.Signing_Id;
    use type SMB.Core_Wire.Command_Code;
    use type SMB.DWord;
    use type SMB.QWord;
@@ -83,6 +84,13 @@ is
    function Current_Dialect (State : Engine_State) return SMB.Word;
    function Current_Cipher
      (State : Engine_State) return SMB.Core_Negotiate.Cipher_Id;
+   --  The algorithm that signs: HMAC-SHA256 unless negotiation chose 3.1.1,
+   --  and then the one the server chose, AES-CMAC or AES-GMAC.
+   function Current_Signing
+     (State : Engine_State) return SMB.Core_Negotiate.Signing_Id
+   with Post =>
+     (Current_Signing'Result = SMB.Core_Negotiate.HMAC_SHA256) =
+       (Current_Dialect (State) /= SMB.SMB2_Dialect_0311);
    function Current_Preauth
      (State : Engine_State) return SMB.Core_Preauth.Hash_Value;
    --  A 3.1.1 session signs with a key derived from the session key, which
@@ -322,12 +330,13 @@ is
             Has_Validated_Response (State)'Old
         else State = State'Old and Status = SMB.Invalid_State_Status);
 
-   --  Cipher and Preauth are those of a 3.1.1 response; a 2.1 response has
-   --  neither, and gets No_Cipher.
+   --  Cipher, Signing and Preauth are those of a 3.1.1 response; a 2.1
+   --  response has none of them, and gets No_Cipher and HMAC-SHA256.
    procedure Mark_Negotiated
      (State : in out Engine_State;
       Maximum_Read, Maximum_Write : Natural;
       Cipher : SMB.Core_Negotiate.Cipher_Id;
+      Signing : SMB.Core_Negotiate.SMB3_Signing_Id;
       Preauth : SMB.Core_Preauth.Hash_Value;
       Status : out SMB.Core_Status)
    with
@@ -370,6 +379,9 @@ is
           and Current_Cipher (State) =
             (if Current_Dialect (State) = SMB.SMB2_Dialect_0311 then Cipher
              else SMB.Core_Negotiate.No_Cipher)
+          and Current_Signing (State) =
+            (if Current_Dialect (State) = SMB.SMB2_Dialect_0311 then Signing
+             else SMB.Core_Negotiate.HMAC_SHA256)
           and Current_Preauth (State) = Preauth
           and not Has_SMB3_Signing_Key (State)
           and not Has_Validated_Response (State)
@@ -1128,6 +1140,10 @@ private
       Nonce_Counter : SMB.QWord := 0;
       Dialect : SMB.Word := 0;
       Cipher : SMB.Core_Negotiate.Cipher_Id := SMB.Core_Negotiate.No_Cipher;
+      --  Read only under 3.1.1, for which Mark_Negotiated sets it; the
+      --  dialect that resets set to 0 hides it (see Current_Signing).
+      Signing : SMB.Core_Negotiate.SMB3_Signing_Id :=
+        SMB.Core_Negotiate.AES_CMAC;
       Preauth : SMB.Core_Preauth.Hash_Value := SMB.Core_Preauth.Initial;
       Pending : Boolean := False;
       Pending_Async_Id : SMB.QWord := 0;
@@ -1156,6 +1172,7 @@ private
        and then After.Has_Key = Before.Has_Key
        and then After.Dialect = Before.Dialect
        and then After.Cipher = Before.Cipher
+       and then After.Signing = Before.Signing
        and then After.Preauth = Before.Preauth
        and then After.Pending = Before.Pending
        and then After.Pending_Async_Id = Before.Pending_Async_Id
@@ -1193,6 +1210,7 @@ private
        and then After.Decrypted = Before.Decrypted
        and then After.Dialect = Before.Dialect
        and then After.Cipher = Before.Cipher
+       and then After.Signing = Before.Signing
        and then After.Preauth = Before.Preauth
        and then After.Pending = Before.Pending
        and then After.Pending_Async_Id = Before.Pending_Async_Id
@@ -1229,6 +1247,7 @@ private
        and then After.Nonce_Counter = Before.Nonce_Counter
        and then After.Dialect = Before.Dialect
        and then After.Cipher = Before.Cipher
+       and then After.Signing = Before.Signing
        and then After.Preauth = Before.Preauth
        and then After.Pending = Before.Pending
        and then After.Pending_Async_Id = Before.Pending_Async_Id

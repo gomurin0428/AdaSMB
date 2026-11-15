@@ -35,7 +35,7 @@ DYNAMIC_ALLOWED = {
 # must not grow with that length.
 STATIC_REQUIRED = {
     ("smb-core_wire.adb", "VERIFY_SIGNATURE"),
-    ("smb-core_wire.adb", "VERIFY_SIGNATURE_CMAC"),
+    ("smb-core_wire.adb", "VERIFY_SIGNATURE_SMB3"),
     ("smb-crypto.adb", "SHA256"),
     ("smb-crypto.adb", "SHA256_UPDATE"),
     ("smb-crypto.adb", "SHA512"),
@@ -46,6 +46,8 @@ STATIC_REQUIRED = {
     ("smb-aes-ccm.adb", "OPEN"),
     ("smb-aes-gcm.adb", "SEAL"),
     ("smb-aes-gcm.adb", "OPEN"),
+    ("smb-aes-gcm.adb", "MAC"),
+    ("smb-aes-gcm.adb", "UPDATE"),
     ("smb-crypto.adb", "HMAC_SHA256"),
     ("smb-crypto.adb", "HMAC_SHA256_UPDATE"),
     ("smb-crypto.adb", "MD5"),

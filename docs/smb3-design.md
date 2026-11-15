@@ -19,8 +19,7 @@ implemented or proved. Section numbers refer to
   server marked the session or share as requiring encryption. A
   `Require_Encryption` option makes the connection fail when no cipher is
   negotiated.
-* **Not planned:** SMB 3.0/3.0.2, AES-GMAC signing (SMB2_SIGNING_CAPABILITIES),
-  compression, multichannel, RDMA/QUIC transports, Kerberos, and raising the
+* **Not planned:** SMB 3.0/3.0.2, compression, multichannel, RDMA/QUIC transports, Kerberos, and raising the
   64 KiB read/write chunk.
 
 ## Protocol profile
@@ -45,18 +44,23 @@ or ambiguous, the choice is marked as ours.
     AES-128-CCM (`0x0001`), AES-256-GCM (`0x0004`) and AES-256-CCM
     (`0x0003`), in that order, as a Windows client offers them by default.
     0.2.0 offered only the first two.
-  * No NETNAME (a SHOULD that servers ignore) and no SIGNING_CAPABILITIES,
-    so 3.1.1 signing is always AES-128-CMAC.
+  * SIGNING_CAPABILITIES (`0x0008`): AES-GMAC (`0x0002`), then AES-CMAC
+    (`0x0001`); see the AES-GMAC section below. 0.2.0 and 0.3.0 sent no
+    signing context, so 3.1.1 signing was always AES-128-CMAC.
+  * No NETNAME (a SHOULD that servers ignore).
 * Response checks for 3.1.1, all failing the connection:
   * exactly one preauth context, with HashAlgorithmCount = 1, SHA-512, and a
     DataLength that covers the count and salt;
   * at most one encryption context, with CipherCount = 1 and a cipher that
     is 0 or was offered;
-  * a compression, transport, RDMA or signing context is rejected (ours):
-    a server sends one only in answer to the client's, and we offer none;
+  * at most one signing context, with SigningAlgorithmCount = 1 and an
+    algorithm that was offered;
+  * a compression, transport or RDMA context is rejected (ours): a server
+    sends one only in answer to the client's, and we offer none;
   * every context lies inside the message, and other context types are
     ignored.
-* A missing encryption context, or cipher 0, means no encryption.
+* A missing encryption context, or cipher 0, means no encryption. A missing
+  signing context means AES-CMAC signing (§3.1.4.1).
 
 ### Preauth integrity (§3.2.5.2, §3.2.5.3.1)
 
@@ -101,10 +105,10 @@ ApplicationKey is not needed.
 
 ### Signing (§3.1.4.1, §3.2.4.1.1, §3.2.5.3.1)
 
-* AES-128-CMAC with SigningKey over the whole message with the Signature
-  field zeroed, as for HMAC-SHA256 today.
+* AES-128-GMAC or AES-128-CMAC, as negotiated, with SigningKey over the
+  whole message with the Signature field zeroed, as for HMAC-SHA256 today.
 * The final SESSION_SETUP response must carry SMB2_FLAGS_SIGNED, and the
-  client always verifies its CMAC with the new SigningKey before the session
+  client always verifies its signature with the new SigningKey before the session
   counts as authenticated. The spec requires the flag; verifying the
   signature too is ours, and it is what detects tampering with the preauth
   messages.
@@ -125,7 +129,7 @@ ApplicationKey is not needed.
   collide.
 * With a cipher negotiated, every request after the final SESSION_SETUP
   response is encrypted, TREE_CONNECT included. Inside an encrypted request
-  we keep SMB2_FLAGS_SIGNED and the AES-CMAC signature. MS-SMB2 3.2.4.1.1
+  we keep SMB2_FLAGS_SIGNED and the signature. MS-SMB2 3.2.4.1.1
   requires signing unless both the session and the share are encrypted, and
   does not forbid it then; the Windows client sets the flag with a zero
   signature. Samba and Windows Server 2025 accept such requests.
@@ -178,6 +182,33 @@ specification's AES-256 test cases and Python's `cryptography`; the
 protocol against Samba and Windows, each with one AES-256 cipher as the only
 one allowed.
 
+### AES-GMAC signing
+
+0.2.0 and 0.3.0 signed 3.1.1 with AES-128-CMAC only. Windows 11 and
+Windows Server 2022 and later prefer AES-128-GMAC, which MS-SMB2 negotiates
+with SMB2_SIGNING_CAPABILITIES (§2.2.3.1.7). The client now offers AES-GMAC,
+then AES-CMAC, and the server chooses:
+
+* the response's signing context must hold one algorithm that we offered,
+  so HMAC-SHA256 (`0x0000`) and unknown IDs fail the connection. Without a
+  signing context, 3.1.1 signs with AES-CMAC (§3.1.4.1);
+* AES-GMAC is GCM with no data (SP 800-38D): the tag of the whole message,
+  with the Signature field zeroed, as associated data, under the 16-byte
+  SigningKey. The SigningKey and its derivation do not change;
+* the 12-byte nonce (§3.1.4.1) is the header's MessageId, then four bytes
+  whose bit 0 is set when the server sends the message and bit 1 for a
+  CANCEL request; the rest are zero. Like Samba, we take bit 0 from the
+  header's SMB2_FLAGS_SERVER_TO_REDIR, which the response checks already
+  require. The client never sends CANCEL;
+* the engine records the algorithm with the dialect and cipher, and every
+  signature, sent or verified, uses it: `SMB.Engine.Current_Signing` is
+  HMAC-SHA256 unless 3.1.1 was negotiated.
+
+GMAC is checked against the GCM specification's test case 1 and NIST's
+CAVP no-plaintext vectors, and against Python's `cryptography`; the
+protocol against Samba with each algorithm as the only one allowed, and
+against Windows Server 2025, which chooses AES-GMAC.
+
 ## New cryptography
 
 All of it is written in Ada, in SPARK, in the style of `SMB.Crypto`: bounded
@@ -190,6 +221,7 @@ OpenSSL and `hashlib` as a test-only reference.
 | SHA-512 | preauth integrity hash | FIPS 180-4 examples, `hashlib` |
 | AES-128 and AES-256 (encryption direction only) | CMAC (AES-128 only), CCM, GCM | FIPS 197, SP 800-38A (AES-256), NIST CAVP (AES-128), `cryptography` |
 | AES-128-CMAC | 3.1.1 signing | RFC 4493, SP 800-38B |
+| AES-128-GMAC (GCM with no data) | 3.1.1 signing | the GCM specification's test case 1, NIST CAVP, `cryptography` |
 | SP 800-108 KDF (counter mode, HMAC-SHA256, L = 128 or 256) | signing and cipher keys | Microsoft vectors (L = 128), `cryptography` |
 | AES-128-CCM and AES-256-CCM (11-byte nonce, 16-byte tag) | encryption | SP 800-38C (AES-128), `cryptography` |
 | AES-128-GCM and AES-256-GCM (12-byte nonce, 16-byte tag) | encryption | SP 800-38D, the GCM specification's test cases 13 to 16 (AES-256), `cryptography` |
@@ -207,8 +239,9 @@ correctness comes from the vectors, not from proof.
 
 `SMB.Engine` keeps owning every security decision. New state:
 
-* the negotiated dialect (2.1 or 3.1.1) and cipher (none, or AES-128-CCM,
-  AES-128-GCM, AES-256-CCM or AES-256-GCM);
+* the negotiated dialect (2.1 or 3.1.1), cipher (none, or AES-128-CCM,
+  AES-128-GCM, AES-256-CCM or AES-256-GCM) and 3.1.1 signing algorithm
+  (AES-CMAC or AES-GMAC);
 * the connection and session preauth hash values (64 bytes each);
 * the 3.1.1 signing key, encryption key and decryption key, replacing the
   2.1 use of the session key as the signing key;

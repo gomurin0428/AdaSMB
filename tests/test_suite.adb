@@ -2809,6 +2809,9 @@ procedure Test_Suite is
       function Cipher (Value : Natural) return SMB.Bytes is
         (Context (2, U16 (1) & U16 (Value)));
 
+      function Signing_Algorithm (Value : Natural) return SMB.Bytes is
+        (Context (8, U16 (1) & U16 (Value)));
+
       --  A.1's response with its contexts replaced. Its first context
       --  stays at offset 448, after the security buffer.
       function Response (Contexts : Natural; Data : SMB.Bytes)
@@ -2836,38 +2839,45 @@ procedure Test_Suite is
          Packet : SMB.Bytes;
          Status : SMB.Core_Status;
          Cipher : SMB.Core_Negotiate.Cipher_Id :=
-           SMB.Core_Negotiate.No_Cipher)
+           SMB.Core_Negotiate.No_Cipher;
+         Signing : SMB.Core_Negotiate.SMB3_Signing_Id :=
+           SMB.Core_Negotiate.AES_CMAC)
       is
          Got_Cipher : SMB.Core_Negotiate.Cipher_Id;
+         Got_Signing : SMB.Core_Negotiate.SMB3_Signing_Id;
          Got_Status : SMB.Core_Status;
       begin
          SMB.Core_Negotiate.Check_Response_Contexts
-           (Packet, Got_Cipher, Got_Status);
+           (Packet, Got_Cipher, Got_Signing, Got_Status);
          Assert (Got_Status = Status,
                  "negotiate contexts " & Name & ": status "
                  & SMB.Core_Status'Image (Got_Status));
          Assert (Got_Cipher = Cipher,
                  "negotiate contexts " & Name & ": cipher "
                  & SMB.Core_Negotiate.Cipher_Id'Image (Got_Cipher));
+         Assert (SMB.Core_Negotiate."=" (Got_Signing, Signing),
+                 "negotiate contexts " & Name & ": signing "
+                 & SMB.Core_Negotiate.Signing_Id'Image (Got_Signing));
          Count := Count + 1;
       end Expect;
 
-      --  The preauth integrity context, padding, and the encryption
-      --  context with AES-128-GCM, AES-128-CCM, AES-256-GCM, AES-256-CCM.
+      --  The preauth integrity context, padding, the encryption context
+      --  with AES-128-GCM, AES-128-CCM, AES-256-GCM, AES-256-CCM, padding,
+      --  and the signing context with AES-GMAC and AES-CMAC.
       Contexts : constant SMB.Bytes := Hex
         ("0100260000000000010020000100D1709D7196E1BD0B6EBF95213D7655343576"
          & "3514392649FD6F216ED8BF269CD8000002000A00000000000400020001000400"
-         & "0300");
+         & "0300" & "000000000000" & "0800060000000000" & "020002000100");
    begin
       Assert_Equal
         (SMB.Core_Negotiate.Request (Guid, Salt, False),
          Hex ("240001000300000040000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
-              & "680000000200000011030000") & Contexts,
+              & "680000000300000011030000") & Contexts,
          "3.1.1 NEGOTIATE request");
       Assert_Equal
         (SMB.Core_Negotiate.Request (Guid, Salt, True),
          Hex ("240002000300000040000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
-              & "680000000200000011031002") & Contexts,
+              & "680000000300000011031002") & Contexts,
          "3.1.1 and 2.1 NEGOTIATE request");
       --  Windows offers only the AES-128 ciphers in A.1, so only the
       --  preauth integrity context and its padding match.
@@ -2938,7 +2948,46 @@ procedure Test_Suite is
       Expect ("short encryption",
               Response (2, Padded (Preauth) & Context (2, U16 (1) & (1 => 2))),
               SMB.Invalid_Protocol);
-      --  Contexts we never offer: compression, transport, RDMA, signing.
+      --  Signing: one algorithm that we offered.
+      Expect ("AES-GMAC signing",
+              Response (2, Padded (Preauth) & Signing_Algorithm (2)), SMB.Ok,
+              Signing => SMB.Core_Negotiate.AES_GMAC);
+      Expect ("AES-CMAC signing",
+              Response (2, Padded (Preauth) & Signing_Algorithm (1)), SMB.Ok);
+      Expect ("signing first, with a cipher",
+              Response (3, Padded (Signing_Algorithm (2))
+                        & Padded (Cipher (1)) & Preauth),
+              SMB.Ok, SMB.Core_Negotiate.AES_128_CCM,
+              SMB.Core_Negotiate.AES_GMAC);
+      Expect ("HMAC-SHA256 signing",
+              Response (2, Padded (Preauth) & Signing_Algorithm (0)),
+              SMB.Invalid_Protocol);
+      Expect ("signing 3", Response (2, Padded (Preauth) & Signing_Algorithm (3)),
+              SMB.Invalid_Protocol);
+      Expect ("signing 16#FFFF#",
+              Response (2, Padded (Preauth) & Signing_Algorithm (16#FFFF#)),
+              SMB.Invalid_Protocol);
+      Expect ("two signing contexts",
+              Response (3, Padded (Preauth) & Padded (Signing_Algorithm (2))
+                        & Signing_Algorithm (2)),
+              SMB.Invalid_Protocol);
+      Expect ("no signing count",
+              Response (2, Padded (Preauth) & Context (8, U16 (0) & U16 (2))),
+              SMB.Invalid_Protocol);
+      Expect ("two signing algorithms",
+              Response (2, Padded (Preauth)
+                        & Context (8, U16 (2) & U16 (2) & U16 (1))),
+              SMB.Invalid_Protocol);
+      Expect ("short signing",
+              Response (2, Padded (Preauth) & Context (8, U16 (1) & (1 => 2))),
+              SMB.Invalid_Protocol);
+      --  A failure after a signing context reports AES-CMAC and no cipher.
+      Expect ("failure after signing and cipher",
+              Response (4, Padded (Preauth) & Padded (Cipher (2))
+                        & Padded (Signing_Algorithm (2))
+                        & Context (3, (1 .. 6 => 0))),
+              SMB.Invalid_Protocol);
+      --  Contexts we never offer: compression, transport, RDMA.
       Expect ("compression", Response (2, Padded (Preauth)
                                        & Context (3, (1 .. 6 => 0))),
               SMB.Invalid_Protocol);
@@ -2947,9 +2996,6 @@ procedure Test_Suite is
               SMB.Invalid_Protocol);
       Expect ("RDMA", Response (2, Padded (Preauth)
                                 & Context (7, (1 .. 6 => 0))),
-              SMB.Invalid_Protocol);
-      Expect ("signing", Response (2, Padded (Preauth)
-                                   & Context (8, U16 (1) & U16 (2))),
               SMB.Invalid_Protocol);
       Expect ("no contexts", Response (0, Preauth), SMB.Invalid_Protocol);
 
@@ -3121,10 +3167,10 @@ procedure Test_Suite is
          Valid : Boolean;
          Status : SMB.Core_Status;
       begin
-         SMB.Core_Wire.Verify_Signature_CMAC (Packet, Key, Valid, Status);
+         SMB.Core_Wire.Verify_Signature_SMB3 (Packet, Key, SMB.Core_Negotiate.AES_CMAC, Valid, Status);
          Assert (Status = SMB.Ok and then Valid, Name & " signature");
          Data (48 .. 63) := (others => 16#FF#);
-         SMB.Core_Wire.Sign_CMAC (Data, Key, Status);
+         SMB.Core_Wire.Sign_SMB3 (Data, Key, SMB.Core_Negotiate.AES_CMAC, Status);
          Assert (Status = SMB.Ok, Name & " sign status");
          Assert_Equal (Data, Packet, Name & " signed");
          Count := Count + 2;
@@ -3138,14 +3184,14 @@ procedure Test_Suite is
             begin
                Data := Packet;
                Data (Index) := Data (Index) xor 16#01#;
-               SMB.Core_Wire.Verify_Signature_CMAC (Data, Key, Valid, Status);
+               SMB.Core_Wire.Verify_Signature_SMB3 (Data, Key, SMB.Core_Negotiate.AES_CMAC, Valid, Status);
                Assert (Status = SMB.Ok and then not Valid,
                        Name & " accepted a change at" & Natural'Image (Index));
                Count := Count + 1;
             end;
          end loop;
          Other_Key (15) := Other_Key (15) xor 16#80#;
-         SMB.Core_Wire.Verify_Signature_CMAC (Packet, Other_Key, Valid, Status);
+         SMB.Core_Wire.Verify_Signature_SMB3 (Packet, Other_Key, SMB.Core_Negotiate.AES_CMAC, Valid, Status);
          Assert (Status = SMB.Ok and then not Valid, Name & " another key");
          --  The SMB 2.1 HMAC form must not accept a CMAC signature.
          SMB.Core_Wire.Verify_Signature (Packet, Key, Valid, Status);
@@ -3163,11 +3209,11 @@ procedure Test_Suite is
       declare
          Short : SMB.Bytes (0 .. 62) := (others => 16#33#);
       begin
-         SMB.Core_Wire.Sign_CMAC (Short, Key, Status);
+         SMB.Core_Wire.Sign_SMB3 (Short, Key, SMB.Core_Negotiate.AES_CMAC, Status);
          Assert (Status = SMB.Invalid_Length
                  and then (for all Value of Short => Value = 16#33#),
                  "CMAC sign of a short message");
-         SMB.Core_Wire.Verify_Signature_CMAC (Short, Key, Valid, Status);
+         SMB.Core_Wire.Verify_Signature_SMB3 (Short, Key, SMB.Core_Negotiate.AES_CMAC, Valid, Status);
          Assert (Status = SMB.Invalid_Length and then not Valid,
                  "CMAC verify of a short message");
          Count := Count + 2;
@@ -3177,9 +3223,9 @@ procedure Test_Suite is
          Header : SMB.Bytes (Natural'Last - 63 .. Natural'Last) :=
            (others => 16#5C#);
       begin
-         SMB.Core_Wire.Sign_CMAC (Header, Key, Status);
+         SMB.Core_Wire.Sign_SMB3 (Header, Key, SMB.Core_Negotiate.AES_CMAC, Status);
          Assert (Status = SMB.Ok, "CMAC sign of a header at Natural'Last");
-         SMB.Core_Wire.Verify_Signature_CMAC (Header, Key, Valid, Status);
+         SMB.Core_Wire.Verify_Signature_SMB3 (Header, Key, SMB.Core_Negotiate.AES_CMAC, Valid, Status);
          Assert (Status = SMB.Ok and then Valid,
                  "CMAC verify of a header at Natural'Last");
          Count := Count + 2;
@@ -3188,6 +3234,183 @@ procedure Test_Suite is
         ("SMB 3.1.1 CMAC signing: 2 published signatures,"
          & Natural'Image (Count) & " checks passed");
    end Test_CMAC_Signing;
+
+   --  AES-GMAC: GCM with no data, as SMB.AES.GCM.MAC and its incremental
+   --  form, against three published tags (test case 1 of the GCM
+   --  specification and the first no-plaintext, 128-bit-AAD vectors of
+   --  NIST's CAVP gcmEncryptExtIV128 and gcmEncryptExtIV256); the SMB 3.1.1
+   --  nonce; and SMB signing with it. No SMB message signed with AES-GMAC
+   --  is published, so A.1's final SESSION_SETUP response signed under
+   --  A.1's signing key is checked against Python's cryptography.
+   procedure Test_GMAC_Signing is
+      Count : Natural := 0;
+
+      procedure Check_MAC (Name : String; Key, Nonce, Message, Tag : SMB.Bytes)
+      is
+         Context : SMB.AES.GCM.MAC_Context;
+         Result : SMB.AES.GCM.Tag_128;
+         Nothing : SMB.Bytes (1 .. 0);
+      begin
+         Assert_Equal (SMB.AES.GCM.MAC (Key, Nonce, Message), Tag,
+                       Name & " GMAC");
+         SMB.AES.GCM.Seal (Key, Nonce, Message, Nothing, Result);
+         Assert_Equal (Result, Tag, Name & " GCM with no data");
+         SMB.AES.GCM.Start (Context, Key, Nonce);
+         Assert (SMB.AES.GCM.Ready (Context)
+                 and then SMB.AES.GCM.Length (Context) = 0
+                 and then not SMB.AES.GCM.Wiped (Context),
+                 Name & " started");
+         SMB.AES.GCM.Update (Context, Nothing);
+         SMB.AES.GCM.Update (Context, Message);
+         Assert (SMB.AES.GCM.Length (Context) = Message'Length,
+                 Name & " length");
+         SMB.AES.GCM.Finish (Context, Result);
+         Assert (not SMB.AES.GCM.Ready (Context)
+                 and then SMB.AES.GCM.Wiped (Context),
+                 Name & " finished");
+         Assert_Equal (Result, Tag, Name & " incremental GMAC");
+         Count := Count + 3;
+      end Check_MAC;
+
+      --  A header with the given flags byte, command and MessageId.
+      function Header
+        (Flags : SMB.Byte; Command : SMB.Word; Message_Id : SMB.QWord)
+         return SMB.Bytes
+      is
+         Result : SMB.Bytes (0 .. 63) := (others => 16#A5#);
+      begin
+         Result (16) := Flags;
+         SMB.Wire.Put_U16 (Result, 12, Command);
+         SMB.Wire.Put_U64 (Result, 24, Message_Id);
+         return Result;
+      end Header;
+
+      procedure Check_Nonce
+        (Name : String; Data : SMB.Bytes; Expected_Role : SMB.Byte)
+      is
+      begin
+         Assert_Equal
+           (SMB.Core_Wire.GMAC_Nonce (Data),
+            Data (Data'First + 24 .. Data'First + 31)
+            & SMB.Bytes'(Expected_Role, 0, 0, 0),
+            Name & " nonce");
+         Count := Count + 1;
+      end Check_Nonce;
+
+      Key : constant SMB.AES.Key_128 := A1_Keys (0 .. 15);
+      Signature : constant SMB.Bytes := Hex ("42FE89B1890DE0AADF2117AC042B355B");
+      Packet : SMB.Bytes := A1_Setup_Response_2;
+      Data : SMB.Bytes (A1_Setup_Response_2'Range);
+      Valid : Boolean;
+      Status : SMB.Core_Status;
+   begin
+      Check_MAC ("test case 1", (0 .. 15 => 0), (0 .. 11 => 0),
+                 (1 .. 0 => 0), Hex ("58E2FCCEFA7E3061367F1D57A4E7455A"));
+      Check_MAC ("CAVP AES-128",
+                 Hex ("77BE63708971C4E240D1CB79E8D77FEB"),
+                 Hex ("E0E00F19FED7BA0136A797F3"),
+                 Hex ("7A43EC1D9C0A5A78A0B16533A6213CAB"),
+                 Hex ("209FCC8D3675ED938E9C7166709DD946"));
+      Check_MAC ("CAVP AES-256",
+                 Hex ("78DC4E0AAF52D935C3C01EEA57428F00"
+                      & "CA1FD475F5DA86A49C8DD73D68C8E223"),
+                 Hex ("D79CF22D504CC793C3FB6C8A"),
+                 Hex ("B96BAA8C1C75A671BFB2D08D06BE5F36"),
+                 Hex ("3E5D486AA2E30B22E040B85723A06E76"));
+
+      --  The nonce: the MessageId, then bit 0 from SMB2_FLAGS_SERVER_TO_REDIR
+      --  and bit 1 for CANCEL (command 12), read little-endian.
+      Check_Nonce ("request", Header (16#00#, 5, 16#0807_0605_0403_0201#), 0);
+      Check_Nonce ("response", Header (16#09#, 5, 16#0807_0605_0403_0201#), 1);
+      Check_Nonce ("other flags", Header (16#FE#, 5, 0), 0);
+      Check_Nonce ("CANCEL", Header (16#00#, 12, 7), 2);
+      Check_Nonce ("CANCEL response", Header (16#01#, 12, 7), 3);
+      Check_Nonce ("command 16#0C00#", Header (16#00#, 16#0C00#, 7), 0);
+      Check_Nonce ("command 16#010C#", Header (16#00#, 16#010C#, 7), 0);
+      Check_Nonce ("last MessageId", Header (16#01#, 1, SMB.QWord'Last), 1);
+      Check_Nonce ("A.1 response", A1_Setup_Response_2, 1);
+      declare
+         Rebased : constant SMB.Bytes (Natural'Last - 63 .. Natural'Last) :=
+           Header (16#01#, 12, 16#1122_3344_5566_7788#);
+      begin
+         Check_Nonce ("header at Natural'Last", Rebased, 3);
+      end;
+
+      --  A.1's final response, signed with AES-GMAC instead of AES-CMAC.
+      Packet (48 .. 63) := Signature;
+      SMB.Core_Wire.Verify_Signature_SMB3
+        (Packet, Key, SMB.Core_Negotiate.AES_GMAC, Valid, Status);
+      Assert (Status = SMB.Ok and then Valid, "A.1 GMAC signature");
+      Data := A1_Setup_Response_2;
+      SMB.Core_Wire.Sign_SMB3 (Data, Key, SMB.Core_Negotiate.AES_GMAC, Status);
+      Assert (Status = SMB.Ok, "A.1 GMAC sign status");
+      Assert_Equal (Data, Packet, "A.1 GMAC signed");
+      Count := Count + 2;
+      --  Every byte is covered, the flags and command through the nonce
+      --  too.
+      for Index in Packet'Range loop
+         Data := Packet;
+         Data (Index) := Data (Index) xor 16#01#;
+         SMB.Core_Wire.Verify_Signature_SMB3
+           (Data, Key, SMB.Core_Negotiate.AES_GMAC, Valid, Status);
+         Assert (Status = SMB.Ok and then not Valid,
+                 "A.1 GMAC accepted a change at" & Natural'Image (Index));
+         Count := Count + 1;
+      end loop;
+      declare
+         Other_Key : SMB.AES.Key_128 := Key;
+      begin
+         Other_Key (0) := Other_Key (0) xor 16#01#;
+         SMB.Core_Wire.Verify_Signature_SMB3
+           (Packet, Other_Key, SMB.Core_Negotiate.AES_GMAC, Valid, Status);
+         Assert (Status = SMB.Ok and then not Valid, "A.1 GMAC another key");
+      end;
+      --  Neither the CMAC nor the HMAC form accepts it, and GMAC does not
+      --  accept the published CMAC signature.
+      SMB.Core_Wire.Verify_Signature_SMB3
+        (Packet, Key, SMB.Core_Negotiate.AES_CMAC, Valid, Status);
+      Assert (Status = SMB.Ok and then not Valid, "A.1 GMAC as CMAC");
+      SMB.Core_Wire.Verify_Signature (Packet, Key, Valid, Status);
+      Assert (Status = SMB.Ok and then not Valid, "A.1 GMAC as HMAC");
+      SMB.Core_Wire.Verify_Signature_SMB3
+        (A1_Setup_Response_2, Key, SMB.Core_Negotiate.AES_GMAC, Valid,
+         Status);
+      Assert (Status = SMB.Ok and then not Valid, "A.1 CMAC as GMAC");
+      Count := Count + 4;
+
+      --  Shorter than a header: rejected, and Sign leaves the data alone.
+      declare
+         Short : SMB.Bytes (0 .. 62) := (others => 16#33#);
+      begin
+         SMB.Core_Wire.Sign_SMB3
+           (Short, Key, SMB.Core_Negotiate.AES_GMAC, Status);
+         Assert (Status = SMB.Invalid_Length
+                 and then (for all Value of Short => Value = 16#33#),
+                 "GMAC sign of a short message");
+         SMB.Core_Wire.Verify_Signature_SMB3
+           (Short, Key, SMB.Core_Negotiate.AES_GMAC, Valid, Status);
+         Assert (Status = SMB.Invalid_Length and then not Valid,
+                 "GMAC verify of a short message");
+         Count := Count + 2;
+      end;
+      --  A bare header that ends at Natural'Last signs and verifies.
+      declare
+         Bare : SMB.Bytes (Natural'Last - 63 .. Natural'Last) :=
+           (others => 16#5C#);
+      begin
+         SMB.Core_Wire.Sign_SMB3
+           (Bare, Key, SMB.Core_Negotiate.AES_GMAC, Status);
+         Assert (Status = SMB.Ok, "GMAC sign of a header at Natural'Last");
+         SMB.Core_Wire.Verify_Signature_SMB3
+           (Bare, Key, SMB.Core_Negotiate.AES_GMAC, Valid, Status);
+         Assert (Status = SMB.Ok and then Valid,
+                 "GMAC verify of a header at Natural'Last");
+         Count := Count + 2;
+      end;
+      Ada.Text_IO.Put_Line
+        ("SMB 3.1.1 GMAC signing: 3 published tags, 1 generated signature,"
+         & Natural'Image (Count) & " checks passed");
+   end Test_GMAC_Signing;
 
    procedure Test_Connection_Negotiate_311 is
       use type SMB.Core_Negotiate.Cipher_Id;
@@ -3216,11 +3439,13 @@ procedure Test_Suite is
          Expected : SMB.Core_Status;
          Dialect : SMB.Word := 0;
          Cipher : SMB.Core_Negotiate.Cipher_Id :=
-           SMB.Core_Negotiate.No_Cipher)
+           SMB.Core_Negotiate.No_Cipher;
+         Signing : SMB.Core_Negotiate.Signing_Id :=
+           SMB.Core_Negotiate.AES_CMAC)
       is
          State : SMB.Engine.Engine_State;
          Operation : SMB.Core_Connection.Connection_Operation;
-         Request : SMB.Bytes (0 .. 169) := (others => 0);
+         Request : SMB.Bytes (0 .. 189) := (others => 0);
          Used : Natural;
          Status : SMB.Core_Status;
          Nt_Status : SMB.DWord;
@@ -3231,8 +3456,8 @@ procedure Test_Suite is
          SMB.Core_Connection.Prepare_Negotiate
            (Operation, State, Guid, Test_Salt, Allow_21, Request, Used,
             Status);
-         Assert (Status = SMB.Ok and then Used = 170
-                 and then Request (64 .. 169) =
+         Assert (Status = SMB.Ok and then Used = 190
+                 and then Request (64 .. 189) =
                    SMB.Core_Negotiate.Request (Guid, Test_Salt, Allow_21),
                  Name & ": request");
          SMB.Core_Connection.Send_Succeeded (Operation, State, Status);
@@ -3244,8 +3469,10 @@ procedure Test_Suite is
             Assert
               (SMB.Engine.Current_Phase (State) = SMB.Engine.Negotiated
                and then SMB.Engine.Current_Dialect (State) = Dialect
-               and then SMB.Engine.Current_Cipher (State) = Cipher,
-               Name & ": dialect and cipher");
+               and then SMB.Engine.Current_Cipher (State) = Cipher
+               and then SMB.Core_Negotiate."="
+                 (SMB.Engine.Current_Signing (State), Signing),
+               Name & ": dialect, cipher and signing");
             if Dialect = SMB.SMB2_Dialect_0311 then
                SMB.Core_Preauth.Update (Chain, Request);
                SMB.Core_Preauth.Update (Chain, Response);
@@ -3272,15 +3499,20 @@ procedure Test_Suite is
       Check ("A.2, 2.1 allowed", True, A2_Negotiate_Response, SMB.Ok,
              SMB.SMB2_Dialect_0311, SMB.Core_Negotiate.AES_128_CCM);
       Check ("2.1 when allowed", True, Response_21, SMB.Ok,
-             SMB.SMB2_Dialect_0210);
+             SMB.SMB2_Dialect_0210, Signing => SMB.Core_Negotiate.HMAC_SHA256);
       Check ("2.1 when not offered", False, Response_21,
              SMB.Unsupported_Feature);
       No_Contexts (70) := 0;
       Check ("3.1.1 without contexts", True, No_Contexts,
              SMB.Invalid_Protocol);
-      --  A.1's encryption context turned into a signing context.
+      --  A.1's encryption context turned into a signing context, which
+      --  chooses AES-GMAC (2), and then HMAC-SHA256 (0), which we do not
+      --  offer.
       Signing_Context (496) := 8;
-      Check ("3.1.1 with a signing context", False, Signing_Context,
+      Check ("3.1.1 with a signing context", False, Signing_Context, SMB.Ok,
+             SMB.SMB2_Dialect_0311, Signing => SMB.Core_Negotiate.AES_GMAC);
+      Signing_Context (506) := 0;
+      Check ("3.1.1 choosing HMAC-SHA256 signing", False, Signing_Context,
              SMB.Invalid_Protocol);
       Ada.Text_IO.Put_Line
         ("SMB 3.1.1 connection negotiation:" & Natural'Image (Count)
@@ -3288,10 +3520,20 @@ procedure Test_Suite is
    end Test_Connection_Negotiate_311;
 
    --  SMB 3.1.1 after authentication, driven through the engine by hand up
-   --  to the final SESSION_SETUP: requests carry the AES-CMAC of the
-   --  derived key, signed responses must too, and a signature failure clears
-   --  the 3.1.1 state.
-   procedure Test_SMB311_Signed_Operations is
+   --  to the final SESSION_SETUP, with the server's choice of Signing:
+   --  requests carry the AES-CMAC or AES-GMAC of the derived key, signed
+   --  responses must too, and a signature failure, with the other algorithm
+   --  among others, clears the 3.1.1 state.
+   procedure Test_SMB311_Signed_Operations
+     (Signing : SMB.Core_Negotiate.SMB3_Signing_Id)
+   is
+      Other : constant SMB.Core_Negotiate.SMB3_Signing_Id :=
+        (case Signing is
+            when SMB.Core_Negotiate.AES_CMAC => SMB.Core_Negotiate.AES_GMAC,
+            when SMB.Core_Negotiate.AES_GMAC => SMB.Core_Negotiate.AES_CMAC);
+      Label : constant String :=
+        "3.1.1 operations, " & SMB.Core_Negotiate.Signing_Id'Image (Signing)
+        & ": ";
       Preauth : constant SMB.Core_Preauth.Hash_Value := (others => 16#3E#);
       Key : constant SMB.Bytes (0 .. 15) := Engine_Fixtures.Key;
       SMB3_Key : constant SMB.AES.Key_128 :=
@@ -3306,27 +3548,33 @@ procedure Test_Suite is
       Expected : SMB.Engine.Request_Expectation;
       Checks : Natural := 0;
 
-      --  HMAC under the session key, AES-CMAC under the 3.1.1 key, or
-      --  AES-CMAC under the all-zero key an engine holds before it has one.
-      type Signer is (HMAC, CMAC, Zero_CMAC);
+      --  HMAC under the session key; Signing (MAC) or the other 3.1.1
+      --  algorithm (Other_MAC) under the 3.1.1 key; or Signing under the
+      --  all-zero key an engine holds before it has one.
+      type Signer is (HMAC, MAC, Other_MAC, Zero_MAC);
 
       procedure Check (Condition : Boolean; Message : String) is
       begin
-         Assert (Condition, "3.1.1 operations: " & Message);
+         Assert (Condition, Label & Message);
          Checks := Checks + 1;
       end Check;
 
-      --  Whether Data carries the CMAC of the 3.1.1 key, and not the HMAC of
-      --  the session key.
-      function CMAC_Signed (Data : SMB.Bytes) return Boolean is
+      --  Whether Data carries the Signing MAC of the 3.1.1 key, and neither
+      --  the other algorithm's nor the HMAC of the session key.
+      function MAC_Signed (Data : SMB.Bytes) return Boolean is
          Valid : Boolean;
+         Other_Valid : Boolean;
          Verify_Status : SMB.Core_Status;
+         Other_Status : SMB.Core_Status;
       begin
-         SMB.Core_Wire.Verify_Signature_CMAC
-           (Data, SMB3_Key, Valid, Verify_Status);
+         SMB.Core_Wire.Verify_Signature_SMB3
+           (Data, SMB3_Key, Signing, Valid, Verify_Status);
+         SMB.Core_Wire.Verify_Signature_SMB3
+           (Data, SMB3_Key, Other, Other_Valid, Other_Status);
          return Verify_Status = SMB.Ok and then Valid
+           and then Other_Status = SMB.Ok and then not Other_Valid
            and then not SMB.Wire.Verify_Signature (Data, Key);
-      end CMAC_Signed;
+      end MAC_Signed;
 
       --  A signed response to message Reply_Id: header, then the body bytes
       --  set by the caller.
@@ -3350,13 +3598,15 @@ procedure Test_Suite is
          case With_Signer is
             when HMAC =>
                SMB.Wire.Sign (Packet, Key);
-            when CMAC =>
-               SMB.Core_Wire.Sign_CMAC (Packet, SMB3_Key, Sign_Status);
-            when Zero_CMAC =>
-               SMB.Core_Wire.Sign_CMAC
-                 (Packet, SMB.AES.Key_128'(others => 0), Sign_Status);
+            when MAC =>
+               SMB.Core_Wire.Sign_SMB3 (Packet, SMB3_Key, Signing, Sign_Status);
+            when Other_MAC =>
+               SMB.Core_Wire.Sign_SMB3 (Packet, SMB3_Key, Other, Sign_Status);
+            when Zero_MAC =>
+               SMB.Core_Wire.Sign_SMB3
+                 (Packet, SMB.AES.Key_128'(others => 0), Signing, Sign_Status);
          end case;
-         Assert (Sign_Status = SMB.Ok, "3.1.1 operations: sign a reply");
+         Assert (Sign_Status = SMB.Ok, Label & "sign a reply");
       end Sign_Reply;
 
       --  A fresh engine that negotiated Dialect, with Cipher offered.
@@ -3379,10 +3629,10 @@ procedure Test_Suite is
          Packet (98) := 1;
          Packet (102) := 1;
          SMB.Engine.Accept_Response (State, Packet, Nt_Status, Status);
-         Assert (Status = SMB.Ok, "3.1.1 operations: negotiate response");
+         Assert (Status = SMB.Ok, Label & "negotiate response");
          SMB.Engine.Mark_Negotiated
-           (State, 65_536, 65_536, Cipher, Preauth, Status);
-         Assert (Status = SMB.Ok, "3.1.1 operations: negotiated");
+           (State, 65_536, 65_536, Cipher, Signing, Preauth, Status);
+         Assert (Status = SMB.Ok, Label & "negotiated");
       end Negotiate;
 
       --  The challenge response, with Session_Flags, and its status.
@@ -3403,9 +3653,9 @@ procedure Test_Suite is
       procedure Challenge_And_Key (Session_Flags : SMB.Word := 0) is
       begin
          Challenge_Exchange (Session_Flags);
-         Assert (Status = SMB.Ok, "3.1.1 operations: challenge response");
+         Assert (Status = SMB.Ok, Label & "challenge response");
          SMB.Engine.Install_Session_Key (State, Session_Id, Key, Status);
-         Assert (Status = SMB.Ok, "3.1.1 operations: session key");
+         Assert (Status = SMB.Ok, Label & "session key");
       end Challenge_And_Key;
 
       --  The final SESSION_SETUP exchange; Status and Nt_Status are
@@ -3419,7 +3669,7 @@ procedure Test_Suite is
       begin
          SMB.Engine.Begin_Request
            (State, 1, False, True, Message_Id, Expected, Status);
-         Assert (Status = SMB.Ok, "3.1.1 operations: final request");
+         Assert (Status = SMB.Ok, Label & "final request");
          Prepare_Reply (Packet, 1, Message_Id, 0);
          SMB.Wire.Put_U32 (Packet, 8, Final_Status);
          Packet (64) := 9;
@@ -3451,6 +3701,9 @@ procedure Test_Suite is
                SMB.Core_Negotiate.No_Cipher)
             and then SMB.Engine.Current_Preauth (State) =
               SMB.Core_Preauth.Initial
+            and then SMB.Core_Negotiate."="
+              (SMB.Engine.Current_Signing (State),
+               SMB.Core_Negotiate.HMAC_SHA256)
             and then not SMB.Engine.Has_SMB3_Signing_Key (State)
             and then SMB.Engine.Current_SMB3_Signing_Key (State) =
               SMB.AES.Key_128'(others => 0)
@@ -3485,27 +3738,33 @@ procedure Test_Suite is
                 "unsigned response that claims a signature");
       end;
 
-      --  2.1 keeps no cipher and has no 3.1.1 key to derive.
+      --  2.1 keeps no cipher, signs with HMAC-SHA256 and has no 3.1.1 key
+      --  to derive.
       Negotiate (SMB.SMB2_Dialect_0210, SMB.Core_Negotiate.AES_128_GCM);
       Check (SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0210
              and then SMB.Core_Negotiate."="
                (SMB.Engine.Current_Cipher (State),
-                SMB.Core_Negotiate.No_Cipher),
-             "2.1 records no cipher");
+                SMB.Core_Negotiate.No_Cipher)
+             and then SMB.Core_Negotiate."="
+               (SMB.Engine.Current_Signing (State),
+                SMB.Core_Negotiate.HMAC_SHA256),
+             "2.1 records no cipher and HMAC-SHA256 signing");
       Challenge_And_Key;
       Reject_Derive ("derive on 2.1");
 
       --  3.1.1 derives only from a session key. Before the derivation a
-      --  signed response fails even with the CMAC of the all-zero key the
+      --  signed response fails even with the MAC of the all-zero key the
       --  engine holds, and its NTSTATUS is not reported.
       Negotiate (SMB.SMB2_Dialect_0311, SMB.Core_Negotiate.AES_128_GCM);
       Check (SMB.Core_Negotiate."="
                (SMB.Engine.Current_Cipher (State),
-                SMB.Core_Negotiate.AES_128_GCM),
-             "3.1.1 records the cipher");
+                SMB.Core_Negotiate.AES_128_GCM)
+             and then SMB.Core_Negotiate."="
+               (SMB.Engine.Current_Signing (State), Signing),
+             "3.1.1 records the cipher and the signing algorithm");
       Reject_Derive ("derive without a session key");
       Challenge_And_Key;
-      Final_Exchange (Zero_CMAC, Logon_Failure);
+      Final_Exchange (Zero_MAC, Logon_Failure);
       Check (Status = SMB.Signature_Error and then Nt_Status = 0,
              "signed response before the key is derived");
       Check_Cleared ("signature failure before the key is derived");
@@ -3518,8 +3777,18 @@ procedure Test_Suite is
              and then SMB.Engine.Current_SMB3_Signing_Key (State) = SMB3_Key,
              "derived signing key");
       Reject_Derive ("derive twice");
-      Final_Exchange (CMAC);
-      Check (Status = SMB.Ok, "final response signed with CMAC");
+      --  The other algorithm's MAC of the right key fails too.
+      declare
+         Before : constant SMB.Engine.Engine_State := State;
+      begin
+         Final_Exchange (Other_MAC, Logon_Failure);
+         Check (Status = SMB.Signature_Error and then Nt_Status = 0,
+                "final response signed with the other algorithm");
+         Check_Cleared ("signature failure with the other algorithm");
+         State := Before;
+      end;
+      Final_Exchange (MAC);
+      Check (Status = SMB.Ok, "final response signed");
       SMB.Engine.Mark_Authenticated (State, Status);
       Check (Status = SMB.Ok, "authenticated");
 
@@ -3534,19 +3803,19 @@ procedure Test_Suite is
            (Operation, State, SMB.Bytes'(16#5C#, 0, 16#73#, 0), Request,
             Used, Status);
          Check (Status = SMB.Ok and then Used = 76
-                and then CMAC_Signed (Request (0 .. Used - 1)),
-                "TREE_CONNECT signed with CMAC");
+                and then MAC_Signed (Request (0 .. Used - 1)),
+                "TREE_CONNECT signed");
          SMB.Core_Connection.Send_Succeeded (Operation, State, Status);
          Prepare_Reply (Response, 3, SMB.Wire.U64 (Request, 24), Tree_Id);
          Response (64) := 16;
          Response (66) := 1;
-         Sign_Reply (Response, CMAC);
+         Sign_Reply (Response, MAC);
          SMB.Core_Connection.Complete
            (Operation, State, Response, Nt_Status, Status);
          Check (Status = SMB.Ok
                 and then SMB.Engine.Current_Phase (State) =
                   SMB.Engine.Share_Connected,
-                "TREE_CONNECT response signed with CMAC");
+                "TREE_CONNECT response signed");
       end;
 
       --  CREATE and CLOSE through Core_Client; the CLOSE response is signed
@@ -3562,16 +3831,16 @@ procedure Test_Suite is
            (Operation, State, SMB.Bytes'(65, 0), SMB.Engine.Read_Only, False,
             1, False, Request, Used, Status);
          Check (Status = SMB.Ok
-                and then CMAC_Signed (Request (0 .. Used - 1)),
-                "CREATE signed with CMAC");
+                and then MAC_Signed (Request (0 .. Used - 1)),
+                "CREATE signed");
          SMB.Core_Client.Send_Succeeded (Operation, State, Status);
          Prepare_Reply (Response, 5, SMB.Wire.U64 (Request, 24), Tree_Id);
          Response (64) := 89;
          Response (128 .. 143) := Engine_Fixtures.File_Id;
-         Sign_Reply (Response, CMAC);
+         Sign_Reply (Response, MAC);
          SMB.Core_Client.Complete
            (Operation, State, Response, Nt_Status, Token, Status);
-         Check (Status = SMB.Ok, "CREATE response signed with CMAC");
+         Check (Status = SMB.Ok, "CREATE response signed");
          declare
             Close : SMB.Core_Client.Operation;
             Close_Response : SMB.Bytes (0 .. 123);
@@ -3580,8 +3849,8 @@ procedure Test_Suite is
             SMB.Core_Client.Prepare_Close
               (Close, State, Token, Request, Used, Status);
             Check (Status = SMB.Ok
-                   and then CMAC_Signed (Request (0 .. Used - 1)),
-                   "CLOSE signed with CMAC");
+                   and then MAC_Signed (Request (0 .. Used - 1)),
+                   "CLOSE signed");
             SMB.Core_Client.Send_Succeeded (Close, State, Status);
             Prepare_Reply
               (Close_Response, 6, SMB.Wire.U64 (Request, 24), Tree_Id);
@@ -3634,7 +3903,7 @@ procedure Test_Suite is
                SMB.Core_Transform.Seal
                  (Cipher, Seal_Key, SMB.Core_Transform.Counter_Nonce (16#5E5E#),
                   Session_Id, Plain, Output, Used, Seal_Status);
-               Assert (Seal_Status = SMB.Ok, "3.1.1 operations: server seal");
+               Assert (Seal_Status = SMB.Ok, Label & "server seal");
                return Output;
             end Server_Sealed;
 
@@ -3684,7 +3953,7 @@ procedure Test_Suite is
                       and then not SMB.Engine.Is_Encrypting (State),
                       Name & " cipher keys");
                --  The server may mark the session encrypted.
-               Final_Exchange (CMAC, Session_Flags => 4);
+               Final_Exchange (MAC, Session_Flags => 4);
                Check (Status = SMB.Ok, Name & " final response");
                SMB.Engine.Mark_Authenticated (State, Status);
                Check (Status = SMB.Ok and then SMB.Engine.Is_Encrypting (State),
@@ -3814,7 +4083,7 @@ procedure Test_Suite is
                     (Close_Response, 6, SMB.Wire.U64 (Request, 24), Tree_Id);
                   SMB.Wire.Put_U32 (Close_Response, 8, Logon_Failure);
                   Close_Response (64) := 60;
-                  Sign_Reply (Close_Response, CMAC);
+                  Sign_Reply (Close_Response, MAC);
                   SMB.Core_Client.Complete
                     (Close, State, Close_Response, Nt_Status, Ignored_Token,
                      Status);
@@ -3859,7 +4128,7 @@ procedure Test_Suite is
                   Authenticate_Encrypted;
                   SMB.Engine.Begin_Request
                     (State, 3, True, True, Message_Id, Expected, Status);
-                  Assert (Status = SMB.Ok, "3.1.1 operations: pending");
+                  Assert (Status = SMB.Ok, Label & "pending");
                end Pending;
             begin
                SMB.Wire.Initialize_Header (Plain, 3, 0, 0, Session_Id);
@@ -3953,7 +4222,7 @@ procedure Test_Suite is
       SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
       Check (Status = SMB.Ok and then not SMB.Engine.Has_Cipher_Keys (State),
              "no cipher keys without a cipher");
-      Final_Exchange (CMAC, Session_Flags => 4);
+      Final_Exchange (MAC, Session_Flags => 4);
       Check (Status = SMB.Unsupported_Feature
              and then SMB.Engine.Current_Phase (State) =
                SMB.Engine.Disconnected,
@@ -3961,7 +4230,7 @@ procedure Test_Suite is
       Negotiate (SMB.SMB2_Dialect_0311);
       Challenge_And_Key;
       SMB.Engine.Derive_SMB3_Keys (State, Preauth, Status);
-      Final_Exchange (CMAC);
+      Final_Exchange (MAC);
       SMB.Engine.Mark_Authenticated (State, Status);
       Check (Status = SMB.Ok and then not SMB.Engine.Is_Encrypting (State),
              "no encryption without a cipher");
@@ -3979,7 +4248,7 @@ procedure Test_Suite is
          Response (64) := 16;
          Response (66) := 1;
          SMB.Wire.Put_U32 (Response, 68, 16#8000#);
-         Sign_Reply (Response, CMAC);
+         Sign_Reply (Response, MAC);
          SMB.Core_Connection.Complete
            (Operation, State, Response, Nt_Status, Status);
          Check (Status = SMB.Unsupported_Feature
@@ -3988,7 +4257,9 @@ procedure Test_Suite is
                 "encrypted share without a cipher");
       end;
       Ada.Text_IO.Put_Line
-        ("SMB 3.1.1 signed and encrypted operations:" & Natural'Image (Checks)
+        ("SMB 3.1.1 signed and encrypted operations, "
+         & SMB.Core_Negotiate.Signing_Id'Image (Signing) & ":"
+         & Natural'Image (Checks)
          & " checks passed");
    end Test_SMB311_Signed_Operations;
 
@@ -4457,7 +4728,7 @@ procedure Test_Suite is
          Response (102) := 1;
          SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
          Assert (Status = SMB.Ok, "authentication negotiate response");
-         SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Preauth.Initial, Status);
+         SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Negotiate.AES_CMAC, SMB.Core_Preauth.Initial, Status);
          Assert (Status = SMB.Ok, "authentication negotiated state");
       end Prepare_Negotiated;
 
@@ -5728,7 +5999,7 @@ procedure Test_Suite is
             Assert (Status = SMB.Ok, "3.1.1 negotiate response");
             SMB.Engine.Mark_Negotiated
               (State_311, 65_536, 65_536, SMB.Core_Negotiate.AES_128_GCM,
-               Connection_Hash, Status);
+               SMB.Core_Negotiate.AES_CMAC, Connection_Hash, Status);
             Assert
               (Status = SMB.Ok
                and then SMB.Engine.Current_Dialect (State_311) =
@@ -5776,9 +6047,9 @@ procedure Test_Suite is
                Signing_Status : SMB.Core_Status;
             begin
                if Sign_With_CMAC then
-                  SMB.Core_Wire.Sign_CMAC
+                  SMB.Core_Wire.Sign_SMB3
                     (Final, SMB.KDF.Derive (Session_Key, SMB.KDF.Signing, Chain),
-                     Signing_Status);
+                     SMB.Core_Negotiate.AES_CMAC, Signing_Status);
                   Assert (Signing_Status = SMB.Ok, "3.1.1 final signature");
                end if;
                SMB.Core_Client.Complete_Authenticate
@@ -6977,7 +7248,7 @@ procedure Test_Suite is
             if Stop_At_Negotiate then
                return;
             end if;
-            SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Preauth.Initial, Status);
+            SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Negotiate.AES_CMAC, SMB.Core_Preauth.Initial, Status);
             Assert (Status = SMB.Ok, "reconnect negotiated phase");
          end;
          declare
@@ -7356,7 +7627,7 @@ procedure Test_Suite is
                begin
                   case Kind is
                      when Negotiate_Receipt =>
-                        SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Preauth.Initial, Status);
+                        SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Negotiate.AES_CMAC, SMB.Core_Preauth.Initial, Status);
                      when Challenge_Receipt =>
                         SMB.Engine.Install_Session_Key (Target, Session_Id, Key, Status);
                      when Create_Receipt =>
@@ -8124,7 +8395,7 @@ procedure Test_Suite is
             Before : constant SMB.Engine.Engine_State := Target;
          begin
             SMB.Engine.Mark_Negotiated
-              (Target, Read_Limit, Write_Limit, SMB.Core_Negotiate.No_Cipher, SMB.Core_Preauth.Initial, Status);
+              (Target, Read_Limit, Write_Limit, SMB.Core_Negotiate.No_Cipher, SMB.Core_Negotiate.AES_CMAC, SMB.Core_Preauth.Initial, Status);
             Assert
               (Status = SMB.Invalid_Value and then Target = Before,
                "rejected negotiation changed state or status");
@@ -8201,7 +8472,7 @@ procedure Test_Suite is
             Reject_Negotiation (Read_Limit => Limit);
             Reject_Negotiation (Write_Limit => Limit);
          end loop;
-         SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Preauth.Initial, Status);
+         SMB.Engine.Mark_Negotiated (Target, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Negotiate.AES_CMAC, SMB.Core_Preauth.Initial, Status);
          Assert
            (Status = SMB.Ok
             and then SMB.Engine.Current_Phase (Target) = SMB.Engine.Negotiated
@@ -8445,7 +8716,7 @@ procedure Test_Suite is
            (16#00#, 16#01#, 16#02#, 16#03#, 16#04#, 16#05#, 16#06#, 16#07#,
             16#08#, 16#09#, 16#0A#, 16#0B#, 16#0C#, 16#0D#, 16#0E#, 16#0F#);
          Name : constant SMB.Bytes (9 .. 12) := (16#41#, 0, 16#42#, 0);
-         Request : SMB.Bytes (0 .. 169) := (others => 0);
+         Request : SMB.Bytes (0 .. 189) := (others => 0);
          Nonzero_Request : SMB.Bytes (5 .. 80) := (others => 0);
          Short_Request : SMB.Bytes (0 .. 74) := (others => 0);
          Response : SMB.Bytes (0 .. 127) := (others => 0);
@@ -8469,10 +8740,10 @@ procedure Test_Suite is
          SMB.Core_Connection.Prepare_Negotiate
            (Operation, State, Guid, Test_Salt, True, Request, Used, Status);
          Assert
-           (Status = SMB.Ok and then Used = 170
+           (Status = SMB.Ok and then Used = 190
             and then SMB.Wire.U16 (Request, 12) = 0
             and then Request (76 .. 91) = Guid
-            and then Request (64 .. 169) =
+            and then Request (64 .. 189) =
               SMB.Core_Negotiate.Request (Guid, Test_Salt, True),
             "connection NEGOTIATE packet fields and GUID");
          SMB.Core_Connection.Send_Succeeded (Operation, State, Status);
@@ -8833,7 +9104,7 @@ procedure Test_Suite is
             Owner_Operation, Foreign_Operation, Fresh_Operation :
               SMB.Core_Connection.Connection_Operation;
             Owner_Packet, Foreign_Packet, Fresh_Packet :
-              SMB.Bytes (0 .. 169) := (others => 0);
+              SMB.Bytes (0 .. 189) := (others => 0);
             Owner_Used, Foreign_Used, Fresh_Used : Natural;
             Owner_Id, Owner_Epoch : SMB.QWord;
             Owner_State_Before, Foreign_State_Before :
@@ -9109,7 +9380,7 @@ procedure Test_Suite is
          Name : constant SMB.Bytes (0 .. 3) := (16#41#, 0, 16#42#, 0);
          Negotiate, Second_Negotiate, Tree_One, Disconnect :
            SMB.Core_Connection.Connection_Operation;
-         Request : SMB.Bytes (0 .. 169);
+         Request : SMB.Bytes (0 .. 189);
          Response : SMB.Bytes (0 .. 127);
          Used : Natural;
          Response_Status : SMB.Core_Status;
@@ -9120,7 +9391,7 @@ procedure Test_Suite is
          SMB.Core_Connection.Prepare_Negotiate
            (Negotiate, State, Guid, Test_Salt, True, Request, Used, Status);
          Assert
-           (Status = SMB.Ok and then Used = 170
+           (Status = SMB.Ok and then Used = 190
             and then (for all Index in 48 .. 63 => Request (Index) = 0),
             "unsigned NEGOTIATE carries no signature");
          SMB.Core_Connection.Send_Succeeded (Negotiate, State, Status);
@@ -9545,7 +9816,7 @@ procedure Test_Suite is
 
       function Rejects_Negotiation return Boolean is
       begin
-         SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Preauth.Initial, Status);
+         SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Negotiate.AES_CMAC, SMB.Core_Preauth.Initial, Status);
          return Status /= SMB.Ok;
       end Rejects_Negotiation;
 
@@ -9635,7 +9906,7 @@ procedure Test_Suite is
          Assert
            (Status = SMB.Ok and then Nt_Status = SMB.Success,
             "accept negotiate receipt");
-         SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Preauth.Initial, Status);
+         SMB.Engine.Mark_Negotiated (State, 65_536, 65_536, SMB.Core_Negotiate.No_Cipher, SMB.Core_Negotiate.AES_CMAC, SMB.Core_Preauth.Initial, Status);
          Assert
            (Status = SMB.Ok
             and then SMB.Engine.Current_Phase (State) = SMB.Engine.Negotiated,
@@ -11015,7 +11286,7 @@ procedure Test_Suite is
          Response (100) := 1;
          SMB.Engine.Accept_Response (State, Response, Nt_Status, Status);
          Assert (Status = SMB.Ok, "malformed CLOSE accept negotiate");
-         SMB.Engine.Mark_Negotiated (State, 1, 1, SMB.Core_Negotiate.No_Cipher, SMB.Core_Preauth.Initial, Status);
+         SMB.Engine.Mark_Negotiated (State, 1, 1, SMB.Core_Negotiate.No_Cipher, SMB.Core_Negotiate.AES_CMAC, SMB.Core_Preauth.Initial, Status);
          Assert (Status = SMB.Ok, "malformed CLOSE negotiate transition");
       end;
 
@@ -11467,8 +11738,10 @@ begin
    Test_Negotiate_311;
    Test_Preauth_311;
    Test_CMAC_Signing;
+   Test_GMAC_Signing;
    Test_Connection_Negotiate_311;
-   Test_SMB311_Signed_Operations;
+   Test_SMB311_Signed_Operations (SMB.Core_Negotiate.AES_CMAC);
+   Test_SMB311_Signed_Operations (SMB.Core_Negotiate.AES_GMAC);
    Test_Crypto_Equality;
    Test_Authentication_Preflight;
    Test_Framing;

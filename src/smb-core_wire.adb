@@ -364,9 +364,21 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status := SMB.Ok;
    end Verify_Signature;
 
-   procedure Sign_CMAC
+   --  SMB2 CANCEL (MS-SMB2 2.2.1).
+   Cancel_Command : constant := 16#000C#;
+
+   function GMAC_Nonce (Data : SMB.Bytes) return SMB.AES.GCM.Nonce_96 is
+     (Data (Data'First + 24), Data (Data'First + 25), Data (Data'First + 26),
+      Data (Data'First + 27), Data (Data'First + 28), Data (Data'First + 29),
+      Data (Data'First + 30), Data (Data'First + 31),
+      (Data (Data'First + 16) and 1)
+        or (if Encoded_U16 (Data, 12) = Cancel_Command then 2 else 0),
+      0, 0, 0);
+
+   procedure Sign_SMB3
      (Data : in out SMB.Bytes;
       Key : SMB.AES.Key_128;
+      Algorithm : SMB.Core_Negotiate.SMB3_Signing_Id;
       Status : out SMB.Core_Status) is
    begin
       if Data'Length < Header_Size then
@@ -377,18 +389,24 @@ package body SMB.Core_Wire with SPARK_Mode is
          Data (Data'First + Index) := 0;
       end loop;
       declare
-         Tag : constant SMB.AES.CMAC.Tag_128 := SMB.AES.CMAC.MAC (Key, Data);
+         Tag : constant SMB.AES.CMAC.Tag_128 :=
+           (case Algorithm is
+              when SMB.Core_Negotiate.AES_CMAC =>
+                 SMB.AES.CMAC.MAC (Key, Data),
+              when SMB.Core_Negotiate.AES_GMAC =>
+                 SMB.AES.GCM.MAC (Key, GMAC_Nonce (Data), Data));
       begin
          for Index in 0 .. 15 loop
             Data (Data'First + 48 + Index) := Tag (Index);
          end loop;
       end;
       Status := SMB.Ok;
-   end Sign_CMAC;
+   end Sign_SMB3;
 
-   procedure Verify_Signature_CMAC
+   procedure Verify_Signature_SMB3
      (Data : SMB.Bytes;
       Key : SMB.AES.Key_128;
+      Algorithm : SMB.Core_Negotiate.SMB3_Signing_Id;
       Valid : out Boolean;
       Status : out SMB.Core_Status) is
    begin
@@ -401,22 +419,44 @@ package body SMB.Core_Wire with SPARK_Mode is
          Zero_Signature : constant SMB.Bytes (0 .. 15) := (others => 0);
          Given : constant SMB.Bytes (0 .. 15) :=
            Data (Data'First + 48 .. Data'First + 63);
-         Tag : SMB.AES.CMAC.Tag_128;
-         Context : SMB.AES.CMAC.MAC_Context;
+         Tag : SMB.Bytes (0 .. 15);
       begin
          --  The header up to the Signature field, a zero signature and the
          --  rest. For a bare header that ends at Natural'Last, the rest's
-         --  first index would overflow, so it is skipped when empty.
-         SMB.AES.CMAC.Start (Context, Key);
-         SMB.AES.CMAC.Update (Context, Data (Data'First .. Data'First + 47));
-         SMB.AES.CMAC.Update (Context, Zero_Signature);
-         if Data'Length > Header_Size then
-            SMB.AES.CMAC.Update
-              (Context, Data (Data'First + Header_Size .. Data'Last));
-         end if;
-         SMB.AES.CMAC.Finish (Context, Tag);
+         --  first index would overflow, so it is skipped when empty. The
+         --  first two pieces are whole blocks, as GMAC's Update needs.
+         case Algorithm is
+            when SMB.Core_Negotiate.AES_CMAC =>
+               declare
+                  Context : SMB.AES.CMAC.MAC_Context;
+               begin
+                  SMB.AES.CMAC.Start (Context, Key);
+                  SMB.AES.CMAC.Update
+                    (Context, Data (Data'First .. Data'First + 47));
+                  SMB.AES.CMAC.Update (Context, Zero_Signature);
+                  if Data'Length > Header_Size then
+                     SMB.AES.CMAC.Update
+                       (Context, Data (Data'First + Header_Size .. Data'Last));
+                  end if;
+                  SMB.AES.CMAC.Finish (Context, Tag);
+               end;
+            when SMB.Core_Negotiate.AES_GMAC =>
+               declare
+                  Context : SMB.AES.GCM.MAC_Context;
+               begin
+                  SMB.AES.GCM.Start (Context, Key, GMAC_Nonce (Data));
+                  SMB.AES.GCM.Update
+                    (Context, Data (Data'First .. Data'First + 47));
+                  SMB.AES.GCM.Update (Context, Zero_Signature);
+                  if Data'Length > Header_Size then
+                     SMB.AES.GCM.Update
+                       (Context, Data (Data'First + Header_Size .. Data'Last));
+                  end if;
+                  SMB.AES.GCM.Finish (Context, Tag);
+               end;
+         end case;
          Valid := SMB.Crypto.Constant_Time_Equal (Given, Tag);
       end;
       Status := SMB.Ok;
-   end Verify_Signature_CMAC;
+   end Verify_Signature_SMB3;
 end SMB.Core_Wire;

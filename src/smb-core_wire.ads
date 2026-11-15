@@ -1,5 +1,7 @@
 with Interfaces;
 with SMB.AES;
+with SMB.AES.GCM;
+with SMB.Core_Negotiate;
 
 package SMB.Core_Wire is
    pragma SPARK_Mode (On);
@@ -311,14 +313,15 @@ package SMB.Core_Wire is
                  else SMB.Ok)
        and then (if Status /= SMB.Ok then not Valid);
 
-   --  SMB 3.1.1 signing (MS-SMB2 3.1.4.1): the 16-byte AES-128-CMAC tag of
-   --  the whole message with its Signature field zeroed, under the
-   --  session's signing key. Sign and Verify_Signature are the SMB 2.1
-   --  HMAC-SHA256 forms; these have the same contracts, except that the
-   --  key's length is fixed by its type.
-   procedure Sign_CMAC
+   --  SMB 3.1.1 signing (MS-SMB2 3.1.4.1): the 16-byte AES-128-CMAC or
+   --  AES-128-GMAC tag, as Algorithm says, of the whole message with its
+   --  Signature field zeroed, under the session's signing key. Sign and
+   --  Verify_Signature are the SMB 2.1 HMAC-SHA256 forms; these have the
+   --  same contracts, except that the key's length is fixed by its type.
+   procedure Sign_SMB3
      (Data : in out SMB.Bytes;
       Key : SMB.AES.Key_128;
+      Algorithm : SMB.Core_Negotiate.SMB3_Signing_Id;
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
@@ -335,9 +338,10 @@ package SMB.Core_Wire is
               then Data (Index) = Data'Old (Index)))
         else Data = Data'Old);
 
-   procedure Verify_Signature_CMAC
+   procedure Verify_Signature_SMB3
      (Data : SMB.Bytes;
       Key : SMB.AES.Key_128;
+      Algorithm : SMB.Core_Negotiate.SMB3_Signing_Id;
       Valid : out Boolean;
       Status : out SMB.Core_Status)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
@@ -345,4 +349,12 @@ package SMB.Core_Wire is
        Status = (if Data'Length < Header_Size then SMB.Invalid_Length
                  else SMB.Ok)
        and then (if Status /= SMB.Ok then not Valid);
+
+   --  The AES-GMAC nonce of the message in Data (MS-SMB2 3.1.4.1): its
+   --  MessageId, then four bytes whose bit 0 is set for a message from the
+   --  server and bit 1 for a CANCEL request. Like Samba, the server bit is
+   --  the header's SMB2_FLAGS_SERVER_TO_REDIR.
+   function GMAC_Nonce (Data : SMB.Bytes) return SMB.AES.GCM.Nonce_96
+   with Pre => Data'Length >= Header_Size
+       and then Data'Length <= SMB.Maximum_Frame_Size;
 end SMB.Core_Wire;

@@ -19,22 +19,22 @@ types). These are the implementations called by `SMB.Client` and
 | `SMB.AES` | AES-128 and AES-256 encryption with a computed S-box, for SMB 3.1.1; run-time safety, not cryptographic hardness or timing |
 | `SMB.AES.CMAC` | AES-128-CMAC, one-shot and incremental, for SMB 3.1.1 signing; run-time safety, the `Ready`/`Length` contracts and a wiped context after `Finish`, not cryptographic hardness or timing |
 | `SMB.AES.CCM` | AES-CCM with a 16- or 32-byte key and SMB's 11-byte nonce and 16-byte tag, in place, for SMB 3.x encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
-| `SMB.AES.GCM` | AES-GCM with a 16- or 32-byte key and SMB's 12-byte nonce and 16-byte tag, in place, for SMB 3.1.1 encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
+| `SMB.AES.GCM` | AES-GCM with a 16- or 32-byte key and SMB's 12-byte nonce and 16-byte tag, in place, for SMB 3.1.1 encryption, and GMAC (GCM with no data), one-shot and incremental, for SMB 3.1.1 AES-GMAC signing; run-time safety, all-zero data after a rejected tag, and for GMAC the `Ready`/`Length` contracts and a wiped context after `Finish`, not cryptographic hardness or timing |
 | `SMB.KDF` | SMB 3.1.1 signing, encryption and decryption key derivation (SP 800-108, HMAC-SHA256), 128- or 256-bit, with every length fixed by its types; run-time safety, not cryptographic hardness |
 | `SMB.Core_Text` | Strict UTF-8/UTF-16 conversion, NTLM ASCII username uppercase; exact lexical path/share acceptance, byte-preserving slash normalization, and zeroed invalid-path output |
 | `SMB.Core_NTLM` | Strict DER/SPNEGO challenge extraction, directional mechanism-list MIC and final-token validation |
 | `SMB.Core_Auth` | Bounded credential preflight, Type 2/security-buffer/AV validation, NTLMv2 proof, Type 3 and its MIC, session key and SPNEGO output |
-| `SMB.Core_Wire` | Exact integer read/write success and rejection with zeroed read failures and unchanged write failures; header initialization, correlation validation, and HMAC-SHA256 (SMB 2.1) and AES-128-CMAC (SMB 3.1.1) signing |
+| `SMB.Core_Wire` | Exact integer read/write success and rejection with zeroed read failures and unchanged write failures; header initialization, correlation validation, and HMAC-SHA256 (SMB 2.1) and AES-128-CMAC or AES-128-GMAC (SMB 3.1.1) signing, with the GMAC nonce taken from the header |
 | `SMB.Core_Framing` | Exact 24-bit big-endian TCP frame length encoding/decoding, 64-byte through 1-MiB bounds, type/length status precedence, and zero outputs on failure |
 | `SMB.Core_Transport` | Native stream frame construction, exact receive-prefix copying with prefix/tail preservation, bounded partial-read/write progress and unsent-slice selection |
 | `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
-| `SMB.Core_Negotiate` | The SMB 3.1.1 NEGOTIATE request body with its preauth integrity and encryption contexts, and the checks on a 3.1.1 response's negotiate contexts; run-time safety and a cipher of `No_Cipher` on failure |
+| `SMB.Core_Negotiate` | The SMB 3.1.1 NEGOTIATE request body with its preauth integrity, encryption and signing contexts, and the checks on a 3.1.1 response's negotiate contexts; run-time safety, and a cipher of `No_Cipher` and AES-CMAC signing on failure |
 | `SMB.Core_Preauth` | The SMB 3.1.1 preauth integrity hash step, SHA-512 of the previous value and a message; run-time safety |
 | `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-CCM or AES-GCM under a 16-byte (AES-128) or 32-byte (AES-256) key of the cipher's length, and checking and opening a received one; the header fields, nonce field and trailing zeros written, the header and inner SMB2 header checks that hold on success (the tag itself is tested, not stated), and no message bytes left after any failure |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
-| `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC with the derived key for 3.1.1), the negotiated dialect, cipher and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime |
+| `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC or AES-128-GMAC, as negotiated, with the derived key for 3.1.1), the negotiated dialect, cipher, signing algorithm and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime |
 
 Supported response bodies are parsed in the core after header/correlation and
 required signature validation. A successful final Session Setup also needs the
@@ -93,7 +93,8 @@ exactly-once behavior is claimed.
 SMB 3.1.1 is negotiated by default. `Core_Connection.Prepare_Negotiate` sends
 `SMB.Core_Negotiate.Request`, which offers 3.1.1 (and 2.1 only when the caller
 allows it) with a preauth integrity context (SHA-512 and a fresh salt) and an
-encryption context (AES-128-GCM, AES-128-CCM, AES-256-GCM, AES-256-CCM). `Complete`'s postcondition proves
+encryption context (AES-128-GCM, AES-128-CCM, AES-256-GCM, AES-256-CCM) and
+a signing context (AES-GMAC, AES-CMAC). `Complete`'s postcondition proves
 that a successful NEGOTIATE leaves the Engine on 3.1.1, or on 2.1 only when 2.1
 was offered; a 3.1.1 response must pass `Check_Response_Contexts`. The
 connection starts the preauth integrity hash with the request and response,
@@ -101,9 +102,14 @@ and `Core_Client` extends it with the SESSION_SETUP messages up to the final
 request. After writing that request's header, `Core_Client` derives the
 3.1.1 signing key with `SMB.KDF` through `Engine.Derive_SMB3_Keys`,
 whose postcondition states the key and that nothing else in the Engine
-changes. From then on requests are signed with AES-128-CMAC and the Engine
-accepts a signed response only if its CMAC under that key verifies, including
-the final SESSION_SETUP response. The NTLM session key still keys the SPNEGO
+changes. From then on requests are signed with the negotiated algorithm,
+AES-128-GMAC or AES-128-CMAC (`Engine.Current_Signing`, HMAC-SHA256 unless
+3.1.1 was negotiated), and the Engine accepts a signed response only if its
+MAC under that key and algorithm verifies, including the final SESSION_SETUP
+response. The proof does not show that the GMAC nonce follows MS-SMB2
+3.1.4.1; unit tests, the comparison with Python's `cryptography`, and Samba
+and Windows Server 2025 verifying and producing GMAC signatures supply that
+evidence. The NTLM session key still keys the SPNEGO
 mechanism-list MIC. The proof does not show that the hash covers exactly the
 messages MS-SMB2 3.2.5.2 and 3.2.5.3 list, or that the derived key matches
 Windows'; the Microsoft test vectors in the unit tests and the 3.1.1 runs

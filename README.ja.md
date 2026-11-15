@@ -36,8 +36,13 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   変換し、非 BMP 文字の surrogate pair も扱います。
 * 最終 Session Setup 応答と認証後の通信に SMB signing を必須とします。
   SMB 3.1.1 は、セッション鍵とセッションの preauth integrity hash から
-  導出（SP 800-108）した鍵の AES-128-CMAC で署名し、SMB 2.1 は
-  セッション鍵の HMAC-SHA256 の先頭 16 byte を検証します。署名検証に失敗したフレーム
+  導出（SP 800-108）した鍵で署名します。アルゴリズムは、クライアントが
+  提示する AES-128-GMAC と AES-128-CMAC（この順）からサーバーが選びます
+  （応答に署名コンテキストがなければ AES-128-CMAC）。SMB 2.1 は
+  セッション鍵の HMAC-SHA256 の先頭 16 byte を検証します。
+  `Negotiated_Signing` で署名アルゴリズムが分かります。CI では Samba を
+  それぞれ唯一のアルゴリズムにして試験し、Windows Server 2025 は
+  AES-GMAC を選びます。署名検証に失敗したフレーム
   や不正な相関番号は接続を破棄します。
   署名は改ざん検知であり、ファイル内容を隠すのは暗号化だけです。
 * 1 接続につき 1 share、未完了の操作は 1 つだけです。接続・ハンドル
@@ -48,7 +53,7 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   I/O より前に拒否します。
 * フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
   受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB 3.0・3.0.2、
-  AES-GMAC 署名、compression、compound、Kerberos、guest/null fallback、
+  compression、compound、Kerberos、guest/null fallback、
   large-MTU negotiation は実装していません。
 * スタック使用量は証明の対象外です。フレーム・転送・要求・ディレクトリ
   一覧のバッファはヒープに置き、ソケットは 16 KiB 単位で読みます。応答の
@@ -159,7 +164,7 @@ make cmac-test              # Python の cryptography と AES-128-CMAC の差分
 make ccm-test               # Python の cryptography と AES-CCM（128・256 ビット鍵）の差分試験
 make gcm-test               # Python の cryptography と AES-GCM（128・256 ビット鍵）の差分試験
 make kdf-test               # Python の cryptography と SMB 3.1.1 の鍵導出の差分試験
-make signing-test           # SMB 2.1・3.1.1 の署名の組立て・改ざん拒否を Python と照合
+make signing-test           # SMB 2.1・3.1.1（CMAC と GMAC）の署名の組立て・改ざん拒否を Python と照合
 make clock-test             # FILETIME の全暦日・秒・100ns 端数を Python と照合
 make check                  # warnings-as-errors と依存関係検査（stack-check を含む）
 make stack-check            # 公開 API ごとの最悪スタック使用量を GCC の呼び出しグラフで検査
@@ -245,7 +250,11 @@ NTLM 互換用途以外の新しい設計に推奨するものでもありませ
 検査します。AES-256-GCM は GCM 仕様の試験ケース 13〜16 と、同じ種類の
 メッセージを数を減らして 32 バイト鍵で検査します。各メッセージを複数の
 配列境界で暗号化・復号し、tag や暗号文を変えたものは拒否してデータを
-ゼロにすることも確かめます。
+ゼロにすることも確かめます。SMB 3.1.1 の AES-GMAC 署名の MAC である
+GMAC は、GCM 仕様と NIST の CAVP にある平文なしの tag、10 ブロックまでの
+すべての長さ、大きなブロック境界前後とフレーム上限の長さ、1 ビットの変更、
+シード固定の乱数メッセージで検査し、それぞれ 1 回の呼び出しと、ブロック
+単位に分けた入力の両方で確かめます。
 
 `make kdf-test` は SMB 3.1.1 の鍵導出（HMAC-SHA256 を使うカウンターモードの
 SP 800-108）を同じパッケージの `KBKDFHMAC` と比較します。Microsoft が公開して

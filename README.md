@@ -35,10 +35,14 @@ directory operations.
   user names. Passwords, domains and file names are converted strictly from
   UTF-8 to UTF-16LE, including surrogate pairs for non-BMP characters.
 * SMB signing is required for the final Session Setup response and for all
-  traffic after authentication. SMB 3.1.1 signs with AES-128-CMAC under a
-  key derived (SP 800-108) from the session key and the session's preauth
-  integrity hash; SMB 2.1 verifies the first 16 bytes of HMAC-SHA256 under
-  the session key. A frame that fails signature verification or
+  traffic after authentication. SMB 3.1.1 signs with AES-128-GMAC or
+  AES-128-CMAC, whichever the server chooses from the two the client offers
+  (AES-GMAC first; without a signing context in the response, AES-CMAC),
+  under a key derived (SP 800-108) from the session key and the session's
+  preauth integrity hash; SMB 2.1 verifies the first 16 bytes of
+  HMAC-SHA256 under the session key. `Negotiated_Signing` reports the
+  algorithm. CI runs Samba with each of the two as the only one allowed,
+  and Windows Server 2025 chooses AES-GMAC. A frame that fails signature verification or
   carries a wrong correlation number tears the connection down.
   Signing detects tampering; only encryption hides file contents.
 * One share per connection and one outstanding operation. Connections and
@@ -49,7 +53,7 @@ directory operations.
   I/O.
 * Frames are limited to 1 MiB and single read/write requests to 64 KiB, and
   received offsets, lengths and their sums are range-checked. SMB1, SMB 3.0
-  and 3.0.2, AES-GMAC signing, compression, compound requests, Kerberos,
+  and 3.0.2, compression, compound requests, Kerberos,
   guest/null fallback and large-MTU negotiation are not implemented.
 * Stack usage is outside the proofs. Frame, transfer, request and directory
   listing buffers live on the heap, and the socket is read 16 KiB at a time.
@@ -178,7 +182,7 @@ make cmac-test              # AES-128-CMAC against Python's cryptography package
 make ccm-test               # AES-CCM (128- and 256-bit keys) against Python's cryptography package
 make gcm-test               # AES-GCM (128- and 256-bit keys) against Python's cryptography package
 make kdf-test               # SMB 3.1.1 key derivation against Python's cryptography
-make signing-test           # SMB 2.1 and 3.1.1 signing and tamper rejection against Python
+make signing-test           # SMB 2.1 and 3.1.1 (CMAC and GMAC) signing and tamper rejection against Python
 make clock-test             # FILETIME for every day, second and 100 ns fraction
 make check                  # warnings as errors and dependency checks (with stack-check)
 make stack-check            # worst-case stack use per public API from GCC call graphs
@@ -266,7 +270,11 @@ and seeded random messages. AES-256-GCM gets test cases 13 to 16 of the GCM
 specification and the same kinds of messages under 32-byte keys, fewer of
 each. Each message is sealed and opened at several
 array bounds, and a changed tag or ciphertext must be rejected with the
-data zeroed.
+data zeroed. GMAC, the SMB 3.1.1 AES-GMAC signing MAC, gets the published
+no-plaintext tags of the GCM specification and NIST's CAVP, every message
+length up to ten blocks, the lengths around larger block boundaries and the
+frame limit, single-bit changes and seeded random messages, each in one
+call and fed in whole blocks.
 
 `make kdf-test` compares the SMB 3.1.1 key derivation (SP 800-108 in counter
 mode with HMAC-SHA256) with the same package's `KBKDFHMAC`: Microsoft's twelve

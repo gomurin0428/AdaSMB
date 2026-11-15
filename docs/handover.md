@@ -8,9 +8,8 @@ of date.
 
 * 0.1.0 (SMB 2.1) is released and on Alire as the crate `smb`. 0.2.0 (SMB
   3.1.1 with signing and encryption) is tagged `v0.2.0` with a GitHub
-  release and submitted to the Alire index as
-  alire-project/alire-index#2340, whose checks passed; it waits for the
-  index maintainers to merge it.
+  release and on the Alire index (alire-project/alire-index#2340, merged
+  on 2026-11-14).
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -20,8 +19,9 @@ of date.
   * The client encrypts whenever the server supports a cipher, and a
     "require encryption" option refuses servers that do not.
   * AES-128 only in 0.2.0; AES-256 is offered since #130.
-  * Out of scope: AES-GMAC signing, compression, multichannel, Kerberos,
-    and raising the 64 KiB I/O chunk.
+  * Out of scope: compression, multichannel, Kerberos, and raising the
+    64 KiB I/O chunk. AES-GMAC signing, first out of scope, came in with
+    #132.
 * Phase status (the phases are listed in the design document):
 
 | Phase | Item | State |
@@ -43,6 +43,7 @@ of date.
 | 5 | Release 0.2.0 (`alire.toml`, tag, GitHub release) | merged (#127) |
 | after 0.2.0 | AES-256 primitives (`SMB.AES`, CCM, GCM, `SMB.KDF.Derive_256`) | merged (#129) |
 | after 0.2.0 | AES-256 in negotiation, the transform and the engine | merged (#130) |
+| after 0.2.0 | AES-GMAC signing (GMAC, the signing context, the engine) | #132 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -193,7 +194,8 @@ part of phase 3. Nothing calls it yet.
   response, header included, because the offset fields count from the
   header. It applies the design document's rules and returns the cipher,
   or `No_Cipher` with any failure. A compression, transport, RDMA or
-  signing context fails it, since we offer none. It also requires the
+  signing context fails it, since we offer none. (#132 offers and accepts
+  a signing context.) It also requires the
   first context at or after offset 128, the end of the fixed response body
   (ours).
 * It does not check DialectRevision or call anything; the engine pull
@@ -273,6 +275,7 @@ Phase 3 is complete: `Connect` offers SMB 3.1.1 by default and signs a
   with AES-CMAC under it.
 * Every request signer (`Sign_Packet` in both units, and the direct call in
   `Prepare_Close`) picks HMAC-SHA256 or AES-CMAC by `Current_Dialect`.
+  (Since #132, `Sign_Packet` picks by `Current_Signing`.)
 * The cipher is negotiated and recorded but not used; a share or session
   the server wants encrypted is refused. Because the request now offers
   encryption, that includes servers that only prefer it (Samba's
@@ -381,8 +384,7 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Check that alire-project/alire-index#2340 (smb 0.2.0) is merged. For a
-  later release, the index manifest is `alire.toml` at the release tag with
+* For a later release, the Alire index manifest is `alire.toml` at the release tag with
   an `[origin]` section added: `commit` is the tag's commit and `url` is
   `git+https://github.com/gomurin0428/AdaSMB.git`, as in the index's
   `index/sm/smb/smb-0.2.0.toml`. `alr publish` wrote that file for 0.1.0;
@@ -392,8 +394,9 @@ opens a received one. It is a stateless SPARK unit, like
 * Hostile transform headers are covered by unit tests through the engine;
   the adversarial proxy still speaks 2.1 only. Teaching it 3.1.1 would let
   the proxy tests run against the 3.1.1 Samba.
-* Release 0.3.0 with AES-256 (#129, #130): bump `alire.toml`, tag, GitHub
-  release, then the Alire index as for 0.2.0.
+* Release 0.3.0 with AES-256 (#129, #130) and AES-GMAC signing (#132):
+  bump `alire.toml`, tag, GitHub release. Submit it to the Alire index only
+  when the maintainer says so.
 
 ## AES-256 primitives (#129)
 
@@ -448,6 +451,49 @@ opens a received one. It is a stateless SPARK unit, like
   final SESSION_SETUP response with the L = 128 key, which the client
   verifies. Requests after authentication are encrypted, so the servers
   never check the client's signature under that key.
+
+## AES-GMAC signing (#132)
+
+* `SMB.AES.GCM.MAC` is GMAC, GCM with no data, and `MAC_Context`
+  (`Start`, `Update`, `Finish`) its incremental form. GHASH pads only the
+  last block, so `Update` requires the length so far to be a multiple of
+  16; the pieces `Core_Wire` verifies (48 bytes, the 16-byte zero
+  signature, the rest) meet that. The context keeps the hash subkey, the
+  GHASH state and the encrypted first counter block, not the key schedule,
+  and `Finish` wipes it.
+* `SMB.Core_Negotiate.Signing_Id` is `HMAC_SHA256`, `AES_CMAC`,
+  `AES_GMAC` (wire IDs 0 to 2), and `SMB3_Signing_Id` the last two. The
+  request gains a SIGNING_CAPABILITIES context offering AES-GMAC, then
+  AES-CMAC: `Request_Length` grows from 106 to 126 and the NEGOTIATE packet
+  from 170 to 190 bytes, with `Request_Context_Count` 3.
+  `Check_Response_Contexts` returns the algorithm, `AES_CMAC` without a
+  signing context or on failure, and refuses HMAC-SHA256, unknown IDs, a
+  count other than one and a second signing context.
+* `SMB.Core_Wire.Sign_CMAC` and `Verify_Signature_CMAC` became `Sign_SMB3`
+  and `Verify_Signature_SMB3` with an `Algorithm` parameter, with the same
+  contracts. `GMAC_Nonce` builds the nonce from the header: the MessageId,
+  then bit 0 from SMB2_FLAGS_SERVER_TO_REDIR (as Samba does) and bit 1 for
+  command 12 (CANCEL), which the client never sends.
+* The engine records the algorithm in `Mark_Negotiated`, which gained a
+  `Signing` parameter. `Current_Signing` is the recorded algorithm under
+  3.1.1 and `HMAC_SHA256` otherwise; its postcondition says so, which lets
+  `Prepare_Close` pass it where it has just checked the dialect. Resets
+  leave the field alone, because they set the dialect to 0, which hides
+  it. `SMB.Client.Negotiated_Signing` reports it.
+* No SMB message signed with AES-GMAC is published. GMAC is checked
+  against the GCM specification's test case 1 and the first no-plaintext
+  vectors of NIST's CAVP for AES-128 and AES-256, which
+  `gcm_conformance.py` also checks `cryptography` against; SMB signing
+  against `cryptography`, with a nonce built from the header as MS-SMB2
+  3.1.4.1 says, and a signature over A.1's final SESSION_SETUP response
+  computed with it.
+* Integration: `ADASMB_SMB_SIGNING` makes the Samba harness set
+  `server smb3 signing algorithms` to one algorithm, and the client must
+  report it (`SMB_TEST_SIGNING`). CI runs the signing-only 3.1.1 Samba
+  configuration with AES-128-GMAC only and with AES-128-CMAC only. The
+  Windows harness requires AES-GMAC: Windows Server 2025 chooses it. With
+  encryption on, Windows signs only the final SESSION_SETUP response, so
+  the requests signed with AES-GMAC are tested against Samba.
 
 ## Checklist for a new primitive
 

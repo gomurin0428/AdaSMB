@@ -8,6 +8,7 @@ with SMB.AES.GCM;
 with SMB.Crypto;
 with SMB.KDF;
 with SMB.Core_NTLM;
+with SMB.Core_Negotiate;
 with SMB.Core_Wire;
 with SMB.Wire;
 
@@ -271,6 +272,122 @@ procedure Crypto_Probe is
       end loop;
    end Check_CMAC;
 
+   --  AES-GMAC: SMB.AES.GCM.MAC of Data under the key and nonce in
+   --  Key_Nonce (a 16- or 32-byte key, then 12 nonce bytes) at the four lower
+   --  bounds Check_CMAC uses, Seal over no data, which must give the same
+   --  tag, and the incremental form. Its pieces are whole blocks but the
+   --  last: the pieces Core_Wire verifies (48 bytes, 16, the rest) and two
+   --  thirds rounded down to blocks, and at the first bound up to 4,096
+   --  bytes also two parts split at every block boundary, and block by
+   --  block up to 300. One context serves every run, so each Start must
+   --  reset a finished context, and the first one an abandoned context
+   --  under another key.
+   procedure Check_GMAC (Key_Nonce, Data, Expected : SMB.Bytes) is
+      Key_Length : constant Integer := Key_Nonce'Length - 12;
+      Length : constant Natural := Data'Length;
+      Context : SMB.AES.GCM.MAC_Context;
+      Result : SMB.AES.GCM.Tag_128;
+      Input : Bytes_Access := null;
+   begin
+      if (Key_Length /= 16 and then Key_Length /= 32)
+        or else Expected'Length /= 16
+      then
+         raise Program_Error with "invalid GMAC fixture";
+      end if;
+      declare
+         Key : constant SMB.Bytes (0 .. Key_Length - 1) :=
+           Key_Nonce (Key_Nonce'First .. Key_Nonce'First + Key_Length - 1);
+         Nonce : constant SMB.AES.GCM.Nonce_96 :=
+           Key_Nonce (Key_Nonce'Last - 11 .. Key_Nonce'Last);
+
+         --  Feeds Input in pieces that end at each cut, then the rest.
+         procedure Run (Cuts : Offsets) is
+            From : Natural := Input'First;
+         begin
+            SMB.AES.GCM.Start (Context, Key, Nonce);
+            for Cut of Cuts loop
+               SMB.AES.GCM.Update
+                 (Context, Input (From .. Input'First + Cut - 1));
+               if SMB.AES.GCM.Length (Context) /= Cut then
+                  raise Program_Error with "GMAC length mismatch";
+               end if;
+               From := Input'First + Cut;
+            end loop;
+            SMB.AES.GCM.Update (Context, Input (From .. Input'Last));
+            if not SMB.AES.GCM.Ready (Context)
+              or else SMB.AES.GCM.Length (Context) /= Length
+            then
+               raise Program_Error with "GMAC length mismatch";
+            end if;
+            SMB.AES.GCM.Finish (Context, Result);
+            if SMB.AES.GCM.Ready (Context)
+              or else not SMB.AES.GCM.Wiped (Context)
+            then
+               raise Program_Error with "finished GMAC context not wiped";
+            end if;
+            if Result /= Expected then
+               raise Program_Error with "incremental GMAC mismatch";
+            end if;
+         end Run;
+      begin
+         SMB.AES.GCM.Start (Context, (1 .. 16 => 16#A5#), (others => 16#5A#));
+         SMB.AES.GCM.Update (Context, (1 .. 21 => 16#5A#));
+         for Base in 0 .. 3 loop
+            declare
+               First : constant Natural :=
+                 (case Base is
+                     when 0 => 0,
+                     when 1 => 7,
+                     when 2 => Natural'Last - Length,
+                     when others =>
+                       (if Length = 0 then Natural'Last
+                        else Natural'Last - (Length - 1)));
+               Nothing : SMB.Bytes (1 .. 0);
+            begin
+               Input := new SMB.Bytes (First .. First + (Length - 1));
+               Input.all := Data;
+               if SMB.AES.GCM.MAC (Key, Nonce, Input.all) /= Expected then
+                  raise Program_Error with "GMAC mismatch";
+               end if;
+               SMB.AES.GCM.Seal (Key, Nonce, Input.all, Nothing, Result);
+               if Result /= Expected then
+                  raise Program_Error with "GMAC differs from GCM";
+               end if;
+               --  At the fourth bound a piece could not end past
+               --  Natural'Last.
+               if Length >= 64
+                 and then (Base = 0 or else (Base <= 2 and then Length <= 4096))
+               then
+                  Run ((48, 64));
+               end if;
+               if Base <= 2 and then Length <= 4096 then
+                  Run ((16 * (Length / 48), 32 * (Length / 48)));
+               end if;
+               if Base = 0 and then Length <= 4096 then
+                  for Cut in 0 .. Length / 16 loop
+                     Run ((1 => 16 * Cut));
+                  end loop;
+                  if Length <= 300 then
+                     declare
+                        Blocks : Offsets (1 .. Length / 16);
+                     begin
+                        for I in Blocks'Range loop
+                           Blocks (I) := 16 * I;
+                        end loop;
+                        Run (Blocks);
+                     end;
+                  end if;
+               end if;
+               Free_Bytes (Input);
+            exception
+               when others =>
+                  Free_Bytes (Input);
+                  raise;
+            end;
+         end loop;
+      end;
+   end Check_GMAC;
+
    --  Seals and opens Plain with Data at the four lower bounds Check_CMAC
    --  uses, and the associated data at its own bounds (1 ..) at the even
    --  ones and ending at Natural'Last at the odd ones. Open must then reject
@@ -455,18 +572,21 @@ procedure Crypto_Probe is
    end Check_MIC;
 
    --  Signs (Signing) or verifies Data with Key at two lower bounds each,
-   --  through SMB.Core_Wire and SMB.Wire. With CMAC, the SMB 3.1.1 form, only
-   --  SMB.Core_Wire has it and the key is 16 bytes.
+   --  through SMB.Core_Wire and SMB.Wire. With AES-CMAC or AES-GMAC, the SMB
+   --  3.1.1 forms, only SMB.Core_Wire has them and the key is 16 bytes.
    procedure Check_Wire
      (Key, Data, Expected : SMB.Bytes;
       Expected_Status : SMB.Core_Status;
       Signing : Boolean;
       Expected_Valid : Boolean := False;
-      CMAC : Boolean := False)
+      Algorithm : SMB.Core_Negotiate.Signing_Id :=
+        SMB.Core_Negotiate.HMAC_SHA256)
    is
+      use type SMB.Core_Negotiate.Signing_Id;
+      SMB3 : constant Boolean := Algorithm /= SMB.Core_Negotiate.HMAC_SHA256;
    begin
-      if CMAC and then Key'Length /= 16 then
-         raise Program_Error with "invalid CMAC signing fixture";
+      if SMB3 and then Key'Length /= 16 then
+         raise Program_Error with "invalid SMB 3.1.1 signing fixture";
       end if;
       for Key_Rebased in 0 .. 1 loop
          for Data_Rebased in 0 .. 1 loop
@@ -484,15 +604,15 @@ procedure Crypto_Probe is
                  (Data_First .. Data_First + Data'Length - 1);
                Input_Key.all := Key;
                Input_Data.all := Data;
-               if Signing and then CMAC then
-                  SMB.Core_Wire.Sign_CMAC
-                    (Input_Data.all, Input_Key.all, Status);
+               if Signing and then SMB3 then
+                  SMB.Core_Wire.Sign_SMB3
+                    (Input_Data.all, Input_Key.all, Algorithm, Status);
                   if Status /= Expected_Status or else Input_Data.all /= Expected then
                      raise Program_Error with "core signing mismatch";
                   end if;
-               elsif CMAC then
-                  SMB.Core_Wire.Verify_Signature_CMAC
-                    (Input_Data.all, Input_Key.all, Valid, Status);
+               elsif SMB3 then
+                  SMB.Core_Wire.Verify_Signature_SMB3
+                    (Input_Data.all, Input_Key.all, Algorithm, Valid, Status);
                   if Status /= Expected_Status or else Valid /= Expected_Valid then
                      raise Program_Error with "core verification mismatch";
                   end if;
@@ -621,16 +741,26 @@ begin
                  (Hex (Field (2)), Hex (Field (3)), SMB.Bytes'(1 .. 0 => 0),
                   SMB.Core_Status'Value (Field (5)), Signing => False,
                   Expected_Valid => Boolean'Value (Field (4)));
-            elsif Field (1) = "SC" then
+            elsif Field (1) = "GM" then
+               if Field (5) /= "-" then
+                  raise Program_Error with "invalid GMAC fixture";
+               end if;
+               Check_GMAC (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)));
+            elsif Field (1) in "SC" | "SG" then
                Check_Wire
                  (Hex (Field (2)), Hex (Field (3)), Hex (Field (4)),
                   SMB.Core_Status'Value (Field (5)), Signing => True,
-                  CMAC => True);
-            elsif Field (1) = "VC" then
+                  Algorithm =>
+                    (if Field (1) = "SC" then SMB.Core_Negotiate.AES_CMAC
+                     else SMB.Core_Negotiate.AES_GMAC));
+            elsif Field (1) in "VC" | "VG" then
                Check_Wire
                  (Hex (Field (2)), Hex (Field (3)), SMB.Bytes'(1 .. 0 => 0),
                   SMB.Core_Status'Value (Field (5)), Signing => False,
-                  Expected_Valid => Boolean'Value (Field (4)), CMAC => True);
+                  Expected_Valid => Boolean'Value (Field (4)),
+                  Algorithm =>
+                    (if Field (1) = "VC" then SMB.Core_Negotiate.AES_CMAC
+                     else SMB.Core_Negotiate.AES_GMAC));
             else
                raise Program_Error with "unknown fixture operation";
             end if;
