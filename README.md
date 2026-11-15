@@ -42,8 +42,9 @@ directory operations.
   preauth integrity hash; SMB 2.1 verifies the first 16 bytes of
   HMAC-SHA256 under the session key. `Negotiated_Signing` reports the
   algorithm. CI runs Samba with each of the two as the only one allowed,
-  and Windows Server 2025 chooses AES-GMAC. A frame that fails signature verification or
-  carries a wrong correlation number tears the connection down.
+  and Windows Server 2025 chooses AES-GMAC. A frame that fails signature
+  verification or carries a wrong correlation number tears the connection
+  down.
   Signing detects tampering; only encryption hides file contents.
 * One share per connection and one outstanding operation. Connections and
   handles are not thread-safe. Calls to `Connect` on different connections

@@ -356,7 +356,8 @@ procedure Crypto_Probe is
                --  At the fourth bound a piece could not end past
                --  Natural'Last.
                if Length >= 64
-                 and then (Base = 0 or else (Base <= 2 and then Length <= 4096))
+                 and then
+                   (Base = 0 or else (Base <= 2 and then Length <= 4096))
                then
                   Run ((48, 64));
                end if;

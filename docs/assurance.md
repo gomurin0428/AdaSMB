@@ -107,9 +107,12 @@ AES-128-GMAC or AES-128-CMAC (`Engine.Current_Signing`, HMAC-SHA256 unless
 3.1.1 was negotiated), and the Engine accepts a signed response only if its
 MAC under that key and algorithm verifies, including the final SESSION_SETUP
 response. The proof does not show that the GMAC nonce follows MS-SMB2
-3.1.4.1; unit tests, the comparison with Python's `cryptography`, and Samba
-and Windows Server 2025 verifying and producing GMAC signatures supply that
-evidence. The NTLM session key still keys the SPNEGO
+3.1.4.1. The unit tests and the comparison with Python's `cryptography`
+share the client's reading of it, so the evidence is the servers': Samba
+verifies the client's GMAC-signed requests and signs its responses, and
+Windows Server 2025 signs the final SESSION_SETUP response, which the
+client verifies (with encryption on, it verifies none of the client's
+signatures). The NTLM session key still keys the SPNEGO
 mechanism-list MIC. The proof does not show that the hash covers exactly the
 messages MS-SMB2 3.2.5.2 and 3.2.5.3 list, or that the derived key matches
 Windows'; the Microsoft test vectors in the unit tests and the 3.1.1 runs

@@ -384,8 +384,8 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* For a later release, the Alire index manifest is `alire.toml` at the release tag with
-  an `[origin]` section added: `commit` is the tag's commit and `url` is
+* For a later release, the Alire index manifest is `alire.toml` at the
+  release tag with an `[origin]` section added: `commit` is the tag's commit and `url` is
   `git+https://github.com/gomurin0428/AdaSMB.git`, as in the index's
   `index/sm/smb/smb-0.2.0.toml`. `alr publish` wrote that file for 0.1.0;
   the 0.2.0 one was written by hand in the same form. Submitting is a pull

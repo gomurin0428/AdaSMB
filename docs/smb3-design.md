@@ -19,8 +19,8 @@ implemented or proved. Section numbers refer to
   server marked the session or share as requiring encryption. A
   `Require_Encryption` option makes the connection fail when no cipher is
   negotiated.
-* **Not planned:** SMB 3.0/3.0.2, compression, multichannel, RDMA/QUIC transports, Kerberos, and raising the
-  64 KiB read/write chunk.
+* **Not planned:** SMB 3.0/3.0.2, compression, multichannel, RDMA/QUIC
+  transports, Kerberos, and raising the 64 KiB read/write chunk.
 
 ## Protocol profile
 
@@ -45,8 +45,8 @@ or ambiguous, the choice is marked as ours.
     (`0x0003`), in that order, as a Windows client offers them by default.
     0.2.0 offered only the first two.
   * SIGNING_CAPABILITIES (`0x0008`): AES-GMAC (`0x0002`), then AES-CMAC
-    (`0x0001`); see the AES-GMAC section below. 0.2.0 and 0.3.0 sent no
-    signing context, so 3.1.1 signing was always AES-128-CMAC.
+    (`0x0001`); see the AES-GMAC section below. Before #132 the client
+    sent no signing context, so 3.1.1 signing was always AES-128-CMAC.
   * No NETNAME (a SHOULD that servers ignore).
 * Response checks for 3.1.1, all failing the connection:
   * exactly one preauth context, with HashAlgorithmCount = 1, SHA-512, and a
@@ -108,10 +108,10 @@ ApplicationKey is not needed.
 * AES-128-GMAC or AES-128-CMAC, as negotiated, with SigningKey over the
   whole message with the Signature field zeroed, as for HMAC-SHA256 today.
 * The final SESSION_SETUP response must carry SMB2_FLAGS_SIGNED, and the
-  client always verifies its signature with the new SigningKey before the session
-  counts as authenticated. The spec requires the flag; verifying the
-  signature too is ours, and it is what detects tampering with the preauth
-  messages.
+  client always verifies its signature with the new SigningKey before the
+  session counts as authenticated. The spec requires the flag; verifying
+  the signature too is ours, and it is what detects tampering with the
+  preauth messages.
 * Without a cipher, every later request is signed and every response must be
   signed, as in the 2.1 profile. The 3.1.1 rule that TREE_CONNECT is always
   signed when not encrypted is then met.
@@ -184,7 +184,7 @@ one allowed.
 
 ### AES-GMAC signing
 
-0.2.0 and 0.3.0 signed 3.1.1 with AES-128-CMAC only. Windows 11 and
+Until #132, 3.1.1 signing was AES-128-CMAC only. Windows 11 and
 Windows Server 2022 and later prefer AES-128-GMAC, which MS-SMB2 negotiates
 with SMB2_SIGNING_CAPABILITIES (§2.2.3.1.7). The client now offers AES-GMAC,
 then AES-CMAC, and the server chooses:
@@ -205,9 +205,14 @@ then AES-CMAC, and the server chooses:
   HMAC-SHA256 unless 3.1.1 was negotiated.
 
 GMAC is checked against the GCM specification's test case 1 and NIST's
-CAVP no-plaintext vectors, and against Python's `cryptography`; the
-protocol against Samba with each algorithm as the only one allowed, and
-against Windows Server 2025, which chooses AES-GMAC.
+CAVP no-plaintext vectors, and against Python's `cryptography`. The
+protocol is checked against Samba with each algorithm as the only one
+allowed, which verifies the client's signed requests and signs its
+responses, and against Windows Server 2025, which chooses AES-GMAC. With
+encryption on, Windows signs only the final SESSION_SETUP response and
+verifies none of the client's signatures. The unit tests and the Python
+comparison share one reading of the nonce, so they do not check that
+reading; the servers do.
 
 ## New cryptography
 
