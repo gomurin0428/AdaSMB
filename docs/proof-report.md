@@ -5238,8 +5238,8 @@ The servers check the reading. On GitHub Actions:
   it signs only the final SESSION_SETUP response, which the client
   verified; it verifies none of the client's signatures.
 
-A changed-line AdaMutant run detected all 124 mutants (one more did not
-compile): `smb-aes-gcm.adb` 20, `smb-core_client.adb` 11,
+A changed-line AdaMutant run detected all 123 mutants (one more did not
+compile): `smb-aes-gcm.adb` 19, `smb-core_client.adb` 11,
 `smb-core_connection.adb` 11, `smb-core_negotiate.adb` 22,
 `smb-core_wire.adb` 55 and `smb-engine.adb` 5. Two lines were written to
 avoid equivalent mutants: the engine's resets leave the recorded algorithm
