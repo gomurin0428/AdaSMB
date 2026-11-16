@@ -10,8 +10,8 @@ of date.
   3.1.1 with signing and encryption) is tagged `v0.2.0` with a GitHub
   release and on the Alire index (alire-project/alire-index#2340, merged
   on 2026-11-14). 0.3.0 (the AES-256 ciphers and AES-GMAC signing) is
-  tagged `v0.3.0` with a GitHub release. It is not on the Alire index yet:
-  the maintainer will say when to submit it.
+  tagged `v0.3.0` with a GitHub release and submitted to the Alire index
+  as alire-project/alire-index#2357.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -47,6 +47,7 @@ of date.
 | after 0.2.0 | AES-256 in negotiation, the transform and the engine | merged (#130) |
 | after 0.2.0 | AES-GMAC signing (GMAC, the signing context, the engine) | merged (#132) |
 | after 0.2.0 | Release 0.3.0 (`alire.toml`, tag, GitHub release) | merged (#131) |
+| after 0.2.0 | 0.3.0 on the Alire index | submitted (alire-project/alire-index#2357) |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -387,14 +388,18 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Submit 0.3.0 to the Alire index only when the maintainer says so. The
-  index manifest is `alire.toml` at the release tag with an `[origin]`
-  section added: `commit` is the tag's commit and `url` is
-  `git+https://github.com/gomurin0428/AdaSMB.git`, as in the index's
-  `index/sm/smb/smb-0.2.0.toml`. `alr publish` wrote that file for 0.1.0;
-  later ones were written by hand in the same form. The index is a
-  third-party repository: leave the Claude session URL and any
-  `Claude-Session:` commit trailer out of pull requests and commits there.
+* See alire-project/alire-index#2357 through to its merge. Submit a later
+  release to the index only when the maintainer says so.
+  * The index manifest is `alire.toml` at the release tag with an
+    `[origin]` section added: `commit` is the tag's commit and `url` is
+    `git+https://github.com/gomurin0428/AdaSMB.git`, as in the index's
+    `index/sm/smb/smb-0.2.0.toml`.
+  * `alr publish` wrote that file for 0.1.0. Later ones were written by
+    hand in the same form, on a branch of the fork gomurin0428/alire-index
+    cut from the index's `stable-1.4.0`.
+  * The index is a third-party repository: leave the Claude session URL
+    and any `Claude-Session:` commit trailer out of pull requests and
+    commits there.
 * Hostile transform headers are covered by unit tests through the engine;
   the adversarial proxy still speaks 2.1 only. Teaching it 3.1.1 would let
   the proxy tests run against the 3.1.1 Samba.
