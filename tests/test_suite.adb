@@ -39,6 +39,7 @@ with Challenge_Mutation_Tests;
 with Async_Engine_Tests;
 with Core_Client_Tests;
 with Core_Query_Tests;
+with Core_Resize_Tests;
 with Engine_Fixtures;
 with SMB.Heap_Owner_Tests;
 
@@ -11699,7 +11700,8 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "challenge-mutations"
                  and then Ada.Command_Line.Argument (1) /= "async-responses"
                  and then Ada.Command_Line.Argument (1) /= "core-client"
-                 and then Ada.Command_Line.Argument (1) /= "core-query")
+                 and then Ada.Command_Line.Argument (1) /= "core-query"
+                 and then Ada.Command_Line.Argument (1) /= "core-resize")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
@@ -11713,6 +11715,8 @@ begin
          Core_Client_Tests.Run;
       elsif Ada.Command_Line.Argument (1) = "core-query" then
          Core_Query_Tests.Run;
+      elsif Ada.Command_Line.Argument (1) = "core-resize" then
+         Core_Resize_Tests.Run;
       elsif Ada.Command_Line.Argument (1) = "async-responses" then
          Async_Engine_Tests.Run;
          Ada.Text_IO.Put_Line ("AdaSMB async response tests passed");
@@ -11826,6 +11830,7 @@ begin
    Async_Engine_Tests.Run;
    Core_Client_Tests.Run;
    Core_Query_Tests.Run;
+   Core_Resize_Tests.Run;
    SMB.Heap_Owner_Tests.Run;
    Test_Text_And_Wire;
    Test_Wire_Facade;

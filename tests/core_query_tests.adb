@@ -439,6 +439,11 @@ package body Core_Query_Tests is
             (Owner => File.Owner, Epoch => File.Epoch + 1,
              Ticket => File.Ticket),
             "handle of another epoch");
+         Rejected
+           (Stale,
+            (Owner => File.Owner + 1, Epoch => File.Epoch,
+             Ticket => File.Ticket),
+            "handle of another owner");
       end;
       declare
          Prepared, Busy, Holding, Again : Query.Query_Operation;

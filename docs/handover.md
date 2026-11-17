@@ -13,7 +13,8 @@ of date.
   tagged `v0.3.0` with a GitHub release and on the Alire index
   (alire-project/alire-index#2357, merged on 2026-11-16).
 * After 0.3.0 the maintainer approved three pieces, in this order: file
-  information (`Query_Information`, #134), reads and writes larger than
+  information (`Query_Information`, #134, and `Set_Size`, #135), reads and
+  writes larger than
   64 KiB per request, and teaching the adversarial proxy SMB 3.1.1. A
   release that includes them (0.4.0), and its Alire submission, wait for
   the maintainer's word.
@@ -53,7 +54,8 @@ of date.
 | after 0.2.0 | AES-GMAC signing (GMAC, the signing context, the engine) | merged (#132) |
 | after 0.2.0 | Release 0.3.0 (`alire.toml`, tag, GitHub release) | merged (#131) |
 | after 0.2.0 | 0.3.0 on the Alire index | merged (alire-project/alire-index#2357) |
-| after 0.3.0 | File information: QUERY_INFO (`SMB.Core_Query`), directory entry times, `To_Time` | #134 |
+| after 0.3.0 | File information: QUERY_INFO (`SMB.Core_Query`), directory entry times, `To_Time` | merged (#134) |
+| after 0.3.0 | Setting a file's size: SET_INFO FileEndOfFileInformation (`SMB.Core_Resize`, `SMB.Core_Request`) | #135 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -394,8 +396,8 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Next, in the order the maintainer approved: setting a file's size (see
-  "File information" below), reads and writes larger than 64 KiB per request (multi-credit requests: CreditCharge, the server's
+* Next, in the order the maintainer approved: reads and writes larger than
+  64 KiB per request (multi-credit requests: CreditCharge, the server's
   MaxReadSize and MaxWriteSize, and the engine's credit accounting), then
   the adversarial proxy over 3.1.1 (below).
 * Submit a release to the Alire index only when the maintainer says so.
@@ -417,8 +419,9 @@ opens a received one. It is a stateless SPARK unit, like
 
 * `SMB.Core_Query` is a new SPARK unit for QUERY_INFO, rather than another
   operation in `SMB.Core_Client`, so that a change to it re-proves a small
-  unit. It keeps its own copies of `Prepare_Header` and `Sign_Packet`, as
-  `SMB.Core_Connection` does.
+  unit. Since #135 it shares `Prepare_Header` and `Sign_Packet` with
+  `SMB.Core_Resize` through `SMB.Core_Request`; `SMB.Core_Client` and
+  `SMB.Core_Connection` keep copies of their own.
 * One request shape: FileNetworkOpenInformation (class 34), 56 bytes, on
   an open handle. Every access mode the client opens with includes
   FILE_READ_ATTRIBUTES (`Core_Client.Access_Mask`), so any handle can be
@@ -447,10 +450,26 @@ opens a received one. It is a stateless SPARK unit, like
   engine to state that `Handle_Matches` implies `Validate_Handle` succeeds.
 * The adversarial proxy mutates QUERY_DIRECTORY and SET_INFO responses but
   not QUERY_INFO; add it when the proxy learns 3.1.1.
-* Next, as its own pull request: SET_INFO FileEndOfFileInformation, to
-  truncate or extend a file (a third `Metadata_Kind` in `SMB.Core_Client`).
 * Not done: a path-based query that opens and closes a handle itself (it
   would need to tell files from directories first).
+
+## Setting a file's size (#135)
+
+* `SMB.Client.Set_Size` sends SET_INFO FileEndOfFileInformation (class 20,
+  an eight-byte EndOfFile) through the new SPARK unit `SMB.Core_Resize`,
+  built like `SMB.Core_Query` rather than as a third `Metadata_Kind` in
+  `SMB.Core_Client`, whose proof takes about 40 minutes on the Mac.
+* `Prepare` asks the engine for a handle that may write
+  (`Validate_Handle (..., Need_Write => True)`), so a read-only handle is
+  refused with `Invalid_State_Status` before any I/O, and refuses a size
+  past 2**63 - 1 (EndOfFile is signed) with `Invalid_Value`, which the
+  facade raises as `SMB.Protocol_Error`, as it does for a READ that is too
+  long.
+* `SMB.Core_Request` holds the header and signing steps that
+  `SMB.Core_Query` kept its own copy of; both new units use it.
+* The integration client truncates the 70,001-byte file to 1,000 bytes,
+  extends it to 5,000 and reads zeros past 1,000, and checks the two local
+  refusals. The async proxy's success workflow calls `Set_Size` as well.
 
 ## AES-256 primitives (#129)
 

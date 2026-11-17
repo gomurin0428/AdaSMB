@@ -76,6 +76,10 @@ PROOF_UNITS = {
     "smb-core_client.adb",
     "smb-core_query.ads",
     "smb-core_query.adb",
+    "smb-core_request.ads",
+    "smb-core_request.adb",
+    "smb-core_resize.ads",
+    "smb-core_resize.adb",
     "smb-engine.ads",
     "smb-engine.adb",
 }
@@ -104,6 +108,8 @@ PROOF_BODIES = {
     "smb-core_connection.adb",
     "smb-core_client.adb",
     "smb-core_query.adb",
+    "smb-core_request.adb",
+    "smb-core_resize.adb",
     "smb-engine.adb",
 }
 for body in PROOF_BODIES:

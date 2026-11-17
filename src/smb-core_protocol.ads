@@ -365,6 +365,37 @@ package SMB.Core_Protocol is
      and then Offset <= Buffer'Length
      and then Buffer'Length - Offset >= Network_Open_Information_Size;
 
+   --  A SET_INFO request body (MS-SMB2 2.2.39) for FileEndOfFileInformation
+   --  (class 20) of the open File_Id: the eight-byte EndOfFile, Size.
+   End_Of_File_Information_Class : constant := 20;
+   procedure Build_End_Of_File
+     (File_Id : SMB.Bytes;
+      Size : SMB.QWord;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with Pre => File_Id'Length = 16
+     and then Output'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 40
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
+            and then Output (Output'First + 2) = 1
+            and then Output (Output'First + 3) =
+              End_Of_File_Information_Class
+            and then SMB.Core_Wire.Encoded_U32 (Output, 4) = 8
+            and then SMB.Core_Wire.Encoded_U16 (Output, 8) = 96
+            and then
+              (for all Index in 10 .. 15 =>
+                 Output (Output'First + Index) = 0)
+            and then
+              (for all Index in 0 .. 15 =>
+                 Output (Output'First + 16 + Index) =
+                   File_Id (File_Id'First + Index))
+            and then SMB.Core_Wire.Encoded_U64 (Output, 32) = Size);
+
    procedure Build_Rename
      (File_Id : SMB.Bytes;
       Name : SMB.Bytes;

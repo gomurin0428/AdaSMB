@@ -664,6 +664,30 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Finish (41, Output'Length, Used, Status);
    end Build_Query_Information;
 
+   procedure Build_End_Of_File
+     (File_Id : SMB.Bytes;
+      Size : SMB.QWord;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status) is
+   begin
+      Begin_Build (Output, 40, Status);
+      Put_U16 (Output, 0, 33, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
+      if Status = SMB.Ok then
+         Put_Byte (Output, 2, 1, Status);
+         Put_Byte (Output, 3, End_Of_File_Information_Class, Status);
+      end if;
+      Put_U32 (Output, 4, 8, Status);
+      Put_U16 (Output, 8, 96, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
+      if Status = SMB.Ok then
+         Copy (Output, 16, File_Id, Status);
+      end if;
+      Put_U64 (Output, 32, Size, Status);
+      Finish (40, Output'Length, Used, Status);
+   end Build_End_Of_File;
+
    procedure Build_Rename
      (File_Id : SMB.Bytes;
       Name : SMB.Bytes;

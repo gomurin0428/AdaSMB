@@ -1,117 +1,10 @@
-with SMB.AES;
-with SMB.Core_Negotiate;
+with SMB.Core_Request;
 
 package body SMB.Core_Query
   with SPARK_Mode
 is
    pragma Unevaluated_Use_Of_Old (Allow);
    Header_Length : constant Natural := SMB.Core_Wire.Header_Size;
-
-   --  The header and signing steps are those of SMB.Core_Client and
-   --  SMB.Core_Connection, each of which keeps its own copy as well.
-   procedure Prepare_Header
-     (Packet : in out SMB.Bytes;
-      Expected : SMB.Engine.Request_Expectation;
-      Status : out SMB.Core_Status)
-   with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
-     Post =>
-       (if Packet'Length >= Header_Length then Status = SMB.Ok)
-       and then (if Status = SMB.Ok then
-          SMB.Core_Wire.Encoded_U16 (Packet, 4) =
-            SMB.Word (Header_Length)
-          and then SMB.Core_Wire.Encoded_U16 (Packet, 12) =
-            SMB.Word (Expected.Command)
-          and then SMB.Core_Wire.Encoded_U32 (Packet, 16) =
-            (if Expected.Request_Signed then 8 else 0)
-          and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
-            Expected.Message_Id
-          and then SMB.Core_Wire.Encoded_U32 (Packet, 36) =
-            Expected.Tree_Id
-          and then SMB.Core_Wire.Encoded_U64 (Packet, 40) =
-            Expected.Session_Id
-          and then
-            (for all Index in Packet'Range =>
-               (if Index - Packet'First >= Header_Length then
-                  Packet (Index) = Packet'Old (Index))))
-   is
-      Field_Status : SMB.Core_Status;
-   begin
-      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: Prepare checks the output length first
-      if Packet'Length < Header_Length then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
-         Status := SMB.Invalid_Length;
-         return;
-      end if;
-      SMB.Core_Wire.Initialize_Header
-        (Packet, Expected.Command, Expected.Message_Id,
-         Expected.Tree_Id, Expected.Session_Id, 1, Field_Status);
-      --  adamutant:disable-next-line ConditionalExpression: a header fits the packet, so the write succeeds
-      if Field_Status /= SMB.Ok then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
-         Status := Field_Status;
-         return;
-      end if;
-      --  adamutant:disable-next-line ConditionalExpression: every QUERY_INFO is signed
-      if Expected.Request_Signed then
-         SMB.Core_Wire.Write_U32 (Packet, 16, 8, Field_Status);
-         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: a header fits the packet, so the write succeeds
-         if Field_Status /= SMB.Ok then
-            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
-            Status := Field_Status;
-            return;
-         end if;
-      end if;
-      Status := SMB.Ok;
-   end Prepare_Header;
-
-   --  Signs with HMAC-SHA256 and Key for SMB 2.1, and with AES-128-CMAC or
-   --  AES-128-GMAC, as Signing says, and SMB3_Key for 3.1.1.
-   procedure Sign_Packet
-     (Packet : in out SMB.Bytes;
-      Used : Natural;
-      Key : SMB.Bytes;
-      Signing : SMB.Core_Negotiate.Signing_Id;
-      SMB3_Key : SMB.AES.Key_128;
-      Status : out SMB.Core_Status)
-   with Pre =>
-     Packet'Length <= SMB.Maximum_Frame_Size
-     and then Key'Length > 0
-     and then Key'Length <= SMB.Maximum_Frame_Size
-     and then Used <= Packet'Length
-     and then Used >= Header_Length,
-     Post =>
-       Status = SMB.Ok
-       and then
-         (for all Index in Packet'Range =>
-            (if Index < Packet'First + 48
-               or else Index > Packet'First + 63
-             then Packet (Index) = Packet'Old (Index)))
-       and then SMB.Core_Wire.Encoded_U16 (Packet, 4) =
-         SMB.Core_Wire.Encoded_U16 (Packet'Old, 4)
-       and then SMB.Core_Wire.Encoded_U16 (Packet, 12) =
-         SMB.Core_Wire.Encoded_U16 (Packet'Old, 12)
-       and then SMB.Core_Wire.Encoded_U32 (Packet, 16) =
-         SMB.Core_Wire.Encoded_U32 (Packet'Old, 16)
-       and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
-         SMB.Core_Wire.Encoded_U64 (Packet'Old, 24)
-       and then SMB.Core_Wire.Encoded_U32 (Packet, 36) =
-         SMB.Core_Wire.Encoded_U32 (Packet'Old, 36)
-       and then SMB.Core_Wire.Encoded_U64 (Packet, 40) =
-         SMB.Core_Wire.Encoded_U64 (Packet'Old, 40)
-   is
-   begin
-      case Signing is
-         when SMB.Core_Negotiate.HMAC_SHA256 =>
-            SMB.Core_Wire.Sign
-              (Packet
-                 (Packet'First .. Packet'First + (Used - 1)), Key, Status);
-         when SMB.Core_Negotiate.AES_CMAC | SMB.Core_Negotiate.AES_GMAC =>
-            SMB.Core_Wire.Sign_SMB3
-              (Packet
-                 (Packet'First .. Packet'First + (Used - 1)), SMB3_Key,
-               Signing, Status);
-      end case;
-   end Sign_Packet;
 
    --  The executable part of In_Flight, but for the stage and the pending
    --  request.
@@ -255,9 +148,9 @@ is
       pragma Assert
         (SMB.Engine.Handle_Matches_In_States
            (Before_Begin, State, Token, Id, Mode, Dir));
-      Prepare_Header (Output, Expected, S);
+      SMB.Core_Request.Prepare_Header (Output, Expected, S);
       pragma Assert (S = SMB.Ok);
-      Sign_Packet
+      SMB.Core_Request.Sign_Packet
         (Output, Request_Size, SMB.Engine.Current_Signing_Key (State),
          SMB.Engine.Current_Signing (State),
          SMB.Engine.Current_SMB3_Signing_Key (State), S);

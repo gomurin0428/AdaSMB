@@ -8,7 +8,7 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes twenty-two units (twenty-one bodies plus
+`proof.gpr` explicitly includes twenty-four units (twenty-three bodies plus
 `SMB`'s types). These are the implementations called by `SMB.Client` and
 `SMB.Transport`, not a parallel model.
 
@@ -34,6 +34,8 @@ replace a successful GNATprove run.
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Query` | QUERY_INFO lifecycle for FileNetworkOpenInformation on an open handle: request construction/signing for a live handle only, send acknowledgement, response acceptance, a 56-byte information structure read from inside the packet on success, an error NTSTATUS returned with the connection kept; otherwise `Complete` either changes nothing (`Invalid_State_Status`) or fails the operation and invalidates the connection, as an abort does |
+| `SMB.Core_Resize` | SET_INFO FileEndOfFileInformation lifecycle on an open handle that may write: a size no larger than 2**63 - 1, request construction/signing for a live writable handle only, send acknowledgement and response acceptance; as for `SMB.Core_Query`, `Complete` either succeeds, changes nothing (`Invalid_State_Status`), or fails the operation and invalidates the connection |
+| `SMB.Core_Request` | The header and signature of a request whose body is in place, shared by `SMB.Core_Query` and `SMB.Core_Resize`: the header fields written from the engine's expectation, and only the signature field changed by signing |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
 | `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC or AES-128-GMAC, as negotiated, with the derived key for 3.1.1), the negotiated dialect, cipher, signing algorithm and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime |
 
@@ -313,6 +315,7 @@ remain trusted.
 | `SMB.Client` | `List_Directory` | Trusted folder lifetime and cleanup, UTF-16 decoding, dot-entry filtering, vector allocation/insertion, exception translation and socket pumping around the typed directory coordinator. |
 | `SMB.Client` | `Open_File`, `Close`, `Make_Directory`, `Remove_File`, `Remove_Directory` | Public wrappers over typed CREATE/CLOSE/SET_INFO flows; path validation/conversion, local object and temporary-handle lifetime, cleanup, and exception/NTSTATUS translation remain trusted. |
 | `SMB.Client` | `Connect`, `Connect_Share`, `Disconnect`, `Execute_Connection` | Trusted OS socket/entropy setup, share path encoding, exact returned packet slicing and socket pumping, exception/NTSTATUS translation, best-effort TREE_DISCONNECT/LOGOFF ordering, and transport cleanup. |
+| `SMB.Client` | `Set_Size` | Trusted SET_INFO socket orchestration around `SMB.Core_Resize`, cleanup and exception/NTSTATUS translation. What the server does to the file, such as filling an extension with zeros, is outside the proof. |
 | `SMB.Client` | `Query_Information`, `To_Time` | Trusted QUERY_INFO socket orchestration, the copy of the proved result into `File_Information`, cleanup, and exception/NTSTATUS translation; `To_Time`'s FILETIME arithmetic and range checks, and `Ada.Calendar` itself. The times and sizes are what the server reports. |
 | `SMB.Client` | `Execute_Metadata`, `Set_Disposition`, `Rename` | Trusted SET_INFO socket orchestration, path validation and UTF-16 encoding, allocation, temporary-handle lifetime, cleanup, and exception/NTSTATUS translation. DELETE authorization and server-side disposition/rename effects are outside the proof. |
 
