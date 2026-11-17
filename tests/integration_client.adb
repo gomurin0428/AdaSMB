@@ -1,4 +1,5 @@
 with Test_Dialects;
+with Ada.Calendar;
 with Ada.Environment_Variables;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
@@ -15,6 +16,7 @@ procedure Integration_Client is
    use type SMB.Bytes;
    use type SMB.Client.Access_Mode;
    use type SMB.DWord;
+   use type SMB.QWord;
 
    function Env (Name : String) return String is
    begin
@@ -39,6 +41,22 @@ procedure Integration_Client is
      & Character'Val (16#9F#) & Character'Val (16#98#)
      & Character'Val (16#80#) & ".bin";
    Renamed_Name : constant String := "renamed.bin";
+
+   --  A file's times, as a server keeps them: set, and in a plausible year.
+   procedure Check_Times
+     (Info : SMB.Client.File_Information; Label : String) is
+      type Times is array (1 .. 3) of SMB.QWord;
+   begin
+      for Value of Times'
+        (Info.Creation_Time, Info.Last_Write_Time, Info.Change_Time)
+      loop
+         Assert
+           (Ada.Calendar.Year (SMB.Client.To_Time (Value)) in 2020 .. 2200,
+            Label & ": implausible time" & SMB.QWord'Image (Value));
+      end loop;
+      Assert ((Info.Attributes and 16#10#) = 0,
+              Label & ": a file reported as a directory");
+   end Check_Times;
 begin
    declare
       Wrong : SMB.Client.Connection;
@@ -511,6 +529,24 @@ begin
          end;
          Check_Local_Transfer_Errors;
          declare
+            Info : constant SMB.Client.File_Information :=
+              SMB.Client.Query_Information (Client, File);
+            Writer : SMB.Client.Handle :=
+              SMB.Client.Open_File
+                (Client, Unicode_Name, SMB.Client.Write_Only);
+            Through_Writer : constant SMB.Client.File_Information :=
+              SMB.Client.Query_Information (Client, Writer);
+         begin
+            SMB.Client.Close (Client, Writer);
+            Assert (Info.Size = SMB.QWord (Data'Length),
+                    "QUERY_INFO size after a write:"
+                    & SMB.QWord'Image (Info.Size));
+            Assert (Through_Writer.Size = Info.Size
+                    and then Through_Writer.Creation_Time = Info.Creation_Time,
+                    "QUERY_INFO through a write-only handle differs");
+            Check_Times (Info, "written file");
+         end;
+         declare
             Partial_EOF : constant SMB.Bytes :=
               SMB.Client.Read
                 (Client, File, SMB.QWord (Data'Length - 1), 10);
@@ -554,6 +590,19 @@ begin
          exception
             when SMB.Invalid_State => null;
          end;
+         begin
+            declare
+               Ignored : constant SMB.Client.File_Information :=
+                 SMB.Client.Query_Information (Client, File);
+            begin
+               Assert (Ignored.Size = 0, "stale handle unexpectedly queried");
+            end;
+            raise Program_Error with "stale handle was queried";
+         exception
+            when SMB.Invalid_State => null;
+         end;
+         Assert (SMB.Client.Is_Connected (Client),
+                 "a stale-handle query disconnected");
       end;
 
       SMB.Client.Rename (Client, Unicode_Name, Renamed_Name);
@@ -603,6 +652,24 @@ begin
             begin
                if Name = "fixture.txt" then
                   Found_Fixture := True;
+                  declare
+                     Fixture : SMB.Client.Handle :=
+                       SMB.Client.Open_File
+                         (Client, Name, SMB.Client.Read_Only);
+                     Info : constant SMB.Client.File_Information :=
+                       SMB.Client.Query_Information (Client, Fixture);
+                  begin
+                     SMB.Client.Close (Client, Fixture);
+                     Assert (Item.Size = 27 and then Info.Size = 27,
+                             "fixture size in the listing or QUERY_INFO");
+                     Assert
+                       (Item.Creation_Time = Info.Creation_Time
+                        and then Item.Last_Write_Time = Info.Last_Write_Time
+                        and then Item.Change_Time = Info.Change_Time
+                        and then Item.Attributes = Info.Attributes,
+                        "listing and QUERY_INFO disagree on the fixture");
+                     Check_Times (Info, "fixture");
+                  end;
                elsif Name = "readonly.txt" then
                   Found_Readonly := True;
                elsif Name = "interrupted-read.bin" then

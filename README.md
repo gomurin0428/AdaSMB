@@ -52,6 +52,11 @@ directory operations.
   owner IDs. Handles record a monotonic integer owner ID, an epoch and an open
   ticket, and foreign, stale or closed handles are rejected before any network
   I/O.
+* `Query_Information` asks the server for an open file's size, allocation
+  size, attributes and four times (FileNetworkOpenInformation, through a
+  handle of any access mode), and `List_Directory` returns the same times
+  for each entry. Times are FILETIMEs as the server sends them;
+  `To_Time` converts one to `Ada.Calendar.Time`.
 * Frames are limited to 1 MiB and single read/write requests to 64 KiB, and
   received offsets, lengths and their sums are range-checked. SMB1, SMB 3.0
   and 3.0.2, compression, compound requests, Kerberos,
@@ -68,7 +73,8 @@ directory operations.
 
 The public API is synchronous and sends one request at a time. After
 authentication, LOGOFF, TREE_DISCONNECT, CREATE, CLOSE, READ, WRITE,
-QUERY_DIRECTORY and SET_INFO handle SMB 2.x `STATUS_PENDING` interim responses
+QUERY_DIRECTORY, QUERY_INFO and SET_INFO handle SMB 2.x `STATUS_PENDING`
+interim responses
 and the matching async final responses. As the specification says, interim
 responses are not signature-checked; only their correlation with the request,
 a non-zero AsyncId and the mandatory fields of the ERROR body are checked. An
@@ -133,8 +139,9 @@ or an invalid response, the Engine is invalidated without a retry and the
 facade closes the Channel. Socket I/O, transfer of the returned slices,
 allocation, exception handling and container lifetime are trust boundaries.
 Authentication, directory enumeration and DISPOSITION/RENAME also go through
-typed cores, and `SMB.Core_Connection` manages the state updates of connect,
-share connect and disconnect from requests and responses.
+typed cores, as does QUERY_INFO in `SMB.Core_Query`, and
+`SMB.Core_Connection` manages the state updates of connect, share connect and
+disconnect from requests and responses.
 
 The socket path uses `SMB.Core_Transport`, which proves the bytes of the whole
 frame in the native array actually sent, the copy of partial receives that
@@ -163,8 +170,9 @@ assumption is listed in [`docs/assurance.md`](docs/assurance.md).
 ## API and build
 
 The main API of `SMB.Client` is `Connect`, `Authenticate`, `Connect_Share`,
-`Open_File`, `Read`, `Write`, `Close`, `List_Directory`, `Make_Directory`,
-`Remove_File`, `Remove_Directory`, `Rename` and `Disconnect`. Paths are
+`Open_File`, `Read`, `Write`, `Close`, `Query_Information`, `List_Directory`,
+`Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename` and
+`Disconnect`. Paths are
 relative to the share; absolute paths, `..` escapes and embedded NULs are
 rejected.
 

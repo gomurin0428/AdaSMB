@@ -13,6 +13,7 @@ with SMB.Core_Connection;
 with SMB.Core_Framing;
 with SMB.Core_Negotiate;
 with SMB.Core_Preauth;
+with SMB.Core_Query;
 with SMB.Core_Transform;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
@@ -37,6 +38,7 @@ with Spnego_Mutation_Tests;
 with Challenge_Mutation_Tests;
 with Async_Engine_Tests;
 with Core_Client_Tests;
+with Core_Query_Tests;
 with Engine_Fixtures;
 with SMB.Heap_Owner_Tests;
 
@@ -3860,6 +3862,33 @@ procedure Test_Suite is
          SMB.Core_Client.Complete
            (Operation, State, Response, Nt_Status, Token, Status);
          Check (Status = SMB.Ok, "CREATE response signed");
+         --  QUERY_INFO through Core_Query.
+         declare
+            use type SMB.Core_Query.Query_Stage;
+            Query : SMB.Core_Query.Query_Operation;
+            Query_Response : SMB.Bytes (0 .. 127);
+         begin
+            SMB.Core_Query.Prepare (Query, State, Token, Request, Used, Status);
+            Check (Status = SMB.Ok and then Used = 105
+                   and then MAC_Signed (Request (0 .. Used - 1)),
+                   "QUERY_INFO signed");
+            SMB.Core_Query.Send_Succeeded (Query, State, Status);
+            Prepare_Reply
+              (Query_Response, 16, SMB.Wire.U64 (Request, 24), Tree_Id);
+            Query_Response (64) := 9;
+            Query_Response (66) := 72;
+            Query_Response (68) := 56;
+            Query_Response (112) := 16#2A#;
+            Sign_Reply (Query_Response, MAC);
+            SMB.Core_Query.Complete
+              (Query, State, Query_Response, Nt_Status, Status);
+            Check (Status = SMB.Ok
+                   and then SMB.Core_Query.Stage_Of (Query) =
+                     SMB.Core_Query.Query_Finished
+                   and then SMB.Core_Query.Result_Of (Query).End_Of_File =
+                     16#2A#,
+                   "QUERY_INFO response signed");
+         end;
          declare
             Close : SMB.Core_Client.Operation;
             Close_Response : SMB.Bytes (0 .. 123);
@@ -6334,7 +6363,7 @@ procedure Test_Suite is
       Status : SMB.Core_Status;
       type Command_Array is array (Positive range <>) of
         SMB.Core_Wire.Command_Code;
-      Commands : constant Command_Array := (5, 8, 14, 17);
+      Commands : constant Command_Array := (5, 8, 14, 16, 17);
    begin
       SMB.Wire.Put_U16 (Packet, 64, 9);
       SMB.Wire.Put_U32 (Packet, 68, 3);
@@ -7524,7 +7553,7 @@ procedure Test_Suite is
          Base, Target, Authenticated_State : SMB.Engine.Engine_State;
          Handle : SMB.Engine.Handle_Token;
          Commands : constant array (Positive range <>) of
-           SMB.Core_Wire.Command_Code := (2, 4, 5, 6, 8, 9, 14, 17);
+           SMB.Core_Wire.Command_Code := (2, 4, 5, 6, 8, 9, 14, 16, 17);
          Poison : constant SMB.Engine.Request_Expectation :=
            (Command => SMB.Core_Wire.Command_Code'Last,
             Message_Id => SMB.QWord'Last,
@@ -7594,11 +7623,11 @@ procedure Test_Suite is
          Assert (Result = SMB.Ok, "reserve authenticated LOGOFF metadata fixture");
          Check_Request_Metadata (Authenticated_State, Reservation, False, True);
          Assert
-           (Reservation_Checks = 13 and then Metadata_Mutations = 156
-            and then Rejections = 12,
+           (Reservation_Checks = 14 and then Metadata_Mutations = 168
+            and then Rejections = 13,
             "request metadata coverage");
          Ada.Text_IO.Put_Line
-           ("request metadata: 13 reservations, 156 field mutations and 12 rejected calls passed");
+           ("request metadata: 14 reservations, 168 field mutations and 13 rejected calls passed");
       end Test_Request_Metadata;
 
       procedure Test_Request_Receipt_Preservation is
@@ -11669,7 +11698,8 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "final-spnego"
                  and then Ada.Command_Line.Argument (1) /= "challenge-mutations"
                  and then Ada.Command_Line.Argument (1) /= "async-responses"
-                 and then Ada.Command_Line.Argument (1) /= "core-client")
+                 and then Ada.Command_Line.Argument (1) /= "core-client"
+                 and then Ada.Command_Line.Argument (1) /= "core-query")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
@@ -11681,6 +11711,8 @@ begin
          Test_Transfer_Progress;
       elsif Ada.Command_Line.Argument (1) = "core-client" then
          Core_Client_Tests.Run;
+      elsif Ada.Command_Line.Argument (1) = "core-query" then
+         Core_Query_Tests.Run;
       elsif Ada.Command_Line.Argument (1) = "async-responses" then
          Async_Engine_Tests.Run;
          Ada.Text_IO.Put_Line ("AdaSMB async response tests passed");
@@ -11793,6 +11825,7 @@ begin
    Test_Engine_Receipts;
    Async_Engine_Tests.Run;
    Core_Client_Tests.Run;
+   Core_Query_Tests.Run;
    SMB.Heap_Owner_Tests.Run;
    Test_Text_And_Wire;
    Test_Wire_Facade;

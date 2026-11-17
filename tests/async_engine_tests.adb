@@ -130,7 +130,7 @@ package body Async_Engine_Tests is
       end Reject_Request;
 
       type Command_List is array (Positive range <>) of SMB.Core_Wire.Command_Code;
-      Async_Commands : constant Command_List := (2, 4, 5, 6, 9, 14, 17);
+      Async_Commands : constant Command_List := (2, 4, 5, 6, 9, 14, 16, 17);
    begin
       Setup_Share (State, Message_Id, Expected, Status, Stop_At => Connected);
       Reject_Request

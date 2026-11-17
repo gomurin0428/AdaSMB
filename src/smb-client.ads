@@ -1,3 +1,4 @@
+with Ada.Calendar;
 with Ada.Finalization;
 with Ada.Strings.Unbounded;
 with SMB.Core_Negotiate;
@@ -19,10 +20,16 @@ package SMB.Client is
    --  attacker strip 3.1.1 from the request and force 2.1.
    type Dialect_Policy is (SMB_311_Only, SMB_311_Or_21);
 
+   --  File times are FILETIMEs, as the server sends them: 100-nanosecond
+   --  intervals since 1601-01-01 UTC. To_Time converts one.
    type Directory_Entry is record
       Name : Ada.Strings.Unbounded.Unbounded_String;
       Size : SMB.QWord := 0;
       Attributes : SMB.DWord := 0;
+      Creation_Time : SMB.QWord := 0;
+      Last_Access_Time : SMB.QWord := 0;
+      Last_Write_Time : SMB.QWord := 0;
+      Change_Time : SMB.QWord := 0;
    end record;
    type Directory_Entry_Array is array (Natural range <>) of Directory_Entry;
 
@@ -56,6 +63,31 @@ package SMB.Client is
       Offset : SMB.QWord;
       Data : SMB.Bytes);
    procedure Close (Client : in out Connection; File : in out Handle);
+
+   --  What the server reports of an open file: its FileNetworkOpenInformation
+   --  (MS-FSCC). Size is the end of file, and Allocation_Size the
+   --  space the file takes on disk.
+   type File_Information is record
+      Size : SMB.QWord := 0;
+      Allocation_Size : SMB.QWord := 0;
+      Attributes : SMB.DWord := 0;
+      Creation_Time : SMB.QWord := 0;
+      Last_Access_Time : SMB.QWord := 0;
+      Last_Write_Time : SMB.QWord := 0;
+      Change_Time : SMB.QWord := 0;
+   end record;
+
+   --  Asks the server for File's information now: the size reflects writes
+   --  made through File, though a server may update the last-write time
+   --  only later (Windows and Samba both can). Works on a handle of any
+   --  Access_Mode.
+   function Query_Information
+     (Client : in out Connection; File : Handle) return File_Information;
+
+   --  The Ada.Calendar.Time of a FILETIME. Raises Ada.Calendar.Time_Error
+   --  outside Ada.Calendar's range, 1901 to 2399; that includes 0, which a
+   --  server sends for a time it does not keep.
+   function To_Time (Value : SMB.QWord) return Ada.Calendar.Time;
 
    function List_Directory
      (Client : in out Connection;

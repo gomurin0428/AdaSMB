@@ -5257,3 +5257,77 @@ branch: 6,134 checks in every unit at its `proof.gpr` timeouts, with
 nothing unproved. That run was on the first commit; the later commits
 changed only `smb-aes-gcm.adb`'s body in `src/`, proved again on the Mac
 above.
+
+## File information (`SMB.Core_Query`)
+
+`SMB.Client.Query_Information` sends QUERY_INFO for FileNetworkOpenInformation
+on an open handle. The new SPARK unit `SMB.Core_Query` holds its lifecycle:
+`Prepare`, `Send_Succeeded`, `Complete` and `Abort_Query`, as the SET_INFO
+operation in `SMB.Core_Client` has. `Prepare`'s postcondition gives the
+request's fields (`Packet_Matches`): the header's structure size, command,
+signed flag, MessageId, TreeId and SessionId, and the body's StructureSize
+41, information type 1 and class 34, OutputBufferLength 56, zero input
+fields and Buffer byte, and the handle's FileId; the signature is
+`Sign_Packet`'s. `Complete`'s postcondition states that a successful query
+leaves the share connected and the handle unchanged, and that on
+STATUS_SUCCESS the OutputBufferLength is exactly 56, the structure lies
+inside the packet after the fixed part, and the result is
+`Core_Protocol.Network_Open_Information` at the OutputBufferOffset. An
+error status finishes the operation with a zero result. Any other outcome
+either reports `Invalid_State_Status` with nothing changed or fails the
+operation with the connection invalidated, as `Complete_Metadata` states for
+SET_INFO; so a response of another length invalidates the connection. `Parse_Response` takes command 16 on QUERY_DIRECTORY's
+branch, the engine accepts command 16 where it accepts 14 and 17, and
+`Parse_Directory_Entry`'s postcondition now gives the four times of each
+entry.
+
+`Build_Query_Information` does not claim to succeed on a large enough
+output: the field writers it calls state what they wrote, not that they
+succeed within bounds, as for the other builders. `Prepare` handles its
+status on a branch that cannot be reached.
+
+GNATprove 16.1.0 proved every check of the changed units on the Mac, with
+no `pragma Assume` or justification:
+
+| Unit | Checks |
+| --- | --- |
+| `smb-core_query.adb` | 137 |
+| `smb-core_protocol.adb` | 973 |
+| `smb-engine.adb` | 332 |
+| `smb-core_client.adb` | 1,488 |
+
+The full proof workflow (`proof.yml`) on GitHub Actions passed on this
+branch: 6,332 checks in every unit at its `proof.gpr` timeouts, with nothing
+unproved. That run was on the commit before this report's figures were
+filled in, which changed nothing in `src/`.
+
+`test_suite` adds `Core_Query_Tests` (88 checks): the request byte by byte,
+each access mode and a directory handle, an output of exactly the request's
+size, an error status, data at a later offset, nine malformed responses
+(48, 64 and 0 bytes of information, information inside the header or past
+the end, structure size 17, a length past the I/O limit, unsigned, another
+message's response), an interim response followed by an async final one,
+calls out of order and aborts, the builder and parsers at the top of the
+index range, and `To_Time` at both ends of `Ada.Calendar`'s range. The 3.1.1
+engine operations test sends QUERY_INFO signed with AES-CMAC and with
+AES-GMAC. The integration client checks a written file's size and times
+through read-write and write-only handles, a closed handle refused without
+disconnecting, and `fixture.txt`'s listing against its QUERY_INFO.
+
+A changed-line AdaMutant run detected all 193 mutants (one more did not
+compile): `smb-core_query.adb` 136, `smb-core_protocol.adb` 35,
+`smb-engine.adb` 15 and `smb-core_client.adb` 7. The first run left five:
+three needed tests (the credit fields, an output of exactly the request's
+size, a directory handle), and two were branches that cannot be reached,
+now marked with the reason.
+
+The review before merging found no defect in the wire format, the facade or
+`To_Time`'s range. It asked for `Complete`'s failure outcomes to be stated
+as above (they had only said that a changed operation had failed), for
+QUERY_INFO in the remaining lists of commands (the async proxy, the ERROR
+body and request-metadata tests, the assurance document's interim list),
+and for exact wording here. `To_Time` was then rewritten to build the civil
+date and call `Ada.Calendar.Formatting.Time_Of`, instead of adding days
+with `Ada.Calendar.Arithmetic` (whose 64-bit nanosecond count took steps of
+100,000 days), which also keeps it right under GNAT's leap-second option;
+a test steps through all 182,256 days of the range.

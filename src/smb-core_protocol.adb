@@ -11,6 +11,7 @@ package body SMB.Core_Protocol with SPARK_Mode is
    Read_Command : constant SMB.Core_Wire.Command_Code := 8;
    Write_Command : constant SMB.Core_Wire.Command_Code := 9;
    Query_Directory_Command : constant SMB.Core_Wire.Command_Code := 14;
+   Query_Info_Command : constant SMB.Core_Wire.Command_Code := 16;
    Set_Info_Command : constant SMB.Core_Wire.Command_Code := 17;
 
    procedure Clear (Output : out SMB.Bytes)
@@ -642,6 +643,27 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Finish (33, Output'Length, Used, Status);
    end Build_Disposition;
 
+   procedure Build_Query_Information
+     (File_Id : SMB.Bytes;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status) is
+   begin
+      Begin_Build (Output, 41, Status);
+      Put_U16 (Output, 0, 41, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
+      if Status = SMB.Ok then
+         Put_Byte (Output, 2, 1, Status);
+         Put_Byte (Output, 3, Network_Open_Information_Class, Status);
+      end if;
+      Put_U32 (Output, 4, Network_Open_Information_Size, Status);
+      --  adamutant:disable-next-line ConditionalExpression: the status is Ok here whenever the output is used
+      if Status = SMB.Ok then
+         Copy (Output, 24, File_Id, Status);
+      end if;
+      Finish (41, Output'Length, Used, Status);
+   end Build_Query_Information;
+
    procedure Build_Rename
      (File_Id : SMB.Bytes;
       Name : SMB.Bytes;
@@ -834,7 +856,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
          when Negotiate_Command | Session_Setup_Command | Logoff_Command
             | Tree_Connect_Command | Tree_Disconnect_Command
             | Create_Command | Close_Command | Read_Command | Write_Command
-            | Query_Directory_Command | Set_Info_Command =>
+            | Query_Directory_Command | Query_Info_Command
+            | Set_Info_Command =>
             null;
          when others =>
             Status := SMB.Unsupported_Feature;
@@ -1059,7 +1082,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
          if Structure /= 60 or else (Word_Value and 16#FFFE#) /= 0 then
             Status := SMB.Invalid_Protocol;
          end if;
-      elsif Command = 14 then
+      --  QUERY_DIRECTORY and QUERY_INFO responses have the same layout.
+      elsif Command = Query_Directory_Command
+        or else Command = Query_Info_Command
+      then
          if Packet'Length < 72 then
             Status := SMB.Invalid_Length;
             return;
@@ -1156,6 +1182,12 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Info.Size := SMB.Core_Wire.Encoded_U64 (Buffer, Cursor + 40);
       Info.Attributes :=
         SMB.Core_Wire.Encoded_U32 (Buffer, Cursor + 56);
+      Info.Creation_Time := SMB.Core_Wire.Encoded_U64 (Buffer, Cursor + 8);
+      Info.Last_Access_Time :=
+        SMB.Core_Wire.Encoded_U64 (Buffer, Cursor + 16);
+      Info.Last_Write_Time :=
+        SMB.Core_Wire.Encoded_U64 (Buffer, Cursor + 24);
+      Info.Change_Time := SMB.Core_Wire.Encoded_U64 (Buffer, Cursor + 32);
       Name_Length := SMB.Core_Wire.Encoded_U32 (Buffer, Cursor + 60);
       Short_Name_Length := Buffer (Buffer'First + Cursor + 68);
       --  adamutant:disable-next-line ArithmeticOperator: a longer name fails the entry length check below the same way

@@ -1,3 +1,4 @@
+with Ada.Calendar.Formatting;
 with Ada.Containers.Vectors;
 with Ada.Exceptions;
 with Ada.Real_Time;
@@ -8,6 +9,7 @@ with SMB.Core_Client;
 with SMB.Core_Connection;
 with SMB.Core_Transform;
 with SMB.Core_Protocol;
+with SMB.Core_Query;
 with SMB.Core_Text;
 with SMB.Core_Wire;
 with SMB.Heap_Owner;
@@ -20,6 +22,7 @@ package body SMB.Client is
    use type SMB.Core_Client.Authentication_Stage;
    use type SMB.Core_Client.Directory_Stage;
    use type SMB.Core_Client.Metadata_Stage;
+   use type SMB.Core_Query.Query_Stage;
    use type SMB.Core_Connection.Connection_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
@@ -933,6 +936,116 @@ package body SMB.Client is
          raise;
    end Read;
 
+   function Query_Information
+     (Client : in out Connection; File : Handle) return File_Information is
+      Packet : SMB.Bytes (0 .. SMB.Core_Query.Request_Size - 1) :=
+        (others => 0);
+      Used : Natural;
+      Core_Status : SMB.Core_Status;
+      Operation : SMB.Core_Query.Query_Operation;
+   begin
+      SMB.Core_Query.Prepare
+        (Operation, Client.Engine_Core, File.Engine_Token, Packet, Used,
+         Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB QUERY_INFO preparation");
+      Send_Request (Client, Packet (0 .. Used - 1));
+      SMB.Core_Query.Send_Succeeded
+        (Operation, Client.Engine_Core, Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB QUERY_INFO send acknowledgement");
+      declare
+         Response : constant SMB.Bytes := Receive_Response (Client);
+      begin
+         SMB.Core_Query.Complete
+           (Operation, Client.Engine_Core, Response, Client.Last_Status,
+            Core_Status);
+      end;
+      Require_Transfer_Status (Core_Status, "SMB QUERY_INFO response");
+      Require_Status (Client, Client.Last_Status);
+      declare
+         Info : constant SMB.Core_Protocol.File_Information :=
+           SMB.Core_Query.Result_Of (Operation);
+      begin
+         return
+           (Size => Info.End_Of_File,
+            Allocation_Size => Info.Allocation_Size,
+            Attributes => Info.Attributes,
+            Creation_Time => Info.Creation_Time,
+            Last_Access_Time => Info.Last_Access_Time,
+            Last_Write_Time => Info.Last_Write_Time,
+            Change_Time => Info.Change_Time);
+      end;
+   exception
+      when others =>
+         if SMB.Core_Query.Stage_Of (Operation) in
+              SMB.Core_Query.Query_Prepared | SMB.Core_Query.Query_Sent
+         then
+            SMB.Core_Query.Abort_Query
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
+            Clear_State_Preserving_Status (Client);
+         end if;
+         raise;
+   end Query_Information;
+
+   --  1601-01-01, FILETIME's epoch, starts a 400-year Gregorian cycle, and
+   --  Ada.Calendar's range, 1901 to 2399, starts 109,572 days after it and
+   --  ends 291,828 days after it.
+   Ticks_Per_Second : constant SMB.QWord := 10_000_000;
+   Seconds_Per_Day : constant SMB.QWord := 86_400;
+   First_Calendar_Day : constant SMB.QWord := 109_572;
+   Past_Calendar_Day : constant SMB.QWord := 291_828;
+
+   --  The date of the day Days after 1601-01-01: H. Hinnant's
+   --  civil_from_days, counted from 1600-03-01 so that a leap day ends its
+   --  year. 1601-01-01 is 306 days after 1600-03-01.
+   procedure Split_Days
+     (Days : SMB.QWord;
+      Year : out Ada.Calendar.Year_Number;
+      Month : out Ada.Calendar.Month_Number;
+      Day : out Ada.Calendar.Day_Number)
+   is
+      Shifted : constant SMB.QWord := Days + 306;
+      Cycle : constant SMB.QWord := Shifted / 146_097;
+      Day_Of_Cycle : constant SMB.QWord := Shifted mod 146_097;
+      Year_Of_Cycle : constant SMB.QWord :=
+        (Day_Of_Cycle - Day_Of_Cycle / 1_460 + Day_Of_Cycle / 36_524
+         - Day_Of_Cycle / 146_096) / 365;
+      Day_Of_Year : constant SMB.QWord :=
+        Day_Of_Cycle
+        - (365 * Year_Of_Cycle + Year_Of_Cycle / 4 - Year_Of_Cycle / 100);
+      Month_From_March : constant SMB.QWord := (5 * Day_Of_Year + 2) / 153;
+   begin
+      Day := Ada.Calendar.Day_Number
+        (Day_Of_Year - (153 * Month_From_March + 2) / 5 + 1);
+      Month := Ada.Calendar.Month_Number
+        (if Month_From_March < 10 then Month_From_March + 3
+         else Month_From_March - 9);
+      Year := Ada.Calendar.Year_Number
+        (1600 + 400 * Cycle + Year_Of_Cycle + (if Month <= 2 then 1 else 0));
+   end Split_Days;
+
+   function To_Time (Value : SMB.QWord) return Ada.Calendar.Time is
+      Seconds : constant SMB.QWord := Value / Ticks_Per_Second;
+      Days : constant SMB.QWord := Seconds / Seconds_Per_Day;
+      Year : Ada.Calendar.Year_Number;
+      Month : Ada.Calendar.Month_Number;
+      Day : Ada.Calendar.Day_Number;
+   begin
+      if Days < First_Calendar_Day or else Days >= Past_Calendar_Day then
+         raise Ada.Calendar.Time_Error with
+           "FILETIME outside the years 1901 to 2399";
+      end if;
+      Split_Days (Days, Year, Month, Day);
+      --  A FILETIME counts no leap seconds, so the time of day goes in as
+      --  a civil time, whatever the runtime does with leap seconds.
+      return Ada.Calendar.Formatting.Time_Of
+        (Year, Month, Day,
+         Seconds => Duration (Seconds mod Seconds_Per_Day)
+           + Duration (Value mod Ticks_Per_Second) / 10_000_000,
+         Time_Zone => 0);
+   end To_Time;
+
    procedure Write
      (Client : in out Connection;
       File : Handle;
@@ -1095,6 +1208,11 @@ package body SMB.Client is
                              Ada.Strings.Unbounded.To_Unbounded_String (Name);
                            Item.Size := Entry_Info.Size;
                            Item.Attributes := Entry_Info.Attributes;
+                           Item.Creation_Time := Entry_Info.Creation_Time;
+                           Item.Last_Access_Time :=
+                             Entry_Info.Last_Access_Time;
+                           Item.Last_Write_Time := Entry_Info.Last_Write_Time;
+                           Item.Change_Time := Entry_Info.Change_Time;
                            Entries.Append (Item);
                         end if;
                      end;

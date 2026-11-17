@@ -13,7 +13,7 @@ import time
 
 from adversarial_proxy import recv_exact, session_key_from_type3
 
-ASYNC_COMMANDS = {2, 4, 5, 6, 8, 9, 14, 17}
+ASYNC_COMMANDS = {2, 4, 5, 6, 8, 9, 14, 16, 17}
 NEGATIVE_MODES = {
     "wrong-async-id",
     "wrong-message-id",
