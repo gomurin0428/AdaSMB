@@ -5291,10 +5291,15 @@ no `pragma Assume` or justification:
 
 | Unit | Checks |
 | --- | --- |
-| `smb-core_query.adb` | QUERY_CHECKS |
-| `smb-core_protocol.adb` | PROTOCOL_CHECKS |
+| `smb-core_query.adb` | 137 |
+| `smb-core_protocol.adb` | 973 |
 | `smb-engine.adb` | 332 |
 | `smb-core_client.adb` | 1,488 |
+
+The full proof workflow (`proof.yml`) on GitHub Actions passed on this
+branch: 6,332 checks in every unit at its `proof.gpr` timeouts, with nothing
+unproved. That run was on the commit before this report's figures were
+filled in, which changed nothing in `src/`.
 
 `test_suite` adds `Core_Query_Tests` (88 checks): the request byte by byte,
 each access mode and a directory handle, an output of exactly the request's
