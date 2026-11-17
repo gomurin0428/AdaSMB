@@ -3,6 +3,10 @@ PYTHON ?= python3
 ADAMUTANT ?= adamutant
 
 MUTATION_BASE ?= origin/main
+# A directory for GNATprove's proof cache (--memcached-server=file:...):
+# results of unchanged proof goals are taken from it instead of the provers.
+# Empty means no cache.
+PROOF_CACHE ?=
 
 .PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test aes-test cmac-test ccm-test gcm-test kdf-test signing-test clock-test check stack-check clean example prove mutation mutation-diff
 
@@ -92,6 +96,7 @@ prove:
 	@command -v gnatprove >/dev/null 2>&1 || { echo "gnatprove is required"; exit 127; }
 	@gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=all \
 		--checks-as-errors=on --prover=cvc5,z3,altergo -j4 \
+		$(if $(PROOF_CACHE),--memcached-server=file:$(abspath $(PROOF_CACHE))) \
 		> gnatprove.out 2>&1; result=$$?; \
 		cat gnatprove.out; exit $$result
 
