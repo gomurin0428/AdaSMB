@@ -996,12 +996,16 @@ package body Core_Client_Tests is
                       Directory => True);
          Name := (others => 16#EE#);
          Info := (Name_Offset => 1, Name_Length => 1, Size => 1,
-                  Attributes => 1, Next_Cursor => 1);
+                  Attributes => 1, Next_Cursor => 1, Creation_Time => 1,
+                  Last_Access_Time => 1, Last_Write_Time => 1,
+                  Change_Time => 1);
          Client.Next_Directory_Entry (Value, State, Name, Name_Used, Info, Status);
          Check
            (Status = SMB.Invalid_State_Status and then Name_Used = 0
             and then Info = (Name_Offset => 0, Name_Length => 0, Size => 0,
-                             Attributes => 0, Next_Cursor => 0),
+                             Attributes => 0, Next_Cursor => 0,
+                             Creation_Time => 0, Last_Access_Time => 0,
+                             Last_Write_Time => 0, Change_Time => 0),
             "entry before a start");
          Output := (others => 16#EE#);
          Client.Prepare_Directory_Query (Value, State, Output, Used, Status);

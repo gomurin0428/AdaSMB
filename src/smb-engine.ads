@@ -910,7 +910,8 @@ is
                       SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
                     and then Current_Response_Info (State).Count =
                       Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
-                  elsif Pending_Command (State)'Old = 14
+                  elsif (Pending_Command (State)'Old = 14
+                         or else Pending_Command (State)'Old = 16)
                     and then Nt_Status = SMB.Success
                   then Packet'Length >= 72
                     and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
@@ -931,7 +932,9 @@ is
                         Current_Response_Info (State).Data_Offset
                     ))
                and then
-                 (if Pending_Command (State)'Old = 17 then
+                 (if Pending_Command (State)'Old = 16
+                     or else Pending_Command (State)'Old = 17
+                  then
                     Current_Phase (State) = Current_Phase (State)'Old
                     and then Handle_Table_Equivalent (State'Old, State)))
        --  While encrypting, only a decrypted response is taken; the flag is

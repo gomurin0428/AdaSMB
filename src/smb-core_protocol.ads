@@ -32,13 +32,33 @@ package SMB.Core_Protocol is
       Encrypt_Data : Boolean := False;
    end record;
 
+   --  The times here and in File_Information are FILETIMEs: 100-nanosecond
+   --  intervals since 1601-01-01 UTC, as the server sends them.
    type Directory_Info is record
       Next_Cursor : Natural := 0;
       Name_Offset : Natural := 0;
       Name_Length : Natural := 0;
       Size : SMB.QWord := 0;
       Attributes : SMB.DWord := 0;
+      Creation_Time : SMB.QWord := 0;
+      Last_Access_Time : SMB.QWord := 0;
+      Last_Write_Time : SMB.QWord := 0;
+      Change_Time : SMB.QWord := 0;
    end record;
+
+   --  FILE_NETWORK_OPEN_INFORMATION (MS-FSCC), which QUERY_INFO returns for
+   --  FileNetworkOpenInformation (class 34).
+   type File_Information is record
+      Creation_Time : SMB.QWord := 0;
+      Last_Access_Time : SMB.QWord := 0;
+      Last_Write_Time : SMB.QWord := 0;
+      Change_Time : SMB.QWord := 0;
+      Allocation_Size : SMB.QWord := 0;
+      End_Of_File : SMB.QWord := 0;
+      Attributes : SMB.DWord := 0;
+   end record;
+   Network_Open_Information_Class : constant := 34;
+   Network_Open_Information_Size : constant := 56;
 
    procedure Build_Negotiate
      (Guid : SMB.Bytes;
@@ -300,6 +320,51 @@ package SMB.Core_Protocol is
             and then Output (Output'First + 32) =
               (if Delete_File then 1 else 0));
 
+   --  A QUERY_INFO request body (MS-SMB2 2.2.37) for FileNetworkOpenInformation
+   --  of the open File_Id, with room for exactly that structure: 40 bytes and
+   --  the one-byte buffer that StructureSize 41 counts, left zero.
+   procedure Build_Query_Information
+     (File_Id : SMB.Bytes;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with Pre => File_Id'Length = 16
+     and then Output'Length <= SMB.Maximum_Frame_Size,
+     Post =>
+       Used <= Output'Length
+       and then
+         (if Status = SMB.Ok then
+            Used = 41
+            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 41
+            and then Output (Output'First + 2) = 1
+            and then Output (Output'First + 3) =
+              Network_Open_Information_Class
+            and then SMB.Core_Wire.Encoded_U32 (Output, 4) =
+              Network_Open_Information_Size
+            and then
+              (for all Index in 8 .. 23 =>
+                 Output (Output'First + Index) = 0)
+            and then
+              (for all Index in 0 .. 15 =>
+                 Output (Output'First + 24 + Index) =
+                   File_Id (File_Id'First + Index))
+            and then Output (Output'First + 40) = 0);
+
+   --  The FILE_NETWORK_OPEN_INFORMATION at Offset in Buffer.
+   function Network_Open_Information
+     (Buffer : SMB.Bytes;
+      Offset : Natural) return File_Information is
+     ((Creation_Time => SMB.Core_Wire.Encoded_U64 (Buffer, Offset),
+       Last_Access_Time => SMB.Core_Wire.Encoded_U64 (Buffer, Offset + 8),
+       Last_Write_Time => SMB.Core_Wire.Encoded_U64 (Buffer, Offset + 16),
+       Change_Time => SMB.Core_Wire.Encoded_U64 (Buffer, Offset + 24),
+       Allocation_Size => SMB.Core_Wire.Encoded_U64 (Buffer, Offset + 32),
+       End_Of_File => SMB.Core_Wire.Encoded_U64 (Buffer, Offset + 40),
+       Attributes => SMB.Core_Wire.Encoded_U32 (Buffer, Offset + 48)))
+   with Pre => Buffer'Length <= SMB.Maximum_Frame_Size
+     and then Offset <= Buffer'Length
+     and then Buffer'Length - Offset >= Network_Open_Information_Size;
+
    procedure Build_Rename
      (File_Id : SMB.Bytes;
       Name : SMB.Bytes;
@@ -397,7 +462,8 @@ package SMB.Core_Protocol is
             and then Info.Count <= Maximum_IO_Chunk
             and then Info.Count = Natural
               (SMB.Core_Wire.Encoded_U32 (Packet, 68))
-          elsif Command = 14 and then Nt_Status = SMB.Success
+          elsif (Command = 14 or else Command = 16)
+            and then Nt_Status = SMB.Success
           then Packet'Length >= 72
             and then Info.Data_Offset = Natural
               (SMB.Core_Wire.Encoded_U16 (Packet, 66))
@@ -468,7 +534,15 @@ package SMB.Core_Protocol is
          and then Info.Size =
            SMB.Core_Wire.Encoded_U64 (Buffer, Cursor'Old + 40)
          and then Info.Attributes = SMB.Core_Wire.Encoded_U32
-           (Buffer, Cursor'Old + 56));
+           (Buffer, Cursor'Old + 56)
+         and then Info.Creation_Time =
+           SMB.Core_Wire.Encoded_U64 (Buffer, Cursor'Old + 8)
+         and then Info.Last_Access_Time =
+           SMB.Core_Wire.Encoded_U64 (Buffer, Cursor'Old + 16)
+         and then Info.Last_Write_Time =
+           SMB.Core_Wire.Encoded_U64 (Buffer, Cursor'Old + 24)
+         and then Info.Change_Time =
+           SMB.Core_Wire.Encoded_U64 (Buffer, Cursor'Old + 32));
 
    procedure Advance_Transfer
      (Position : in out SMB.QWord;

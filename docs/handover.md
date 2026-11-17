@@ -1,6 +1,6 @@
 # Handover
 
-State of the SMB 3.1.1 work at release 0.3.0, for whoever picks it up. Fold what
+State of the SMB 3.1.1 work since release 0.3.0, for whoever picks it up. Fold what
 stays useful into the other documents, and delete this file, once it is out
 of date.
 
@@ -10,8 +10,13 @@ of date.
   3.1.1 with signing and encryption) is tagged `v0.2.0` with a GitHub
   release and on the Alire index (alire-project/alire-index#2340, merged
   on 2026-11-14). 0.3.0 (the AES-256 ciphers and AES-GMAC signing) is
-  tagged `v0.3.0` with a GitHub release and submitted to the Alire index
-  as alire-project/alire-index#2357.
+  tagged `v0.3.0` with a GitHub release and on the Alire index
+  (alire-project/alire-index#2357, merged on 2026-11-16).
+* After 0.3.0 the maintainer approved three pieces, in this order: file
+  information (`Query_Information`, #134), reads and writes larger than
+  64 KiB per request, and teaching the adversarial proxy SMB 3.1.1. A
+  release that includes them (0.4.0), and its Alire submission, wait for
+  the maintainer's word.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -47,7 +52,8 @@ of date.
 | after 0.2.0 | AES-256 in negotiation, the transform and the engine | merged (#130) |
 | after 0.2.0 | AES-GMAC signing (GMAC, the signing context, the engine) | merged (#132) |
 | after 0.2.0 | Release 0.3.0 (`alire.toml`, tag, GitHub release) | merged (#131) |
-| after 0.2.0 | 0.3.0 on the Alire index | submitted (alire-project/alire-index#2357) |
+| after 0.2.0 | 0.3.0 on the Alire index | merged (alire-project/alire-index#2357) |
+| after 0.3.0 | File information: QUERY_INFO (`SMB.Core_Query`), directory entry times, `To_Time` | #134 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -388,8 +394,11 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* See alire-project/alire-index#2357 through to its merge. Submit a later
-  release to the index only when the maintainer says so.
+* Next, in the order the maintainer approved: setting a file's size (see
+  "File information" below), reads and writes larger than 64 KiB per request (multi-credit requests: CreditCharge, the server's
+  MaxReadSize and MaxWriteSize, and the engine's credit accounting), then
+  the adversarial proxy over 3.1.1 (below).
+* Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
     `[origin]` section added: `commit` is the tag's commit and `url` is
     `git+https://github.com/gomurin0428/AdaSMB.git`, as in the index's
@@ -403,6 +412,36 @@ opens a received one. It is a stateless SPARK unit, like
 * Hostile transform headers are covered by unit tests through the engine;
   the adversarial proxy still speaks 2.1 only. Teaching it 3.1.1 would let
   the proxy tests run against the 3.1.1 Samba.
+
+## File information (#134)
+
+* `SMB.Core_Query` is a new SPARK unit for QUERY_INFO, rather than another
+  operation in `SMB.Core_Client`, so that a change to it re-proves a small
+  unit. It keeps its own copies of `Prepare_Header` and `Sign_Packet`, as
+  `SMB.Core_Connection` does.
+* One request shape: FileNetworkOpenInformation (class 34), 56 bytes, on
+  an open handle. Every access mode the client opens with includes
+  FILE_READ_ATTRIBUTES (`Core_Client.Access_Mask`), so any handle can be
+  queried; the integration client queries through write-only and
+  read-write handles and a read-only one.
+* The response has QUERY_DIRECTORY's layout, so `Parse_Response` takes
+  command 16 on QUERY_DIRECTORY's branch, and the engine accepts command 16
+  where it accepts 14 and 17 (requests, interim responses, and the
+  postcondition that the phase and handles are unchanged). A success
+  response whose OutputBufferLength is not 56 invalidates the connection;
+  an error status finishes the operation with a zero result and keeps it.
+* `Directory_Info` gains the four times at offsets 8 to 32 of
+  FileIdBothDirectoryInformation, and `Parse_Directory_Entry`'s
+  postcondition states them. `Next_Directory_Entry`'s postcondition does
+  not repeat them; the facade copies them.
+* `To_Time` is facade code. GNAT's `Ada.Calendar.Arithmetic."+"` turns a
+  day count into a `Duration`, which overflows past about 106,000 days, so
+  the days go in steps of 100,000. GNAT also accepts times in 2400; the
+  function refuses them, because the language guarantees only 1901 to 2399.
+* Next, as its own pull request: SET_INFO FileEndOfFileInformation, to
+  truncate or extend a file (a third `Metadata_Kind` in `SMB.Core_Client`).
+* Not done: a path-based query that opens and closes a handle itself (it
+  would need to tell files from directories first).
 
 ## AES-256 primitives (#129)
 

@@ -372,7 +372,7 @@ is
          end if;
       elsif Command = 4 or else Command = 5 or else Command = 6
         or else Command = 8 or else Command = 9
-        or else Command = 14 or else Command = 17
+        or else Command = 14 or else Command = 16 or else Command = 17
       then
          if State.Current /= Share_Connected
            or else not Request_Signed or else not Response_Signed
@@ -623,6 +623,7 @@ is
         or else State.Pending_Expected.Command = 8
         or else State.Pending_Expected.Command = 9
         or else State.Pending_Expected.Command = 14
+        or else State.Pending_Expected.Command = 16
         or else State.Pending_Expected.Command = 17;
       if not Supported_Command then
          Invalidate (State, Ignore_Status);

@@ -121,6 +121,35 @@ persistent handle、directory leasing、encryption）を主張すると拒否し
 * [MS-SMB2 2.2.4 NEGOTIATE Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/63abf97c-0d09-47e2-88d6-6bfa552949a5)
 * [MS-SMB2 2.2.10 TREE_CONNECT Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/dd34e26c-a75e-47fa-aab2-6efc27502e96)
 
+## ファイル情報
+
+`Query_Information` は開いたハンドルに QUERY_INFO を 1 つ送り、
+FileNetworkOpenInformation（class 34）をちょうど 56 byte 要求します。
+要求本文は StructureSize 41 で、OutputBufferLength は 56、InputBuffer は
+なく（InputBufferOffset と InputBufferLength は 0）、StructureSize が数える
+1 byte の Buffer はゼロです。クライアントが開くハンドルはどのアクセス
+モードでも FILE_READ_ATTRIBUTES を含むので、読み取り専用でも書き込み専用でも
+問い合わせられます。
+
+応答は QUERY_DIRECTORY と同じ形（StructureSize 9、OutputBufferOffset、
+OutputBufferLength）で、長さが 0 でなければ offset は固定部の後（72 以上）、
+データはパケット内に収まっていなければなりません。成功応答の長さが 56 byte
+でなければ、要求した構造ではないので接続を破棄します。Reserved の 4 byte は
+読みません。STATUS_ACCESS_DENIED などのエラー応答は、署名と構造を検査した
+うえで NTSTATUS として呼び出し元へ返し、接続は保ちます。
+
+時刻はサーバーが送る FILETIME（1601-01-01 UTC からの 100ns 単位）のまま
+返します。`List_Directory` の各項目も、FileIdBothDirectoryInformation の
+同じ 4 つの時刻を返します。`To_Time` は Ada.Calendar の範囲（1901〜2399 年）
+で `Ada.Calendar.Time` に変換し、範囲外は `Ada.Calendar.Time_Error` にします。
+時刻を持たないサーバーが送る 0 も範囲外です。
+
+公式仕様:
+
+* [MS-SMB2 2.2.37 QUERY_INFO Request](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d623b2f7-a5cd-4639-8cc9-71fa7d9f9ba9)
+* [MS-SMB2 2.2.38 QUERY_INFO Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/3b1b3598-a898-44ca-bfac-2dcae065247f)
+* [MS-FSCC FileNetworkOpenInformation](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/26d261db-58d1-4513-a548-074448cbb146)
+
 ## NTLMv2/SPNEGO
 
 クライアントが出す SPNEGO は NTLM OID だけを含みます。応答は DER の

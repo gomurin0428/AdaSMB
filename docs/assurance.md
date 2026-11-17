@@ -33,6 +33,7 @@ types). These are the implementations called by `SMB.Client` and
 | `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-CCM or AES-GCM under a 16-byte (AES-128) or 32-byte (AES-256) key of the cipher's length, and checking and opening a received one; the header fields, nonce field and trailing zeros written, the header and inner SMB2 header checks that hold on success (the tag itself is tested, not stated), and no message bytes left after any failure |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
+| `SMB.Core_Query` | QUERY_INFO lifecycle for FileNetworkOpenInformation on an open handle: request construction/signing for a live handle only, send acknowledgement, response acceptance, a 56-byte information structure read from inside the packet on success, an error NTSTATUS returned with the connection kept, and invalidation on a malformed response or an abort |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
 | `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC or AES-128-GMAC, as negotiated, with the derived key for 3.1.1), the negotiated dialect, cipher, signing algorithm and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime |
 
@@ -78,6 +79,15 @@ authorization, and no server-side effect, rollback, or exactly-once guarantee
 is claimed. The public `Open_File`, `Close`, `Make_Directory`, `Remove_File`,
 and `Remove_Directory` wrappers use typed CREATE/CLOSE/SET_INFO flows while
 retaining trusted path and object-lifetime orchestration.
+
+`Query_Information` uses the `SMB.Core_Query.Query_Operation` lifecycle in
+the same way. `Complete`'s postcondition proves that a successful query
+leaves the share connected and the handle unchanged, and that on
+STATUS_SUCCESS the result is the FileNetworkOpenInformation at the
+response's OutputBufferOffset, whose OutputBufferLength is exactly 56 and
+which lies inside the packet after the fixed part. The socket pump, the copy
+into the public record, and `To_Time`'s calendar arithmetic (in
+`Ada.Calendar`) are trusted facade code.
 
 The connection lifecycle uses the separate `SMB.Core_Connection` operation
 coordinator for bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF
@@ -300,6 +310,7 @@ remain trusted.
 | `SMB.Client` | `List_Directory` | Trusted folder lifetime and cleanup, UTF-16 decoding, dot-entry filtering, vector allocation/insertion, exception translation and socket pumping around the typed directory coordinator. |
 | `SMB.Client` | `Open_File`, `Close`, `Make_Directory`, `Remove_File`, `Remove_Directory` | Public wrappers over typed CREATE/CLOSE/SET_INFO flows; path validation/conversion, local object and temporary-handle lifetime, cleanup, and exception/NTSTATUS translation remain trusted. |
 | `SMB.Client` | `Connect`, `Connect_Share`, `Disconnect`, `Execute_Connection` | Trusted OS socket/entropy setup, share path encoding, exact returned packet slicing and socket pumping, exception/NTSTATUS translation, best-effort TREE_DISCONNECT/LOGOFF ordering, and transport cleanup. |
+| `SMB.Client` | `Query_Information`, `To_Time` | Trusted QUERY_INFO socket orchestration, the copy of the proved result into `File_Information`, cleanup, and exception/NTSTATUS translation; `To_Time`'s FILETIME arithmetic and range checks, and `Ada.Calendar` itself. The times and sizes are what the server reports. |
 | `SMB.Client` | `Execute_Metadata`, `Set_Disposition`, `Rename` | Trusted SET_INFO socket orchestration, path validation and UTF-16 encoding, allocation, temporary-handle lifetime, cleanup, and exception/NTSTATUS translation. DELETE authorization and server-side disposition/rename effects are outside the proof. |
 
 Tests and the example are outside the proof project. Their successful execution

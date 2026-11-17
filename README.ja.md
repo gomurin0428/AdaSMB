@@ -51,6 +51,11 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   ハンドルには単調な整数 owner ID、
   epoch、open ticket を記録し、foreign/stale/closed handle はネットワーク
   I/O より前に拒否します。
+* `Query_Information` は開いたファイルのサイズ、割当てサイズ、属性、
+  4 つの時刻をサーバーに問い合わせます（FileNetworkOpenInformation。
+  どのアクセスモードのハンドルでも使えます）。`List_Directory` も各項目の
+  同じ時刻を返します。時刻はサーバーが送る FILETIME のままで、`To_Time` で
+  `Ada.Calendar.Time` に変換できます。
 * フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
   受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB 3.0・3.0.2、
   compression、compound、Kerberos、guest/null fallback、
@@ -66,7 +71,7 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
 
 公開 API は同期型で、一度に 1 要求だけを送信します。認証後の
 LOGOFF、TREE_DISCONNECT、CREATE、CLOSE、READ、WRITE、QUERY_DIRECTORY、
-SET_INFO では SMB 2.x の `STATUS_PENDING` interim と対応する async final
+QUERY_INFO、SET_INFO では SMB 2.x の `STATUS_PENDING` interim と対応する async final
 response を扱います。interim は仕様に従って署名検証を行わず、要求との
 相関、非ゼロ AsyncId、ERROR 本文の必須フィールドだけを確認します。interim は成功、
 認証済みデータ、NTSTATUS として扱いません。最終応答は受信した元の
@@ -120,7 +125,7 @@ WRITE は開始時に入力を private snapshot へ一度だけコピーし、�
 再試行せず Engine を無効化し、ファサードが Channel を閉じます。ソケット I/O、
 返却スライスの転送、割当て、例外処理、コンテナ寿命は信頼境界です。
 認証、ディレクトリ列挙、DISPOSITION／RENAME も型付きコアを通り、
-接続・共有接続・切断は `SMB.Core_Connection` が要求と応答に基づく
+QUERY_INFO は `SMB.Core_Query` を通ります。接続・共有接続・切断は `SMB.Core_Connection` が要求と応答に基づく
 状態更新を管理します。
 
 ソケット経路は `SMB.Core_Transport` を使い、実際に送るネイティブ配列の
@@ -146,7 +151,7 @@ WRITE は開始時に入力を private snapshot へ一度だけコピーし、�
 
 主要 API は `SMB.Client` の `Connect`、`Authenticate`、
 `Connect_Share`、`Open_File`、`Read`、`Write`、`Close`、
-`List_Directory`、`Make_Directory`、`Remove_File`、
+`Query_Information`、`List_Directory`、`Make_Directory`、`Remove_File`、
 `Remove_Directory`、`Rename`、`Disconnect` です。パスは share 相対で、
 絶対パス・`..` の脱出・組み込み NUL は拒否されます。
 

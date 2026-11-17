@@ -2028,7 +2028,8 @@ is
       Used := 0;
       Info :=
         (Name_Offset => 0, Name_Length => 0, Size => 0,
-         Attributes => 0, Next_Cursor => 0);
+         Attributes => 0, Next_Cursor => 0, Creation_Time => 0,
+         Last_Access_Time => 0, Last_Write_Time => 0, Change_Time => 0);
       if Value.Stage /= Page_Ready
         or else not Directory_Invariant (Value)
         or else not Directory_Context_Valid (Value, State)

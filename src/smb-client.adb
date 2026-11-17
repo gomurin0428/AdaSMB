@@ -1,3 +1,5 @@
+with Ada.Calendar.Arithmetic;
+with Ada.Calendar.Formatting;
 with Ada.Containers.Vectors;
 with Ada.Exceptions;
 with Ada.Real_Time;
@@ -8,6 +10,7 @@ with SMB.Core_Client;
 with SMB.Core_Connection;
 with SMB.Core_Transform;
 with SMB.Core_Protocol;
+with SMB.Core_Query;
 with SMB.Core_Text;
 with SMB.Core_Wire;
 with SMB.Heap_Owner;
@@ -20,6 +23,7 @@ package body SMB.Client is
    use type SMB.Core_Client.Authentication_Stage;
    use type SMB.Core_Client.Directory_Stage;
    use type SMB.Core_Client.Metadata_Stage;
+   use type SMB.Core_Query.Query_Stage;
    use type SMB.Core_Connection.Connection_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
@@ -933,6 +937,100 @@ package body SMB.Client is
          raise;
    end Read;
 
+   function Query_Information
+     (Client : in out Connection; File : Handle) return File_Information is
+      Packet : SMB.Bytes (0 .. SMB.Core_Query.Request_Size - 1) :=
+        (others => 0);
+      Used : Natural;
+      Core_Status : SMB.Core_Status;
+      Operation : SMB.Core_Query.Query_Operation;
+   begin
+      SMB.Core_Query.Prepare
+        (Operation, Client.Engine_Core, File.Engine_Token, Packet, Used,
+         Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB QUERY_INFO preparation");
+      Send_Request (Client, Packet (0 .. Used - 1));
+      SMB.Core_Query.Send_Succeeded
+        (Operation, Client.Engine_Core, Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB QUERY_INFO send acknowledgement");
+      declare
+         Response : constant SMB.Bytes := Receive_Response (Client);
+      begin
+         SMB.Core_Query.Complete
+           (Operation, Client.Engine_Core, Response, Client.Last_Status,
+            Core_Status);
+      end;
+      Require_Transfer_Status (Core_Status, "SMB QUERY_INFO response");
+      Require_Status (Client, Client.Last_Status);
+      declare
+         Info : constant SMB.Core_Protocol.File_Information :=
+           SMB.Core_Query.Result_Of (Operation);
+      begin
+         return
+           (Size => Info.End_Of_File,
+            Allocation_Size => Info.Allocation_Size,
+            Attributes => Info.Attributes,
+            Creation_Time => Info.Creation_Time,
+            Last_Access_Time => Info.Last_Access_Time,
+            Last_Write_Time => Info.Last_Write_Time,
+            Change_Time => Info.Change_Time);
+      end;
+   exception
+      when others =>
+         if SMB.Core_Query.Stage_Of (Operation) in
+              SMB.Core_Query.Query_Prepared | SMB.Core_Query.Query_Sent
+         then
+            SMB.Core_Query.Abort_Query
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
+            Clear_State_Preserving_Status (Client);
+         end if;
+         raise;
+   end Query_Information;
+
+   --  1901-01-01 00:00 UTC, the start of Ada.Calendar's range, as a
+   --  FILETIME: 109,572 days after 1601-01-01.
+   Calendar_Start_Filetime : constant SMB.QWord := 94_670_208_000_000_000;
+   Ticks_Per_Second : constant SMB.QWord := 10_000_000;
+   Seconds_Per_Day : constant SMB.QWord := 86_400;
+
+   function To_Time (Value : SMB.QWord) return Ada.Calendar.Time is
+      Start : constant Ada.Calendar.Time :=
+        Ada.Calendar.Formatting.Time_Of
+          (Year => 1901, Month => 1, Day => 1, Seconds => 0.0,
+           Time_Zone => 0);
+      Ticks : SMB.QWord;
+      Seconds : SMB.QWord;
+      Days : SMB.QWord;
+      Step : SMB.QWord;
+      Result : Ada.Calendar.Time;
+   begin
+      if Value < Calendar_Start_Filetime then
+         raise Ada.Calendar.Time_Error with "FILETIME before 1901";
+      end if;
+      Ticks := Value - Calendar_Start_Filetime;
+      Seconds := Ticks / Ticks_Per_Second;
+      Days := Seconds / Seconds_Per_Day;
+      --  Ada.Calendar's years end with 2399; 2400 starts 182,256 days on.
+      if Days >= 182_256 then
+         raise Ada.Calendar.Time_Error with "FILETIME after 2399";
+      end if;
+      --  Whole days, then the rest. GNAT adds days as a Duration, which
+      --  holds about 106,000 days, so they go in steps of 100,000.
+      Result := Start;
+      while Days > 0 loop
+         Step := SMB.QWord'Min (Days, 100_000);
+         Result := Ada.Calendar.Arithmetic."+"
+           (Result, Ada.Calendar.Arithmetic.Day_Count (Step));
+         Days := Days - Step;
+      end loop;
+      return Ada.Calendar."+"
+        (Result,
+         Duration (Seconds mod Seconds_Per_Day)
+           + Duration (Ticks mod Ticks_Per_Second) / 10_000_000);
+   end To_Time;
+
    procedure Write
      (Client : in out Connection;
       File : Handle;
@@ -1095,6 +1193,11 @@ package body SMB.Client is
                              Ada.Strings.Unbounded.To_Unbounded_String (Name);
                            Item.Size := Entry_Info.Size;
                            Item.Attributes := Entry_Info.Attributes;
+                           Item.Creation_Time := Entry_Info.Creation_Time;
+                           Item.Last_Access_Time :=
+                             Entry_Info.Last_Access_Time;
+                           Item.Last_Write_Time := Entry_Info.Last_Write_Time;
+                           Item.Change_Time := Entry_Info.Change_Time;
                            Entries.Append (Item);
                         end if;
                      end;
