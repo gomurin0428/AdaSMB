@@ -144,11 +144,21 @@ OutputBufferLength）で、長さが 0 でなければ offset は固定部の後
 で `Ada.Calendar.Time` に変換し、範囲外は `Ada.Calendar.Time_Error` にします。
 時刻を持たないサーバーが送る 0 も範囲外です。
 
+`Set_Size` は書き込み可能なハンドル（`Write_Only` か `Read_Write`）に
+SET_INFO を 1 つ送り、FileEndOfFileInformation（class 20）の 8 byte の
+EndOfFile を設定します。要求本文は StructureSize 33、BufferLength 8、
+BufferOffset 96 です。EndOfFile は符号付き 64 bit なので 2**63 - 1 を超える
+サイズは送らず、読み取り専用のハンドルとともに送信前に拒否します。応答は
+StructureSize 2 の SET_INFO 応答で、エラーは NTSTATUS として返し、接続は
+保ちます。伸ばした部分は、Windows でも Samba でもゼロとして読めます。
+
 公式仕様:
 
 * [MS-SMB2 2.2.37 QUERY_INFO Request](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/d623b2f7-a5cd-4639-8cc9-71fa7d9f9ba9)
 * [MS-SMB2 2.2.38 QUERY_INFO Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/3b1b3598-a898-44ca-bfac-2dcae065247f)
 * [MS-FSCC FileNetworkOpenInformation](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/26d261db-58d1-4513-a548-074448cbb146)
+* [MS-SMB2 2.2.39 SET_INFO Request](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/ee9614c4-be54-4a3c-98f1-769a7032a0e4)
+* [MS-FSCC FileEndOfFileInformation](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/75241cca-3167-472f-8058-a52d77c6bb17)
 
 ## NTLMv2/SPNEGO
 

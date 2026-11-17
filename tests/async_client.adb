@@ -66,6 +66,10 @@ begin
          if SMB.Client.Query_Information (Client, File).Size /= Data'Length then
             raise Program_Error with "async success QUERY_INFO size mismatch";
          end if;
+         SMB.Client.Set_Size (Client, File, 2);
+         if SMB.Client.Query_Information (Client, File).Size /= 2 then
+            raise Program_Error with "async success SET_INFO size mismatch";
+         end if;
          SMB.Client.Close (Client, File);
       end;
       declare

@@ -579,6 +579,54 @@ begin
             Assert (Foreign_Rejected, "foreign handle was accepted");
             SMB.Client.Disconnect (Other);
          end;
+         --  Truncate, then extend: the extension reads back as zeros.
+         SMB.Client.Set_Size (Client, File, 1_000);
+         declare
+            Kept : constant SMB.Bytes := SMB.Client.Read (Client, File, 0, 2_000);
+         begin
+            Assert (SMB.Client.Query_Information (Client, File).Size = 1_000
+                    and then Kept'Length = 1_000
+                    and then Kept = Data (0 .. 999),
+                    "truncation to 1,000 bytes");
+         end;
+         SMB.Client.Set_Size (Client, File, 5_000);
+         declare
+            Grown : constant SMB.Bytes := SMB.Client.Read (Client, File, 0, 6_000);
+         begin
+            Assert (SMB.Client.Query_Information (Client, File).Size = 5_000
+                    and then Grown'Length = 5_000
+                    and then Grown (Grown'First .. Grown'First + 999) =
+                      Data (0 .. 999)
+                    and then Grown (Grown'First + 1_000 .. Grown'Last) =
+                      (Grown'First + 1_000 .. Grown'Last => 0),
+                    "extension to 5,000 bytes");
+         end;
+         declare
+            Reader : SMB.Client.Handle :=
+              SMB.Client.Open_File (Client, Unicode_Name, SMB.Client.Read_Only);
+            Refused : Boolean := False;
+         begin
+            begin
+               SMB.Client.Set_Size (Client, Reader, 0);
+            exception
+               when SMB.Invalid_State =>
+                  Refused := True;
+            end;
+            Assert (Refused and then SMB.Client.Is_Connected (Client),
+                    "resize through a read-only handle was not refused locally");
+            Refused := False;
+            begin
+               SMB.Client.Set_Size (Client, File, 2 ** 63);
+            exception
+               when SMB.Protocol_Error =>
+                  Refused := True;
+            end;
+            Assert (Refused and then SMB.Client.Is_Connected (Client)
+                    and then SMB.Client.Query_Information (Client, File).Size =
+                      5_000,
+                    "a size of 2**63 was not refused locally");
+            SMB.Client.Close (Client, Reader);
+         end;
          SMB.Client.Close (Client, File);
          begin
             declare

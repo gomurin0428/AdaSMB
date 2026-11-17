@@ -84,6 +84,14 @@ package SMB.Client is
    function Query_Information
      (Client : in out Connection; File : Handle) return File_Information;
 
+   --  Sets File's size (FileEndOfFileInformation), truncating the file or
+   --  extending it; Windows and Samba fill an extension with zeros. File
+   --  must have been opened Write_Only or Read_Write (SMB.Invalid_State
+   --  otherwise, before any network I/O), and Size cannot pass 2**63 - 1
+   --  (SMB.Protocol_Error).
+   procedure Set_Size
+     (Client : in out Connection; File : Handle; Size : SMB.QWord);
+
    --  The Ada.Calendar.Time of a FILETIME. Raises Ada.Calendar.Time_Error
    --  outside Ada.Calendar's range, 1901 to 2399; that includes 0, which a
    --  server sends for a time it does not keep.

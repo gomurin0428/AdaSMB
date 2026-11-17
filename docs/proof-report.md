@@ -5331,3 +5331,47 @@ date and call `Ada.Calendar.Formatting.Time_Of`, instead of adding days
 with `Ada.Calendar.Arithmetic` (whose 64-bit nanosecond count took steps of
 100,000 days), which also keeps it right under GNAT's leap-second option;
 a test steps through all 182,256 days of the range.
+
+## Setting a file's size (`SMB.Core_Resize`)
+
+`SMB.Client.Set_Size` sends SET_INFO FileEndOfFileInformation on an open
+handle. The new SPARK unit `SMB.Core_Resize` holds its lifecycle, built as
+`SMB.Core_Query` is. `Prepare` refuses, before any I/O, a handle that may
+not write (`Can_Prepare` asks for `Valid_Handle (..., Need_Write => True)`)
+and a size past 2**63 - 1; its postcondition gives the request's fields as
+for QUERY_INFO, and the body's StructureSize 33, information type 1, class
+20, BufferLength 8, BufferOffset 96, zero reserved and additional
+information, the handle's FileId and the size as EndOfFile.
+`Core_Protocol.Build_End_Of_File` builds the body. `Complete` has
+`Core_Query.Complete`'s three outcomes: success with the share connected
+and the handle unchanged, `Invalid_State_Status` with nothing changed, or
+the operation failed and the connection invalidated. The header and signing
+steps moved into `SMB.Core_Request`, which both units call; that is why
+`smb-core_query.adb` has fewer checks than before.
+
+GNATprove 16.1.0 proved every check of the changed units on the Mac, with
+no `pragma Assume` or justification:
+
+| Unit | Checks |
+| --- | --- |
+| `smb-core_request.adb` | 44 |
+| `smb-core_query.adb` | 95 |
+| `smb-core_resize.adb` | 82 |
+| `smb-core_protocol.adb` | 1,003 |
+
+`test_suite` adds `Core_Resize_Tests` (60 checks): the request byte by byte
+at sizes 0, a mixed value and 2**63 - 1, in an output of exactly its size;
+the builder at the top of the index range and one byte short; both writable
+access modes; an error status, also for a directory's handle; an interim response followed by an async
+final one; four malformed responses (structure size 3, no structure,
+unsigned, another message's response); a read-only handle, sizes 2**63 and
+2**64 - 1, a stale, closed or absent handle; and calls out of order and
+aborts. The integration client truncates a file to 1,000 bytes and extends
+it to 5,000, checking the size with `Query_Information` and reading zeros
+past the old end, against Samba and Windows Server 2025, and the async
+proxy's workflow resizes a file after a STATUS_PENDING interim.
+
+A changed-line AdaMutant run detected 155 of 157 mutants. The two left
+needed a test of a directory's handle, now added, and a mark on the in-flight
+handle check's write flag: `Prepare` takes only a handle that may write, so
+asking again changes nothing a test can see.

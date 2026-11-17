@@ -56,7 +56,8 @@ directory operations.
   size, attributes and four times (FileNetworkOpenInformation, through a
   handle of any access mode), and `List_Directory` returns the same times
   for each entry. Times are FILETIMEs as the server sends them;
-  `To_Time` converts one to `Ada.Calendar.Time`.
+  `To_Time` converts one to `Ada.Calendar.Time`. `Set_Size` truncates or
+  extends a file opened for writing (FileEndOfFileInformation).
 * Frames are limited to 1 MiB and single read/write requests to 64 KiB, and
   received offsets, lengths and their sums are range-checked. SMB1, SMB 3.0
   and 3.0.2, compression, compound requests, Kerberos,
@@ -139,7 +140,8 @@ or an invalid response, the Engine is invalidated without a retry and the
 facade closes the Channel. Socket I/O, transfer of the returned slices,
 allocation, exception handling and container lifetime are trust boundaries.
 Authentication, directory enumeration and DISPOSITION/RENAME also go through
-typed cores, as does QUERY_INFO in `SMB.Core_Query`, and
+typed cores, as do QUERY_INFO in `SMB.Core_Query` and setting a file's size
+in `SMB.Core_Resize`, and
 `SMB.Core_Connection` manages the state updates of connect, share connect and
 disconnect from requests and responses.
 
@@ -170,7 +172,8 @@ assumption is listed in [`docs/assurance.md`](docs/assurance.md).
 ## API and build
 
 The main API of `SMB.Client` is `Connect`, `Authenticate`, `Connect_Share`,
-`Open_File`, `Read`, `Write`, `Close`, `Query_Information`, `List_Directory`,
+`Open_File`, `Read`, `Write`, `Close`, `Query_Information`, `Set_Size`,
+`List_Directory`,
 `Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename` and
 `Disconnect`. Paths are
 relative to the share; absolute paths, `..` escapes and embedded NULs are

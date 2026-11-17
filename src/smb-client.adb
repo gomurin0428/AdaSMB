@@ -10,6 +10,7 @@ with SMB.Core_Connection;
 with SMB.Core_Transform;
 with SMB.Core_Protocol;
 with SMB.Core_Query;
+with SMB.Core_Resize;
 with SMB.Core_Text;
 with SMB.Core_Wire;
 with SMB.Heap_Owner;
@@ -23,6 +24,7 @@ package body SMB.Client is
    use type SMB.Core_Client.Directory_Stage;
    use type SMB.Core_Client.Metadata_Stage;
    use type SMB.Core_Query.Query_Stage;
+   use type SMB.Core_Resize.Resize_Stage;
    use type SMB.Core_Connection.Connection_Stage;
    use type SMB.DWord;
    use type SMB.QWord;
@@ -987,6 +989,45 @@ package body SMB.Client is
          end if;
          raise;
    end Query_Information;
+
+   procedure Set_Size
+     (Client : in out Connection; File : Handle; Size : SMB.QWord) is
+      Packet : SMB.Bytes (0 .. SMB.Core_Resize.Request_Size - 1) :=
+        (others => 0);
+      Used : Natural;
+      Core_Status : SMB.Core_Status;
+      Operation : SMB.Core_Resize.Resize_Operation;
+   begin
+      SMB.Core_Resize.Prepare
+        (Operation, Client.Engine_Core, File.Engine_Token, Size, Packet, Used,
+         Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB SET_INFO preparation");
+      Send_Request (Client, Packet (0 .. Used - 1));
+      SMB.Core_Resize.Send_Succeeded
+        (Operation, Client.Engine_Core, Core_Status);
+      Require_Transfer_Status (Core_Status, "SMB SET_INFO send acknowledgement");
+      declare
+         Response : constant SMB.Bytes := Receive_Response (Client);
+      begin
+         SMB.Core_Resize.Complete
+           (Operation, Client.Engine_Core, Response, Client.Last_Status,
+            Core_Status);
+      end;
+      Require_Transfer_Status (Core_Status, "SMB SET_INFO response");
+      Require_Status (Client, Client.Last_Status);
+   exception
+      when others =>
+         if SMB.Core_Resize.Stage_Of (Operation) in
+              SMB.Core_Resize.Resize_Prepared | SMB.Core_Resize.Resize_Sent
+         then
+            SMB.Core_Resize.Abort_Resize
+              (Operation, Client.Engine_Core, Core_Status);
+         end if;
+         if SMB.Engine.Current_Phase (Client.Engine_Core) = Disconnected then
+            Clear_State_Preserving_Status (Client);
+         end if;
+         raise;
+   end Set_Size;
 
    --  1601-01-01, FILETIME's epoch, starts a 400-year Gregorian cycle, and
    --  Ada.Calendar's range, 1901 to 2399, starts 109,572 days after it and
