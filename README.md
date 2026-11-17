@@ -173,11 +173,9 @@ assumption is listed in [`docs/assurance.md`](docs/assurance.md).
 
 The main API of `SMB.Client` is `Connect`, `Authenticate`, `Connect_Share`,
 `Open_File`, `Read`, `Write`, `Close`, `Query_Information`, `Set_Size`,
-`List_Directory`,
-`Make_Directory`, `Remove_File`, `Remove_Directory`, `Rename` and
-`Disconnect`. Paths are
-relative to the share; absolute paths, `..` escapes and embedded NULs are
-rejected.
+`List_Directory`, `Make_Directory`, `Remove_File`, `Remove_Directory`,
+`Rename` and `Disconnect`. Paths are relative to the share; absolute paths,
+`..` escapes and embedded NULs are rejected.
 
 You need GNAT, GPRbuild and GNU Make. Time conversion requires GNAT's
 `Duration` with a 1 ns step, and a runtime with a different precision is

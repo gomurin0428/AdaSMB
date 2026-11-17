@@ -589,7 +589,15 @@ begin
                     and then Kept = Data (0 .. 999),
                     "truncation to 1,000 bytes");
          end;
-         SMB.Client.Set_Size (Client, File, 5_000);
+         --  The extension goes through a write-only handle.
+         declare
+            Writer : SMB.Client.Handle :=
+              SMB.Client.Open_File
+                (Client, Unicode_Name, SMB.Client.Write_Only);
+         begin
+            SMB.Client.Set_Size (Client, Writer, 5_000);
+            SMB.Client.Close (Client, Writer);
+         end;
          declare
             Grown : constant SMB.Bytes := SMB.Client.Read (Client, File, 0, 6_000);
          begin
@@ -612,7 +620,8 @@ begin
                when SMB.Invalid_State =>
                   Refused := True;
             end;
-            Assert (Refused and then SMB.Client.Is_Connected (Client),
+            Assert (Refused and then SMB.Client.Is_Connected (Client)
+                    and then SMB.Client.Last_NT_Status (Client) = SMB.Success,
                     "resize through a read-only handle was not refused locally");
             Refused := False;
             begin
@@ -622,6 +631,7 @@ begin
                   Refused := True;
             end;
             Assert (Refused and then SMB.Client.Is_Connected (Client)
+                    and then SMB.Client.Last_NT_Status (Client) = SMB.Success
                     and then SMB.Client.Query_Information (Client, File).Size =
                       5_000,
                     "a size of 2**63 was not refused locally");

@@ -338,6 +338,11 @@ package body Core_Resize_Tests is
             (Owner => File.Owner, Epoch => File.Epoch + 1,
              Ticket => File.Ticket),
             "handle of another epoch");
+         Rejected
+           (Stale,
+            (Owner => File.Owner + 1, Epoch => File.Epoch,
+             Ticket => File.Ticket),
+            "handle of another owner");
          Resize.Send_Succeeded (Idle, State, Status);
          Check
            (Status = SMB.Invalid_State_Status
@@ -357,6 +362,7 @@ package body Core_Resize_Tests is
          Resize.Prepare (Idle, State, File, 1, Short, Used, Status);
          Check
            (Status = SMB.Resource_Limit and then Used = 0
+            and then Resize.Stage_Of (Idle) = Resize.Resize_Idle
             and then not SMB.Engine.Has_Pending_Request (State),
             "output one byte short");
       end;

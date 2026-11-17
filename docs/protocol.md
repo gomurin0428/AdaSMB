@@ -158,6 +158,7 @@ StructureSize 2 の SET_INFO 応答で、エラーは NTSTATUS として返し�
 * [MS-SMB2 2.2.38 QUERY_INFO Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/3b1b3598-a898-44ca-bfac-2dcae065247f)
 * [MS-FSCC FileNetworkOpenInformation](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/26d261db-58d1-4513-a548-074448cbb146)
 * [MS-SMB2 2.2.39 SET_INFO Request](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/ee9614c4-be54-4a3c-98f1-769a7032a0e4)
+* [MS-SMB2 2.2.40 SET_INFO Response](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-smb2/c4318eb4-bdab-49b7-9352-abd7005c7f19)
 * [MS-FSCC FileEndOfFileInformation](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/75241cca-3167-472f-8058-a52d77c6bb17)
 
 ## NTLMv2/SPNEGO

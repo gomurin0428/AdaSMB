@@ -13,7 +13,8 @@ of date.
   tagged `v0.3.0` with a GitHub release and on the Alire index
   (alire-project/alire-index#2357, merged on 2026-11-16).
 * After 0.3.0 the maintainer approved three pieces, in this order: file
-  information (`Query_Information`, #134), reads and writes larger than
+  information (`Query_Information`, #134, and `Set_Size`, #135), reads and
+  writes larger than
   64 KiB per request, and teaching the adversarial proxy SMB 3.1.1. A
   release that includes them (0.4.0), and its Alire submission, wait for
   the maintainer's word.

@@ -5359,19 +5359,32 @@ no `pragma Assume` or justification:
 | `smb-core_resize.adb` | 82 |
 | `smb-core_protocol.adb` | 1,003 |
 
-`test_suite` adds `Core_Resize_Tests` (60 checks): the request byte by byte
+The full proof workflow (`proof.yml`) on GitHub Actions passed on this
+branch: 6,446 checks in every unit at its `proof.gpr` timeouts, with nothing
+unproved. That run was on the first commit; the later one changed only tests
+and documents.
+
+`test_suite` adds `Core_Resize_Tests` (61 checks): the request byte by byte
 at sizes 0, a mixed value and 2**63 - 1, in an output of exactly its size;
 the builder at the top of the index range and one byte short; both writable
 access modes; an error status, also for a directory's handle; an interim response followed by an async
 final one; four malformed responses (structure size 3, no structure,
 unsigned, another message's response); a read-only handle, sizes 2**63 and
-2**64 - 1, a stale, closed or absent handle; and calls out of order and
-aborts. The integration client truncates a file to 1,000 bytes and extends
-it to 5,000, checking the size with `Query_Information` and reading zeros
-past the old end, against Samba and Windows Server 2025, and the async
+2**64 - 1, a handle of another owner or epoch, a closed or absent handle;
+and calls out of order and aborts. `Core_Query_Tests` gains the handle of
+another owner too (90 checks). The integration client truncates a file to 1,000 bytes and extends
+it to 5,000 through a write-only handle, checking the size with
+`Query_Information` and reading zeros past the old end, and checks that the
+two local refusals leave the connection and `Last_NT_Status` alone, against Samba and Windows Server 2025, and the async
 proxy's workflow resizes a file after a STATUS_PENDING interim.
 
-A changed-line AdaMutant run detected 155 of 157 mutants. The two left
-needed a test of a directory's handle, now added, and a mark on the in-flight
-handle check's write flag: `Prepare` takes only a handle that may write, so
-asking again changes nothing a test can see.
+A changed-line AdaMutant run detected 155 of 157 mutants locally. The two
+left needed a test of a directory's handle, now added, and a mark on the
+in-flight handle check's write flag: `Prepare` takes only a handle that may
+write, so asking again changes nothing a test can see. CI's run on the pull
+request, after both changes, detected every mutant.
+
+The review before merging found no defect. It asked for the resize through a
+write-only handle and the unchanged `Last_NT_Status` to be checked against
+the servers, for the stage after a short output and a handle of another
+owner in the unit tests, and for the SET_INFO response's link.
