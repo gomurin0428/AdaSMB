@@ -178,6 +178,7 @@ make check                  # warnings-as-errors と依存関係検査（stack-c
 make stack-check            # 公開 API ごとの最悪スタック使用量を GCC の呼び出しグラフで検査
 make example                # build/bin/smb_example
 make prove                  # GNATprove + cvc5/z3/alt-ergo が必要。未証明があれば失敗
+make prove PROOF_CACHE=dir  # 同じ。変わっていない証明ゴールの結果を dir から取る
 make transport-test         # TCP 断片化、送受信 timeout、途中切断・復旧試験
 make integration            # 明示的にローカル Samba を起動する opt-in テスト
 make mutation               # src/*.adb 全体に対する試験のミューテーションテスト（AdaMutant が必要）
@@ -317,6 +318,8 @@ Alire 2.1.1 で GNAT 16.1.0・gprbuild 26.0.1・gnatprove 16.1.0 を導入しま
   ミューテーションテスト。ミュータント数がほぼ等しい 8 つのジョブに分けて
   実行し、レポートを成果物として残します。
 * `proof.yml`（毎週月曜 03:00 JST と手動実行）: `make prove` による全体証明。
+  GNATprove の証明キャッシュ（`--memcached-server=file:...`）を実行間で保持し、
+  変わっていないゴールは解き直しません（ソースが同じなら 67 分が 7 秒でした）。
   GitHub は、60 日間活動のないリポジトリでは定期実行を止めます。
 
 ## プロトコル根拠

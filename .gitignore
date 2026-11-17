@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 /alire/
 /config/
+/proof-cache/

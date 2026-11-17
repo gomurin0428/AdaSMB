@@ -27,5 +27,24 @@ jobs:
         run: >
           bash .github/scripts/install-ada.sh "$HOME/ada-prover"
           gnat_native=16.1.0 gprbuild=26.0.1 gnatprove=16.1.0
+      # GNATprove's proof cache: the results of proof goals that have not
+      # changed come from it instead of the provers. A branch reads the
+      # newest cache of its own or of main, and saves a new one, even after
+      # a failed proof, whose finished goals are still worth keeping.
+      - name: Restore the proof cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: proof-cache
+          key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: proof-cache-${{ runner.os }}-gnatprove16.1.0-
       - name: Prove
-        run: make prove
+        run: |
+          mkdir -p proof-cache
+          du -sh proof-cache
+          time make prove PROOF_CACHE=proof-cache
+      - name: Save the proof cache
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: proof-cache
+          key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}

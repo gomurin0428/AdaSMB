@@ -5388,3 +5388,25 @@ The review before merging found no defect. It asked for the resize through a
 write-only handle and the unchanged `Last_NT_Status` to be checked against
 the servers, for the stage after a short output and a handle of another
 owner in the unit tests, and for the SET_INFO response's link.
+
+## Proof cache
+
+GNATprove 16.1 can keep the result of each proof goal in a directory
+(`--memcached-server=file:DIR`) and take the result of a goal whose
+formula and prover settings are unchanged from it instead of running the
+provers. `make prove PROOF_CACHE=DIR` passes the directory, and `proof.yml`
+restores the newest cache of its branch or of `main` before proving and
+saves a new one afterwards, even after a failed proof.
+
+Measured on GitHub Actions, on the same commit of the branch that added it:
+
+| Run | Cache | `make prove` | Result |
+| --- | --- | --- | --- |
+| first | none | 67 min 15 s | 6,446 checks proved |
+| second | the first run's (9 MiB compressed, 182 MB on disk) | 7 s | 6,446 checks proved |
+
+On this Mac, `smb-engine.adb` (332 checks) took 25 seconds from the cache,
+against about 10 minutes without it. Unchanged sources are the best case: a
+change re-proves the goals whose formulas it changes, and a change to a
+widely used specification changes many. Results are reported as the provers'
+would be, and a goal that is not in the cache is proved as before.

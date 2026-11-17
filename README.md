@@ -198,6 +198,7 @@ make check                  # warnings as errors and dependency checks (with sta
 make stack-check            # worst-case stack use per public API from GCC call graphs
 make example                # build/bin/smb_example
 make prove                  # needs GNATprove + cvc5/z3/alt-ergo; fails on any unproved check
+make prove PROOF_CACHE=dir  # the same, taking unchanged proof goals' results from dir
 make transport-test         # TCP fragmentation, send/receive timeouts, disconnects, recovery
 make integration            # opt-in test that explicitly starts a local Samba
 make mutation               # mutation testing of the tests over all of src/*.adb (needs AdaMutant)
@@ -342,7 +343,10 @@ cached).
   manual runs): mutation testing of all of `src/*.adb`, split over eight jobs
   of about the same number of mutants. The reports are kept as artifacts.
 * `proof.yml` (every Sunday 18:00 UTC, which is Monday 03:00 JST, and manual
-  runs): the full proof with `make prove`. GitHub stops scheduled runs in
+  runs): the full proof with `make prove`, with GNATprove's proof cache
+  (`--memcached-server=file:...`) kept between runs, so that goals that did not
+  change are not proved again: on unchanged sources the proof took 7 seconds
+  instead of 67 minutes. GitHub stops scheduled runs in
   repositories without activity for 60 days.
 
 ## Protocol references
