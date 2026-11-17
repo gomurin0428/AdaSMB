@@ -75,7 +75,7 @@ is
       State : SMB.Engine.Engine_State) return Boolean
    with Ghost;
 
-   --  Packet (1 .. Used) is the signed request for the operation's handle.
+   --  The first Used bytes of Packet are the operation's signed request.
    function Packet_Matches
      (Snapshot : Query_Snapshot;
       State : SMB.Engine.Engine_State;
@@ -141,6 +141,9 @@ is
 
    --  Takes the response. An error status from the server also finishes
    --  the operation, with Result_Of left zero, for the caller to report.
+   --  Otherwise the call either changes nothing and reports
+   --  Invalid_State_Status, or fails the operation and invalidates the
+   --  connection: no response is taken without its checks.
    procedure Complete
      (Value : in out Query_Operation;
       State : in out SMB.Engine.Engine_State;
@@ -191,13 +194,17 @@ is
                       Natural (SMB.Core_Wire.Encoded_U16 (Packet, 66)))
                else Result_Of (Value) =
                  SMB.Core_Protocol.File_Information'(others => <>))
-          elsif Snapshot_Of (Value) /= Snapshot_Of (Value)'Old then
-            Stage_Of (Value) = Query_Failed
+          elsif Status = SMB.Invalid_State_Status then
+            Snapshot_Of (Value) = Snapshot_Of (Value)'Old
+            and then State = State'Old
+            and then Nt_Status = 0
+          else Stage_Of (Value) = Query_Failed
             and then Same_Request
               (Snapshot_Of (Value), Snapshot_Of (Value)'Old)
             and then Result_Of (Value) = Result_Of (Value)'Old
             and then SMB.Engine.Current_Phase (State) =
-              SMB.Engine.Disconnected);
+              SMB.Engine.Disconnected
+            and then not SMB.Engine.Has_Pending_Request (State));
 
    --  Gives up on a prepared or sent request: the connection cannot tell
    --  its response from a later one, so it is invalidated.

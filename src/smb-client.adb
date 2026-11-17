@@ -1,4 +1,3 @@
-with Ada.Calendar.Arithmetic;
 with Ada.Calendar.Formatting;
 with Ada.Containers.Vectors;
 with Ada.Exceptions;
@@ -989,46 +988,62 @@ package body SMB.Client is
          raise;
    end Query_Information;
 
-   --  1901-01-01 00:00 UTC, the start of Ada.Calendar's range, as a
-   --  FILETIME: 109,572 days after 1601-01-01.
-   Calendar_Start_Filetime : constant SMB.QWord := 94_670_208_000_000_000;
+   --  1601-01-01, FILETIME's epoch, starts a 400-year Gregorian cycle, and
+   --  Ada.Calendar's range, 1901 to 2399, starts 109,572 days after it and
+   --  ends 291,828 days after it.
    Ticks_Per_Second : constant SMB.QWord := 10_000_000;
    Seconds_Per_Day : constant SMB.QWord := 86_400;
+   First_Calendar_Day : constant SMB.QWord := 109_572;
+   Past_Calendar_Day : constant SMB.QWord := 291_828;
+
+   --  The date of the day Days after 1601-01-01: H. Hinnant's
+   --  civil_from_days, counted from 1600-03-01 so that a leap day ends its
+   --  year. 1601-01-01 is 306 days after 1600-03-01.
+   procedure Split_Days
+     (Days : SMB.QWord;
+      Year : out Ada.Calendar.Year_Number;
+      Month : out Ada.Calendar.Month_Number;
+      Day : out Ada.Calendar.Day_Number)
+   is
+      Shifted : constant SMB.QWord := Days + 306;
+      Cycle : constant SMB.QWord := Shifted / 146_097;
+      Day_Of_Cycle : constant SMB.QWord := Shifted mod 146_097;
+      Year_Of_Cycle : constant SMB.QWord :=
+        (Day_Of_Cycle - Day_Of_Cycle / 1_460 + Day_Of_Cycle / 36_524
+         - Day_Of_Cycle / 146_096) / 365;
+      Day_Of_Year : constant SMB.QWord :=
+        Day_Of_Cycle
+        - (365 * Year_Of_Cycle + Year_Of_Cycle / 4 - Year_Of_Cycle / 100);
+      Month_From_March : constant SMB.QWord := (5 * Day_Of_Year + 2) / 153;
+   begin
+      Day := Ada.Calendar.Day_Number
+        (Day_Of_Year - (153 * Month_From_March + 2) / 5 + 1);
+      Month := Ada.Calendar.Month_Number
+        (if Month_From_March < 10 then Month_From_March + 3
+         else Month_From_March - 9);
+      Year := Ada.Calendar.Year_Number
+        (1600 + 400 * Cycle + Year_Of_Cycle + (if Month <= 2 then 1 else 0));
+   end Split_Days;
 
    function To_Time (Value : SMB.QWord) return Ada.Calendar.Time is
-      Start : constant Ada.Calendar.Time :=
-        Ada.Calendar.Formatting.Time_Of
-          (Year => 1901, Month => 1, Day => 1, Seconds => 0.0,
-           Time_Zone => 0);
-      Ticks : SMB.QWord;
-      Seconds : SMB.QWord;
-      Days : SMB.QWord;
-      Step : SMB.QWord;
-      Result : Ada.Calendar.Time;
+      Seconds : constant SMB.QWord := Value / Ticks_Per_Second;
+      Days : constant SMB.QWord := Seconds / Seconds_Per_Day;
+      Year : Ada.Calendar.Year_Number;
+      Month : Ada.Calendar.Month_Number;
+      Day : Ada.Calendar.Day_Number;
    begin
-      if Value < Calendar_Start_Filetime then
-         raise Ada.Calendar.Time_Error with "FILETIME before 1901";
+      if Days < First_Calendar_Day or else Days >= Past_Calendar_Day then
+         raise Ada.Calendar.Time_Error with
+           "FILETIME outside the years 1901 to 2399";
       end if;
-      Ticks := Value - Calendar_Start_Filetime;
-      Seconds := Ticks / Ticks_Per_Second;
-      Days := Seconds / Seconds_Per_Day;
-      --  Ada.Calendar's years end with 2399; 2400 starts 182,256 days on.
-      if Days >= 182_256 then
-         raise Ada.Calendar.Time_Error with "FILETIME after 2399";
-      end if;
-      --  Whole days, then the rest. GNAT adds days as a Duration, which
-      --  holds about 106,000 days, so they go in steps of 100,000.
-      Result := Start;
-      while Days > 0 loop
-         Step := SMB.QWord'Min (Days, 100_000);
-         Result := Ada.Calendar.Arithmetic."+"
-           (Result, Ada.Calendar.Arithmetic.Day_Count (Step));
-         Days := Days - Step;
-      end loop;
-      return Ada.Calendar."+"
-        (Result,
-         Duration (Seconds mod Seconds_Per_Day)
-           + Duration (Ticks mod Ticks_Per_Second) / 10_000_000);
+      Split_Days (Days, Year, Month, Day);
+      --  A FILETIME counts no leap seconds, so the time of day goes in as
+      --  a civil time, whatever the runtime does with leap seconds.
+      return Ada.Calendar.Formatting.Time_Of
+        (Year, Month, Day,
+         Seconds => Duration (Seconds mod Seconds_Per_Day)
+           + Duration (Value mod Ticks_Per_Second) / 10_000_000,
+         Time_Zone => 0);
    end To_Time;
 
    procedure Write

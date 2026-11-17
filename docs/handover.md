@@ -434,10 +434,19 @@ opens a received one. It is a stateless SPARK unit, like
   FileIdBothDirectoryInformation, and `Parse_Directory_Entry`'s
   postcondition states them. `Next_Directory_Entry`'s postcondition does
   not repeat them; the facade copies them.
-* `To_Time` is facade code. GNAT's `Ada.Calendar.Arithmetic."+"` turns a
-  day count into a `Duration`, which overflows past about 106,000 days, so
-  the days go in steps of 100,000. GNAT also accepts times in 2400; the
-  function refuses them, because the language guarantees only 1901 to 2399.
+* `To_Time` is facade code. It splits the day count into a civil date
+  (H. Hinnant's civil_from_days, from 1600-03-01) and calls
+  `Ada.Calendar.Formatting.Time_Of` with the time of day, so it does not
+  depend on how the runtime adds days or counts leap seconds. GNAT accepts
+  times in 2400; the function refuses them, because the language guarantees
+  only 1901 to 2399. A unit test steps through every day of the range.
+* `Complete` states three outcomes, as `Complete_Metadata` does: success,
+  `Invalid_State_Status` with nothing changed, or the operation failed and
+  the connection invalidated. The stronger form of `Core_Connection` (a
+  call made in flight never reports `Invalid_State_Status`) would need the
+  engine to state that `Handle_Matches` implies `Validate_Handle` succeeds.
+* The adversarial proxy mutates QUERY_DIRECTORY and SET_INFO responses but
+  not QUERY_INFO; add it when the proxy learns 3.1.1.
 * Next, as its own pull request: SET_INFO FileEndOfFileInformation, to
   truncate or extend a file (a third `Metadata_Kind` in `SMB.Core_Client`).
 * Not done: a path-based query that opens and closes a handle itself (it

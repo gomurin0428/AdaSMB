@@ -625,6 +625,26 @@ package body Core_Query_Tests is
         (SMB.Client.To_Time (Unix_Epoch + 12_345_678)
            - SMB.Client.To_Time (Unix_Epoch) = 1.234_567_8,
          "a fraction of a second, to 100 nanoseconds");
+      --  Every day of the range, each one day after the one before: with the
+      --  ends right, that leaves no date wrong.
+      declare
+         First : constant SMB.QWord := 94_670_208_000_000_000;
+         Day_Ticks : constant SMB.QWord := 864_000_000_000;
+         Previous : Ada.Calendar.Time := SMB.Client.To_Time (First);
+         Next : Ada.Calendar.Time;
+         Apart : Boolean := True;
+      begin
+         for Day in 1 .. 182_255 loop
+            Next := SMB.Client.To_Time (First + SMB.QWord (Day) * Day_Ticks);
+            Apart := Apart and then Next - Previous = 86_400.0;
+            Previous := Next;
+         end loop;
+         Check
+           (Apart
+            and then Ada.Calendar.Formatting.Image (Previous, Time_Zone => 0)
+              = "2399-12-31 00:00:00",
+            "182,256 days from 1901 to 2399, one day apart");
+      end;
       Refused (0, "zero, a time the server does not keep");
       Refused (94_670_207_999_999_999, "just before 1901");
       Refused (252_139_392_000_000_000, "2400");

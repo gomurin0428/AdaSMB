@@ -9,6 +9,7 @@ with SMB.Client;
 procedure Async_Client is
    use type SMB.Bytes;
    use type SMB.DWord;
+   use type SMB.QWord;
    use type Ada.Real_Time.Time;
    Mode : constant String :=
      Ada.Environment_Variables.Value ("SMB_TEST_MODE");
@@ -61,6 +62,9 @@ begin
          SMB.Client.Write (Client, File, 0, Data);
          if SMB.Client.Read (Client, File, 0, Data'Length) /= Data then
             raise Program_Error with "async success READ content mismatch";
+         end if;
+         if SMB.Client.Query_Information (Client, File).Size /= Data'Length then
+            raise Program_Error with "async success QUERY_INFO size mismatch";
          end if;
          SMB.Client.Close (Client, File);
       end;

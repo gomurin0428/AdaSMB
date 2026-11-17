@@ -77,8 +77,10 @@ package SMB.Client is
       Change_Time : SMB.QWord := 0;
    end record;
 
-   --  Asks the server for File's information now, so it reflects writes made
-   --  through File. Works on a handle of any Access_Mode.
+   --  Asks the server for File's information now: the size reflects writes
+   --  made through File, though a server may update the last-write time
+   --  only later (Windows and Samba both can). Works on a handle of any
+   --  Access_Mode.
    function Query_Information
      (Client : in out Connection; File : Handle) return File_Information;
 

@@ -8,8 +8,8 @@ replace a successful GNATprove run.
 
 ## Executable proof scope
 
-`proof.gpr` explicitly includes twenty-one units (twenty bodies plus `SMB`'s
-types). These are the implementations called by `SMB.Client` and
+`proof.gpr` explicitly includes twenty-two units (twenty-one bodies plus
+`SMB`'s types). These are the implementations called by `SMB.Client` and
 `SMB.Transport`, not a parallel model.
 
 | Unit | Runtime responsibility |
@@ -33,7 +33,7 @@ types). These are the implementations called by `SMB.Client` and
 | `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-CCM or AES-GCM under a 16-byte (AES-128) or 32-byte (AES-256) key of the cipher's length, and checking and opening a received one; the header fields, nonce field and trailing zeros written, the header and inner SMB2 header checks that hold on success (the tag itself is tested, not stated), and no message bytes left after any failure |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
-| `SMB.Core_Query` | QUERY_INFO lifecycle for FileNetworkOpenInformation on an open handle: request construction/signing for a live handle only, send acknowledgement, response acceptance, a 56-byte information structure read from inside the packet on success, an error NTSTATUS returned with the connection kept, and invalidation on a malformed response or an abort |
+| `SMB.Core_Query` | QUERY_INFO lifecycle for FileNetworkOpenInformation on an open handle: request construction/signing for a live handle only, send acknowledgement, response acceptance, a 56-byte information structure read from inside the packet on success, an error NTSTATUS returned with the connection kept; otherwise `Complete` either changes nothing (`Invalid_State_Status`) or fails the operation and invalidates the connection, as an abort does |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
 | `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC or AES-128-GMAC, as negotiated, with the derived key for 3.1.1), the negotiated dialect, cipher, signing algorithm and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime |
 
@@ -85,7 +85,10 @@ the same way. `Complete`'s postcondition proves that a successful query
 leaves the share connected and the handle unchanged, and that on
 STATUS_SUCCESS the result is the FileNetworkOpenInformation at the
 response's OutputBufferOffset, whose OutputBufferLength is exactly 56 and
-which lies inside the packet after the fixed part. The socket pump, the copy
+which lies inside the packet after the fixed part. Any other outcome either
+changes nothing and reports `Invalid_State_Status` (the operation was not in
+flight) or fails the operation with the connection invalidated, so no
+response is taken without those checks. The socket pump, the copy
 into the public record, and `To_Time`'s calendar arithmetic (in
 `Ada.Calendar`) are trusted facade code.
 
@@ -173,7 +176,7 @@ reads it, and seals every request through `Seal_Request`. Both are trusted
 adapter steps, as the forwarding of the exact packet slice already is.
 
 For authenticated LOGOFF, TREE_DISCONNECT, CREATE, CLOSE, READ, WRITE,
-QUERY_DIRECTORY, and SET_INFO commands, the Engine records a nonzero AsyncId
+QUERY_DIRECTORY, QUERY_INFO, and SET_INFO commands, the Engine records a nonzero AsyncId
 only after validating the correlated `STATUS_PENDING` header and bounded ERROR
 body. The interim is intentionally not signature-verified as required by SMB2;
 it does not create a receipt, expose its status, or advance transfer progress.

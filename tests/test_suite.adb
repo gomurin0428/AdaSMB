@@ -6363,7 +6363,7 @@ procedure Test_Suite is
       Status : SMB.Core_Status;
       type Command_Array is array (Positive range <>) of
         SMB.Core_Wire.Command_Code;
-      Commands : constant Command_Array := (5, 8, 14, 17);
+      Commands : constant Command_Array := (5, 8, 14, 16, 17);
    begin
       SMB.Wire.Put_U16 (Packet, 64, 9);
       SMB.Wire.Put_U32 (Packet, 68, 3);
@@ -7553,7 +7553,7 @@ procedure Test_Suite is
          Base, Target, Authenticated_State : SMB.Engine.Engine_State;
          Handle : SMB.Engine.Handle_Token;
          Commands : constant array (Positive range <>) of
-           SMB.Core_Wire.Command_Code := (2, 4, 5, 6, 8, 9, 14, 17);
+           SMB.Core_Wire.Command_Code := (2, 4, 5, 6, 8, 9, 14, 16, 17);
          Poison : constant SMB.Engine.Request_Expectation :=
            (Command => SMB.Core_Wire.Command_Code'Last,
             Message_Id => SMB.QWord'Last,
@@ -7623,11 +7623,11 @@ procedure Test_Suite is
          Assert (Result = SMB.Ok, "reserve authenticated LOGOFF metadata fixture");
          Check_Request_Metadata (Authenticated_State, Reservation, False, True);
          Assert
-           (Reservation_Checks = 13 and then Metadata_Mutations = 156
-            and then Rejections = 12,
+           (Reservation_Checks = 14 and then Metadata_Mutations = 168
+            and then Rejections = 13,
             "request metadata coverage");
          Ada.Text_IO.Put_Line
-           ("request metadata: 13 reservations, 156 field mutations and 12 rejected calls passed");
+           ("request metadata: 14 reservations, 168 field mutations and 13 rejected calls passed");
       end Test_Request_Metadata;
 
       procedure Test_Request_Receipt_Preservation is
