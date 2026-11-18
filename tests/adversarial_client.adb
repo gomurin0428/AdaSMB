@@ -19,7 +19,9 @@ procedure Adversarial_Client is
    end Is_Early_Failure;
    --  An SMB 3.1.1 NEGOTIATE response altered on the way: the keys then
    --  differ from the server's, and the signed final SESSION_SETUP
-   --  response fails, so Authenticate must raise.
+   --  response fails its signature check, so Authenticate must raise
+   --  Authentication_Error ("server did not complete signed SMB
+   --  authentication").
    function Is_Negotiate_Tamper return Boolean is
      (Mode'Length > 10
       and then Mode (Mode'First .. Mode'First + 9) = "negotiate-");
@@ -68,6 +70,14 @@ begin
                      raise Program_Error with
                        "authenticated-path proxy failed before authentication";
                   end if;
+                  Rejected := True;
+               when E : SMB.Authentication_Error =>
+                  if not Is_Negotiate_Tamper then
+                     raise;
+                  end if;
+                  Ada.Text_IO.Put_Line
+                    ("authentication rejected: "
+                     & Ada.Exceptions.Exception_Message (E));
                   Rejected := True;
             end;
             if Is_Negotiate_Tamper and then SMB.Client.Is_Connected (Client) then
