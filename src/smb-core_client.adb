@@ -2482,15 +2482,24 @@ is
       Access_Mode : SMB.Engine.Access_Kind;
       Directory : Boolean;
       Amount : Natural;
-      --  A READ or WRITE may take several credits.
+      --  What Output holds after a WRITE's header and fixed part.
+      Room : constant Natural :=
+        (if Output'Length > Header_Length + 48
+         then Output'Length - (Header_Length + 48) else 0);
+      --  A READ or WRITE may take several credits. A WRITE above 64 KiB is
+      --  also kept to what Output holds, so an Output sized for 64 KiB
+      --  WRITEs still works with LARGE_MTU; one that cannot hold the chunk
+      --  below that fails with Resource_Limit, as before.
       Limit : constant Natural :=
         (if Value.Kind = Read_Transfer
          then Natural'Min
                 (SMB.Engine.Current_Read_Chunk (State),
                  SMB.Core_Protocol.Maximum_Read_Chunk)
          else Natural'Min
-                (SMB.Engine.Current_Write_Chunk (State),
-                 SMB.Core_Protocol.Maximum_Write_Chunk));
+                (Natural'Min
+                   (SMB.Engine.Current_Write_Chunk (State),
+                    SMB.Core_Protocol.Maximum_Write_Chunk),
+                 Natural'Max (SMB.Core_Protocol.Maximum_IO_Chunk, Room)));
       Message_Id : SMB.QWord;
       Expected : SMB.Engine.Request_Expectation;
       Begin_Status : SMB.Core_Status;
@@ -2648,6 +2657,9 @@ is
          end if;
          Output (Output'First + 48 .. Output'First + 63) := Signature;
       end;
+      pragma Assert (SMB.Core_Wire.Encoded_U32 (Output, 16) = 8);
+      pragma Assert
+        (SMB.Core_Wire.Encoded_U64 (Output, 40) = Expected.Session_Id);
       pragma Assert
         (SMB.Core_Wire.Encoded_U64 (Output, 24) = Expected.Message_Id);
       pragma Assert

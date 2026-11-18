@@ -17,6 +17,7 @@ package body Credit_Tests is
    use type SMB.Word;
    use type SMB.Engine.Engine_State;
    use type SMB.Core_Client.Transfer_Stage;
+   use type SMB.Engine.Phase;
 
    subtype Engine is SMB.Engine.Engine_State;
    subtype Handle is SMB.Engine.Handle_Token;
@@ -594,21 +595,24 @@ package body Credit_Tests is
    --  A 1 MiB WRITE through SMB.Core_Client: 960 KiB on fifteen credits,
    --  then 64 KiB on one, each request carrying its part of the data; and in
    --  64 KiB pieces without LARGE_MTU. Grants (when given) are the credits
-   --  each response grants, and with them the requests' sizes.
+   --  each response grants, and Amounts, in credits, the requests' sizes
+   --  that follow from them or from Room, the bytes of data the output
+   --  holds.
    procedure Test_Large_Write
      (Large_MTU : Boolean;
       Label : String;
       Total : Natural := 1_048_576;
       Credits : SMB.Word := 40;
       Grants : SMB.Bytes := (1 .. 0 => 0);
-      Amounts : SMB.Bytes := (1 .. 0 => 0))
+      Amounts : SMB.Bytes := (1 .. 0 => 0);
+      Room : Natural := Write_Chunk)
    is
       State : Engine;
       Token : Handle;
       Data : Bytes_Access := new SMB.Bytes (0 .. Total - 1);
       Value : Transfer_Access := new SMB.Core_Client.Transfer (Total);
       Output : Bytes_Access :=
-        new SMB.Bytes (0 .. SMB.Core_Wire.Header_Size + 48 + Write_Chunk - 1);
+        new SMB.Bytes (0 .. SMB.Core_Wire.Header_Size + 48 + Room - 1);
       Used : Natural;
       Status : SMB.Core_Status;
       Nt_Status : SMB.DWord;
@@ -657,8 +661,12 @@ package body Credit_Tests is
                       Data (Offset + Index);
                end loop;
             end if;
+            --  StructureSize 49, DataOffset 112, and Channel to Flags zero.
             Check
               (Carried
+               and then SMB.Wire.U16 (Output.all, 64) = 49
+               and then SMB.Wire.U16 (Output.all, 66) = 112
+               and then Output (64 + 32 .. 64 + 47) = (64 + 32 .. 64 + 47 => 0)
                and then SMB.Wire.U16 (Output.all, 12) = 9
                and then SMB.Wire.Verify_Signature
                  (Output (0 .. Used - 1), Key)
@@ -705,6 +713,49 @@ package body Credit_Tests is
       Free (Data);
    end Test_Large_Write;
 
+   --  A WRITE response whose Count is above what the request carried is
+   --  refused, with LARGE_MTU or without: the parser takes Counts up to
+   --  960 KiB, so for a 64 KiB WRITE the check against the request is what
+   --  catches 64 KiB and one.
+   procedure Test_Write_Count (Large_MTU : Boolean) is
+      Label : constant String :=
+        (if Large_MTU then "LARGE_MTU WRITE" else "WRITE without LARGE_MTU");
+      Amount : constant Natural := (if Large_MTU then 2 * Credit else Credit);
+      State : Engine;
+      Token : Handle;
+      Data : Bytes_Access := new SMB.Bytes'(0 .. Amount - 1 => 16#4D#);
+      Value : Transfer_Access := new SMB.Core_Client.Transfer (Amount);
+      Output : Bytes_Access :=
+        new SMB.Bytes (0 .. SMB.Core_Wire.Header_Size + 48 + Write_Chunk - 1);
+      Used : Natural;
+      Status : SMB.Core_Status;
+      Nt_Status : SMB.DWord;
+   begin
+      Shared (State, Large_MTU, 40,
+              Maximum_Write => (if Large_MTU then Write_Chunk else Credit));
+      Open_Handle (State, Token, SMB.Engine.Read_Write);
+      SMB.Core_Client.Start_Write (Value.all, State, Token, 0, Data.all, Status);
+      SMB.Core_Client.Prepare_Next (Value.all, State, Output.all, Used, Status);
+      Check (Status = SMB.Ok
+             and then Natural (SMB.Wire.U32 (Output.all, 64 + 4)) = Amount,
+             Label & " Count: the request");
+      SMB.Core_Client.Transfer_Send_Succeeded (Value.all, State, Status);
+      SMB.Core_Client.Complete_Write
+        (Value.all, State,
+         Write_Response (SMB.Wire.U64 (Output.all, 24), Amount + 1, 15),
+         Nt_Status, Status);
+      Check (Status /= SMB.Ok
+             and then SMB.Core_Client.Transfer_Stage_Of (Value.all) =
+               SMB.Core_Client.Transfer_Failed
+             and then SMB.Engine.Current_Phase (State) =
+               SMB.Engine.Disconnected,
+             Label & ": a Count one above the request: "
+             & SMB.Core_Status'Image (Status));
+      Free (Output);
+      Free (Value);
+      Free (Data);
+   end Test_Write_Count;
+
    procedure Run is
    begin
       Test_Counting;
@@ -720,6 +771,16 @@ package body Credit_Tests is
       Test_Large_Write
         (True, "WRITE with small grants", Total => 524_288, Credits => 1,
          Grants => (4, 2, 1, 1), Amounts => (1, 4, 2, 1));
+      --  An output that holds 192 KiB of data: WRITEs of 192 KiB, and one
+      --  output sized for 64 KiB WRITEs still works with LARGE_MTU.
+      Test_Large_Write
+        (True, "WRITE into a 192 KiB output", Room => 3 * Credit,
+         Amounts => (3, 3, 3, 3, 3, 1));
+      Test_Large_Write
+        (True, "WRITE into a 64 KiB output", Room => Credit,
+         Amounts => (1 .. 16 => 1));
+      Test_Write_Count (True);
+      Test_Write_Count (False);
       Ada.Text_IO.Put_Line
         ("credits and multi-credit READs and WRITEs:" & Natural'Image (Checks)
          & " checks passed");
