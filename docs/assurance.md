@@ -53,9 +53,10 @@ installation, and completion based on the Engine's signed response receipt are
 in the proved core. The facade supplies entropy and clock input, pumps socket
 frames, translates exceptions, and closes the transport when the engine is
 invalidated. The bounded transfer state owns progress, the immutable WRITE
-snapshot, and accumulated READ bytes; each READ chunk is at most 960 KiB (and
-no more than the credits on hand pay for, as `Engine.Current_Read_Chunk` states),
-each WRITE chunk at most 64 KiB, and a transfer at most 1 MiB. READ short/zero responses finish normally, while positive
+snapshot, and accumulated READ bytes; each READ or WRITE chunk is at most
+960 KiB (and no more than the credits on hand pay for, as
+`Engine.Current_Read_Chunk` and `Current_Write_Chunk` state), and a transfer
+at most 1 MiB. READ short/zero responses finish normally, while positive
 partial WRITE counts advance only by the validated response count. Reserved
 fields in NEGOTIATE, TREE_CONNECT, READ, ERROR, CLOSE, TREE_DISCONNECT and LOGOFF
 are ignored as required for SMB 2.1. Except for the unsigned NEGOTIATE
@@ -367,8 +368,8 @@ does not make the above bodies formally verified.
   `Process_Target_Info` and `Build_Type3` to stay fixed-size, because the peer
   chooses those lengths (for responses, before the signature is known to be
   valid).
-* An entire read/write API operation is capped at 1 MiB, each wire READ at
-  960 KiB and each WRITE at 64 KiB, the credits counted at 8,192, encoded names at 65,534 bytes, open handles at 256, directory pages at
+* An entire read/write API operation is capped at 1 MiB, each wire READ or
+  WRITE at 960 KiB, the credits counted at 8,192, encoded names at 65,534 bytes, open handles at 256, directory pages at
   4,096 and directory entries at 100,000. Exhaustion is reported, not wrapped.
 * For each request, one absolute receive deadline covers interim frames and the
   final response; multi-request API operations keep their existing per-frame

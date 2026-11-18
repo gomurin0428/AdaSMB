@@ -310,15 +310,37 @@ package body SMB.Core_Wire with SPARK_Mode is
          Data (Data'First + Index) := 0;
       end loop;
       declare
+         Signature : Signature_Bytes;
+      begin
+         Compute_Signature (Data, Key, Signature, Status);
+         Data (Data'First + 48 .. Data'First + 63) := Signature;
+      end;
+   end Sign;
+
+   procedure Compute_Signature
+     (Data : SMB.Bytes;
+      Key : SMB.Bytes;
+      Signature : out Signature_Bytes;
+      Status : out SMB.Core_Status) is
+   begin
+      Signature := (others => 0);
+      if Data'Length < Header_Size then
+         Status := SMB.Invalid_Length;
+         return;
+      end if;
+      if Key'Length = 0 then
+         Status := SMB.Invalid_Value;
+         return;
+      end if;
+      declare
          Digest : constant SMB.Bytes := SMB.Crypto.HMAC_SHA256 (Key, Data);
       begin
          for Index in 0 .. 15 loop
-            Data (Data'First + 48 + Index) :=
-              Digest (Digest'First + Index);
+            Signature (Index) := Digest (Digest'First + Index);
          end loop;
       end;
       Status := SMB.Ok;
-   end Sign;
+   end Compute_Signature;
 
    procedure Verify_Signature
      (Data : SMB.Bytes;
@@ -384,6 +406,26 @@ package body SMB.Core_Wire with SPARK_Mode is
          Data (Data'First + Index) := 0;
       end loop;
       declare
+         Signature : Signature_Bytes;
+      begin
+         Compute_Signature_SMB3 (Data, Key, Algorithm, Signature, Status);
+         Data (Data'First + 48 .. Data'First + 63) := Signature;
+      end;
+   end Sign_SMB3;
+
+   procedure Compute_Signature_SMB3
+     (Data : SMB.Bytes;
+      Key : SMB.AES.Key_128;
+      Algorithm : SMB.Core_Negotiate.SMB3_Signing_Id;
+      Signature : out Signature_Bytes;
+      Status : out SMB.Core_Status) is
+   begin
+      Signature := (others => 0);
+      if Data'Length < Header_Size then
+         Status := SMB.Invalid_Length;
+         return;
+      end if;
+      declare
          Tag : constant SMB.AES.CMAC.Tag_128 :=
            (case Algorithm is
               when SMB.Core_Negotiate.AES_CMAC =>
@@ -392,11 +434,11 @@ package body SMB.Core_Wire with SPARK_Mode is
                  SMB.AES.GCM.MAC (Key, GMAC_Nonce (Data), Data));
       begin
          for Index in 0 .. 15 loop
-            Data (Data'First + 48 + Index) := Tag (Index);
+            Signature (Index) := Tag (Index);
          end loop;
       end;
       Status := SMB.Ok;
-   end Sign_SMB3;
+   end Compute_Signature_SMB3;
 
    procedure Verify_Signature_SMB3
      (Data : SMB.Bytes;

@@ -108,6 +108,17 @@ is
         then Has_Large_MTU (State)
           and then SMB.Core_Protocol.Credit_Charge (Current_Read_Chunk'Result)
             <= Current_Credits (State));
+   --  The same for a WRITE.
+   function Current_Write_Chunk (State : Engine_State) return Natural
+   with Post =>
+     Current_Write_Chunk'Result <= Current_Max_Write (State)
+     and then Current_Write_Chunk'Result <=
+       SMB.Core_Protocol.Maximum_Write_Chunk
+     and then
+       (if Current_Write_Chunk'Result > SMB.Core_Protocol.Maximum_IO_Chunk
+        then Has_Large_MTU (State)
+          and then SMB.Core_Protocol.Credit_Charge (Current_Write_Chunk'Result)
+            <= Current_Credits (State));
    function Current_Async_Id (State : Engine_State) return SMB.QWord;
    function Has_Open_Handles (State : Engine_State) return Boolean;
    function Has_Pending_Request (State : Engine_State) return Boolean;
@@ -642,7 +653,8 @@ is
           Has_Pending_Request (State)
           and Next_Request_Id (State)'Old < SMB.QWord'Last
           and Expected.Credit_Charge =
-            (if Command = 8 and then Has_Large_MTU (State)'Old
+            (if (Command = 8 or else Command = 9)
+               and then Has_Large_MTU (State)'Old
              then SMB.Word (SMB.Core_Protocol.Credit_Charge (Request_Amount))
              else 1)
           and Expected.Credit_Charge in
@@ -952,7 +964,7 @@ is
                     and then Current_Response_Info (State).Max_Read in
                       1 .. SMB.Core_Protocol.Maximum_Read_Chunk
                     and then Current_Response_Info (State).Max_Write in
-                      1 .. SMB.Core_Protocol.Maximum_IO_Chunk
+                      1 .. SMB.Core_Protocol.Maximum_Write_Chunk
                     and then Current_Response_Info (State).Max_Read =
                       Natural (SMB.DWord'Min
                         ((if Current_Response_Info (State).Large_MTU
@@ -961,7 +973,9 @@ is
                          SMB.Core_Wire.Encoded_U32 (Packet, 96)))
                     and then Current_Response_Info (State).Max_Write =
                       Natural (SMB.DWord'Min
-                        (SMB.Core_Protocol.Maximum_IO_Chunk,
+                        ((if Current_Response_Info (State).Large_MTU
+                          then SMB.Core_Protocol.Maximum_Write_Chunk
+                          else SMB.Core_Protocol.Maximum_IO_Chunk),
                          SMB.Core_Wire.Encoded_U32 (Packet, 100)))
                   elsif Pending_Command (State)'Old = 3
                     and then Nt_Status = SMB.Success
@@ -992,7 +1006,7 @@ is
                     and then Nt_Status = SMB.Success
                   then Packet'Length >= 80
                     and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
-                      SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                      SMB.DWord (SMB.Core_Protocol.Maximum_Write_Chunk)
                     and then Current_Response_Info (State).Count =
                       Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
                   elsif (Pending_Command (State)'Old = 14

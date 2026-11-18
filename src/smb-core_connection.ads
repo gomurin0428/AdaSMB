@@ -328,7 +328,7 @@ is
                         and then SMB.Engine.Current_Max_Read (State) in
                           1 .. SMB.Core_Protocol.Maximum_Read_Chunk
                         and then SMB.Engine.Current_Max_Write (State) in
-                          1 .. SMB.Core_Protocol.Maximum_IO_Chunk
+                          1 .. SMB.Core_Protocol.Maximum_Write_Chunk
                         and then SMB.Engine.Current_Max_Read (State) =
                           Natural (SMB.DWord'Min
                             ((if SMB.Engine.Has_Large_MTU (State)
@@ -337,7 +337,9 @@ is
                              SMB.Core_Wire.Encoded_U32 (Packet, 96)))
                         and then SMB.Engine.Current_Max_Write (State) =
                           Natural (SMB.DWord'Min
-                            (SMB.Core_Protocol.Maximum_IO_Chunk,
+                            ((if SMB.Engine.Has_Large_MTU (State)
+                              then SMB.Core_Protocol.Maximum_Write_Chunk
+                              else SMB.Core_Protocol.Maximum_IO_Chunk),
                              SMB.Core_Wire.Encoded_U32 (Packet, 100))),
                       when Tree_Connect =>
                         Packet'Length >= 80

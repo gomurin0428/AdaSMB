@@ -435,6 +435,72 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Finish (49, Output'Length, Used, Status);
    end Build_Read;
 
+   --  The 48 bytes before a WRITE's data: StructureSize, DataOffset,
+   --  Length, Offset and FileId, the rest zero.
+   procedure Build_Write_Fixed
+     (File_Id : SMB.Bytes;
+      Offset : SMB.QWord;
+      Length : Natural;
+      Output : out SMB.Bytes;
+      Status : out SMB.Core_Status)
+   with Pre => File_Id'Length = 16
+     and then Length <= Maximum_Write_Chunk
+     and then Output'Length = 48,
+     Post =>
+       (if Status = SMB.Ok then
+          Output (Output'First + 4) =
+            SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 0)
+          and then Output (Output'First + 5) =
+            SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 1)
+          and then Output (Output'First + 6) =
+            SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 2)
+          and then Output (Output'First + 7) =
+            SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 3)
+          and then SMB.Core_Wire.Encoded_U64 (Output, 8) = Offset
+          and then
+            (for all Byte_Index in 0 .. 7 =>
+               Output (Output'First + 8 + Byte_Index) =
+                 SMB.Core_Wire.U64_Byte (Offset, Byte_Index))
+          and then
+            (for all Index in 0 .. 15 =>
+               Output (Output'First + 16 + Index) =
+                 File_Id (File_Id'First + Index)))
+   is
+   begin
+      Begin_Build (Output, 48, Status);
+      Put_U16 (Output, 0, 49, Status);
+      Put_U16 (Output, 2, 112, Status);
+      Put_Byte
+        (Output, 4, SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 0), Status);
+      pragma Assert
+        (if Status = SMB.Ok then
+           Output (Output'First + 4) =
+             SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 0));
+      Put_Byte
+        (Output, 5, SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 1), Status);
+      pragma Assert
+        (if Status = SMB.Ok then
+           Output (Output'First + 5) =
+             SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 1));
+      Put_Byte
+        (Output, 6, SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 2), Status);
+      pragma Assert
+        (if Status = SMB.Ok then
+           Output (Output'First + 6) =
+             SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 2));
+      Put_Byte
+        (Output, 7, SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 3), Status);
+      pragma Assert
+        (if Status = SMB.Ok then
+           Output (Output'First + 7) =
+             SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 3));
+      Put_U64 (Output, 8, Offset, Status);
+      if Status = SMB.Ok then
+         Copy (Output, 16, File_Id, Status);
+      end if;
+      --  Bytes 44 to 47 (Flags) stay zero, as Begin_Build cleared them.
+   end Build_Write_Fixed;
+
    procedure Build_Write
      (File_Id : SMB.Bytes;
       Offset : SMB.QWord;
@@ -445,82 +511,25 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Required : constant Natural := 48 + Data'Length;
    begin
       Begin_Build (Output, Required, Status);
-      Put_U16 (Output, 0, 49, Status);
-      Put_U16 (Output, 2, 112, Status);
-      Put_Byte
-        (Output, 4, SMB.Core_Wire.U32_Byte
-           (SMB.DWord (Data'Length), 0), Status);
-      pragma Assert
-        (if Status = SMB.Ok then
-           Output (Output'First + 4) =
-             SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 0));
-      Put_Byte
-        (Output, 5, SMB.Core_Wire.U32_Byte
-           (SMB.DWord (Data'Length), 1), Status);
-      pragma Assert
-        (if Status = SMB.Ok then
-           Output (Output'First + 5) =
-             SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 1));
-      Put_Byte
-        (Output, 6, SMB.Core_Wire.U32_Byte
-           (SMB.DWord (Data'Length), 2), Status);
-      pragma Assert
-        (if Status = SMB.Ok then
-           Output (Output'First + 6) =
-             SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 2));
-      Put_Byte
-        (Output, 7, SMB.Core_Wire.U32_Byte
-           (SMB.DWord (Data'Length), 3), Status);
-      pragma Assert
-        (if Status = SMB.Ok then
-           Output (Output'First + 7) =
-             SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 3));
-      Put_U64 (Output, 8, Offset, Status);
-      if Status = SMB.Ok then
-         Copy (Output, 16, File_Id, Status);
+      if Status /= SMB.Ok then
+         Used := 0;
+         return;
       end if;
-      pragma Assert
-        (if Status = SMB.Ok then
-           (for all Index in 0 .. 15 =>
-              Output (Output'First + 16 + Index) =
-                File_Id (File_Id'First + Index)));
-      --  Keep only what the rest needs: the eight header calls before this
-      --  point leave a chain of frame conditions that makes the provers time
-      --  out on the data copy below.
-      pragma Assert_And_Cut
-        (Output'Length <= SMB.Maximum_Frame_Size
-         and then Data'Length <= Maximum_IO_Chunk
-         and then File_Id'Length = 16
-         and then Required = 48 + Data'Length
-         and then
-           (if Status = SMB.Ok then
-              Required <= Output'Length
-              and then Output (Output'First + 4) =
-                SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 0)
-              and then Output (Output'First + 5) =
-                SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 1)
-              and then Output (Output'First + 6) =
-                SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 2)
-              and then Output (Output'First + 7) =
-                SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 3)
-              and then SMB.Core_Wire.Encoded_U64 (Output, 8) = Offset
-              and then
-                (for all Byte_Index in 0 .. 7 =>
-                   Output (Output'First + 8 + Byte_Index) =
-                     SMB.Core_Wire.U64_Byte (Offset, Byte_Index))
-              and then
-                (for all Index in 0 .. 15 =>
-                   Output (Output'First + 16 + Index) =
-                     File_Id (File_Id'First + Index))));
-      --  Bytes 44 to 47 (Flags) stay zero, as Begin_Build cleared them.
-      if Status = SMB.Ok then
-         Copy (Output, 48, Data, Status);
+      --  The fields go into their own 48 bytes, and the data, up to
+      --  960 KiB, straight after them: the field steps' postconditions,
+      --  checked at run time, then copy only those 48 bytes for 'Old.
+      Build_Write_Fixed
+        (File_Id, Offset, Data'Length,
+         Output (Output'First .. Output'First + 47), Status);
+      if Status /= SMB.Ok then
+         Used := 0;
+         return;
       end if;
-      pragma Assert
-        (if Status = SMB.Ok and then Data'Length > 0 then
-           (for all Index in 0 .. Data'Length - 1 =>
-              Output (Output'First + 48 + Index) = Data (Data'First + Index)));
-      Finish (Required, Output'Length, Used, Status);
+      if Data'Length > 0 then
+         Output (Output'First + 48 .. Output'First + 47 + Data'Length) :=
+           Data;
+      end if;
+      Used := Required;
    end Build_Write;
 
    procedure Build_Close
@@ -877,7 +886,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Info.Max_Write :=
-           Natural (SMB.DWord'Min (Maximum_IO_Chunk, DWord_Value));
+           Natural (SMB.DWord'Min
+             ((if Info.Large_MTU then Maximum_Write_Chunk
+               else Maximum_IO_Chunk),
+              DWord_Value));
          Read_U16 (Packet, 120, Word_Value, Header_Status);
          Read_U16 (Packet, 122, Structure, Header_Status);
          if Header_Status /= SMB.Ok then
@@ -1012,9 +1024,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Read_U16 (Packet, 64, Structure, Header_Status);
          Read_U32 (Packet, 68, DWord_Value, Header_Status);
          if Structure /= 17 or else DWord_Value = 0
-           or else DWord_Value > SMB.DWord (Maximum_IO_Chunk)
+           or else DWord_Value > SMB.DWord (Maximum_Write_Chunk)
            or else SMB.Core_Wire.Encoded_U32 (Packet, 68) >
-             SMB.DWord (Maximum_IO_Chunk)
+             SMB.DWord (Maximum_Write_Chunk)
          then
             Status := SMB.Invalid_Protocol;
             return;
