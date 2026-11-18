@@ -436,8 +436,9 @@ opens a received one. It is a stateless SPARK unit, like
   response (the signing algorithm, the cipher, a byte of the preauth salt,
   a byte of the server GUID) and relays the rest. The client then derives
   keys that differ from the server's, and `adversarial_client` requires
-  `Authenticate` to raise `Protocol_Error` on the signed final
-  SESSION_SETUP response and the connection to close; the proxy requires
+  `Authenticate` to raise `Authentication_Error` ("server did not complete
+  signed SMB authentication") on the signed final SESSION_SETUP response
+  and the connection to close; the proxy requires
   two SESSION_SETUP requests and nothing after them. These run in every
   `ADASMB_SMB311_ONLY=1` Samba run (the cipher one only where a cipher is
   negotiated).
