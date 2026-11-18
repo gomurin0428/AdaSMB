@@ -459,15 +459,19 @@ opens a received one. It is a stateless SPARK unit, like
   L = 256, for the AES-256 ciphers). The proxy opens each transform message
   (AES-CCM with an 11-byte nonce or AES-GCM with a 12-byte one, the header
   from the Nonce field on as associated data): an encrypted request only to
-  look at it, forwarding the original bytes, and an encrypted response to
-  alter it, then encrypts it again under the same nonce and SessionId with
-  the new OriginalMessageSize. Inside encryption the proxy, like the
+  look at it, forwarding the original bytes, and every encrypted response,
+  passed on or altered, which `to_client` encrypts again under the same
+  nonce and SessionId with the new OriginalMessageSize. In the encrypted
+  runs the proxy requires the response it alters to have come encrypted. Inside encryption the proxy, like the
   client, neither checks nor rewrites the Signature field: the tag
   authenticated the response when it was opened, and servers differ on the
   SIGNED flag there (Windows clears it, Samba copies the request's; the
   first CI run of #144 met Samba's). The KDF matches
-  `tests/kdf_conformance.py`'s for every label at 16 and 32 bytes, and the
-  transform round-trips for all four ciphers (checked by hand).
+  `tests/kdf_conformance.py`'s for every label at 16 and 32 bytes, and
+  `open` and `seal` reproduce Microsoft's published AES-128-CCM and
+  AES-128-GCM transform messages (checked by hand, not by a test). Samba
+  picks AES-128-GCM where it may choose, so AES-128-CCM never reaches the
+  proxy in CI.
 * Still over 2.1 only: everything else the proxies do, among them the
   directory, SET_INFO, CREATE, reserved-field, security-buffer,
   connection-level, unsigned and tampered-signature, interrupted READ and

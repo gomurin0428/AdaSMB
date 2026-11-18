@@ -49,15 +49,18 @@ def smbd_diagnostics(work: pathlib.Path) -> str:
     return "\n".join(lines)
 
 
-def run_response_mutation_cases(env: dict[str, str], share: pathlib.Path) -> None:
-    """Signed READ and WRITE responses that the proxy alters and signs
-    again, with the 2.1 key or the 3.1.1 one: the client must reject each,
-    and a rejected WRITE must have reached the server once."""
+def run_response_mutation_cases(env: dict[str, str], share: pathlib.Path,
+                                encrypted: bool = False) -> None:
+    """READ and WRITE responses that the proxy alters, then signs again with
+    the 2.1 or the 3.1.1 key, or, in an encrypted session (where each must
+    come encrypted), encrypts again: the client must reject each, and a
+    rejected WRITE must have reached the server once."""
     for index, mode in enumerate(RESPONSE_MUTATIONS, start=21):
         (share / "mutation-write.bin").write_bytes(b"A" * 64)
         (share / "mutation-write.bin").chmod(0o666)
         proxy_port = PORT + index
-        proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD)
+        proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD,
+                                 encrypted=encrypted)
         proxy.start()
         mutation_env = env.copy()
         mutation_env.update(
@@ -370,7 +373,7 @@ def main() -> int:
                     # with the 3.1.1 key or, when the session encrypts,
                     # opens and encrypts again with its keys.
                     run_negotiate_tamper_cases(env, encrypting=encrypt != "off")
-                    run_response_mutation_cases(env, share)
+                    run_response_mutation_cases(env, share, encrypted=encrypt != "off")
                     print("local Samba SMB 3.1.1 integration tests passed")
                     return 0
                 if os.environ.get("ADASMB_DIRECTORY_ONLY") == "1":

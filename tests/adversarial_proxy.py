@@ -467,9 +467,14 @@ class SigningState:
         size = struct.unpack_from("<I", message, 36)[0]
         if size != len(message) - TRANSFORM_HEADER:
             raise RuntimeError("transform OriginalMessageSize does not match")
-        return aead.decrypt(bytes(message[20:20 + nonce_length]),
-                            bytes(message[TRANSFORM_HEADER:]) + bytes(message[4:20]),
-                            bytes(message[20:TRANSFORM_HEADER]))
+        from cryptography.exceptions import InvalidTag
+        try:
+            return aead.decrypt(bytes(message[20:20 + nonce_length]),
+                                bytes(message[TRANSFORM_HEADER:]) + bytes(message[4:20]),
+                                bytes(message[20:TRANSFORM_HEADER]))
+        except InvalidTag as error:
+            direction = "request" if to_server else "response"
+            raise RuntimeError(f"could not open an encrypted {direction}") from error
 
     def seal(self, session_key: bytes | None, envelope: bytes,
              inner: bytes | bytearray, to_server: bool) -> bytes:
@@ -492,12 +497,16 @@ class AdversarialProxy:
         backend_port: int,
         user: str = "",
         password: str = "",
+        encrypted: bool = False,
     ) -> None:
         self.mode = mode
         self.listen_port = listen_port
         self.backend_port = backend_port
         self.user = user
         self.password = password
+        # The session encrypts: the response a mode alters must have come
+        # encrypted, or the mode would test the signed path instead.
+        self.encrypted = encrypted
         self.listener = socket.socket()
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.listener.bind(("127.0.0.1", listen_port))
@@ -854,6 +863,8 @@ class AdversarialProxy:
                         self.mode in RESPONSE_MUTATIONS
                         and struct.unpack_from("<H", payload, 12)[0] == RESPONSE_MUTATIONS[self.mode]
                     ):
+                        if self.encrypted and envelope is None:
+                            raise RuntimeError("the response to alter came unencrypted")
                         if self.mode.startswith("header-"):
                             if selected_read_header is None or session_key is None:
                                 raise RuntimeError("missing request context for header mutation")
@@ -1307,7 +1318,6 @@ class AdversarialProxy:
                                 payload[end:end] = b"\x00" * padding
                                 struct.pack_into("<I", payload, 68, data_length + padding)
                                 struct.pack_into("<I", payload, entry, remaining + padding)
-                                header = b"\x00" + len(payload).to_bytes(3, "big")
                             elif self.mode in DIRECTORY_NAME_MUTATIONS:
                                 name = DIRECTORY_NAME_MUTATIONS[self.mode]
                                 next_entry = struct.unpack_from("<I", payload, data_offset)[0]

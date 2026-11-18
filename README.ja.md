@@ -307,7 +307,7 @@ SMB_USER=alice SMB_PASSWORD='...' SMB_DOMAIN=WORKGROUP \
 プロキシを通したプロトコル試験も行います。多くは SMB 2.1 で行い、3.1.1
 （`ADASMB_SMB311_ONLY=1` の実行）では、書き換えた NEGOTIATE 応答（preauth
 integrity ハッシュで露見しなければならない）と、書き換えたうえで 3.1.1 の鍵で
-署名し直した（暗号化するセッションでは、その鍵で復号して暗号化し直した）
+署名し直した（暗号化するセッションでは、セッションの暗号鍵で開いて暗号化し直した）
 READ・WRITE 応答（Python の `cryptography` が必要）を使います。
 
 [`tests/windows_integration.py`](tests/windows_integration.py) は、同じ統合
