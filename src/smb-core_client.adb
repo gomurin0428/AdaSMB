@@ -158,7 +158,8 @@ is
       end if;
       SMB.Core_Wire.Initialize_Header
         (Packet, Expected.Command, Expected.Message_Id,
-         Expected.Tree_Id, Expected.Session_Id, 1, Status);
+         Expected.Tree_Id, Expected.Session_Id, Expected.Credit_Request,
+         Status, Charge => Expected.Credit_Charge);
    end Prepare_Unsigned_Header;
 
    function Authentication_Stage_Of
@@ -847,7 +848,8 @@ is
      Post =>
        (if Status = SMB.Ok then
           SMB.Core_Wire.Encoded_U16 (Packet, 4) = 64
-          and then SMB.Core_Wire.Encoded_U16 (Packet, 6) = 1
+          and then SMB.Core_Wire.Encoded_U16 (Packet, 6) =
+            Expected.Credit_Charge
           and then SMB.Core_Wire.Encoded_U16 (Packet, 12) =
             SMB.Word (Expected.Command)
           and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =
@@ -872,7 +874,8 @@ is
       end if;
       SMB.Core_Wire.Initialize_Header
         (Packet, Expected.Command, Expected.Message_Id, Expected.Tree_Id,
-         Expected.Session_Id, 1, Field_Status);
+         Expected.Session_Id, Expected.Credit_Request, Field_Status,
+         Charge => Expected.Credit_Charge);
       --  adamutant:disable-next-line ConditionalExpression: as above
       if Field_Status /= SMB.Ok then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above
@@ -2642,10 +2645,15 @@ is
       Access_Mode : SMB.Engine.Access_Kind;
       Directory : Boolean;
       Amount : Natural;
+      --  A READ may take several credits (Current_Read_Chunk), a WRITE one.
       Limit : constant Natural :=
         (if Value.Kind = Read_Transfer
-         then SMB.Engine.Current_Max_Read (State)
-         else SMB.Engine.Current_Max_Write (State));
+         then Natural'Min
+                (SMB.Engine.Current_Read_Chunk (State),
+                 SMB.Core_Protocol.Maximum_Read_Chunk)
+         else Natural'Min
+                (SMB.Engine.Current_Max_Write (State),
+                 SMB.Core_Protocol.Maximum_IO_Chunk));
       Message_Id : SMB.QWord;
       Expected : SMB.Engine.Request_Expectation;
       Begin_Status : SMB.Core_Status;
@@ -2698,9 +2706,7 @@ is
          return;
       end if;
       SMB.Core_Protocol.Select_Transfer_Amount
-        (Value.Remaining,
-         Natural'Min (Limit, SMB.Core_Protocol.Maximum_IO_Chunk),
-         Amount, Status);
+        (Value.Remaining, Limit, Amount, Status);
       --  adamutant:disable-next-line ConditionalExpression, LogicalOperator: a ready transfer has bytes left and the negotiated sizes are nonzero
       if Status /= SMB.Ok or else Amount = 0 then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above
@@ -2999,7 +3005,7 @@ is
            Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68)));
       pragma Assert
         (SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
-           SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk));
+           SMB.DWord (SMB.Core_Protocol.Maximum_Read_Chunk));
       --  Each of these alone is rejected by the engine first, so no pairing of them can be told apart.
       --  adamutant:disable LogicalOperator
       --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: the engine rejects these responses first

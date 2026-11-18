@@ -8,7 +8,21 @@ package SMB.Core_Protocol is
    use type SMB.DWord;
    use type SMB.QWord;
 
+   --  One credit's worth (MS-SMB2 3.1.5.2): the most a request may carry
+   --  without multi-credit, and so every request but a READ here.
    Maximum_IO_Chunk : constant := 65_536;
+   --  A READ may take up to this many credits when the server supports
+   --  SMB2_GLOBAL_CAP_LARGE_MTU. The response, with its header and a
+   --  transform header, stays inside a 1 MiB frame.
+   Maximum_Credit_Charge : constant := 15;
+   Maximum_Read_Chunk : constant := Maximum_Credit_Charge * Maximum_IO_Chunk;
+   Large_MTU_Capability : constant := 16#04#;
+
+   --  The credits a request that moves Amount bytes takes once multi-credit
+   --  requests are on: one per 64 KiB started (MS-SMB2 3.2.4.1.5), and one
+   --  for none.
+   function Credit_Charge (Amount : Natural) return Positive is
+     (if Amount = 0 then 1 else (Amount - 1) / Maximum_IO_Chunk + 1);
    Maximum_Name_Bytes : constant := 65_534;
    Maximum_Directory_Entries : constant := 100_000;
    Maximum_Directory_Pages : constant := 4_096;
@@ -22,6 +36,8 @@ package SMB.Core_Protocol is
       Tree_Id : SMB.DWord := 0;
       File_Id : SMB.Bytes (0 .. 15) := (others => 0);
       Count : Natural := 0;
+      --  A NEGOTIATE response's SMB2_GLOBAL_CAP_LARGE_MTU.
+      Large_MTU : Boolean := False;
       --  The dialect a NEGOTIATE response selected: 2.1 or 3.1.1.
       Dialect : SMB.Word := 0;
       --  The server encrypts the session (SESSION_SETUP's SessionFlags is
@@ -179,7 +195,7 @@ package SMB.Core_Protocol is
       Used : out Natural;
       Status : out SMB.Core_Status)
    with Pre => File_Id'Length = 16
-     and then Amount <= Maximum_IO_Chunk
+     and then Amount <= Maximum_Read_Chunk
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
        Used <= Output'Length
@@ -469,10 +485,16 @@ package SMB.Core_Protocol is
        and then
          (if Command = 0 and then Nt_Status = SMB.Success then
             Packet'Length >= 128
-            and then Info.Max_Read in 1 .. Maximum_IO_Chunk
+            and then Info.Large_MTU =
+              ((SMB.Core_Wire.Encoded_U32 (Packet, 88)
+                  and Large_MTU_Capability) /= 0)
+            and then Info.Max_Read in 1 .. Maximum_Read_Chunk
+            and then (Info.Large_MTU or else Info.Max_Read <= Maximum_IO_Chunk)
             and then Info.Max_Write in 1 .. Maximum_IO_Chunk
             and then Info.Max_Read = Natural (SMB.DWord'Min
-              (Maximum_IO_Chunk, SMB.Core_Wire.Encoded_U32 (Packet, 96)))
+              ((if Info.Large_MTU then Maximum_Read_Chunk
+                else Maximum_IO_Chunk),
+               SMB.Core_Wire.Encoded_U32 (Packet, 96)))
             and then Info.Max_Write = Natural (SMB.DWord'Min
               (Maximum_IO_Chunk, SMB.Core_Wire.Encoded_U32 (Packet, 100)))
           elsif Command = 3 and then Nt_Status = SMB.Success then
@@ -484,7 +506,7 @@ package SMB.Core_Protocol is
             Packet'Length >= 80
             and then Natural (Packet (Packet'First + 66)) =
               Info.Data_Offset
-            and then Info.Data_Length <= Maximum_IO_Chunk
+            and then Info.Data_Length <= Maximum_Read_Chunk
             and then Info.Data_Length = Natural
               (SMB.Core_Wire.Encoded_U32 (Packet, 68))
           elsif Command = 9
@@ -581,8 +603,8 @@ package SMB.Core_Protocol is
       Requested, Count : Natural;
       Status : out SMB.Core_Status;
       Require_Progress : Boolean := True)
-   with Pre => Requested <= Maximum_IO_Chunk
-     and then Count <= Maximum_IO_Chunk
+   with Pre => Requested <= Maximum_Read_Chunk
+     and then Count <= Maximum_Read_Chunk
      and then Remaining <= SMB.Maximum_Frame_Size,
      Post => Status =
        (if (Count = 0 and then Requested /= 0 and then Require_Progress)
@@ -605,7 +627,7 @@ package SMB.Core_Protocol is
       Amount : out Natural;
       Status : out SMB.Core_Status)
    with Pre => Remaining <= SMB.Maximum_Frame_Size
-     and then Limit <= Maximum_IO_Chunk,
+     and then Limit <= Maximum_Read_Chunk,
      Post => Status =
        (if Remaining /= 0 and then Limit = 0 then SMB.Invalid_Value
         else SMB.Ok)

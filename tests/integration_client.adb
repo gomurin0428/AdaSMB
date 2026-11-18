@@ -663,6 +663,31 @@ begin
                  "a stale-handle query disconnected");
       end;
 
+      --  A 1 MiB file, read back in one call: with SMB2_GLOBAL_CAP_LARGE_MTU
+      --  that is a READ of up to fifteen credits and the rest.
+      declare
+         type Bytes_Access is access SMB.Bytes;
+         Total : constant := 1_048_576;
+         Data : constant Bytes_Access := new SMB.Bytes (0 .. Total - 1);
+         Large : SMB.Client.Handle :=
+           SMB.Client.Open_File
+             (Client, "adasmb-large.bin", SMB.Client.Read_Write,
+              SMB.Client.Create_New);
+      begin
+         for Index in Data'Range loop
+            Data (Index) := SMB.Byte ((Index * 7) mod 253);
+         end loop;
+         SMB.Client.Write (Client, Large, 0, Data.all);
+         declare
+            Back : constant SMB.Bytes :=
+              SMB.Client.Read (Client, Large, 0, Total);
+         begin
+            Assert (Back'Length = Total and then Back = Data.all,
+                    "1 MiB read back differs");
+         end;
+         SMB.Client.Close (Client, Large);
+         SMB.Client.Remove_File (Client, "adasmb-large.bin");
+      end;
       SMB.Client.Rename (Client, Unicode_Name, Renamed_Name);
       SMB.Client.Remove_File (Client, Renamed_Name);
       SMB.Client.Make_Directory (Client, "adasmb-empty-directory");

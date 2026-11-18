@@ -57,7 +57,7 @@ is
           and then SMB.Core_Wire.Encoded_U16 (Buffer, 2) in 1 .. 2
           and then SMB.Core_Wire.Encoded_U16 (Buffer, 4) = 3
           and then SMB.Core_Wire.Encoded_U16 (Buffer, 6) = 0
-          and then SMB.Core_Wire.Encoded_U32 (Buffer, 8) = 16#40#
+          and then SMB.Core_Wire.Encoded_U32 (Buffer, 8) = 16#44#
           and then
             (for all Index in 0 .. 15 =>
                Buffer (12 + Index) = Guid (Guid'First + Index))
@@ -194,10 +194,12 @@ is
       and then Value.Expected.Signed = Signed_Kind (Value.Kind)
       and then SMB.Core_Wire.Encoded_U16 (Packet, 4) =
         SMB.Word (Header_Length)
-      and then SMB.Core_Wire.Encoded_U16 (Packet, 6) = 1
+      and then SMB.Core_Wire.Encoded_U16 (Packet, 6) =
+        Value.Expected.Credit_Charge
       and then SMB.Core_Wire.Encoded_U16 (Packet, 12) =
         SMB.Word (Value.Expected.Command)
-      and then SMB.Core_Wire.Encoded_U16 (Packet, 14) = 1
+      and then SMB.Core_Wire.Encoded_U16 (Packet, 14) =
+        Value.Expected.Credit_Request
       and then SMB.Core_Wire.Encoded_U32 (Packet, 16) =
         (if Value.Expected.Request_Signed then 8 else 0)
       and then SMB.Core_Wire.Encoded_U32 (Packet, 20) = 0
@@ -221,7 +223,7 @@ is
              and then SMB.Core_Wire.Encoded_U16
                (Packet, Header_Length + 6) = 0
              and then SMB.Core_Wire.Encoded_U32
-               (Packet, Header_Length + 8) = 16#40#
+               (Packet, Header_Length + 8) = 16#44#
              and then SMB.Core_Wire.Encoded_U32
                (Packet, Header_Length + 28) = 104
              and then SMB.Core_Wire.Encoded_U16
@@ -278,10 +280,12 @@ is
        and then (if Status = SMB.Ok then
           SMB.Core_Wire.Encoded_U16 (Packet, 4) =
             SMB.Word (Header_Length)
-          and then SMB.Core_Wire.Encoded_U16 (Packet, 6) = 1
+          and then SMB.Core_Wire.Encoded_U16 (Packet, 6) =
+            Expected.Credit_Charge
           and then SMB.Core_Wire.Encoded_U16 (Packet, 12) =
             SMB.Word (Expected.Command)
-          and then SMB.Core_Wire.Encoded_U16 (Packet, 14) = 1
+          and then SMB.Core_Wire.Encoded_U16 (Packet, 14) =
+            Expected.Credit_Request
           and then SMB.Core_Wire.Encoded_U32 (Packet, 16) =
             (if Expected.Request_Signed then 8 else 0)
           and then SMB.Core_Wire.Encoded_U32 (Packet, 20) = 0
@@ -306,7 +310,8 @@ is
       end if;
       SMB.Core_Wire.Initialize_Header
         (Packet, Expected.Command, Expected.Message_Id,
-         Expected.Tree_Id, Expected.Session_Id, 1, Field_Status);
+         Expected.Tree_Id, Expected.Session_Id, Expected.Credit_Request,
+         Field_Status, Charge => Expected.Credit_Charge);
       --  adamutant:disable-next-line ConditionalExpression: a header fits the packet, so the write succeeds
       if Field_Status /= SMB.Ok then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above

@@ -37,7 +37,7 @@ replace a successful GNATprove run.
 | `SMB.Core_Resize` | SET_INFO FileEndOfFileInformation lifecycle on an open handle that may write: a size no larger than 2**63 - 1, request construction/signing for a live writable handle only, send acknowledgement and response acceptance; as for `SMB.Core_Query`, `Complete` either succeeds, changes nothing (`Invalid_State_Status`), or fails the operation and invalidates the connection |
 | `SMB.Core_Request` | The header and signature of a request whose body is in place, shared by `SMB.Core_Query` and `SMB.Core_Resize`: the header fields written from the engine's expectation, and only the signature field changed by signing |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
-| `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC or AES-128-GMAC, as negotiated, with the derived key for 3.1.1), the negotiated dialect, cipher, signing algorithm and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime |
+| `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC or AES-128-GMAC, as negotiated, with the derived key for 3.1.1), the negotiated dialect, cipher, signing algorithm and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime; the credit count (one on connection, each request's charge spent, each response's grant added up to 8,192), a READ's charge of one credit per 64 KiB only with SMB2_GLOBAL_CAP_LARGE_MTU and only with the credits on hand, and message ids that advance by the charge |
 
 Supported response bodies are parsed in the core after header/correlation and
 required signature validation. A successful final Session Setup also needs the
@@ -53,8 +53,9 @@ installation, and completion based on the Engine's signed response receipt are
 in the proved core. The facade supplies entropy and clock input, pumps socket
 frames, translates exceptions, and closes the transport when the engine is
 invalidated. The bounded transfer state owns progress, the immutable WRITE
-snapshot, and accumulated READ bytes; each chunk is at most 64 KiB and a transfer
-is at most 1 MiB. READ short/zero responses finish normally, while positive
+snapshot, and accumulated READ bytes; each READ chunk is at most 960 KiB (and
+no more than the credits on hand pay for, as `Engine.Current_Read_Chunk` states),
+each WRITE chunk at most 64 KiB, and a transfer at most 1 MiB. READ short/zero responses finish normally, while positive
 partial WRITE counts advance only by the validated response count. Reserved
 fields in NEGOTIATE, TREE_CONNECT, READ, ERROR, CLOSE, TREE_DISCONNECT and LOGOFF
 are ignored as required for SMB 2.1. Except for the unsigned NEGOTIATE
@@ -359,8 +360,8 @@ does not make the above bodies formally verified.
   `Process_Target_Info` and `Build_Type3` to stay fixed-size, because the peer
   chooses those lengths (for responses, before the signature is known to be
   valid).
-* An entire read/write API operation is capped at 1 MiB, each wire I/O chunk at
-  64 KiB, encoded names at 65,534 bytes, open handles at 256, directory pages at
+* An entire read/write API operation is capped at 1 MiB, each wire READ at
+  960 KiB and each WRITE at 64 KiB, the credits counted at 8,192, encoded names at 65,534 bytes, open handles at 256, directory pages at
   4,096 and directory entries at 100,000. Exhaustion is reported, not wrapped.
 * For each request, one absolute receive deadline covers interim frames and the
   final response; multi-request API operations keep their existing per-frame

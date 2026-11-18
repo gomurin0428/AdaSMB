@@ -26,6 +26,8 @@ package Engine_Fixtures is
    type Fixture_Stage is (Connected, Negotiated, Keyed, Authenticated, Shared);
 
    --  Reconnect keeps the engine's owner, so its epoch moves past zero.
+   --  Large_MTU sets SMB2_GLOBAL_CAP_LARGE_MTU in the NEGOTIATE response,
+   --  and each of the fixture's responses grants Credits.
    procedure Setup_Share
      (State : in out SMB.Engine.Engine_State;
       Message_Id : out SMB.QWord;
@@ -34,7 +36,9 @@ package Engine_Fixtures is
       Stop_At : Fixture_Stage := Shared;
       Session : SMB.QWord := Session_Id;
       Reconnect : Boolean := False;
-      Maximum_Read, Maximum_Write : Natural := 65_536);
+      Maximum_Read, Maximum_Write : Natural := 65_536;
+      Large_MTU : Boolean := False;
+      Credits : SMB.Word := 1);
 
    --  A signed response to the pending request: header, structure size, and
    --  Body_Bytes written from offset 66.

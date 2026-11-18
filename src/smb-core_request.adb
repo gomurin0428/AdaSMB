@@ -15,7 +15,8 @@ is
       end if;
       SMB.Core_Wire.Initialize_Header
         (Packet, Expected.Command, Expected.Message_Id,
-         Expected.Tree_Id, Expected.Session_Id, 1, Field_Status);
+         Expected.Tree_Id, Expected.Session_Id, Expected.Credit_Request,
+         Field_Status, Charge => Expected.Credit_Charge);
       --  adamutant:disable-next-line ConditionalExpression: a header fits the packet, so the write succeeds
       if Field_Status /= SMB.Ok then
          --  adamutant:disable-next-line StatementDeletion: unreachable, as above

@@ -119,6 +119,8 @@ is
       State.Tree_Id := 0;
       State.Max_Read := 0;
       State.Max_Write := 0;
+      State.Credits := 0;
+      State.Large_MTU := False;
       State.Signing_Key := (others => 0);
       State.Has_Key := False;
       State.SMB3_Key := (others => 0);
@@ -156,6 +158,11 @@ is
          return;
       end if;
       State.Current := Transport_Connected;
+      --  The client may send its first request, the NEGOTIATE, on one
+      --  credit (MS-SMB2 3.2.4.1.5); every response grants more.
+      State.Credits := 1;
+      --  adamutant:disable-next-line StatementDeletion, BooleanLiteral: a disconnected state has it off
+      State.Large_MTU := False;
       Status := SMB.Ok;
    end Mark_Connected;
 
@@ -192,6 +199,7 @@ is
       end if;
       State.Max_Read := Maximum_Read;
       State.Max_Write := Maximum_Write;
+      State.Large_MTU := State.Receipt_Info.Large_MTU;
       --  adamutant:disable-next-line StatementDeletion: no session exists before negotiation
       State.Session_Id := 0;
       State.Dialect := State.Receipt_Info.Dialect;
@@ -336,6 +344,7 @@ is
       Tree_Match : Boolean;
       Session_Match : Boolean;
       Close_Found : Boolean := False;
+      Charge : Positive := 1;
    begin
       Message_Id := 0;
       Expected := (others => <>);
@@ -419,7 +428,10 @@ is
             end if;
          elsif (Command = 8 or else Command = 9)
            and then (Request_Amount = 0
-                     or else Request_Amount > SMB.Core_Protocol.Maximum_IO_Chunk)
+                     or else Request_Amount >
+                       (if Command = 8 and then State.Large_MTU
+                        then SMB.Core_Protocol.Maximum_Read_Chunk
+                        else SMB.Core_Protocol.Maximum_IO_Chunk))
          then
             Status := SMB.Invalid_Value;
             return;
@@ -436,6 +448,22 @@ is
          end if;
       else
          Status := SMB.Unsupported_Feature;
+         return;
+      end if;
+      --  Only a READ takes more than one credit, and only with
+      --  SMB2_GLOBAL_CAP_LARGE_MTU; it needs those credits on hand.
+      if Command = 8 and then State.Large_MTU then
+         Charge := SMB.Core_Protocol.Credit_Charge (Request_Amount);
+      end if;
+      if Charge > 1 and then Charge > State.Credits then
+         Status := SMB.Resource_Limit;
+         return;
+      end if;
+      --  adamutant:disable-next-line ConditionalExpression: needs 2**64 requests
+      if State.Next_Message_Id > SMB.QWord'Last - SMB.QWord (Charge) then
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
+         Status := SMB.Counter_Exhausted;
+         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          return;
       end if;
       State.Receipt_Valid := False;
@@ -457,7 +485,13 @@ is
          Request_Signed => Request_Signed,
          Signed => Response_Signed,
          Request_Amount => Request_Amount,
-         Close_Token => Close_Token);
+         Close_Token => Close_Token,
+         Credit_Charge => SMB.Word (Charge),
+         Credit_Request =>
+           Credit_Request_For
+             (State.Large_MTU,
+              State.Credits - Natural'Min (State.Credits, Charge),
+              SMB.Word (Charge)));
       --  adamutant:disable-next-line StatementDeletion: the aggregate above already set it
       Expected.Request_Amount := Request_Amount;
       --  adamutant:disable-next-line StatementDeletion: the aggregate above already set it
@@ -466,7 +500,8 @@ is
       --  adamutant:disable-next-line StatementDeletion: without a pending request the async id is already 0
       State.Pending_Async_Id := 0;
       State.Pending := True;
-      State.Next_Message_Id := State.Next_Message_Id + 1;
+      State.Credits := State.Credits - Natural'Min (State.Credits, Charge);
+      State.Next_Message_Id := State.Next_Message_Id + SMB.QWord (Charge);
       Status := SMB.Ok;
    end Begin_Request;
 
@@ -494,6 +529,8 @@ is
       State.Preauth := SMB.Core_Preauth.Initial;
       State.Max_Read := 0;
       State.Max_Write := 0;
+      State.Credits := 0;
+      State.Large_MTU := False;
       State.Receipt_Valid := False;
       --  Nothing reads the receipt fields once Receipt_Valid is False.
       --  adamutant:disable StatementDeletion, NumericLiteral, BooleanLiteral
@@ -684,6 +721,10 @@ is
          return;
       end if;
       State.Pending_Async_Id := SMB.Core_Wire.Encoded_U64 (Packet, 32);
+      State.Credits :=
+        Natural'Min
+          (Maximum_Credits,
+           State.Credits + Natural (SMB.Core_Wire.Encoded_U16 (Packet, 14)));
       --  The final response is decrypted on its own.
       State.Decrypted := False;
       Is_Interim := True;
@@ -928,6 +969,10 @@ is
       State.Pending_Async_Id := 0;
       --  adamutant:disable-next-line StatementDeletion: nothing reads it without a pending request
       State.Pending_Expected := (others => <>);
+      State.Credits :=
+        Natural'Min
+          (Maximum_Credits,
+           State.Credits + Natural (SMB.Core_Wire.Encoded_U16 (Packet, 14)));
       pragma Assert
         (if Initial_Command = 1 then State.Receipt_Command = 1);
       pragma Assert
@@ -1203,6 +1248,19 @@ is
      (State.Tree_Id);
    function Current_Max_Read (State : Engine_State) return Natural is
      (State.Max_Read);
+   function Has_Large_MTU (State : Engine_State) return Boolean is
+     (State.Large_MTU);
+   function Current_Credits (State : Engine_State) return Natural is
+     (State.Credits);
+   function Current_Read_Chunk (State : Engine_State) return Natural is
+     (Natural'Min
+        (Natural'Min (State.Max_Read, SMB.Core_Protocol.Maximum_Read_Chunk),
+         (if State.Large_MTU
+          then Natural'Max
+                 (1,
+                  Natural'Min
+                    (State.Credits, SMB.Core_Protocol.Maximum_Credit_Charge))
+          else 1) * SMB.Core_Protocol.Maximum_IO_Chunk));
    function Current_Max_Write (State : Engine_State) return Natural is
      (State.Max_Write);
    function Current_Async_Id (State : Engine_State) return SMB.QWord is

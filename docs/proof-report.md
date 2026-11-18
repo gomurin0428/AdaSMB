@@ -5410,3 +5410,52 @@ against about 10 minutes without it. Unchanged sources are the best case: a
 change re-proves the goals whose formulas it changes, and a change to a
 widely used specification changes many. Results are reported as the provers'
 would be, and a goal that is not in the cache is proved as before.
+
+## Multi-credit READs
+
+The NEGOTIATE request offers SMB2_GLOBAL_CAP_LARGE_MTU. `Parse_Response`
+records the server's bit (`Response_Info.Large_MTU`, stated from the
+packet's Capabilities field) and clamps MaxReadSize to `Maximum_Read_Chunk`
+(fifteen credits, 960 KiB) with it and to 64 KiB without. The engine keeps a
+credit count, stated in the contracts of `Mark_Connected` (one),
+`Begin_Request` (the charge taken off, without going below zero),
+`Accept_Response` and `Inspect_Interim_Response` (the response's
+CreditResponse added, up to 8,192; a LOGOFF resets it) and `Mark_Negotiated`
+(unchanged, and LARGE_MTU recorded). `Begin_Request`'s postcondition gives
+the charge (`Core_Protocol.Credit_Charge (Request_Amount)` for a READ with
+LARGE_MTU, one otherwise), that a charge above one is covered by the credits
+on hand, that the message id advances by the charge without wrapping, and
+the CreditRequest (`Credit_Request_For`). `Current_Read_Chunk`'s
+postcondition states that a chunk above 64 KiB has LARGE_MTU and a charge
+the credits cover, which is why `Prepare_Next` never asks `Begin_Request`
+for a READ it would refuse. Each `Prepare_Header` writes the charge and the
+CreditRequest, and its postcondition says so.
+
+GNATprove 16.1.0 proved every check of the changed units, with no
+`pragma Assume` or justification. On the Mac: `smb-core_wire.adb` 448,
+`smb-core_negotiate.adb` 89, `smb-core_request.adb` 44, `smb-core_query.adb`
+95, `smb-core_resize.adb` 82, `smb-engine.adb` 358 and
+`smb-core_connection.adb` 481. `smb-core_protocol.adb` left one check, that
+LARGE_MTU follows the packet, while the bit came from `Read_U32`'s output;
+it is now read with `Encoded_U32`, as MaxReadSize is. `smb-core_protocol.adb`
+and `smb-core_client.adb` were then proved by the full proof workflow on
+GitHub Actions, which passed on this branch: 6,477 checks in every unit,
+nothing unproved. Another project's mutation run was using the Mac.
+
+That run restored `main`'s proof cache and still took 64 min 33 s, against
+67 min without one: this change alters `Request_Expectation` and
+`Response_Info`, records that most proof goals mention, so few goals were
+unchanged. The cache saves most on changes that leave such specifications
+alone.
+
+`test_suite` adds `Credit_Tests` (68 checks): the count from connection
+through each exchange, a grant of seven, the 8,192 cap, an error response's
+and an interim response's grants and the async final's none; the charges
+at the 64 KiB boundaries, a fifteen-credit READ and the message id fifteen
+on, a two-credit READ refused with one credit on hand, a READ past 64 KiB
+refused without LARGE_MTU, a WRITE past 64 KiB refused even with it, and the
+CreditRequest in each case; `Current_Read_Chunk` against the credits and the
+negotiated limit, and the parser's clamp with and without the bit; and a
+1 MiB READ through `SMB.Core_Client` in two requests (960 KiB, then 64 KiB,
+fifteen message ids apart) with LARGE_MTU and in sixteen without. The
+integration client writes a 1 MiB file and reads it back in one call.

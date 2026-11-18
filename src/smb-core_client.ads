@@ -929,7 +929,7 @@ is
                 and then Natural
                   (Packet (Packet'First + 66)) <= Packet'Length
                 and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
-                  SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                  SMB.DWord (SMB.Core_Protocol.Maximum_Read_Chunk)
                 and then Natural
                   (SMB.Core_Wire.Encoded_U32 (Packet, 68)) <=
                     Packet'Length -
@@ -2113,7 +2113,10 @@ private
         SMB.QWord'Last - Value.Initial_Offset
       and then Value.Position =
         Value.Initial_Offset + SMB.QWord (Value.Completed)
-      and then Value.Requested <= SMB.Core_Protocol.Maximum_IO_Chunk
+      and then Value.Requested <= SMB.Core_Protocol.Maximum_Read_Chunk
+      and then
+        (if Value.Kind = Write_Transfer then
+           Value.Requested <= SMB.Core_Protocol.Maximum_IO_Chunk)
       and then
         (if Value.Stage in Transfer_Prepared | Transfer_Sent then
            Value.Expected.Command =

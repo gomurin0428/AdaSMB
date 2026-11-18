@@ -922,6 +922,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Read_U64 (Packet, 40, Info.Session_Id, Header_Status);
          Read_U32 (Packet, 36, Info.Tree_Id, Header_Status);
          Read_U32 (Packet, 88, DWord_Value, Header_Status);
+         Info.Large_MTU :=
+           (SMB.Core_Wire.Encoded_U32 (Packet, 88)
+              and Large_MTU_Capability) /= 0;
          --  Multichannel, persistent handles, directory leasing and
          --  encryption (16#78#) are SMB 3 capabilities: a 2.1 server must
          --  not claim them, and a 3.1.1 server may, though we use none.
@@ -938,7 +941,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
             return;
          end if;
          Info.Max_Read :=
-           Natural (SMB.DWord'Min (Maximum_IO_Chunk, DWord_Value));
+           Natural (SMB.DWord'Min
+             ((if Info.Large_MTU then Maximum_Read_Chunk
+               else Maximum_IO_Chunk),
+              DWord_Value));
          DWord_Value := SMB.Core_Wire.Encoded_U32 (Packet, 100);
          if DWord_Value = 0 then
             Status := SMB.Invalid_Value;
@@ -1063,10 +1069,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
          end if;
          Offset := Natural (Packet (Packet'First + 66));
          Read_U32 (Packet, 68, DWord_Value, Header_Status);
-         if DWord_Value > SMB.DWord (Maximum_IO_Chunk)
+         if DWord_Value > SMB.DWord (Maximum_Read_Chunk)
            --  adamutant:disable-next-line LogicalOperator, NumericLiteral: the test before it reads the same field
            or else SMB.Core_Wire.Encoded_U32 (Packet, 68) >
-             SMB.DWord (Maximum_IO_Chunk)
+             SMB.DWord (Maximum_Read_Chunk)
          then
             Status := SMB.Invalid_Length;
             return;

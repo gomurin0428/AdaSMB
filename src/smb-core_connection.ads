@@ -321,13 +321,19 @@ is
                               and then Snapshot_Of (Value).Allow_21))
                         and then SMB.Engine.Current_Session_Id (State) = 0
                         and then SMB.Engine.Current_Tree_Id (State) = 0
+                        and then SMB.Engine.Has_Large_MTU (State) =
+                          ((SMB.Core_Wire.Encoded_U32 (Packet, 88)
+                              and SMB.Core_Protocol.Large_MTU_Capability)
+                             /= 0)
                         and then SMB.Engine.Current_Max_Read (State) in
-                          1 .. SMB.Core_Protocol.Maximum_IO_Chunk
+                          1 .. SMB.Core_Protocol.Maximum_Read_Chunk
                         and then SMB.Engine.Current_Max_Write (State) in
                           1 .. SMB.Core_Protocol.Maximum_IO_Chunk
                         and then SMB.Engine.Current_Max_Read (State) =
                           Natural (SMB.DWord'Min
-                            (SMB.Core_Protocol.Maximum_IO_Chunk,
+                            ((if SMB.Engine.Has_Large_MTU (State)
+                              then SMB.Core_Protocol.Maximum_Read_Chunk
+                              else SMB.Core_Protocol.Maximum_IO_Chunk),
                              SMB.Core_Wire.Encoded_U32 (Packet, 96)))
                         and then SMB.Engine.Current_Max_Write (State) =
                           Natural (SMB.DWord'Min

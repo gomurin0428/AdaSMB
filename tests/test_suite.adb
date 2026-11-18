@@ -40,6 +40,7 @@ with Async_Engine_Tests;
 with Core_Client_Tests;
 with Core_Query_Tests;
 with Core_Resize_Tests;
+with Credit_Tests;
 with Engine_Fixtures;
 with SMB.Heap_Owner_Tests;
 
@@ -2874,12 +2875,12 @@ procedure Test_Suite is
    begin
       Assert_Equal
         (SMB.Core_Negotiate.Request (Guid, Salt, False),
-         Hex ("240001000300000040000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
+         Hex ("240001000300000044000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
               & "680000000300000011030000") & Contexts,
          "3.1.1 NEGOTIATE request");
       Assert_Equal
         (SMB.Core_Negotiate.Request (Guid, Salt, True),
-         Hex ("240002000300000040000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
+         Hex ("240002000300000044000000" & "4F0D7FA009F5B246B2EF62551D7D7C09"
               & "680000000300000011031002") & Contexts,
          "3.1.1 and 2.1 NEGOTIATE request");
       --  Windows offers only the AES-128 ciphers in A.1, so only the
@@ -7562,7 +7563,8 @@ procedure Test_Suite is
             Session_Id => SMB.QWord'Last,
             Match_Tree | Match_Session | Request_Signed | Signed => True,
             Request_Amount => Natural'Last,
-            Close_Token => (others => SMB.QWord'Last));
+            Close_Token => (others => SMB.QWord'Last),
+            Credit_Charge | Credit_Request => SMB.Word'Last);
          Reservation : SMB.Engine.Request_Expectation;
          Reserved_Id : SMB.QWord;
          Result : SMB.Core_Status;
@@ -7656,7 +7658,8 @@ procedure Test_Suite is
                      Session_Id => SMB.QWord'Last,
                      Match_Tree | Match_Session | Request_Signed | Signed => True,
                      Request_Amount => Natural'Last,
-                     Close_Token => (others => SMB.QWord'Last));
+                     Close_Token => (others => SMB.QWord'Last),
+                     Credit_Charge | Credit_Request => SMB.Word'Last);
                begin
                   Assert (SMB.Engine.Has_Validated_Response (Target),
                           "reservation preservation fixture has no receipt");
@@ -10768,7 +10771,8 @@ procedure Test_Suite is
             Request_Signed => True,
             Signed => True,
             Request_Amount => 0,
-            Close_Token => (others => 0));
+            Close_Token => (others => 0),
+            Credit_Charge | Credit_Request => 1);
          Assert
            (Status = SMB.Ok and then Metadata_Used = 97
             and then SMB.Core_Wire.Encoded_U16 (Request, 4) = 64
@@ -10878,7 +10882,8 @@ procedure Test_Suite is
             Request_Signed => True,
             Signed => True,
             Request_Amount => 0,
-            Close_Token => (others => 0));
+            Close_Token => (others => 0),
+            Credit_Charge | Credit_Request => 1);
          Assert
             (Status = SMB.Ok and then Metadata_Used = 120
             and then SMB.Core_Wire.Encoded_U16 (Rename_Request, 4) = 64
@@ -11701,7 +11706,8 @@ begin
                  and then Ada.Command_Line.Argument (1) /= "async-responses"
                  and then Ada.Command_Line.Argument (1) /= "core-client"
                  and then Ada.Command_Line.Argument (1) /= "core-query"
-                 and then Ada.Command_Line.Argument (1) /= "core-resize")
+                 and then Ada.Command_Line.Argument (1) /= "core-resize"
+                 and then Ada.Command_Line.Argument (1) /= "credits")
       then
          raise Program_Error with "unknown unit-test selection";
       end if;
@@ -11717,6 +11723,8 @@ begin
          Core_Query_Tests.Run;
       elsif Ada.Command_Line.Argument (1) = "core-resize" then
          Core_Resize_Tests.Run;
+      elsif Ada.Command_Line.Argument (1) = "credits" then
+         Credit_Tests.Run;
       elsif Ada.Command_Line.Argument (1) = "async-responses" then
          Async_Engine_Tests.Run;
          Ada.Text_IO.Put_Line ("AdaSMB async response tests passed");
@@ -11831,6 +11839,7 @@ begin
    Core_Client_Tests.Run;
    Core_Query_Tests.Run;
    Core_Resize_Tests.Run;
+   Credit_Tests.Run;
    SMB.Heap_Owner_Tests.Run;
    Test_Text_And_Wire;
    Test_Wire_Facade;

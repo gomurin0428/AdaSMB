@@ -18,7 +18,9 @@ package body Engine_Fixtures is
       Stop_At : Fixture_Stage := Shared;
       Session : SMB.QWord := Session_Id;
       Reconnect : Boolean := False;
-      Maximum_Read, Maximum_Write : Natural := 65_536) is
+      Maximum_Read, Maximum_Write : Natural := 65_536;
+      Large_MTU : Boolean := False;
+      Credits : SMB.Word := 1) is
    begin
       Message_Id := 0;
       Expected := (others => <>);
@@ -40,12 +42,14 @@ package body Engine_Fixtures is
          SMB.Engine.Begin_Request
            (State, 0, False, False, Message_Id, Expected, Status);
          Assert (Status = SMB.Ok, "async fixture negotiate request");
-         SMB.Wire.Initialize_Header (Packet, 0, Message_Id, 0, 0);
+         SMB.Wire.Initialize_Header
+           (Packet, 0, Message_Id, 0, 0, Credit => Credits);
          SMB.Wire.Put_U32 (Packet, 16, 1);
          Packet (64) := 65;
          Packet (66) := 1;
          Packet (68) := 16#10#;
          Packet (69) := 2;
+         SMB.Wire.Put_U32 (Packet, 88, (if Large_MTU then 4 else 0));
          SMB.Wire.Put_U32 (Packet, 96, SMB.DWord (Maximum_Read));
          SMB.Wire.Put_U32 (Packet, 100, SMB.DWord (Maximum_Write));
          SMB.Engine.Accept_Response (State, Packet, Nt_Status, Status);
@@ -68,7 +72,7 @@ package body Engine_Fixtures is
            (State, 1, False, False, Message_Id, Expected, Status);
          Assert (Status = SMB.Ok, "async fixture challenge request");
          SMB.Wire.Initialize_Header
-           (Packet, 1, Message_Id, 0, Session);
+           (Packet, 1, Message_Id, 0, Session, Credit => Credits);
          SMB.Wire.Put_U32 (Packet, 16, 1);
          SMB.Wire.Put_U32 (Packet, 8, SMB.Status_More_Processing_Required);
          Packet (64) := 9;
@@ -91,7 +95,7 @@ package body Engine_Fixtures is
            (State, 1, False, True, Message_Id, Expected, Status);
          Assert (Status = SMB.Ok, "async fixture authenticate request");
          SMB.Wire.Initialize_Header
-           (Packet, 1, Message_Id, 0, Session);
+           (Packet, 1, Message_Id, 0, Session, Credit => Credits);
          SMB.Wire.Put_U32 (Packet, 16, 9);
          Packet (64) := 9;
          SMB.Wire.Put_U16 (Packet, 68, 72);
@@ -119,7 +123,7 @@ package body Engine_Fixtures is
            (State, 3, True, True, Message_Id, Expected, Status);
          Assert (Status = SMB.Ok, "async fixture tree request");
          SMB.Wire.Initialize_Header
-           (Packet, 3, Message_Id, Tree_Id, Session);
+           (Packet, 3, Message_Id, Tree_Id, Session, Credit => Credits);
          SMB.Wire.Put_U32 (Packet, 16, 9);
          Packet (64) := 16;
          Packet (66) := 1;
