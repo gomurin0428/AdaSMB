@@ -330,9 +330,10 @@ at the end. It does not connect to remote hosts. It needs `smbd`, `smbpasswd`
 and Python 3. It also runs protocol tests through a local proxy that alters
 the server's responses: most of them over SMB 2.1, and over 3.1.1 (the
 `ADASMB_SMB311_ONLY=1` runs) an altered NEGOTIATE response, which the
-preauth integrity hash must expose, and, when signed but not encrypted,
-altered READ and WRITE responses that the proxy signs again with the 3.1.1
-key (which needs Python's `cryptography`).
+preauth integrity hash must expose, and altered READ and WRITE responses
+that the proxy signs again with the 3.1.1 key or, when the session
+encrypts, opens and encrypts again with its keys (which needs Python's
+`cryptography`).
 
 [`tests/windows_integration.py`](tests/windows_integration.py) runs the same
 integration client against the Windows SMB server of the machine it runs on.

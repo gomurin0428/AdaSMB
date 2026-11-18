@@ -348,18 +348,31 @@ def tamper_negotiate(payload: bytearray, mode: str) -> None:
         raise RuntimeError(f"unknown NEGOTIATE tampering {mode}")
 
 
-def smb3_kdf(key: bytes, label: bytes, context: bytes) -> bytes:
-    """SP 800-108 counter mode with HMAC-SHA256, one 128-bit block
-    (MS-SMB2 3.1.4.2)."""
-    return hmac.new(
-        key, b"\x00\x00\x00\x01" + label + b"\x00" + context + b"\x00\x00\x00\x80",
-        hashlib.sha256,
-    ).digest()[:16]
+def smb3_kdf(key: bytes, label: bytes, context: bytes, length: int = 16) -> bytes:
+    """SP 800-108 counter mode with HMAC-SHA256 (MS-SMB2 3.1.4.2): 16 bytes,
+    or 32 for the AES-256 ciphers' keys."""
+    bits = (8 * length).to_bytes(4, "big")
+    output = b""
+    for counter in range(1, (length + 31) // 32 + 1):
+        output += hmac.new(
+            key, counter.to_bytes(4, "big") + label + b"\x00" + context + bits,
+            hashlib.sha256,
+        ).digest()
+    return output[:length]
+
+
+TRANSFORM_PROTOCOL = b"\xfdSMB"
+TRANSFORM_HEADER = 52
+# Cipher ids (MS-SMB2 2.2.3.1.2): 1 AES-128-CCM, 2 AES-128-GCM, 3 AES-256-CCM,
+# 4 AES-256-GCM.
+CCM_CIPHERS = (1, 3)
+LONG_KEY_CIPHERS = (3, 4)
 
 
 class SigningState:
-    """How the client signs and checks messages, from the messages the
-    proxy relays (the server's responses as they came, before any change):
+    """How the client signs, checks, encrypts and opens messages, from the
+    messages the proxy relays (the server's responses as they came, before
+    any change):
     HMAC-SHA256 with the session key for SMB 2.1; for 3.1.1, AES-CMAC or
     AES-GMAC, as the NEGOTIATE response says, with the key derived from the
     session key and the preauth integrity hash of the NEGOTIATE and
@@ -371,6 +384,7 @@ class SigningState:
         self.algorithm = SIGNING_AES_CMAC
         self.preauth = b"\x00" * 64
         self.authenticated = False
+        self.cipher = 0
 
     def _hash(self, message: bytes | bytearray) -> None:
         self.preauth = hashlib.sha512(self.preauth + bytes(message)).digest()
@@ -395,6 +409,8 @@ class SigningState:
                     for kind, start, length in negotiate_contexts(payload):
                         if kind == 8 and length >= 4:
                             self.algorithm = struct.unpack_from("<H", payload, start + 2)[0]
+                        if kind == 2 and length >= 4:
+                            self.cipher = struct.unpack_from("<H", payload, start + 2)[0]
                     self._hash(payload)
             elif command == 1 and status == 0xC0000016:
                 self._hash(payload)
@@ -424,6 +440,48 @@ class SigningState:
         mac = cmac.CMAC(algorithms.AES(key))
         mac.update(bytes(message))
         return mac.finalize()
+
+    def _aead(self, session_key: bytes | None, to_server: bool):
+        """The cipher and nonce length of one direction (MS-SMB2 3.1.4.3,
+        3.2.5.3.1): the key from the session key and the preauth hash."""
+        if session_key is None:
+            raise RuntimeError("missing SMB session key for encryption")
+        with self.lock:
+            cipher, preauth = self.cipher, self.preauth
+        if cipher not in (1, 2, 3, 4):
+            raise RuntimeError(f"encrypted message without a negotiated cipher ({cipher})")
+        label = b"SMBC2SCipherKey\x00" if to_server else b"SMBS2CCipherKey\x00"
+        key = smb3_kdf(session_key, label, preauth,
+                       32 if cipher in LONG_KEY_CIPHERS else 16)
+        from cryptography.hazmat.primitives.ciphers.aead import AESCCM, AESGCM
+        if cipher in CCM_CIPHERS:
+            return AESCCM(key, tag_length=16), 11
+        return AESGCM(key), 12
+
+    def open(self, session_key: bytes | None, message: bytes | bytearray,
+             to_server: bool) -> bytes:
+        """The SMB2 message inside a transform message."""
+        if len(message) < TRANSFORM_HEADER or bytes(message[:4]) != TRANSFORM_PROTOCOL:
+            raise RuntimeError("not a transform message")
+        aead, nonce_length = self._aead(session_key, to_server)
+        size = struct.unpack_from("<I", message, 36)[0]
+        if size != len(message) - TRANSFORM_HEADER:
+            raise RuntimeError("transform OriginalMessageSize does not match")
+        return aead.decrypt(bytes(message[20:20 + nonce_length]),
+                            bytes(message[TRANSFORM_HEADER:]) + bytes(message[4:20]),
+                            bytes(message[20:TRANSFORM_HEADER]))
+
+    def seal(self, session_key: bytes | None, envelope: bytes,
+             inner: bytes | bytearray, to_server: bool) -> bytes:
+        """inner in a transform message with envelope's nonce and SessionId,
+        as the proxy received it, for its size."""
+        aead, nonce_length = self._aead(session_key, to_server)
+        header = bytearray(envelope[:TRANSFORM_HEADER])
+        struct.pack_into("<I", header, 36, len(inner))
+        sealed = aead.encrypt(bytes(header[20:20 + nonce_length]), bytes(inner),
+                              bytes(header[20:TRANSFORM_HEADER]))
+        header[4:20] = sealed[-16:]
+        return bytes(header) + sealed[:-16]
 
 
 class AdversarialProxy:
@@ -529,6 +587,35 @@ class AdversarialProxy:
             def sign(message: bytes | bytearray) -> bytes:
                 return signing.sign(session_key, message)
 
+            # The transform header of the response being handled, None when
+            # it came unencrypted; to_client encrypts again what it sends.
+            envelope: bytes | None = None
+
+            def check_server_signature(message: bytearray, what: str) -> None:
+                """The server's signature on message. Inside an encrypted
+                message, which the transform protects, it may have none."""
+                if struct.unpack_from("<I", message, 16)[0] & 8 == 0:
+                    if envelope is None:
+                        raise RuntimeError(f"server {what} was unsigned")
+                    if any(message[48:64]):
+                        raise RuntimeError(f"unsigned encrypted {what} has signature bytes")
+                    return
+                original = bytearray(message)
+                original[48:64] = b"\x00" * 16
+                if not hmac.compare_digest(bytes(message[48:64]), sign(original)):
+                    raise RuntimeError(f"derived key did not validate the {what} signature")
+
+            def sign_again(message: bytearray) -> None:
+                """A new signature for an altered message that was signed."""
+                message[48:64] = b"\x00" * 16
+                if struct.unpack_from("<I", message, 16)[0] & 8:
+                    message[48:64] = sign(message)
+
+            def to_client(message: bytes | bytearray) -> None:
+                if envelope is not None:
+                    message = signing.seal(session_key, envelope, message, to_server=False)
+                client.sendall(b"\x00" + len(message).to_bytes(3, "big") + bytes(message))
+
             def client_to_server() -> None:
                 nonlocal session_key, write_requests, query_requests
                 nonlocal session_setup_requests
@@ -539,7 +626,13 @@ class AdversarialProxy:
                 try:
                     while not done.is_set():
                         header = recv_exact(client, 4)
-                        payload = recv_exact(client, int.from_bytes(header[1:4], "big"))
+                        raw = recv_exact(client, int.from_bytes(header[1:4], "big"))
+                        # An encrypted request is opened to be looked at and
+                        # forwarded as it came.
+                        payload = (
+                            signing.open(session_key, raw, to_server=True)
+                            if raw[:4] == TRANSFORM_PROTOCOL else raw
+                        )
                         if (
                             self.mode.startswith("header-")
                             and len(payload) >= 64
@@ -616,7 +709,7 @@ class AdversarialProxy:
                                     f"client sent command {command} after a tampered NEGOTIATE"
                                 )
                         signing.request(payload)
-                        backend.sendall(header + payload)
+                        backend.sendall(header + raw)
                 except (EOFError, OSError, RuntimeError) as error:
                     relay_error.append(error)
                     done.set()
@@ -635,6 +728,12 @@ class AdversarialProxy:
                     payload = bytearray(
                         recv_exact(backend, int.from_bytes(header[1:4], "big"))
                     )
+                    envelope = None
+                    if payload[:4] == TRANSFORM_PROTOCOL:
+                        envelope = bytes(payload[:TRANSFORM_HEADER])
+                        payload = bytearray(
+                            signing.open(session_key, payload, to_server=False)
+                        )
                     response_command = struct.unpack_from("<H", payload, 12)[0]
                     response_status = struct.unpack_from("<I", payload, 8)[0]
                     signing.response(payload)
@@ -653,14 +752,14 @@ class AdversarialProxy:
                             raise RuntimeError("second NEGOTIATE response")
                         tamper_negotiate(payload, self.mode)
                         mutated = True
-                        client.sendall(b"\x00" + len(payload).to_bytes(3, "big") + payload)
+                        to_client(payload)
                         continue
                     if response_status == 0x103:
                         if not (
                             self.mode.startswith("header-")
                             and response_command == RESPONSE_MUTATIONS[self.mode]
                         ):
-                            client.sendall(header + payload)
+                            to_client(payload)
                         continue
                     if self.mode in SECURITY_BUFFER_MUTATIONS:
                         if response_command == 0:
@@ -677,7 +776,7 @@ class AdversarialProxy:
                             response_command != command
                             or response_status != nt_status
                         ):
-                            client.sendall(header + payload)
+                            to_client(payload)
                             continue
                         if (
                             len(payload) < fixed_end
@@ -737,7 +836,7 @@ class AdversarialProxy:
                         if signed:
                             payload[48:64] = sign(payload)
                         mutated = True
-                        client.sendall(b"\x00" + len(payload).to_bytes(3, "big") + payload)
+                        to_client(payload)
                         upstream.join(timeout=11)
                         if (
                             upstream.is_alive()
@@ -754,40 +853,21 @@ class AdversarialProxy:
                         if self.mode.startswith("header-"):
                             if selected_read_header is None or session_key is None:
                                 raise RuntimeError("missing request context for header mutation")
-                            original_signature = bytes(payload[48:64])
-                            original = bytearray(payload)
-                            original[48:64] = b"\x00" * 16
-                            if (
-                                struct.unpack_from("<I", payload, 16)[0] & 8 == 0
-                                or not hmac.compare_digest(
-                                    original_signature,
-                                    sign(original),
-                                )
-                            ):
-                                raise RuntimeError("original final IO signature verification failed")
+                            check_server_signature(payload, "final IO response")
                             payload[32:40] = selected_read_header
                             flags = struct.unpack_from("<I", payload, 16)[0] & ~2
                             struct.pack_into("<I", payload, 16, flags)
                             struct.pack_into("<H", payload, 14, 1)
-                            payload[48:64] = sign(
-                                payload[:48] + b"\x00" * 16 + payload[64:]
-                            )
+                            sign_again(payload)
                         if (
                             len(payload) < 80
                             or struct.unpack_from("<I", payload, 8)[0] != 0
                             or struct.unpack_from("<H", payload, 64)[0] != 17
                             or struct.unpack_from("<I", payload, 68)[0] != 1
-                            or struct.unpack_from("<I", payload, 16)[0] & 8 == 0
                             or session_key is None
                         ):
-                            raise RuntimeError("expected signed one-byte IO success")
-                        original_signature = bytes(payload[48:64])
-                        payload[48:64] = b"\x00" * 16
-                        if not hmac.compare_digest(
-                            original_signature,
-                            sign(payload),
-                        ):
-                            raise RuntimeError("derived key did not validate IO signature")
+                            raise RuntimeError("expected one-byte IO success")
+                        check_server_signature(payload, "IO response")
                         if self.mode == "signed-read-offset":
                             payload[66] = 64
                         elif self.mode == "signed-read-length":
@@ -824,9 +904,9 @@ class AdversarialProxy:
                             struct.pack_into("<I", payload, 20, 64)
                         else:
                             raise RuntimeError("unhandled IO mutation")
-                        payload[48:64] = sign(payload)
+                        sign_again(payload)
                         mutated = True
-                        client.sendall(b"\x00" + len(payload).to_bytes(3, "big") + payload)
+                        to_client(payload)
                         # The client, not this proxy, must close the connection.
                         upstream.join(timeout=11)
                         if (
@@ -838,7 +918,7 @@ class AdversarialProxy:
                             raise RuntimeError("IO mutation did not cause immediate client disconnect")
                         break
                     if self.mode in RESPONSE_MUTATIONS:
-                        client.sendall(header + payload)
+                        to_client(payload)
                         continue
                     if (
                         self.mode in {
@@ -860,7 +940,7 @@ class AdversarialProxy:
                         if self.mode == "unsigned-auth-wrong-id":
                             message_id = struct.unpack_from("<Q", payload, 24)[0]
                             struct.pack_into("<Q", payload, 24, message_id + 1)
-                        client.sendall(b"\x00" + len(payload).to_bytes(3, "big") + payload)
+                        to_client(payload)
                         mutated = True
                         upstream.join(timeout=11)
                         if upstream.is_alive() or not relay_error or not isinstance(
@@ -878,7 +958,7 @@ class AdversarialProxy:
                     ):
                         if len(payload) < 68 or struct.unpack_from("<I", payload, 8)[0]:
                             raise RuntimeError("reserved-field test LOGOFF failed")
-                        client.sendall(header + payload)
+                        to_client(payload)
                         completed_logoff = True
                         break
                     if (
@@ -895,7 +975,7 @@ class AdversarialProxy:
                             raise RuntimeError("expected unsigned SMB2.1 NEGOTIATE")
                         payload[70:72] = b"\xFF" * 2
                         payload[124:128] = b"\xFF" * 4
-                        client.sendall(header + payload)
+                        to_client(payload)
                         connection_responses.append(0)
                         mutated = True
                         continue
@@ -955,7 +1035,7 @@ class AdversarialProxy:
                     ):
                         if self.mode == "lost-write-response-after-progress":
                             if payload[12:14] != b"\x09\x00":
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             write_responses += 1
                             if len(payload) < 72:
@@ -967,7 +1047,7 @@ class AdversarialProxy:
                                     "WRITE response was not successful with progress"
                                 )
                             if write_responses == 1:
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             if write_responses != 2:
                                 raise RuntimeError("unexpected extra WRITE response")
@@ -976,7 +1056,7 @@ class AdversarialProxy:
                             break
                         elif self.mode == "interrupted-read-after-progress":
                             if payload[12:14] != b"\x08\x00":
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             read_responses += 1
                             count = struct.unpack_from("<I", payload, 68)[0]
@@ -987,7 +1067,7 @@ class AdversarialProxy:
                                         "first READ response made no progress "
                                         f"(status=0x{status:08x})"
                                     )
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             if read_responses != 2:
                                 raise RuntimeError("unexpected extra READ response")
@@ -998,7 +1078,7 @@ class AdversarialProxy:
                             payload[67] ^= 0xFF
                         elif self.mode == "read-reserved-fields":
                             if payload[12:14] != b"\x08\x00":
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             if (
                                 len(payload) < 80
@@ -1023,7 +1103,7 @@ class AdversarialProxy:
                             payload[67] = 0xFF
                             payload[76:80] = b"\xFF" * 4
                             payload[48:64] = sign(payload)
-                            client.sendall(header + payload)
+                            to_client(payload)
                             read_responses += 1
                             mutated = True
                             continue
@@ -1049,14 +1129,14 @@ class AdversarialProxy:
                                 )
                             payload[67] = 0xFF
                             payload[48:64] = sign(payload)
-                            client.sendall(header + payload)
+                            to_client(payload)
                             connection_responses.append(3)
                             mutated = True
                             continue
                         elif self.mode == "teardown-reserved-fields":
                             command = struct.unpack_from("<H", payload, 12)[0]
                             if command not in {2, 4, 6}:
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             length = 124 if command == 6 else 68
                             structure = 60 if command == 6 else 4
@@ -1083,7 +1163,7 @@ class AdversarialProxy:
                                 )
                             payload[offset:offset + width] = b"\xFF" * width
                             payload[48:64] = sign(payload)
-                            client.sendall(header + payload)
+                            to_client(payload)
                             teardown_responses.append(command)
                             mutated = True
                             if command == 2:
@@ -1095,7 +1175,7 @@ class AdversarialProxy:
                                 payload[12:14] != b"\x05\x00"
                                 or struct.unpack_from("<I", payload, 8)[0] == 0
                             ):
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             if (
                                 len(payload) < 72
@@ -1121,13 +1201,13 @@ class AdversarialProxy:
                                 )
                             payload[67] = 0xFF
                             payload[48:64] = sign(payload)
-                            client.sendall(header + payload)
+                            to_client(payload)
                             error_responses += 1
                             mutated = True
                             continue
                         elif self.mode == "malformed-signed-create":
                             if payload[12:14] != b"\x05\x00":
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             if session_key is None:
                                 raise RuntimeError("could not derive SMB signing key")
@@ -1148,7 +1228,7 @@ class AdversarialProxy:
                             payload[48:64] = sign(payload)
                         elif self.mode in DIRECTORY_MODES:
                             if payload[12:14] != b"\x0e\x00":
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             query_responses += 1
                             status = struct.unpack_from("<I", payload, 8)[0]
@@ -1160,7 +1240,7 @@ class AdversarialProxy:
                                 )
                             if query_responses == 1:
                                 first_query_had_data = True
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             if query_responses != 2:
                                 raise RuntimeError(
@@ -1240,7 +1320,7 @@ class AdversarialProxy:
                                 struct.pack_into("<I", payload, data_offset, 1)
                             payload[48:64] = b"\x00" * 16
                             payload[48:64] = sign(payload)
-                            client.sendall(header + payload)
+                            to_client(payload)
                             mutated = True
                             if (
                                 self.mode in DIRECTORY_MODES
@@ -1264,7 +1344,7 @@ class AdversarialProxy:
                             break
                         elif self.mode == "malformed-signed-set-info":
                             if payload[12:14] != b"\x11\x00":
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             if session_key is None:
                                 raise RuntimeError("could not derive SMB signing key")
@@ -1285,7 +1365,7 @@ class AdversarialProxy:
                             struct.pack_into("<H", payload, 64, 3)
                             payload[48:64] = b"\x00" * 16
                             payload[48:64] = sign(payload)
-                            client.sendall(header + payload)
+                            to_client(payload)
                             mutated = True
                             upstream.join(timeout=11)
                             if upstream.is_alive():
@@ -1302,7 +1382,7 @@ class AdversarialProxy:
                             break
                         elif self.mode == "malformed-signed-tree-disconnect":
                             if payload[12:14] != b"\x04\x00":
-                                client.sendall(header + payload)
+                                to_client(payload)
                                 continue
                             if session_key is None:
                                 raise RuntimeError("could not derive SMB signing key")
@@ -1327,7 +1407,7 @@ class AdversarialProxy:
                             struct.pack_into("<H", payload, 64, 5)
                             payload[48:64] = b"\x00" * 16
                             payload[48:64] = sign(payload)
-                            client.sendall(header + payload)
+                            to_client(payload)
                             mutated = True
                             upstream.join(timeout=11)
                             if upstream.is_alive():
@@ -1353,11 +1433,11 @@ class AdversarialProxy:
                             struct.pack_into("<Q", payload, 24, message_id + 1)
                         else:
                             raise ValueError(f"unknown adversarial mode {self.mode}")
-                        client.sendall(header + payload)
+                        to_client(payload)
                         mutated = True
                         done.set()
                         break
-                    client.sendall(header + payload)
+                    to_client(payload)
             except (EOFError, OSError) as error:
                 relay_error.append(error)
                 done.set()
