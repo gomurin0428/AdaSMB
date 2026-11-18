@@ -54,7 +54,7 @@ jobs:
           FILES: ${{ inputs.files }}
         run: |
           mkdir -p proof-cache
-          units=$(for file in $FILES; do basename "$file"; done)
+          units=$(for file in $FILES; do basename "$file"; done | tr '\n' ' ')
           time make prove PROOF_CACHE=proof-cache PROOF_REPORT=statistics PROOF_UNITS="$units"
       - name: Show the proof steps
         if: always()
