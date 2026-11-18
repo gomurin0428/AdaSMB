@@ -461,9 +461,11 @@ opens a received one. It is a stateless SPARK unit, like
   from the Nonce field on as associated data): an encrypted request only to
   look at it, forwarding the original bytes, and an encrypted response to
   alter it, then encrypts it again under the same nonce and SessionId with
-  the new OriginalMessageSize. Inside encryption a response may be
-  unsigned (the transform protects it): the proxy then checks that it has
-  no signature bytes and adds none. The KDF matches
+  the new OriginalMessageSize. Inside encryption the proxy, like the
+  client, neither checks nor rewrites the Signature field: the tag
+  authenticated the response when it was opened, and servers differ on the
+  SIGNED flag there (Windows clears it, Samba copies the request's; the
+  first CI run of #143 met Samba's). The KDF matches
   `tests/kdf_conformance.py`'s for every label at 16 and 32 bytes, and the
   transform round-trips for all four ciphers (checked by hand).
 * Still over 2.1 only: everything else the proxies do, among them the

@@ -593,20 +593,24 @@ class AdversarialProxy:
 
             def check_server_signature(message: bytearray, what: str) -> None:
                 """The server's signature on message. Inside an encrypted
-                message, which the transform protects, it may have none."""
-                if struct.unpack_from("<I", message, 16)[0] & 8 == 0:
-                    if envelope is None:
-                        raise RuntimeError(f"server {what} was unsigned")
-                    if any(message[48:64]):
-                        raise RuntimeError(f"unsigned encrypted {what} has signature bytes")
+                message, whose tag authenticated it when the proxy opened
+                it, the Signature field is not read, as the client does not
+                read it: servers differ on the SIGNED flag there (Windows
+                clears it, Samba copies the request's)."""
+                if envelope is not None:
                     return
+                if struct.unpack_from("<I", message, 16)[0] & 8 == 0:
+                    raise RuntimeError(f"server {what} was unsigned")
                 original = bytearray(message)
                 original[48:64] = b"\x00" * 16
                 if not hmac.compare_digest(bytes(message[48:64]), sign(original)):
                     raise RuntimeError(f"derived key did not validate the {what} signature")
 
             def sign_again(message: bytearray) -> None:
-                """A new signature for an altered message that was signed."""
+                """A new signature for an altered message that was signed;
+                inside encryption the Signature field is left as it was."""
+                if envelope is not None:
+                    return
                 message[48:64] = b"\x00" * 16
                 if struct.unpack_from("<I", message, 16)[0] & 8:
                     message[48:64] = sign(message)
