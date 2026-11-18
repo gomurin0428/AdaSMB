@@ -1107,9 +1107,11 @@ package body SMB.Client is
       Core_Status : SMB.Core_Status;
    begin
       Transfer.Item := new SMB.Core_Client.Transfer (Capacity);
+      --  Room for the largest WRITE this call can send.
       Packet.Item := new SMB.Bytes
         (0 .. SMB.Core_Wire.Header_Size + 48
-           + SMB.Core_Protocol.Maximum_Write_Chunk - 1);
+           + Natural'Min (Capacity, SMB.Core_Protocol.Maximum_Write_Chunk)
+           - 1);
       SMB.Core_Client.Start_Write
         (Transfer.Item.all, Client.Engine_Core, File.Engine_Token, Offset,
          Data, Core_Status);

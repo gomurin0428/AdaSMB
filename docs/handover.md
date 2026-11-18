@@ -576,7 +576,7 @@ opens a received one. It is a stateless SPARK unit, like
 * Only a READ (and, since #138, a WRITE), and only with LARGE_MTU, takes
   more than one credit: `Core_Protocol.Credit_Charge` (one per 64 KiB
   started). `Begin_Request`
-  refuses a multi-credit READ the count does not cover (`Resource_Limit`)
+  refuses a multi-credit request the count does not cover (`Resource_Limit`)
   and advances the message id by the charge; a one-credit request goes as
   before even with no credit counted, so a gap in the count costs speed,
   not a connection.
@@ -607,8 +607,9 @@ opens a received one. It is a stateless SPARK unit, like
   attacker could inflate the count and get the connection dropped, a
   denial of service it can cause anyway.
 * One receive deadline (`Timeout_Seconds`, 10 s by default) still covers a
-  whole response, now up to 960 KiB. On a link slower than about
-  0.8 Mbit/s, raise it.
+  whole response, now up to 960 KiB, and since #138 one send deadline of
+  the same length a whole request of up to 960 KiB (`Transport.Send_Frame`).
+  On a link slower than about 0.8 Mbit/s, raise it.
 
 ## Multi-credit WRITEs (#138)
 
@@ -623,12 +624,13 @@ opens a received one. It is a stateless SPARK unit, like
   `Output`, a WRITE's data straight from the transfer's buffer (no
   `Body_Buffer` or `Payload` copy any more).
 * The library is built with `-gnata`, so postconditions are checked at run
-  time, and a postcondition with `X'Old` copies X onto the stack. Every
-  step that took the whole request `in out` (`Prepare_Header` and its
-  `Core_Wire` calls, `Sign_Packet` and `Core_Wire.Sign`, and
-  `Core_Protocol`'s field writers in `Build_Write`) kept such a copy, nested
-  several deep: with 960 KiB WRITEs `Credit_Tests` needed 10 to 12 MiB of
-  stack and overflowed the 8 MiB main thread. Now:
+  time, and a postcondition with `X'Old`, for an `in out` array X, copies
+  X onto the stack. Every step that took the whole request `in out`
+  (`Prepare_Header` and its `Core_Wire` calls, `Sign_Packet` and
+  `Core_Wire.Sign`, and `Core_Protocol`'s field writers in `Build_Write`)
+  kept such a copy, nested several deep: with 960 KiB WRITEs
+  `Credit_Tests` needed 10 to 12 MiB of stack and overflowed the 8 MiB main
+  thread. Now:
   * `Build_Write` writes the 48 fixed bytes through `Build_Write_Fixed`, on
     their own slice, and puts the data after them with one assignment.
   * `Prepare_Next` passes `Prepare_Header` the 64-byte header slice.
@@ -637,19 +639,33 @@ opens a received one. It is a stateless SPARK unit, like
     or `Compute_Signature_SMB3`; `Prepare_Next` zeroes the Signature field
     first and puts the result in place. `Sign` and `Sign_SMB3` are now
     built on the same two procedures.
-* Measured with GNAT's task stack usage (`gnatbind -u`), `Credit_Tests`
-  peaks at 4,931,212 bytes with this change and its 1 MiB WRITEs, and
-  `main`'s at 4,931,036 with only 1 MiB READs: the WRITEs add nothing. The
-  4.9 MB comes from before (see "Open items").
-* Tests: `Credit_Tests` adds WRITE charges (fifteen credits for 960 KiB,
-  three for 128 KiB and a byte, refusals past fifteen credits, of nothing,
-  with too few credits and past 64 KiB without LARGE_MTU),
-  `Current_Write_Chunk`, the MaxWriteSize clamp, and 1 MiB WRITEs through
-  `SMB.Core_Client` (two requests with LARGE_MTU, sixteen without, and a
-  512 KiB one whose chunks follow grants of 4, 2, 1 and 1), checking each
-  request's data, signature, charge and CreditRequest on the wire.
-  `Response_Mutation_Tests` accepts a WRITE Count up to 960 KiB and tests
-  the cap. The integration client's 1 MiB write now goes in two WRITEs.
+* A 1 MiB transfer through `SMB.Core_Client` in 960 KiB and 64 KiB
+  requests, WRITE or READ, now runs on a 128 KiB main-thread stack (a probe
+  built like the library, `ulimit -s 128`); `-fstack-usage` shows no
+  dynamic frame left on the WRITE path but the 64-byte header's and the
+  48-byte fixed part's. `Credit_Tests` still peaks at about 4.9 MB
+  (`gnatbind -u`), as on `main`: its `Read_Response` builds each 960 KiB
+  READ response with `SMB.Wire`'s `in out` helpers, which keep those
+  copies. That is the test's fixture, not the library.
+* `Prepare_Next` keeps a WRITE to what `Output` holds once that is more
+  than 64 KiB, so a caller that sized `Output` for 64 KiB WRITEs (64 + 48 +
+  64 KiB) gets 64 KiB WRITEs with LARGE_MTU rather than `Resource_Limit`;
+  below 64 KiB the old rule stands, and an `Output` one byte short still
+  fails. `SMB.Client.Write` sizes its buffer by the data, up to 960 KiB.
+* Tests: `Credit_Tests` (191 checks) adds WRITE charges (fifteen credits
+  for 960 KiB, three for 128 KiB and a byte, refusals past fifteen
+  credits, of nothing, with too few credits and past 64 KiB without
+  LARGE_MTU), `Current_Write_Chunk`, the MaxWriteSize clamp, and 1 MiB
+  WRITEs through `SMB.Core_Client`: two requests with LARGE_MTU, sixteen
+  without, a 512 KiB one whose chunks follow grants of 4, 2, 1 and 1, and
+  outputs that hold 192 KiB and 64 KiB of data. Each request's data,
+  StructureSize, DataOffset, zero fields, signature, charge, CreditRequest
+  and message id are checked on the wire. A WRITE response Count one above
+  the request is refused with LARGE_MTU and without. The 3.1.1 operations
+  test signs a WRITE and a READ with AES-CMAC and AES-GMAC through
+  `Prepare_Next`. `Response_Mutation_Tests` accepts a WRITE Count up to
+  960 KiB and tests the cap. The integration client's 1 MiB write now goes
+  in two WRITEs.
 
 ## Setting a file's size (#135)
 
@@ -909,13 +925,12 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Open items
 
-* A 1 MiB `Read` or `Write` through `SMB.Client` takes several MB of stack
-  in a `-gnata` build: `Credit_Tests` peaks at about 4.9 MB, before and
-  after #138. Where it goes has not been broken down; the likely source is
-  the postconditions that copy the whole transfer buffer for
-  `Transfer_Buffer_Of (Value)'Old` (`Prepare_Next`,
-  `Transfer_Send_Succeeded`, `Complete_Read`, `Complete_Write`). A task
-  that calls them needs a stack to match.
+* With `-gnata`, the postconditions of `Prepare_Next`,
+  `Transfer_Send_Succeeded`, `Complete_Read`, `Complete_Write` and
+  `Fail_Transfer` copy and compare the whole transfer buffer (up to 1 MiB)
+  for `Transfer_Buffer_Of (Value)'Old` on every request. The copies go on
+  GNAT's secondary stack, which this runtime grows on the heap, so they
+  cost time, not stack.
 
 * The design document's open question: whether `Connect` should send
   NETNAME. Samba and Windows Server 2025 do not need it.

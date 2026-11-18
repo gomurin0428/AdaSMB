@@ -62,8 +62,10 @@ directory operations.
   SMB2_GLOBAL_CAP_LARGE_MTU (Windows and Samba do), one READ or WRITE can
   carry up to 960 KiB on up to fifteen credits, as far as the server's
   MaxReadSize or MaxWriteSize and the credits it has granted allow;
-  otherwise a request carries at most 64 KiB. `Connect`'s `Timeout_Seconds` bounds the wait for
-  each whole response, so on a link slower than about 1 Mbit/s raise it.
+  otherwise a request carries at most 64 KiB. `Connect`'s `Timeout_Seconds`
+  bounds sending each whole request and the wait for each whole response,
+  either of which may be 960 KiB, so on a link slower than about 1 Mbit/s
+  raise it.
   Received offsets, lengths and their sums are range-checked. SMB1, SMB 3.0 and 3.0.2, compression, compound requests,
   Kerberos and guest/null fallback are not implemented.
 * Stack usage is outside the proofs. Frame, transfer, request and directory

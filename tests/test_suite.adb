@@ -3841,8 +3841,8 @@ procedure Test_Suite is
                 "TREE_CONNECT response signed");
       end;
 
-      --  CREATE and CLOSE through Core_Client; the CLOSE response is signed
-      --  with HMAC, which 3.1.1 rejects.
+      --  CREATE, a WRITE, a READ and CLOSE through Core_Client; the CLOSE
+      --  response is signed with HMAC, which 3.1.1 rejects.
       declare
          Operation : SMB.Core_Client.Operation;
          Request : SMB.Bytes (0 .. 255) := (others => 0);
@@ -3851,7 +3851,7 @@ procedure Test_Suite is
          Token : SMB.Engine.Handle_Token;
       begin
          SMB.Core_Client.Prepare_Create
-           (Operation, State, SMB.Bytes'(65, 0), SMB.Engine.Read_Only, False,
+           (Operation, State, SMB.Bytes'(65, 0), SMB.Engine.Read_Write, False,
             1, False, Request, Used, Status);
          Check (Status = SMB.Ok
                 and then MAC_Signed (Request (0 .. Used - 1)),
@@ -3890,6 +3890,55 @@ procedure Test_Suite is
                    and then SMB.Core_Query.Result_Of (Query).End_Of_File =
                      16#2A#,
                    "QUERY_INFO response signed");
+         end;
+         --  A WRITE and a READ, which Prepare_Next signs in place.
+         declare
+            Data : constant SMB.Bytes (0 .. 99) := (others => 16#5A#);
+            Write : SMB.Core_Client.Transfer (100);
+            Read : SMB.Core_Client.Transfer (100);
+            Write_Response : SMB.Bytes (0 .. 79);
+            Read_Response : SMB.Bytes (0 .. 179);
+            Result : SMB.Bytes (0 .. 99);
+            Result_Used : Natural;
+         begin
+            SMB.Core_Client.Start_Write (Write, State, Token, 0, Data, Status);
+            SMB.Core_Client.Prepare_Next (Write, State, Request, Used, Status);
+            Check (Status = SMB.Ok and then Used = 212
+                   and then Request (112 .. 211) = Data
+                   and then MAC_Signed (Request (0 .. Used - 1)),
+                   "WRITE signed");
+            SMB.Core_Client.Transfer_Send_Succeeded (Write, State, Status);
+            Prepare_Reply
+              (Write_Response, 9, SMB.Wire.U64 (Request, 24), Tree_Id);
+            Write_Response (64) := 17;
+            Write_Response (68) := 100;
+            Sign_Reply (Write_Response, MAC);
+            SMB.Core_Client.Complete_Write
+              (Write, State, Write_Response, Nt_Status, Status);
+            Check (Status = SMB.Ok
+                   and then SMB.Core_Client.Transfer_Stage_Of (Write) =
+                     SMB.Core_Client.Transfer_Finished,
+                   "WRITE response signed");
+            SMB.Core_Client.Start_Read (Read, State, Token, 0, 100, Status);
+            SMB.Core_Client.Prepare_Next (Read, State, Request, Used, Status);
+            Check (Status = SMB.Ok and then Used = 113
+                   and then MAC_Signed (Request (0 .. Used - 1)),
+                   "READ signed");
+            SMB.Core_Client.Transfer_Send_Succeeded (Read, State, Status);
+            Prepare_Reply
+              (Read_Response, 8, SMB.Wire.U64 (Request, 24), Tree_Id);
+            Read_Response (64) := 17;
+            Read_Response (66) := 80;
+            Read_Response (68) := 100;
+            Read_Response (80 .. 179) := Data;
+            Sign_Reply (Read_Response, MAC);
+            SMB.Core_Client.Complete_Read
+              (Read, State, Read_Response, Nt_Status, Status);
+            SMB.Core_Client.Copy_Read_Result
+              (Read, Result, Result_Used, Status);
+            Check (Status = SMB.Ok and then Result_Used = 100
+                   and then Result = Data,
+                   "READ response signed");
          end;
          declare
             Close : SMB.Core_Client.Operation;
