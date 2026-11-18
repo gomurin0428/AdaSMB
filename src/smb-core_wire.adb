@@ -27,7 +27,6 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status : out SMB.Core_Status) is
    begin
       Value := 0;
-      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 2 then
          Status := SMB.Invalid_Offset;
          return;
@@ -44,7 +43,6 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status : out SMB.Core_Status) is
    begin
       Value := 0;
-      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 4 then
          Status := SMB.Invalid_Offset;
          return;
@@ -65,7 +63,6 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status : out SMB.Core_Status) is
    begin
       Value := 0;
-      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 8 then
          Status := SMB.Invalid_Offset;
          return;
@@ -93,7 +90,6 @@ package body SMB.Core_Wire with SPARK_Mode is
      (Data : in out SMB.Bytes; Offset : Natural; Value : SMB.Word;
       Status : out SMB.Core_Status) is
    begin
-      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 2 then
          Status := SMB.Invalid_Offset;
          return;
@@ -108,7 +104,6 @@ package body SMB.Core_Wire with SPARK_Mode is
      (Data : in out SMB.Bytes; Offset : Natural; Value : SMB.DWord;
       Status : out SMB.Core_Status) is
    begin
-      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 4 then
          Status := SMB.Invalid_Offset;
          return;
@@ -125,7 +120,6 @@ package body SMB.Core_Wire with SPARK_Mode is
      (Data : in out SMB.Bytes; Offset : Natural; Value : SMB.QWord;
       Status : out SMB.Core_Status) is
    begin
-      --  adamutant:disable-next-line EqualityOperator: an Offset equal to Data'Length fails the length test too
       if Offset > Data'Length or else Data'Length - Offset < 8 then
          Status := SMB.Invalid_Offset;
          return;
@@ -171,7 +165,8 @@ package body SMB.Core_Wire with SPARK_Mode is
       Tree_Id : SMB.DWord;
       Session_Id : SMB.QWord;
       Credit : SMB.Word;
-      Status : out SMB.Core_Status) is
+      Status : out SMB.Core_Status;
+      Charge : SMB.Word := 1) is
       Field_Status : SMB.Core_Status;
    begin
       if Data'Length < Header_Size then
@@ -185,7 +180,7 @@ package body SMB.Core_Wire with SPARK_Mode is
       --  The buffer holds a whole header, so every field write succeeds.
       Write_U16 (Data, 4, Header_Size, Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
-      Write_U16 (Data, 6, 1, Field_Status);
+      Write_U16 (Data, 6, Charge, Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
       Write_U16 (Data, 12, SMB.Word (Command), Field_Status);
       pragma Assert (Field_Status = SMB.Ok);

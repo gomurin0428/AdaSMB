@@ -11,7 +11,6 @@ package body SMB.NTLM is
       Status : SMB.Core_Status;
    begin
       SMB.Core_Auth.Build_Negotiate_Token (Buffer, Used, Status);
-      --  adamutant:disable-next-line ConditionalExpression, LogicalOperator, NumericLiteral: the token always fits the buffer and is longer than one byte
       if Status /= SMB.Ok or else Used = 0 then
          raise SMB.Authentication_Error with
            "SPNEGO negotiate token could not be constructed";
@@ -45,7 +44,6 @@ package body SMB.NTLM is
       SMB.Core_Auth.Authenticate
         (User, Password, Domain, Nonce, Server_Token,
          Current_Filetime, Buffer, Used, Key, Status);
-      --  adamutant:disable-next-line LogicalOperator, NumericLiteral: a failure leaves Used at 0, and a token is longer than one byte
       if Status /= SMB.Ok or else Used = 0 then
          if Status = SMB.Resource_Limit
            or else Status = SMB.Unsupported_Feature

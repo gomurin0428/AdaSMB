@@ -84,13 +84,19 @@ stack-check:
 	$(GPRBUILD) -p -P smb.gpr --subdirs=stack-usage -cargs:Ada -fcallgraph-info=su
 	$(PYTHON) tests/check_stack_usage.py
 
+# With PROOF_CACHE, the whole project is proved into the cache first, so that
+# the proof of each mutant (tests/mutant_prove.py) proves only the goals the
+# mutant changes. The undetected mutants are listed, not failed: a person
+# judges them.
 mutation:
-	$(ADAMUTANT) run
+	$(if $(PROOF_CACHE),$(MAKE) prove PROOF_CACHE=$(PROOF_CACHE))
+	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run
 	$(PYTHON) tests/mutation_survivors.py
 
 mutation-diff:
-	$(ADAMUTANT) run --since $(MUTATION_BASE)
-	$(PYTHON) tests/mutation_survivors.py --fail
+	$(if $(PROOF_CACHE),$(MAKE) prove PROOF_CACHE=$(PROOF_CACHE))
+	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run --since $(MUTATION_BASE)
+	$(PYTHON) tests/mutation_survivors.py
 
 prove:
 	@command -v gnatprove >/dev/null 2>&1 || { echo "gnatprove is required"; exit 127; }

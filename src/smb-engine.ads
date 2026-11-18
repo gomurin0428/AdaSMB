@@ -23,6 +23,11 @@ is
    pragma Unevaluated_Use_Of_Old (Allow);
 
    Maximum_Handles : constant := 256;
+   --  The most credits counted as on hand, and the count that a request's
+   --  CreditRequest asks to be back at once multi-credit requests are on (a
+   --  server may grant more).
+   Maximum_Credits : constant := 8_192;
+   Credit_Target : constant := 32;
 
    type Phase is
      (Disconnected, Transport_Connected, Negotiated, Authenticated,
@@ -46,7 +51,22 @@ is
       Signed : Boolean := False;
       Request_Amount : Natural := 0;
       Close_Token : Handle_Token := (others => 0);
+      --  The header's CreditCharge and CreditRequest.
+      Credit_Charge : SMB.Word := 1;
+      Credit_Request : SMB.Word := 1;
    end record;
+
+   --  The CreditRequest of a request that leaves Remaining credits on hand:
+   --  one without multi-credit requests, as before them, and otherwise the
+   --  charge and enough to bring the balance back to Credit_Target.
+   function Credit_Request_For
+     (Large_MTU : Boolean;
+      Remaining : Natural;
+      Charge : SMB.Word) return SMB.Word is
+     (if not Large_MTU then 1
+      else Charge
+        + SMB.Word (Credit_Target - Natural'Min (Credit_Target, Remaining)))
+   with Pre => Charge <= SMB.Core_Protocol.Maximum_Credit_Charge;
 
    type Engine_State is private;
 
@@ -71,6 +91,23 @@ is
    function Current_Tree_Id (State : Engine_State) return SMB.DWord;
    function Current_Max_Read (State : Engine_State) return Natural;
    function Current_Max_Write (State : Engine_State) return Natural;
+   --  Whether negotiation granted SMB2_GLOBAL_CAP_LARGE_MTU, and the
+   --  credits the server has granted that no request has spent yet.
+   function Has_Large_MTU (State : Engine_State) return Boolean;
+   function Current_Credits (State : Engine_State) return Natural
+   with Post => Current_Credits'Result <= Maximum_Credits;
+   --  The most one READ may ask for now: the negotiated limit, and no more
+   --  than the credits on hand pay for, one credit at least.
+   function Current_Read_Chunk (State : Engine_State) return Natural
+   with Post =>
+     Current_Read_Chunk'Result <= Current_Max_Read (State)
+     and then Current_Read_Chunk'Result <=
+       SMB.Core_Protocol.Maximum_Read_Chunk
+     and then
+       (if Current_Read_Chunk'Result > SMB.Core_Protocol.Maximum_IO_Chunk
+        then Has_Large_MTU (State)
+          and then SMB.Core_Protocol.Credit_Charge (Current_Read_Chunk'Result)
+            <= Current_Credits (State));
    function Current_Async_Id (State : Engine_State) return SMB.QWord;
    function Has_Open_Handles (State : Engine_State) return Boolean;
    function Has_Pending_Request (State : Engine_State) return Boolean;
@@ -316,6 +353,8 @@ is
           Current_Phase (State)'Old = Disconnected
           and Current_Owner_Id (State)'Old /= 0
           and Current_Phase (State) = Transport_Connected
+          and Current_Credits (State) = 1
+          and not Has_Large_MTU (State)
           and Current_Owner_Id (State) = Current_Owner_Id (State)'Old
           and Current_Epoch (State) = Current_Epoch (State)'Old
           and Current_Session_Id (State) = Current_Session_Id (State)'Old
@@ -373,6 +412,8 @@ is
           and Handle_Table_Equivalent (State'Old, State)
           and Current_Max_Read (State) = Maximum_Read
           and Current_Max_Write (State) = Maximum_Write
+          and Has_Large_MTU (State) = Current_Response_Info (State)'Old.Large_MTU
+          and Current_Credits (State) = Current_Credits (State)'Old
           and Current_Session_Id (State) = 0
           and Current_Dialect (State) =
             Current_Response_Info (State)'Old.Dialect
@@ -600,8 +641,30 @@ is
        (if Status = SMB.Ok then
           Has_Pending_Request (State)
           and Next_Request_Id (State)'Old < SMB.QWord'Last
+          and Expected.Credit_Charge =
+            (if Command = 8 and then Has_Large_MTU (State)'Old
+             then SMB.Word (SMB.Core_Protocol.Credit_Charge (Request_Amount))
+             else 1)
+          and Expected.Credit_Charge in
+            1 .. SMB.Core_Protocol.Maximum_Credit_Charge
+          and (Expected.Credit_Charge = 1
+               or else Natural (Expected.Credit_Charge) <=
+                 Current_Credits (State)'Old)
+          and Next_Request_Id (State)'Old <=
+            SMB.QWord'Last - SMB.QWord (Expected.Credit_Charge)
           and Message_Id = Next_Request_Id (State)'Old
-          and Next_Request_Id (State) = Next_Request_Id (State)'Old + 1
+          and Next_Request_Id (State) =
+            Next_Request_Id (State)'Old + SMB.QWord (Expected.Credit_Charge)
+          and Current_Credits (State) =
+            Current_Credits (State)'Old
+              - Natural'Min
+                  (Current_Credits (State)'Old,
+                   Natural (Expected.Credit_Charge))
+          and Has_Large_MTU (State) = Has_Large_MTU (State)'Old
+          and Expected.Credit_Request =
+            Credit_Request_For
+              (Has_Large_MTU (State), Current_Credits (State),
+               Expected.Credit_Charge)
           and not Has_Validated_Response (State)
           and Current_Async_Id (State) = 0
           and (if Command = 5 then Last_Allocated_Handle_Ticket (State) < SMB.QWord'Last)
@@ -650,6 +713,12 @@ is
              and then not Has_Validated_Response (State)
              and then Current_Async_Id (State) /= 0
              and then Packet'Length >= 72
+             and then Current_Credits (State) =
+               Natural'Min
+                 (Maximum_Credits,
+                  Current_Credits (State)'Old
+                    + Natural (SMB.Core_Wire.Encoded_U16 (Packet, 14)))
+             and then Has_Large_MTU (State) = Has_Large_MTU (State)'Old
              and then Current_Async_Id (State) =
                SMB.Core_Wire.Encoded_U64 (Packet, 32)
              and then Response_Header_Matches_Request
@@ -818,6 +887,17 @@ is
           Packet'Length >= SMB.Core_Wire.Header_Size
           and then Response_Header_Matches_Request (State, Packet, False)'Old
           and then Nt_Status = SMB.Core_Wire.Header_Nt_Status (Packet)
+          --  The credits the response grants are on hand, unless a LOGOFF
+          --  ended the connection's state.
+          and then
+          (if not (Pending_Command (State)'Old = 2
+                   and then Nt_Status = SMB.Success)
+           then Current_Credits (State) =
+             Natural'Min
+               (Maximum_Credits,
+                Current_Credits (State)'Old
+                  + Natural (SMB.Core_Wire.Encoded_U16 (Packet, 14)))
+             and then Has_Large_MTU (State) = Has_Large_MTU (State)'Old)
           and then
           (if Pending_Command (State)'Old = 2
                 and then Nt_Status = SMB.Success
@@ -866,13 +946,18 @@ is
                   then Packet'Length >= 128
                     and then Current_Response_Info (State).Dialect in
                       SMB.SMB2_Dialect_0210 | SMB.SMB2_Dialect_0311
+                    and then Current_Response_Info (State).Large_MTU =
+                      ((SMB.Core_Wire.Encoded_U32 (Packet, 88)
+                          and SMB.Core_Protocol.Large_MTU_Capability) /= 0)
                     and then Current_Response_Info (State).Max_Read in
-                      1 .. SMB.Core_Protocol.Maximum_IO_Chunk
+                      1 .. SMB.Core_Protocol.Maximum_Read_Chunk
                     and then Current_Response_Info (State).Max_Write in
                       1 .. SMB.Core_Protocol.Maximum_IO_Chunk
                     and then Current_Response_Info (State).Max_Read =
                       Natural (SMB.DWord'Min
-                        (SMB.Core_Protocol.Maximum_IO_Chunk,
+                        ((if Current_Response_Info (State).Large_MTU
+                          then SMB.Core_Protocol.Maximum_Read_Chunk
+                          else SMB.Core_Protocol.Maximum_IO_Chunk),
                          SMB.Core_Wire.Encoded_U32 (Packet, 96)))
                     and then Current_Response_Info (State).Max_Write =
                       Natural (SMB.DWord'Min
@@ -900,7 +985,7 @@ is
                     and then Current_Response_Info (State).Data_Offset =
                       Natural (Packet (Packet'First + 66))
                     and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
-                      SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                      SMB.DWord (SMB.Core_Protocol.Maximum_Read_Chunk)
                     and then Current_Response_Info (State).Data_Length =
                       Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))
                   elsif Pending_Command (State)'Old = 9
@@ -1086,6 +1171,8 @@ is
        and Current_Encryption_Key (State) = SMB.AES.Key_256'(others => 0)
        and Current_Decryption_Key (State) = SMB.AES.Key_256'(others => 0)
        and Next_Nonce (State) = 0
+       and Current_Credits (State) = 0
+       and not Has_Large_MTU (State)
        and not Is_Encrypting (State)
        and not Holds_Decrypted_Response (State)
        and SMB.Core_Protocol."="
@@ -1131,6 +1218,9 @@ private
       Tree_Id : SMB.DWord := 0;
       Max_Read : Natural := 0;
       Max_Write : Natural := 0;
+      --  Credits granted and not yet spent, and SMB2_GLOBAL_CAP_LARGE_MTU.
+      Credits : Natural range 0 .. Maximum_Credits := 0;
+      Large_MTU : Boolean := False;
       Signing_Key : SMB.Bytes (0 .. 15) := (others => 0);
       Has_Key : Boolean := False;
       SMB3_Key : SMB.AES.Key_128 := (others => 0);
@@ -1171,6 +1261,8 @@ private
        and then After.Tree_Id = Before.Tree_Id
        and then After.Max_Read = Before.Max_Read
        and then After.Max_Write = Before.Max_Write
+       and then After.Credits = Before.Credits
+       and then After.Large_MTU = Before.Large_MTU
        and then After.Signing_Key = Before.Signing_Key
        and then After.Has_Key = Before.Has_Key
        and then After.Dialect = Before.Dialect
@@ -1202,6 +1294,8 @@ private
        and then After.Tree_Id = Before.Tree_Id
        and then After.Max_Read = Before.Max_Read
        and then After.Max_Write = Before.Max_Write
+       and then After.Credits = Before.Credits
+       and then After.Large_MTU = Before.Large_MTU
        and then After.Signing_Key = Before.Signing_Key
        and then After.Has_Key = Before.Has_Key
        and then After.SMB3_Key = Before.SMB3_Key
@@ -1239,6 +1333,8 @@ private
        and then After.Tree_Id = Before.Tree_Id
        and then After.Max_Read = Before.Max_Read
        and then After.Max_Write = Before.Max_Write
+       and then After.Credits = Before.Credits
+       and then After.Large_MTU = Before.Large_MTU
        and then After.Signing_Key = Before.Signing_Key
        and then After.Has_Key = Before.Has_Key
        and then After.SMB3_Key = Before.SMB3_Key

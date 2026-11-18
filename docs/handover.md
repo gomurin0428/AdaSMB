@@ -27,9 +27,9 @@ of date.
   * The client encrypts whenever the server supports a cipher, and a
     "require encryption" option refuses servers that do not.
   * AES-128 only in 0.2.0; AES-256 is offered since #130.
-  * Out of scope: compression, multichannel, Kerberos, and raising the
-    64 KiB I/O chunk. AES-GMAC signing, first out of scope, came in with
-    #132.
+  * Out of scope: compression, multichannel and Kerberos. AES-GMAC
+    signing and READs above 64 KiB, first out of scope, came in with #132
+    and #137.
 * Phase status (the phases are listed in the design document):
 
 | Phase | Item | State |
@@ -55,7 +55,9 @@ of date.
 | after 0.2.0 | Release 0.3.0 (`alire.toml`, tag, GitHub release) | merged (#131) |
 | after 0.2.0 | 0.3.0 on the Alire index | merged (alire-project/alire-index#2357) |
 | after 0.3.0 | File information: QUERY_INFO (`SMB.Core_Query`), directory entry times, `To_Time` | merged (#134) |
-| after 0.3.0 | Setting a file's size: SET_INFO FileEndOfFileInformation (`SMB.Core_Resize`, `SMB.Core_Request`) | #135 |
+| after 0.3.0 | Setting a file's size: SET_INFO FileEndOfFileInformation (`SMB.Core_Resize`, `SMB.Core_Request`) | merged (#135) |
+| after 0.3.0 | The proof cache in `proof.yml` (`make prove PROOF_CACHE=`) | merged (#136) |
+| after 0.3.0 | Multi-credit READs: LARGE_MTU, the engine's credit count, READs up to 960 KiB | #137 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -396,10 +398,10 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Next, in the order the maintainer approved: reads and writes larger than
-  64 KiB per request (multi-credit requests: CreditCharge, the server's
-  MaxReadSize and MaxWriteSize, and the engine's credit accounting), then
-  the adversarial proxy over 3.1.1 (below).
+* Next, in the order the maintainer approved: multi-credit WRITEs (see
+  "Multi-credit READs" below), then the adversarial proxy over 3.1.1
+  (below). The maintainer will say whether 0.4.0 follows the WRITEs or the
+  proxy.
 * Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
     `[origin]` section added: `commit` is the tag's commit and `url` is
@@ -452,6 +454,53 @@ opens a received one. It is a stateless SPARK unit, like
   not QUERY_INFO; add it when the proxy learns 3.1.1.
 * Not done: a path-based query that opens and closes a handle itself (it
   would need to tell files from directories first).
+
+## Multi-credit READs (#137)
+
+* The NEGOTIATE request offers SMB2_GLOBAL_CAP_LARGE_MTU (`0x04`, with
+  encryption's `0x40`). `Parse_Response` records the server's bit as
+  `Response_Info.Large_MTU`, clamps MaxReadSize to `Maximum_Read_Chunk`
+  (fifteen credits, 960 KiB) with it and to 64 KiB without, and
+  `Mark_Negotiated` copies it into the engine (`Has_Large_MTU`).
+* The engine counts credits (`Current_Credits`): one on `Mark_Connected`, the
+  charge taken off in `Begin_Request`, each response's CreditResponse added
+  in `Accept_Response` and `Inspect_Interim_Response`, at most
+  `Maximum_Credits` (8,192); `Invalidate` and a LOGOFF reset it.
+* Only a READ, and only with LARGE_MTU, takes more than one credit:
+  `Core_Protocol.Credit_Charge` (one per 64 KiB started). `Begin_Request`
+  refuses a multi-credit READ the count does not cover (`Resource_Limit`)
+  and advances the message id by the charge; a one-credit request goes as
+  before even with no credit counted, so a gap in the count costs speed,
+  not a connection.
+* `Request_Expectation` carries `Credit_Charge` and `Credit_Request`, which
+  every `Prepare_Header` copy writes at offsets 6 and 14
+  (`Core_Wire.Initialize_Header`'s new `Charge`). The CreditRequest is 1
+  without LARGE_MTU, as before, and otherwise the charge plus what brings
+  the count back to `Credit_Target` (32).
+* `Core_Client.Prepare_Next` asks for at most `Engine.Current_Read_Chunk`:
+  the negotiated limit, and no more than the credits on hand pay for, one
+  credit at least. WRITE stays at 64 KiB: its body is built in a stack
+  buffer and copied (`Body_Buffer`, `Payload`), which would take about twice
+  the chunk in stack; the next pull request builds it in the output instead.
+* Tests: `tests/credit_tests.adb` (counting, the reset on `Invalidate`,
+  charges, the CreditRequest on the wire, the chunk limit, a 1 MiB READ in
+  two requests or, without LARGE_MTU, sixteen, and chunks that shrink with
+  small grants), and the integration client reads a 1 MiB file back in one
+  call. The adversarial proxy clears LARGE_MTU in the SMB 2.1 NEGOTIATE
+  response for `interrupted-read-after-progress`, `read-reserved-fields`
+  and `lost-write-response-after-progress`, which need a transfer in
+  several 64 KiB requests.
+* `Credit_Target` (32) is what the CreditRequest asks to be back at; a
+  server may grant more. Samba 4.19 grants the charge plus the request
+  minus one, so the count grows by about fourteen per 960 KiB READ until
+  Samba's limit. Credits in responses that are not authenticated (an
+  interim response under signing alone, and the NEGOTIATE and first
+  SESSION_SETUP responses of SMB 2.1) are counted as they are: an on-path
+  attacker could inflate the count and get the connection dropped, a
+  denial of service it can cause anyway.
+* One receive deadline (`Timeout_Seconds`, 10 s by default) still covers a
+  whole response, now up to 960 KiB. On a link slower than about
+  0.8 Mbit/s, raise it.
 
 ## Setting a file's size (#135)
 
@@ -604,19 +653,29 @@ The AES pull request touches each of these. Its diff is the template.
   * `test_suite`, the conformance scripts, `check_sources.py` and the stack
     check;
   * GNATprove on the changed units with no unproved checks;
-  * a changed-line mutation run with no survivors.
+  * a changed-line mutation run (CI runs it), whose undetected mutants and
+    proof-only detections the pull request lists with a judgement for each.
 * `smb.gpr` compiles with `-gnat2012`, so `src/` cannot use Ada 2022
   features such as iterated component aggregates. `proof.gpr` uses
   `-gnat2022`.
-* Mutation triage rules, followed since #104:
-  * A real gap gets a test.
-  * Dead code, and a check that only duplicates another layer's check, is
-    removed if the unit still proves. Re-prove it.
-  * A remaining equivalent mutant gets
-    `--  adamutant:disable-next-line <Mutators>: <reason>`, or a
-    disable/enable block for an `or else` chain whose operators are on
-    following lines.
-  * Confirm each fix with `adamutant run --mutate <id>`.
+* Mutation triage rules, since #137 (AdaMutant with the proof, no
+  exclusion comments; the maintainer's decision: survivors are not a
+  failure, a person judges them):
+  * The tests run first, and a mutant they miss goes to GNATprove
+    (`tests/mutant_prove.py`). The job summary lists what neither detects
+    and what only the proof detects, the latter in AdaMutant's groups:
+    confirmed (a counterexample ran with the real code), a contract that
+    says too little, and undecided. A proof that runs out of time counts
+    as undetected.
+  * A real gap that the tests can observe gets a test, also when only the
+    proof detected it.
+  * A contract that says too little is made stronger where that is worth
+    it.
+  * Dead code, and a check that only duplicates another layer's check, may
+    be removed if the unit still proves.
+  * What remains, such as an equivalent mutant the object-code comparison
+    does not catch, is left as it is and judged in the pull request. There
+    are no `adamutant:disable` comments any more: #137 removed all 706.
 
 ## Toolchain
 

@@ -57,7 +57,14 @@ header の SMB2_FLAGS_SERVER_TO_REDIR から取ります。`Negotiated_Signing` 
 アルゴリズムが分かります。CI では Samba をそれぞれ唯一のアルゴリズムにして
 試験し、Windows Server 2025 が AES-GMAC を選ぶことも確かめます。
 
-各 request は単調な message id と 1 credit で送信します。応答の magic、
+各 request は単調な message id で送信し、READ 以外は 1 credit です。
+NEGOTIATE では SMB2_GLOBAL_CAP_LARGE_MTU を提示し、サーバーも返したときだけ、
+READ に 64 KiB ごとに 1 つ（最大 15）のクレジットを課します（CreditCharge）。
+エンジンは接続時の 1 から始めて、要求ごとに CreditCharge を引き、応答
+（interim を含む）ごとに CreditResponse を足し（上限 8,192）、手元にない
+クレジットを要する READ は送りません。message id は CreditCharge だけ進めます。
+LARGE_MTU のときの CreditRequest は、CreditCharge に、残りを 32 に戻す分を
+足した値です（それ以外は 1）。応答の magic、
 structure size、command、message id、session/tree id、zero credit、
 response flag、async flag、`NextCommand` を検査します。暗号化していない
 ときの SMB 2 transform header、compression、compound response、未実装の
@@ -203,8 +210,9 @@ Ada の整数演算だけで実装しています。既定エントロピーはU
 短い読み取りやOS API失敗を成功扱いにせず、疑似乱数にフォールバックしません。UTF-8 の overlong、surrogate、範囲外 scalar、
 embedded NUL、UTF-16 の奇数長・不正 surrogate は拒否します。
 
-フレーム最大値は 1 MiB、read/write の単一 credit chunk は 64 KiB
-です。TCP の header と payload は一つの deadline で完全送受信し、
+フレーム最大値は 1 MiB です。READ は LARGE_MTU のとき 1 要求最大
+960 KiB（15 クレジット、応答・header・transform header 込みで 1 MiB の
+フレームに収まる大きさ）、それ以外と WRITE は 64 KiB です。TCP の header と payload は一つの deadline で完全送受信し、
 dribble peer が無期限に socket を占有できないようにします。絶対、
 UNC、drive-qualified、空 component、`..` escape の share-relative path
 は API 境界で拒否します。

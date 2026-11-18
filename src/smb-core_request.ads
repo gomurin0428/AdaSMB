@@ -27,10 +27,12 @@ is
        and then (if Status = SMB.Ok then
           SMB.Core_Wire.Encoded_U16 (Packet, 4) =
             SMB.Word (Header_Length)
-          and then SMB.Core_Wire.Encoded_U16 (Packet, 6) = 1
+          and then SMB.Core_Wire.Encoded_U16 (Packet, 6) =
+            Expected.Credit_Charge
           and then SMB.Core_Wire.Encoded_U16 (Packet, 12) =
             SMB.Word (Expected.Command)
-          and then SMB.Core_Wire.Encoded_U16 (Packet, 14) = 1
+          and then SMB.Core_Wire.Encoded_U16 (Packet, 14) =
+            Expected.Credit_Request
           and then SMB.Core_Wire.Encoded_U32 (Packet, 16) =
             (if Expected.Request_Signed then 8 else 0)
           and then SMB.Core_Wire.Encoded_U64 (Packet, 24) =

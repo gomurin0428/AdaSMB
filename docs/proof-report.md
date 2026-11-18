@@ -5410,3 +5410,85 @@ against about 10 minutes without it. Unchanged sources are the best case: a
 change re-proves the goals whose formulas it changes, and a change to a
 widely used specification changes many. Results are reported as the provers'
 would be, and a goal that is not in the cache is proved as before.
+
+## Multi-credit READs
+
+The NEGOTIATE request offers SMB2_GLOBAL_CAP_LARGE_MTU. `Parse_Response`
+records the server's bit (`Response_Info.Large_MTU`, stated from the
+packet's Capabilities field) and clamps MaxReadSize to `Maximum_Read_Chunk`
+(fifteen credits, 960 KiB) with it and to 64 KiB without. The engine keeps a
+credit count, stated in the contracts of `Mark_Connected` (one),
+`Begin_Request` (the charge taken off, without going below zero),
+`Accept_Response` and `Inspect_Interim_Response` (the response's
+CreditResponse added, up to 8,192; a LOGOFF resets it) and `Mark_Negotiated`
+(unchanged, and LARGE_MTU recorded). `Begin_Request`'s postcondition gives
+the charge (`Core_Protocol.Credit_Charge (Request_Amount)` for a READ with
+LARGE_MTU, one otherwise), that a charge above one is covered by the credits
+on hand, that the message id advances by the charge without wrapping, and
+the CreditRequest (`Credit_Request_For`). `Current_Read_Chunk`'s
+postcondition states that a chunk above 64 KiB has LARGE_MTU and a charge
+the credits cover, which is why `Prepare_Next` never asks `Begin_Request`
+for a READ it would refuse. Each `Prepare_Header` (and `Core_Client`'s
+`Prepare_Unsigned_Header`) writes the charge and the CreditRequest, and its
+postcondition says so; `Prepare_Next`'s postcondition
+(`Transfer_Packet_Matches`) does not repeat them, and the unit tests check
+both on the wire. `Invalidate`'s postcondition gives a count of zero and no
+LARGE_MTU.
+
+GNATprove 16.1.0 proved every check of the changed units, with no
+`pragma Assume` or justification. On the Mac: `smb-core_wire.adb` 448,
+`smb-core_negotiate.adb` 89, `smb-core_request.adb` 44, `smb-core_query.adb`
+95, `smb-core_resize.adb` 82, `smb-engine.adb` 358 and
+`smb-core_connection.adb` 481. `smb-core_protocol.adb` left one check, that
+LARGE_MTU follows the packet, while the bit came from `Read_U32`'s output;
+it is now read with `Encoded_U32`, as MaxReadSize is. `smb-core_protocol.adb`
+and `smb-core_client.adb` were then proved by the full proof workflow on
+GitHub Actions, which passed on this branch: 6,477 checks in every unit,
+nothing unproved. Another project's mutation run was using the Mac.
+
+That run restored `main`'s proof cache and still took 64 min 33 s, against
+67 min without one: this change alters `Request_Expectation` and
+`Response_Info`, records that most proof goals mention, so few goals were
+unchanged. The cache saves most on changes that leave such specifications
+alone.
+
+`test_suite` adds `Credit_Tests` (75 checks): the count from connection
+through each exchange, the reset on `Invalidate` and one credit on the next
+connection, a grant of seven, the 8,192 cap, an error response's
+and an interim response's grants and the async final's none; the charges
+at the 64 KiB boundaries, a fifteen-credit READ and the message id fifteen
+on, a two-credit READ refused with one credit on hand, a READ past 64 KiB
+refused without LARGE_MTU, a WRITE past 64 KiB refused even with it, and the
+CreditRequest in each case; `Current_Read_Chunk` against the credits and the
+negotiated limit, and the parser's clamp with and without the bit; and a
+1 MiB READ through `SMB.Core_Client` in two requests (960 KiB, then 64 KiB,
+fifteen message ids apart, the CreditRequest on the wire each time) with
+LARGE_MTU and in sixteen without; and a 512 KiB READ that starts with one
+credit and gets 4, 2 and 1 back, in requests of 64, 256, 128 and 64 KiB. The
+integration client writes a 1 MiB file and reads it back in one call. The
+adversarial proxy clears LARGE_MTU in the SMB 2.1 NEGOTIATE response of the
+three modes that need a transfer in several 64 KiB requests.
+
+The review before merging found the CI failure that the first push had: the
+proxy's `interrupted-read-after-progress` test expected the 70,001-byte
+fixture in two READs, and the client now reads it in one; the next push
+showed `read-reserved-fields` expecting three. It also asked for
+the contracts above (the CreditRequest in `Core_Client`'s header steps, and
+`Invalidate`'s reset), the tests above, and docs that say how credits from
+unauthenticated responses are counted and that the receive deadline covers
+a whole 960 KiB response. The counting itself it found correct.
+
+### Mutation testing with the proof
+
+This pull request also moves to the current AdaMutant (`33e56e3`), which
+sends each mutant that the tests miss to GNATprove and has no comments that
+disable a mutant. All 706 `adamutant:disable` comments are gone. `prove` is
+`tests/mutant_prove.py`: GNATprove on the mutated unit, with counterexamples
+and the proof cache, which CI first fills with the full proof of the pull
+request, so a mutant's proof proves only the goals it changes; a unit that
+`proof.gpr` does not prove passes. `equivalence_build` compiles at `-O2`, and
+a mutant whose object code is unchanged is ignored as equivalent. Undetected
+mutants no longer fail CI: `tests/mutation_survivors.py` lists them, and
+those only the proof detects, in the job summary, for the pull request to
+judge. On this Mac, the proof cache that a run without counterexamples filled
+was used by a run with them (`smb-core_request.adb`: 26 s, then 3 s).

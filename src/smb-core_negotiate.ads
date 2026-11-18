@@ -50,8 +50,8 @@ package SMB.Core_Negotiate is
      and then Request'Result (3) = 0
      and then Request'Result (4) = 3 and then Request'Result (5) = 0
      and then Request'Result (6) = 0 and then Request'Result (7) = 0
-     --  Capabilities: SMB2_GLOBAL_CAP_ENCRYPTION.
-     and then Request'Result (8) = 16#40# and then Request'Result (9) = 0
+     --  Capabilities: SMB2_GLOBAL_CAP_ENCRYPTION and _LARGE_MTU.
+     and then Request'Result (8) = 16#44# and then Request'Result (9) = 0
      and then Request'Result (10) = 0 and then Request'Result (11) = 0
      and then (for all Index in Guid_Bytes'Range =>
                  Request'Result (12 + Index) = Guid (Index))
@@ -126,7 +126,7 @@ private
       & LE16 (if Allow_21 then 2 else 1)
       & LE16 (3)
       & LE16 (0)
-      & LE16 (16#40#) & Zero_High
+      & LE16 (16#44#) & Zero_High
       & Guid
       & LE16 (Request_Context_Offset) & Zero_High
       & LE16 (Request_Context_Count)

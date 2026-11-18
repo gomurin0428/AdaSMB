@@ -204,7 +204,8 @@ package SMB.Core_Wire is
       Tree_Id : SMB.DWord;
       Session_Id : SMB.QWord;
       Credit : SMB.Word;
-      Status : out SMB.Core_Status)
+      Status : out SMB.Core_Status;
+      Charge : SMB.Word := 1)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Post =>
        Status =
@@ -212,7 +213,7 @@ package SMB.Core_Wire is
        and then
        (if Status = SMB.Ok then
           Encoded_U16 (Data, 4) = Header_Size
-          and then Encoded_U16 (Data, 6) = 1
+          and then Encoded_U16 (Data, 6) = Charge
           and then
           Encoded_U16 (Data, 12) = SMB.Word (Command)
           and then Encoded_U16 (Data, 14) = Credit

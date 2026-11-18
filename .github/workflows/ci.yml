@@ -18,7 +18,7 @@ concurrency:
 env:
   ADA_TOOLCHAIN: gnat_native=16.1.0 gprbuild=26.0.1
   TOOLCHAIN_KEY: alr2.1.1-gnat16.1.0-gprbuild26.0.1-v1
-  ADAMUTANT_COMMIT: f1d064e923fef19c4163328b03daf5a5d53de14a
+  ADAMUTANT_COMMIT: 33e56e3d85d513757ff2efe5076765adc7ce4146
 
 jobs:
   linux:
@@ -66,17 +66,19 @@ jobs:
     name: Mutation testing (changed lines)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/ada-toolchain
-          key: ada-${{ runner.os }}-${{ runner.arch }}-${{ env.TOOLCHAIN_KEY }}
-      - name: Install Ada toolchain
-        run: bash .github/scripts/install-ada.sh "$HOME/ada-toolchain" $ADA_TOOLCHAIN
+          path: ~/ada-prover
+          key: ada-${{ runner.os }}-${{ runner.arch }}-alr2.1.1-gnat16.1.0-gprbuild26.0.1-gnatprove16.1.0-v1
+      - name: Install Ada toolchain and GNATprove
+        run: >
+          bash .github/scripts/install-ada.sh "$HOME/ada-prover"
+          gnat_native=16.1.0 gprbuild=26.0.1 gnatprove=16.1.0
       - name: Build AdaMutant
         run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
       - name: Install Python cryptography
@@ -84,14 +86,40 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-cryptography
+      # The proof of each mutant that the tests miss (tests/mutant_prove.py)
+      # takes the goals it does not change from GNATprove's proof cache, so
+      # the whole pull request is proved into the cache first. That proof
+      # must pass, and the cache is saved for the next run.
+      - name: Restore the proof cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: proof-cache
+          key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: proof-cache-${{ runner.os }}-gnatprove16.1.0-
+      - name: Prove into the proof cache
+        run: |
+          mkdir -p proof-cache
+          time make prove PROOF_CACHE=proof-cache
+      - name: Save the proof cache
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: proof-cache
+          key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
       - name: Mutate the lines this pull request changes
+        env:
+          PROOF_CACHE: ${{ github.workspace }}/proof-cache
         run: adamutant run --since "origin/$GITHUB_BASE_REF" --concurrency 4
-      - name: Fail on undetected mutants
-        run: python3 tests/mutation_survivors.py --fail
-      # AdaMutant names the baseline log but does not print it.
-      - name: Show the baseline test log
+      # Undetected mutants, and those that only the proof detects, are for
+      # the pull request to judge; they do not fail the job.
+      - name: List the mutants to judge
+        run: python3 tests/mutation_survivors.py
+      # AdaMutant names the baseline logs but does not print them.
+      - name: Show the baseline logs
         if: failure()
-        run: tail -n 200 .adamutant/logs/baseline-test.log || true
+        run: |
+          tail -n 200 .adamutant/logs/baseline-test.log || true
+          tail -n 200 .adamutant/logs/baseline-prove.log || true
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

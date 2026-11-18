@@ -25,18 +25,14 @@ is
           (State, Value.Token, Value.File_Id, Value.Access_Mode,
            Value.Directory))
    is
-      --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       Id : SMB.Bytes (0 .. 15) := (others => 0);
       Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
-      --  adamutant:disable-next-line BooleanLiteral: Validate_Handle sets every out parameter
       Is_Directory : Boolean := False;
       S : SMB.Core_Status;
    begin
       --  The expectation comes from Begin_Request in Prepare, and
       --  Validate_Handle rejects the other states the same way, so no
       --  pairing of these can be told apart.
-      --  adamutant:disable LogicalOperator
-      --  adamutant:disable-next-line ConditionalExpression: as above
       if Value.Expected.Command /= Set_Info_Command
         or else not Value.Expected.Signed
         or else not Value.Expected.Request_Signed
@@ -44,31 +40,24 @@ is
         or else Value.Epoch /= SMB.Engine.Current_Epoch (State)
         or else SMB.Engine.Current_Phase (State) /=
           SMB.Engine.Share_Connected
-      --  adamutant:enable LogicalOperator
       then
          --  Only for an operation never prepared, or from before the
          --  connection was reset; every caller also requires the
          --  operation's own request pending, which neither can have.
-         --  adamutant:disable-next-line StatementDeletion, BooleanLiteral: as above
          return False;
       end if;
       SMB.Engine.Validate_Handle
         --  Prepare took only a handle that may write, and a token's handle
         --  does not change, so asking for write access here adds nothing.
-        --  adamutant:disable-next-line BooleanLiteral: as above
         (State, Value.Token, False, False, Id, Mode, Is_Directory, S);
       --  A token's handle does not change while its request is in flight,
       --  and a failed lookup clears its outputs, so every pairing of these
       --  fails the same way.
-      --  adamutant:disable LogicalOperator
-      --  adamutant:disable-next-line ConditionalExpression: as above
       if S /= SMB.Ok
         or else Id /= Value.File_Id
         or else Mode /= Value.Access_Mode
         or else Is_Directory /= Value.Directory
-      --  adamutant:enable LogicalOperator
       then
-         --  adamutant:disable-next-line BooleanLiteral, StatementDeletion: unreachable, as above
          return False;
       end if;
       pragma Assert
@@ -89,10 +78,8 @@ is
       Used : out Natural;
       Status : out SMB.Core_Status)
    is
-      --  adamutant:disable-next-line NumericLiteral: Validate_Handle sets every out parameter
       Id : SMB.Bytes (0 .. 15) := (others => 0);
       Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
-      --  adamutant:disable-next-line BooleanLiteral: Validate_Handle sets every out parameter
       Dir : Boolean := False;
       S : SMB.Core_Status;
       Body_Buffer : SMB.Bytes (0 .. Request_Size - Header_Length - 1);
@@ -131,11 +118,8 @@ is
       end if;
       SMB.Core_Protocol.Build_End_Of_File
         (Id, Size, Body_Buffer, Body_Used, S);
-      --  adamutant:disable-next-line ConditionalExpression: the builder cannot fail on a buffer of its size
       if S /= SMB.Ok then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := S;
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          return;
       end if;
       pragma Assert (Body_Used = Body_Buffer'Length);
@@ -147,11 +131,8 @@ is
              Body_Buffer (Index));
       SMB.Engine.Begin_Request
         (State, Set_Info_Command, True, True, Message, Expected, S);
-      --  adamutant:disable-next-line ConditionalExpression: the checks above leave Begin_Request nothing to reject short of 2**64 requests
       if S /= SMB.Ok then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := S;
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          return;
       end if;
       pragma Assert
@@ -221,7 +202,6 @@ is
          --  status for a call that changed nothing.
          Value.Stage := Resize_Failed;
          Status :=
-           --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: as above
            (if Accept_Status = SMB.Invalid_State_Status
             then SMB.Invalid_Protocol else Accept_Status);
          return;
@@ -254,12 +234,10 @@ is
       --  A pending request that matches the operation's own is in flight,
       --  so the stage test adds nothing a test can see; the postcondition
       --  needs it.
-      --  adamutant:disable LogicalOperator
       if Value.Stage not in Resize_Prepared | Resize_Sent
         or else not Context_Valid (Value, State)
         or else not SMB.Engine.Pending_Request_Matches
           (State, Value.Expected)
-      --  adamutant:enable LogicalOperator
       then
          Status := SMB.Invalid_State_Status;
          return;

@@ -7,27 +7,21 @@ is
       Status : out SMB.Core_Status) is
       Field_Status : SMB.Core_Status;
    begin
-      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: every caller checks the output length first
       if Packet'Length < Header_Length then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Length;
          return;
       end if;
       SMB.Core_Wire.Initialize_Header
         (Packet, Expected.Command, Expected.Message_Id,
-         Expected.Tree_Id, Expected.Session_Id, 1, Field_Status);
-      --  adamutant:disable-next-line ConditionalExpression: a header fits the packet, so the write succeeds
+         Expected.Tree_Id, Expected.Session_Id, Expected.Credit_Request,
+         Field_Status, Charge => Expected.Credit_Charge);
       if Field_Status /= SMB.Ok then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := Field_Status;
          return;
       end if;
-      --  adamutant:disable-next-line ConditionalExpression: every request built here is signed
       if Expected.Request_Signed then
          SMB.Core_Wire.Write_U32 (Packet, 16, 8, Field_Status);
-         --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: a header fits the packet, so the write succeeds
          if Field_Status /= SMB.Ok then
-            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := Field_Status;
             return;
          end if;

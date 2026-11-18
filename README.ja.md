@@ -57,10 +57,13 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   同じ時刻を返します。時刻はサーバーが送る FILETIME のままで、`To_Time` で
   `Ada.Calendar.Time` に変換できます。`Set_Size` は書き込み用に開いた
   ファイルを切り詰め、または伸ばします（FileEndOfFileInformation）。
-* フレームは 1 MiB、単一要求の read/write は 64 KiB 以下に制限し、
-  受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB 3.0・3.0.2、
-  compression、compound、Kerberos、guest/null fallback、
-  large-MTU negotiation は実装していません。
+* フレームは 1 MiB に制限します。SMB2_GLOBAL_CAP_LARGE_MTU を持つサーバー
+  （Windows も Samba も持ちます）なら、READ 1 つで最大 960 KiB（クレジット
+  15 個）まで、サーバーの MaxReadSize と付与済みクレジットの範囲で読みます。
+  それ以外と WRITE は 1 要求 64 KiB までです。`Connect` の `Timeout_Seconds` は
+  応答一つ全体の待ち時間の上限なので、1 Mbit/s 程度より遅い回線では大きく
+  してください。受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB 3.0・3.0.2、
+  compression、compound、Kerberos、guest/null fallback は実装していません。
 * スタック使用量は証明の対象外です。フレーム・転送・要求・ディレクトリ
   一覧のバッファはヒープに置き、ソケットは 16 KiB 単位で読みます。応答の
   署名検証と NTLM 認証は HMAC-SHA256 / HMAC-MD5 を 64 byte のブロック単位で
@@ -119,7 +122,9 @@ Windowsでは `OS=Windows_NT` からアダプターを自動選択します。
 CREATE/CLOSE と READ/WRITE の実際の `SMB.Client` 経路は、
 `SMB.Core_Client` の型付きコーディネータを通ります。コアが Engine の
 要求期待値から完全なパケットを構築・署名し、送信確認後だけ応答を受け付けます。
-転送状態は最大 1 MiB を保持し、各 READ/WRITE 要求は最大 64 KiB です。
+転送状態は最大 1 MiB を保持し、各 READ 要求は最大 960 KiB、各 WRITE 要求は
+最大 64 KiB です。エンジンは応答が付与し要求が消費するクレジットを数え、READ は
+手元のクレジットで払える分だけを要求します。
 WRITE は開始時に入力を private snapshot へ一度だけコピーし、部分書込みは
 検証済み count だけ進めます。READ は検証済みデータを状態内へ蓄積し、
 最終結果もコアの境界付きコピーで抽出します。不確かな送受信や不正応答では
@@ -191,11 +196,13 @@ make mutation-diff          # 同じことを origin/main から変わった行�
 します。
 
 `make mutation` は [AdaMutant](https://github.com/gomurin0428/AdaMutant) で
-試験そのものを検査します。AdaMutant は `PATH` に置くか `ADAMUTANT=` で
-指定します。ライブラリのソースに一度に一つだけ小さな変更（演算子、
-リテラル、条件、代入や呼び出し一つを `null` に置換）を加え、`test_suite` を
-作り直して実行します。試験が気づかなかった変更が生き残ったミュータント
-です。照合試験が対象にしている単位（NTLM、ハッシュ・AES・AES-CMAC・AES-CCM・AES-GCM・
+試験と証明を検査します。AdaMutant と GNATprove は `PATH` に置きます（AdaMutant は
+`ADAMUTANT=` でも指定できます）。ライブラリのソースに一度に一つだけ小さな変更
+（演算子、リテラル、条件、代入や呼び出し一つを `null` に置換）を加え、
+`test_suite` を作り直して実行し、試験が気づかなかったミュータントは
+GNATprove で変更したユニットを証明します
+（[`tests/mutant_prove.py`](tests/mutant_prove.py)）。どちらも気づかなかった
+変更が生き残ったミュータントです。照合試験が対象にしている単位（NTLM、ハッシュ・AES・AES-CMAC・AES-CCM・AES-GCM・
 鍵導出と署名、UTF 変換、時刻）のミュータントを `test_suite` が見逃したときは、
 [`tests/mutant_tests.py`](tests/mutant_tests.py) がその照合試験も実行するので、
 該当するすべての試験が見逃したミュータントだけが生き残ります。変更前の
@@ -208,11 +215,15 @@ pragma・ghost コードは GNATprove が検査するので変更しません。
 ミュータントごとに実行するには時間がかかりすぎるためです。設定は
 [`adamutant.toml`](adamutant.toml) にあり、HTML と JSON のレポートは
 `.adamutant/reports` に出ます。
-[`tests/mutation_survivors.py`](tests/mutation_survivors.py) はどの試験も
-検出しなかったミュータントを一覧にし、`make mutation-diff` はそれが一つでも
-あると失敗します。振る舞いを変えようのないミュータントや、どの入力でも
-到達しない防御的な分岐にあるミュータントは、理由を書いた
-`adamutant:disable-next-line` コメントでソース上で無効化します。
+[`tests/mutation_survivors.py`](tests/mutation_survivors.py) は、試験も証明も
+検出しなかったミュータントと、証明だけが検出したミュータント（試験の不足の
+候補）を、人が判断するために一覧にします。後者は AdaMutant の分類（実コードで
+反例を確かめた「確定」、契約が言葉足らずな「契約が弱い」、「未決定」）で
+分けます。検出されなかったミュータントがあっても失敗にはせず、手で除外する
+ものもありません。`-O2` のオブジェクトコードが変わらないミュータントは同値と
+自動で判定し、残りは pull request で判断します。`PROOF_CACHE=dir` を付けると、
+まずプロジェクト全体をキャッシュに証明するので、各ミュータントの証明は変わった
+ゴールだけで済みます。
 
 `make unicode-test` は Python 3 の標準 codec を独立した比較対象として、
 NUL を除く全 1,112,063 Unicode スカラー、短いバイト列の全組合せ、
@@ -311,12 +322,13 @@ Alire 2.1.1 で GNAT 16.1.0・gprbuild 26.0.1・gnatprove 16.1.0 を導入しま
     AES-256-CCM をそれぞれ唯一の cipher にして暗号化を必須にした場合）、
     各照合試験、TCP 転送試験
   * macOS（ARM64）: 警告をエラー扱いにしたビルド
-  * pull request のみ: その pull request が変えた `src/*.adb` の行に対する
-    ミューテーションテスト（`make mutation-diff`）。どの試験も検出しなかった
-    ミュータントがあると失敗します。
-* `mutation.yml`（毎週日曜 03:00 JST と手動実行）: `src/*.adb` 全体の
-  ミューテーションテスト。ミュータント数がほぼ等しい 8 つのジョブに分けて
-  実行し、レポートを成果物として残します。
+  * pull request のみ: 証明キャッシュへの全体証明（通らなければ失敗）の後、
+    その pull request が変えた `src/*.adb` の行に対する、試験と証明による
+    ミューテーションテスト。検出されなかったミュータントと証明だけが検出した
+    ミュータントは、pull request で判断するためにジョブの要約に一覧で出ます。
+* `mutation.yml`（毎週日曜 03:00 JST と手動実行）: 証明キャッシュへの全体証明の
+  後、`src/*.adb` 全体の、試験と証明によるミューテーションテスト。ミュータント数が
+  ほぼ等しい 8 つのジョブに分けて実行し、レポートを成果物として残します。
 * `proof.yml`（毎週月曜 03:00 JST と手動実行）: `make prove` による全体証明。
   GNATprove の証明キャッシュ（`--memcached-server=file:...`）を実行間で保持し、
   変わっていないゴールは解き直しません（ソースが同じなら 67 分が 7 秒でした）。

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""List the mutants that the last AdaMutant run did not detect.
+"""List the mutants of the last AdaMutant run for a person to judge.
 
-Reads .adamutant/reports/mutation-report.json and prints the score and every
-Survived or NoCoverage mutant as Markdown, also to the GitHub step summary
-when there is one. With --fail, exits 1 if any mutant went undetected.
+Reads .adamutant/reports/mutation-report.json and prints, as Markdown and to
+the GitHub step summary when there is one, the score, every mutant that went
+undetected (Survived or NoCoverage, a proof that ran out of time included),
+and every mutant that only the proof detected, in AdaMutant's three groups:
+confirmed by a counterexample run with the real code, a contract that says
+too little, and undecided. Undetected mutants are not a failure; with --fail,
+the script exits 1 if there is one.
 """
 
 import argparse
@@ -23,14 +27,25 @@ def cell(text: str) -> str:
     return "`" + " ".join(text.split()).replace("|", "\\|").replace("`", "'") + "`"
 
 
+def proof_group(reason: str) -> str:
+    if reason.startswith("proof failed, confirmed: "):
+        return "Confirmed"
+    if reason.startswith("proof failed, a contract says too little: "):
+        return "A contract says too little"
+    return "Undecided"
+
+
 def summary(report: dict) -> tuple[str, int]:
     counts: Counter[str] = Counter()
     rows = []
+    proof_rows = []
     for path, entry in sorted(report["files"].items()):
         lines = entry["source"].splitlines()
         for mutant in entry["mutants"]:
             counts[mutant["status"]] += 1
-            if mutant["status"] not in UNDETECTED:
+            reason = mutant.get("statusReason", "")
+            by_proof = mutant["status"] == "Killed" and reason.startswith("proof failed")
+            if mutant["status"] not in UNDETECTED and not by_proof:
                 continue
             start, end = mutant["location"]["start"], mutant["location"]["end"]
             text = lines[start["line"] - 1]
@@ -39,10 +54,15 @@ def summary(report: dict) -> tuple[str, int]:
                 if start["line"] == end["line"]
                 else text[start["column"] - 1 :] + " ..."
             )
-            rows.append(
-                f"| {path}:{start['line']} | {mutant['status']} | {mutant['mutatorName']} "
-                f"| {cell(original)} | {cell(mutant['replacement'])} |"
-            )
+            place = f"| {path}:{start['line']} "
+            change = f"| {mutant['mutatorName']} | {cell(original)} | {cell(mutant['replacement'])} |"
+            if by_proof:
+                proof_rows.append(f"{place}| {proof_group(reason)} {change} {cell(reason)} |")
+            else:
+                status = mutant["status"]
+                if "the proof did not finish within the timeout" in reason:
+                    status += " (proof timed out)"
+                rows.append(f"{place}| {status} {change}")
     detected = sum(counts[status] for status in DETECTED)
     undetected = sum(counts[status] for status in UNDETECTED)
     scored = detected + undetected
@@ -56,9 +76,20 @@ def summary(report: dict) -> tuple[str, int]:
     if rows:
         text += [
             "",
+            "Undetected by the tests and the proof:",
+            "",
             "| Location | Status | Mutator | Original | Replacement |",
             "|---|---|---|---|---|",
             *rows,
+        ]
+    if proof_rows:
+        text += [
+            "",
+            "Detected only by the proof (candidates for a missing test):",
+            "",
+            "| Location | Group | Mutator | Original | Replacement | GNATprove |",
+            "|---|---|---|---|---|---|",
+            *proof_rows,
         ]
     return "\n".join(text) + "\n", undetected
 

@@ -149,13 +149,19 @@ begin
                   Check (Packet, Command, False, "high WORD offset");
                end if;
                declare
-                  Large : SMB.Bytes (First .. First + Fixed_Size + 65_536);
+                  --  A READ may take several credits, so its cap is higher.
+                  Cap : constant Natural :=
+                    (if Directory then SMB.Core_Protocol.Maximum_IO_Chunk
+                     else SMB.Core_Protocol.Maximum_Read_Chunk);
+                  type Bytes_Access is access SMB.Bytes;
+                  Large : constant Bytes_Access :=
+                    new SMB.Bytes (First .. First + Fixed_Size + Cap);
                begin
-                  for Count in 65_535 .. 65_537 loop
-                     Seed (Large, Item);
-                     Put (Large, 66, Offset_Width, SMB.DWord (Fixed_Size));
-                     Put (Large, 68, 4, SMB.DWord (Count));
-                     Check (Large, Command, Count <= 65_536,
+                  for Count in Cap - 1 .. Cap + 1 loop
+                     Seed (Large.all, Item);
+                     Put (Large.all, 66, Offset_Width, SMB.DWord (Fixed_Size));
+                     Put (Large.all, 68, 4, SMB.DWord (Count));
+                     Check (Large.all, Command, Count <= Cap,
                             "library IO cap with sufficient packet capacity");
                   end loop;
                end;
