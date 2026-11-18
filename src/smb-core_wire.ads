@@ -300,6 +300,27 @@ package SMB.Core_Wire is
               then Data (Index) = Data'Old (Index)))
         else Data = Data'Old);
 
+   subtype Signature_Bytes is SMB.Bytes (0 .. 15);
+
+   --  The signature that Sign writes, without writing it: Data's Signature
+   --  field must already be zero. A large request is signed this way, its
+   --  signature then put in place by the caller: Sign's postcondition,
+   --  checked at run time, keeps a copy of the whole of Data on the stack.
+   procedure Compute_Signature
+     (Data : SMB.Bytes;
+      Key : SMB.Bytes;
+      Signature : out Signature_Bytes;
+      Status : out SMB.Core_Status)
+   with Pre =>
+     Data'Length <= SMB.Maximum_Frame_Size
+     and Key'Length <= SMB.Maximum_Frame_Size
+     and (if Data'Length >= Header_Size then
+            (for all Index in 48 .. 63 => Data (Data'First + Index) = 0)),
+     Post =>
+       Status = (if Data'Length < Header_Size then SMB.Invalid_Length
+                 elsif Key'Length = 0 then SMB.Invalid_Value
+                 else SMB.Ok);
+
    procedure Verify_Signature
      (Data : SMB.Bytes;
       Key : SMB.Bytes;
@@ -338,6 +359,20 @@ package SMB.Core_Wire is
              (if Index > Data'First + 63
               then Data (Index) = Data'Old (Index)))
         else Data = Data'Old);
+
+   procedure Compute_Signature_SMB3
+     (Data : SMB.Bytes;
+      Key : SMB.AES.Key_128;
+      Algorithm : SMB.Core_Negotiate.SMB3_Signing_Id;
+      Signature : out Signature_Bytes;
+      Status : out SMB.Core_Status)
+   with Pre =>
+     Data'Length <= SMB.Maximum_Frame_Size
+     and (if Data'Length >= Header_Size then
+            (for all Index in 48 .. 63 => Data (Data'First + Index) = 0)),
+     Post =>
+       Status = (if Data'Length < Header_Size then SMB.Invalid_Length
+                 else SMB.Ok);
 
    procedure Verify_Signature_SMB3
      (Data : SMB.Bytes;

@@ -9,13 +9,15 @@ package SMB.Core_Protocol is
    use type SMB.QWord;
 
    --  One credit's worth (MS-SMB2 3.1.5.2): the most a request may carry
-   --  without multi-credit, and so every request but a READ here.
+   --  without multi-credit, and so every request but a READ or WRITE here.
    Maximum_IO_Chunk : constant := 65_536;
-   --  A READ may take up to this many credits when the server supports
-   --  SMB2_GLOBAL_CAP_LARGE_MTU. The response, with its header and a
-   --  transform header, stays inside a 1 MiB frame.
+   --  A READ or WRITE may take up to this many credits when the server
+   --  supports SMB2_GLOBAL_CAP_LARGE_MTU. The READ response and the WRITE
+   --  request, with their header and a transform header, stay inside a
+   --  1 MiB frame.
    Maximum_Credit_Charge : constant := 15;
    Maximum_Read_Chunk : constant := Maximum_Credit_Charge * Maximum_IO_Chunk;
+   Maximum_Write_Chunk : constant := Maximum_Credit_Charge * Maximum_IO_Chunk;
    Large_MTU_Capability : constant := 16#04#;
 
    --  The credits a request that moves Amount bytes takes once multi-credit
@@ -230,7 +232,7 @@ package SMB.Core_Protocol is
       Used : out Natural;
       Status : out SMB.Core_Status)
    with Pre => File_Id'Length = 16
-     and then Data'Length <= Maximum_IO_Chunk
+     and then Data'Length <= Maximum_Write_Chunk
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
        Used <= Output'Length
@@ -490,13 +492,17 @@ package SMB.Core_Protocol is
                   and Large_MTU_Capability) /= 0)
             and then Info.Max_Read in 1 .. Maximum_Read_Chunk
             and then (Info.Large_MTU or else Info.Max_Read <= Maximum_IO_Chunk)
-            and then Info.Max_Write in 1 .. Maximum_IO_Chunk
+            and then Info.Max_Write in 1 .. Maximum_Write_Chunk
+            and then
+              (Info.Large_MTU or else Info.Max_Write <= Maximum_IO_Chunk)
             and then Info.Max_Read = Natural (SMB.DWord'Min
               ((if Info.Large_MTU then Maximum_Read_Chunk
                 else Maximum_IO_Chunk),
                SMB.Core_Wire.Encoded_U32 (Packet, 96)))
             and then Info.Max_Write = Natural (SMB.DWord'Min
-              (Maximum_IO_Chunk, SMB.Core_Wire.Encoded_U32 (Packet, 100)))
+              ((if Info.Large_MTU then Maximum_Write_Chunk
+                else Maximum_IO_Chunk),
+               SMB.Core_Wire.Encoded_U32 (Packet, 100)))
           elsif Command = 3 and then Nt_Status = SMB.Success then
             Packet'Length >= 80
             and then Info.Tree_Id /= 0
@@ -512,7 +518,7 @@ package SMB.Core_Protocol is
           elsif Command = 9
             and then Nt_Status = SMB.Success
           then Packet'Length >= 80
-            and then Info.Count <= Maximum_IO_Chunk
+            and then Info.Count <= Maximum_Write_Chunk
             and then Info.Count = Natural
               (SMB.Core_Wire.Encoded_U32 (Packet, 68))
           elsif (Command = 14 or else Command = 16)

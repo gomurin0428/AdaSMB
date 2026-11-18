@@ -168,20 +168,33 @@ begin
             end;
          end loop;
 
+         --  A WRITE may take several credits too, so its Count may reach
+         --  Maximum_Write_Chunk.
          for Byte_Index in 0 .. 3 loop
             for Value in 0 .. 255 loop
                declare
                   Count : constant SMB.DWord := SMB.DWord (Value) * 256 ** Byte_Index;
+                  Accepted : constant Boolean :=
+                    Count in 1 .. SMB.Core_Protocol.Maximum_Write_Chunk;
                begin
                   Seed (Packet, (9, 80, 17));
                   Put (Packet, 68, 4, Count);
                   Check (Packet (First .. First + 79), 9,
-                         Count in 1 .. 65_536, "WRITE Count byte mutation");
-                  if Count in 1 .. 65_536 and then Info.Count /= Natural (Count) then
+                         Accepted, "WRITE Count byte mutation");
+                  if Accepted and then Info.Count /= Natural (Count) then
                      raise Program_Error with "WRITE Count changed";
                   end if;
                end;
             end loop;
+         end loop;
+         for Count in SMB.Core_Protocol.Maximum_Write_Chunk - 1 ..
+           SMB.Core_Protocol.Maximum_Write_Chunk + 1
+         loop
+            Seed (Packet, (9, 80, 17));
+            Put (Packet, 68, 4, SMB.DWord (Count));
+            Check (Packet (First .. First + 79), 9,
+                   Count <= SMB.Core_Protocol.Maximum_Write_Chunk,
+                   "WRITE Count cap");
          end loop;
          for Offset in 66 .. 79 loop
             if Offset not in 68 .. 71 then

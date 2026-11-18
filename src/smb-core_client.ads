@@ -981,7 +981,7 @@ is
                 and then Packet'Length >= 72
                 and then SMB.Core_Wire.Encoded_U32 (Packet, 68) > 0
                 and then SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
-                  SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk)
+                  SMB.DWord (SMB.Core_Protocol.Maximum_Write_Chunk)
                 and then Transfer_Completed_Of (Value) =
                   Transfer_Completed_Of (Value)'Old
                   + Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68))))
@@ -2113,10 +2113,10 @@ private
         SMB.QWord'Last - Value.Initial_Offset
       and then Value.Position =
         Value.Initial_Offset + SMB.QWord (Value.Completed)
-      and then Value.Requested <= SMB.Core_Protocol.Maximum_Read_Chunk
-      and then
-        (if Value.Kind = Write_Transfer then
-           Value.Requested <= SMB.Core_Protocol.Maximum_IO_Chunk)
+      and then Value.Requested <=
+        (if Value.Kind = Read_Transfer
+         then SMB.Core_Protocol.Maximum_Read_Chunk
+         else SMB.Core_Protocol.Maximum_Write_Chunk)
       and then
         (if Value.Stage in Transfer_Prepared | Transfer_Sent then
            Value.Expected.Command =

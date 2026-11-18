@@ -65,6 +65,38 @@ is
       end case;
    end Sign_Packet;
 
+   --  The signature that Sign_Packet writes, computed over the first Used
+   --  bytes of Packet, whose Signature field is zero, without writing it.
+   procedure Request_Signature
+     (Packet : SMB.Bytes;
+      Used : Natural;
+      Key : SMB.Bytes;
+      Signing : SMB.Core_Negotiate.Signing_Id;
+      SMB3_Key : SMB.AES.Key_128;
+      Signature : out SMB.Core_Wire.Signature_Bytes;
+      Status : out SMB.Core_Status)
+   with
+     Pre =>
+       Packet'Length <= SMB.Maximum_Frame_Size
+       and then Used >= Header_Length
+       and then Used <= Packet'Length
+       and then Key'Length <= SMB.Maximum_Frame_Size
+       and then
+         (for all Index in 48 .. 63 => Packet (Packet'First + Index) = 0)
+   is
+   begin
+      case Signing is
+         when SMB.Core_Negotiate.HMAC_SHA256 =>
+            SMB.Core_Wire.Compute_Signature
+              (Packet (Packet'First .. Packet'First + (Used - 1)),
+               Key, Signature, Status);
+         when SMB.Core_Negotiate.AES_CMAC | SMB.Core_Negotiate.AES_GMAC =>
+            SMB.Core_Wire.Compute_Signature_SMB3
+              (Packet (Packet'First .. Packet'First + (Used - 1)),
+               SMB3_Key, Signing, Signature, Status);
+      end case;
+   end Request_Signature;
+
    procedure Fail_Transfer
      (Value : in out Transfer;
       State : in out SMB.Engine.Engine_State;
@@ -2450,15 +2482,15 @@ is
       Access_Mode : SMB.Engine.Access_Kind;
       Directory : Boolean;
       Amount : Natural;
-      --  A READ may take several credits (Current_Read_Chunk), a WRITE one.
+      --  A READ or WRITE may take several credits.
       Limit : constant Natural :=
         (if Value.Kind = Read_Transfer
          then Natural'Min
                 (SMB.Engine.Current_Read_Chunk (State),
                  SMB.Core_Protocol.Maximum_Read_Chunk)
          else Natural'Min
-                (SMB.Engine.Current_Max_Write (State),
-                 SMB.Core_Protocol.Maximum_IO_Chunk));
+                (SMB.Engine.Current_Write_Chunk (State),
+                 SMB.Core_Protocol.Maximum_Write_Chunk));
       Message_Id : SMB.QWord;
       Expected : SMB.Engine.Request_Expectation;
       Begin_Status : SMB.Core_Status;
@@ -2521,69 +2553,41 @@ is
          Status := SMB.Resource_Limit;
          return;
       end if;
+      --  The body goes straight into Output, and a WRITE's data straight
+      --  from the transfer's buffer: a WRITE may carry 960 KiB, too much to
+      --  copy on the stack.
       declare
-         Body_Size : constant Natural := Body_Length;
-         Body_Buffer : SMB.Bytes (0 .. Body_Size - 1);
+         Body_First : constant Natural := Output'First + Header_Length;
+         Body_Last : constant Natural := Body_First + (Body_Length - 1);
       begin
          if Value.Kind = Read_Transfer then
             SMB.Core_Protocol.Build_Read
               (File_Id, Value.Position, Amount,
-               Body_Buffer, Body_Used, Field_Status);
+               Output (Body_First .. Body_Last), Body_Used, Field_Status);
             Command := 8;
-            if Field_Status = SMB.Ok then
-               pragma Assert
-                 (for all Byte_Index in 0 .. 7 =>
-                    Body_Buffer (8 + Byte_Index) =
-                      SMB.Core_Wire.U64_Byte
-                        (Value.Position, Byte_Index));
-            end if;
          else
+            SMB.Core_Protocol.Build_Write
+              (File_Id, Value.Position,
+               Value.Buffer
+                 (Value.Completed + 1 .. Value.Completed + Amount),
+               Output (Body_First .. Body_Last), Body_Used, Field_Status);
             Command := 9;
-            declare
-               Payload : constant SMB.Bytes :=
-                 Value.Buffer
-                   (Value.Completed + 1 .. Value.Completed + Amount);
-            begin
-               pragma Assert_And_Cut
-                 (Payload'Length = Amount and then
-                  (for all Index in 0 .. Amount - 1 =>
-                    Payload (Payload'First + Index) =
-                      Value.Buffer (Value.Completed + Index + 1)));
-               SMB.Core_Protocol.Build_Write
-                 (File_Id, Value.Position, Payload,
-                  Body_Buffer, Body_Used, Field_Status);
-               if Field_Status = SMB.Ok then
-                  pragma Assert_And_Cut (Payload'Length > 0);
-                  pragma Assert_And_Cut
-                    (for all Index in 0 .. Payload'Length - 1 =>
-                       Body_Buffer (Body_Buffer'First + 48 + Index) =
-                         Payload (Payload'First + Index));
-                  pragma Assert
-                    (for all Index in 0 .. Amount - 1 =>
-                       Body_Buffer (Body_Buffer'First + 48 + Index) =
-                         Value.Buffer (Value.Completed + Index + 1));
-               end if;
-            end;
-         end if;
-         if Field_Status = SMB.Ok then
-            Output
-              (Output'First + Header_Length ..
-               Output'First + Header_Length + (Body_Used - 1)) :=
-              Body_Buffer (0 .. Body_Used - 1);
-            pragma Assert
-              (for all Byte_Index in 0 .. 7 =>
-                 Output
-                   (Output'First + Header_Length + 8 + Byte_Index) =
-                   SMB.Core_Wire.U64_Byte (Value.Position, Byte_Index));
-            if Value.Kind = Write_Transfer then
-               pragma Assert
-                 (for all Index in 0 .. Amount - 1 =>
-                    Output
-                      (Output'First + Header_Length + 48 + Index) =
-                    Value.Buffer (Value.Completed + Index + 1));
-            end if;
          end if;
       end;
+      if Field_Status = SMB.Ok then
+         pragma Assert
+           (for all Byte_Index in 0 .. 7 =>
+              Output
+                (Output'First + Header_Length + 8 + Byte_Index) =
+                SMB.Core_Wire.U64_Byte (Value.Position, Byte_Index));
+         if Value.Kind = Write_Transfer then
+            pragma Assert
+              (for all Index in 0 .. Amount - 1 =>
+                 Output
+                   (Output'First + Header_Length + 48 + Index) =
+                 Value.Buffer (Value.Completed + Index + 1));
+         end if;
+      end if;
       if Field_Status /= SMB.Ok or else Body_Used /= Body_Length then
          Value.Stage := Transfer_Failed;
          if Field_Status = SMB.Ok then
@@ -2615,8 +2619,12 @@ is
       Value.Access_Mode := Access_Mode;
       Key := SMB.Engine.Current_Signing_Key (State);
       Used := Header_Length + Body_Used;
+      --  The header steps get the header alone, and the signature is put in
+      --  place here: their postconditions, checked at run time, would each
+      --  keep a copy of the whole request, a WRITE's up to 960 KiB.
       Prepare_Header
-        (Output, Expected, Field_Status);
+        (Output (Output'First .. Output'First + (Header_Length - 1)),
+         Expected, Field_Status);
       if Field_Status /= SMB.Ok then
          Fail_Transfer (Value, State, Field_Status, Status);
          Used := 0;
@@ -2625,14 +2633,21 @@ is
       pragma Assert
         (SMB.Core_Wire.Encoded_U32 (Output, 36) =
            Expected.Tree_Id);
-      Sign_Packet
-        (Output, Used, Key, SMB.Engine.Current_Signing (State),
-         SMB.Engine.Current_SMB3_Signing_Key (State), Field_Status);
-      if Field_Status /= SMB.Ok then
-         Fail_Transfer (Value, State, Field_Status, Status);
-         Used := 0;
-         return;
-      end if;
+      Output (Output'First + 48 .. Output'First + 63) := (others => 0);
+      declare
+         Signature : SMB.Core_Wire.Signature_Bytes;
+      begin
+         Request_Signature
+           (Output, Used, Key, SMB.Engine.Current_Signing (State),
+            SMB.Engine.Current_SMB3_Signing_Key (State), Signature,
+            Field_Status);
+         if Field_Status /= SMB.Ok then
+            Fail_Transfer (Value, State, Field_Status, Status);
+            Used := 0;
+            return;
+         end if;
+         Output (Output'First + 48 .. Output'First + 63) := Signature;
+      end;
       pragma Assert
         (SMB.Core_Wire.Encoded_U64 (Output, 24) = Expected.Message_Id);
       pragma Assert
@@ -2888,7 +2903,7 @@ is
            (Count = Natural (SMB.Core_Wire.Encoded_U32 (Packet, 68)));
          pragma Assert
            (SMB.Core_Wire.Encoded_U32 (Packet, 68) <=
-              SMB.DWord (SMB.Core_Protocol.Maximum_IO_Chunk));
+              SMB.DWord (SMB.Core_Protocol.Maximum_Write_Chunk));
          if Count = 0 then
             Fail_Transfer (Value, State, SMB.Invalid_Protocol, Status);
             return;

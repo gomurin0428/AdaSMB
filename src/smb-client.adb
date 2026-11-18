@@ -1109,7 +1109,7 @@ package body SMB.Client is
       Transfer.Item := new SMB.Core_Client.Transfer (Capacity);
       Packet.Item := new SMB.Bytes
         (0 .. SMB.Core_Wire.Header_Size + 48
-           + SMB.Core_Protocol.Maximum_IO_Chunk - 1);
+           + SMB.Core_Protocol.Maximum_Write_Chunk - 1);
       SMB.Core_Client.Start_Write
         (Transfer.Item.all, Client.Engine_Core, File.Engine_Token, Offset,
          Data, Core_Status);
