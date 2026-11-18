@@ -4,13 +4,18 @@
 A mutant's proof (tests/mutant_prove.py) uses PROOF_STEPS, the limit of
 `make prove`, so that it can take the goals it does not change from the
 proof cache. At a much lower limit, LOW_STEPS, a goal that a mutant breaks
-fails far sooner, and most units still prove: a unit's mutants are proved
-there when the unmodified unit proves there. This script proves each given
-unit at LOW_STEPS into CACHE/low/cache, a cache for those proofs, and lists
-the units that proved in CACHE/low/units.txt; mutant_prove.py reads both. A
-unit that does not prove at LOW_STEPS keeps PROOF_STEPS, so a mutant is
-never counted as detected because of the limit alone. `make prove` and CI's
-proof of a pull request are not affected.
+fails far sooner. This script proves each given unit at LOW_STEPS into
+CACHE/low/cache, a cache for those proofs, and lists in CACHE/low/units.txt
+the units that proved with no check taking more than half of LOW_STEPS;
+mutant_prove.py proves their mutants at LOW_STEPS. The other units keep
+PROOF_STEPS. `make prove` and CI's proof of a pull request are not
+affected.
+
+A limit can still make a mutant count as detected without breaking
+anything: one that leaves every goal true but makes one need more steps
+than the limit. The margin makes that less likely; such a mutant shows
+among the ones only the proof detected, as Undecided, which a person
+judges.
 
 The list is made again before each mutation run, from the units it names
 only, so it follows the code.
@@ -24,8 +29,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from proof_steps import PROVER
+
 ROOT = Path(__file__).resolve().parents[1]
 LOW_STEPS = 20000
+# A listed unit's checks all proved within this many steps.
+MARGIN_STEPS = LOW_STEPS // 2
 # The switches of `make prove` but the steps limit; mutant_prove.py adds
 # --counterexamples=on and -j1, which leave the cache keys as they are.
 SWITCHES = [
@@ -64,6 +73,13 @@ def low_units(cache: str) -> set[str]:
     return set(listing.read_text(encoding="utf-8").split())
 
 
+def most_steps(output: str) -> int:
+    """The most steps any prover but Trivial took on a proved check, from
+    GNATprove's output with --report=statistics."""
+    return max((int(steps) for prover, _vcs, _seconds, steps
+                in PROVER.findall(output) if prover != "Trivial"), default=0)
+
+
 def changed_units(base: str) -> list[str]:
     names = subprocess.run(
         ["git", "diff", "--name-only", base, "--", "src"],
@@ -92,13 +108,17 @@ def main() -> int:
         forget_results()
         command = [
             os.environ.get("GNATPROVE", "gnatprove"), "-P", "proof.gpr",
-            *SWITCHES, f"--steps={LOW_STEPS}", "-j4", "-u", unit,
-            f"--memcached-server=file:{low / 'cache'}",
+            *SWITCHES, f"--steps={LOW_STEPS}", "--report=statistics", "-j4",
+            "-u", unit, f"--memcached-server=file:{low / 'cache'}",
         ]
         result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
-        verdict = "proved" if result.returncode == 0 else "not proved"
-        print(f"{unit}: {verdict} at {LOW_STEPS} steps", flush=True)
-        if result.returncode == 0:
+        most = most_steps(result.stdout + result.stderr)
+        listed = result.returncode == 0 and most <= MARGIN_STEPS
+        verdict = ("not proved" if result.returncode != 0
+                   else f"proved, at most {most} steps")
+        print(f"{unit}: {verdict} at {LOW_STEPS}"
+              f"{' (listed)' if listed else ''}", flush=True)
+        if listed:
             passed.append(unit)
     forget_results()
     # Only the units checked now: a list from an earlier run may be stale.

@@ -15,8 +15,9 @@ on:
 permissions:
   contents: read
 
+# A run by hand and the weekly run do not cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 env:
@@ -48,13 +49,19 @@ jobs:
           path: proof-cache
           key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
           restore-keys: proof-cache-${{ runner.os }}-gnatprove16.1.0-
-      # Only the units to mutate, when files are given by hand.
+      # Only the units to mutate, when files are given by hand; a body that
+      # proof.gpr does not prove needs no proof.
       - name: Prove
         env:
           FILES: ${{ inputs.files }}
         run: |
           mkdir -p proof-cache
-          units=$(for file in $FILES; do basename "$file"; done | tr '\n' ' ')
+          if [ -n "$FILES" ]; then
+            units=$(python3 -c 'import sys; sys.path.insert(0, "tests"); from mutant_low_steps import proved_sources; from pathlib import Path; print(" ".join(sorted({Path(f).name for f in sys.argv[1:]} & proved_sources())))' $FILES)
+            if [ -z "$units" ]; then echo "no unit to prove"; exit 0; fi
+          else
+            units=
+          fi
           time make prove PROOF_CACHE=proof-cache PROOF_REPORT=statistics PROOF_UNITS="$units"
       - name: Show the proof steps
         if: always()
@@ -63,8 +70,10 @@ jobs:
         env:
           FILES: ${{ inputs.files }}
         run: python3 tests/mutant_low_steps.py proof-cache ${FILES:---all}
+      # Not when cancelled or timed out: a prover stopped while writing
+      # leaves an entry cut short, which stops GNATprove when read.
       - name: Save the proof cache
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: proof-cache
@@ -97,11 +106,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-cryptography
+      # The prove job saved it under this key; without it every mutant's
+      # proof would start cold.
       - name: Restore the proof cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: proof-cache
           key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
+          fail-on-cache-miss: true
       - name: Mutate the files of this shard
         env:
           PROOF_CACHE: ${{ github.workspace }}/proof-cache

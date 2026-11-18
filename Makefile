@@ -115,8 +115,11 @@ mutation-diff:
 	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run --since $(MUTATION_BASE)
 	$(PYTHON) tests/mutation_survivors.py
 
+# With PROOF_UNITS, GNATprove's exit status would also count the unproved
+# checks an earlier run left for other units, so their results go first.
 prove:
 	@command -v gnatprove >/dev/null 2>&1 || { echo "gnatprove is required"; exit 127; }
+	$(if $(PROOF_UNITS),@rm -f build/proof-obj/gnatprove/*.spark)
 	@gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=$(PROOF_REPORT) \
 		--steps=$(PROOF_STEPS) --checks-as-errors=on --prover=cvc5,z3,altergo -j4 \
 		$(if $(PROOF_CACHE),--memcached-server=file:$(abspath $(PROOF_CACHE))) \

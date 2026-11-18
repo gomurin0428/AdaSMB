@@ -222,8 +222,9 @@ passing whenever a stale value happens to be the expected one.
 `make mutation` checks the tests and the proof with
 [AdaMutant](https://github.com/gomurin0428/AdaMutant), which must be on `PATH`
 (or named with `ADAMUTANT=`), as must GNATprove. It makes one small change at a
-time to the library source (an operator, a literal, a condition, or a whole
-assignment or call replaced by `null`), rebuilds `test_suite` and runs it; a
+time to the library source (an operator, a literal, an attribute, a
+condition, or a whole assignment, call, `raise` or `return;` replaced by
+`null`), rebuilds `test_suite` and runs it; a
 mutant the tests do not notice then goes to GNATprove, which proves the
 mutated unit ([`tests/mutant_prove.py`](tests/mutant_prove.py)). A change that
 neither notices is a surviving mutant. When `test_suite` misses a mutant of a

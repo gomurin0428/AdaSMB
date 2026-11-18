@@ -199,7 +199,8 @@ make mutation-diff          # 同じことを origin/main から変わった行�
 `make mutation` は [AdaMutant](https://github.com/gomurin0428/AdaMutant) で
 試験と証明を検査します。AdaMutant と GNATprove は `PATH` に置きます（AdaMutant は
 `ADAMUTANT=` でも指定できます）。ライブラリのソースに一度に一つだけ小さな変更
-（演算子、リテラル、条件、代入や呼び出し一つを `null` に置換）を加え、
+（演算子、リテラル、属性、条件、代入・呼び出し・`raise`・`return;` 一つを
+`null` に置換）を加え、
 `test_suite` を作り直して実行し、試験が気づかなかったミュータントは
 GNATprove で変更したユニットを証明します
 （[`tests/mutant_prove.py`](tests/mutant_prove.py)）。どちらも気づかなかった
