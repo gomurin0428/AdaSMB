@@ -300,11 +300,11 @@ Phase 3 is complete: `Connect` offers SMB 3.1.1 by default and signs a
   2.1: the session flag fails SESSION_SETUP as `Invalid_Protocol`, the
   share flag fails TREE_CONNECT as `Unsupported_Feature`. Phase 4 encrypts
   and removes this regression.
-* Samba runs twice in CI: as before with 2.1 for the proxy tests (their
-  proxies re-sign with the 2.1 key, and every integration client passes
-  `Test_Dialects.Policy`), and with `ADASMB_SMB311_ONLY=1`, a 3.1.1-only
-  server with mandatory signing, for `integration_client` in its default
-  policy.
+* Samba runs twice in CI: as before with 2.1 for the proxy tests (every
+  integration client passes `Test_Dialects.Policy`), and with
+  `ADASMB_SMB311_ONLY=1`, a 3.1.1-only server with mandatory signing, for
+  `integration_client` in its default policy (and, since #142, the proxy
+  cases that 3.1.1 can run; see that section).
 
 ## The transform header (#124)
 
@@ -430,24 +430,34 @@ opens a received one. It is a stateless SPARK unit, like
   STATUS_MORE_PROCESSING_REQUIRED response). Every signature the proxy
   checks or writes goes through it: HMAC-SHA256 with the session key for
   2.1, and for 3.1.1 AES-128-CMAC or AES-128-GMAC with
-  SMB3KDF(session key, "SMBSigningKey\0", preauth hash). Its signatures
-  match `tests/signing_conformance.py`'s on random messages.
+  SMB3KDF(session key, "SMBSigningKey\0", preauth hash). Checked by hand
+  when it was written (no test runs this): its signatures match
+  `tests/signing_conformance.py`'s on random messages, and on Microsoft's
+  published 3.1.1 exchanges (the vectors in `tests/test_suite.adb`) it
+  derives the published signing keys and verifies the real final
+  SESSION_SETUP signature. It is fed the server's responses before the
+  proxy alters them; no mode both alters a hashed message and signs later.
 * `NEGOTIATE_TAMPERS`: the proxy alters one field of the 3.1.1 NEGOTIATE
   response (the signing algorithm, the cipher, a byte of the preauth salt,
   a byte of the server GUID) and relays the rest. The client then derives
   keys that differ from the server's, and `adversarial_client` requires
-  `Authenticate` to raise `Authentication_Error` ("server did not complete
-  signed SMB authentication") on the signed final SESSION_SETUP response
-  and the connection to close; the proxy requires
-  two SESSION_SETUP requests and nothing after them. These run in every
+  `Authenticate` to raise `Authentication_Error` with "server did not
+  complete signed SMB authentication" (an unsigned logon failure would not
+  count) and the connection to close; the proxy requires two SESSION_SETUP
+  requests, a final response that completed the logon with a signature,
+  and nothing after it. The cipher, salt and GUID changes test the hash
+  alone; the signing algorithm change also makes the client check with
+  the other algorithm. These run in every
   `ADASMB_SMB311_ONLY=1` Samba run (the cipher one only where a cipher is
   negotiated).
 * In the 3.1.1 runs that sign without encrypting (the CMAC and GMAC runs),
   the 14 `RESPONSE_MUTATIONS` (READ and WRITE fields, header fields) run as
   in the 2.1 run, the proxy signing the altered responses with the 3.1.1
   key.
-* Still over 2.1 only: the directory, SET_INFO, CREATE, reserved-field,
-  security-buffer and connection-level modes.
+* Still over 2.1 only: everything else the proxies do, among them the
+  directory, SET_INFO, CREATE, reserved-field, security-buffer,
+  connection-level, unsigned and tampered-signature, interrupted READ and
+  lost WRITE modes, `AsyncProxy` and the directory limits.
 
 ## AdaMutant 2c9351e (#139)
 
@@ -530,7 +540,8 @@ opens a received one. It is a stateless SPARK unit, like
   call made in flight never reports `Invalid_State_Status`) would need the
   engine to state that `Handle_Matches` implies `Validate_Handle` succeeds.
 * The adversarial proxy mutates QUERY_DIRECTORY and SET_INFO responses but
-  not QUERY_INFO; add it when the proxy learns 3.1.1.
+  not QUERY_INFO; it can be added to the 2.1 run, or to the 3.1.1
+  signing runs now that the proxy signs with the 3.1.1 key (#142).
 * Not done: a path-based query that opens and closes a handle itself (it
   would need to tell files from directories first).
 

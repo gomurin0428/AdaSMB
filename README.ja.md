@@ -305,10 +305,10 @@ SMB_USER=alice SMB_PASSWORD='...' SMB_DOMAIN=WORKGROUP \
 ホストへ接続するテストではありません。
 `smbd`、`smbpasswd`、Python 3 が必要です。サーバーの応答を書き換えるローカルの
 プロキシを通したプロトコル試験も行います。多くは SMB 2.1 で行い、3.1.1
-（`ADASMB_SMB311_ONLY=1` の実行。Python の `cryptography` も必要）では、
-書き換えた NEGOTIATE 応答（preauth integrity ハッシュで露見しなければならない）と、
-署名のみで暗号化しないときは、書き換えたうえで 3.1.1 の鍵で署名し直した READ・
-WRITE 応答を使います。
+（`ADASMB_SMB311_ONLY=1` の実行）では、書き換えた NEGOTIATE 応答（preauth
+integrity ハッシュで露見しなければならない）と、署名のみで暗号化しないときは、
+書き換えたうえで 3.1.1 の鍵で署名し直した READ・WRITE 応答（Python の
+`cryptography` が必要）を使います。
 
 [`tests/windows_integration.py`](tests/windows_integration.py) は、同じ統合
 試験クライアントを、実行したマシン自身の Windows SMB サーバーに対して動かし

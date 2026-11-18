@@ -23,8 +23,8 @@ procedure Adversarial_Client is
    --  Authentication_Error ("server did not complete signed SMB
    --  authentication").
    function Is_Negotiate_Tamper return Boolean is
-     (Mode'Length > 10
-      and then Mode (Mode'First .. Mode'First + 9) = "negotiate-");
+     (Mode in "negotiate-signing-algorithm" | "negotiate-cipher"
+        | "negotiate-salt" | "negotiate-server-guid");
 begin
    declare
       Client : SMB.Client.Connection;
@@ -63,16 +63,20 @@ begin
                  (Client, Ada.Environment_Variables.Value ("SMB_TEST_SHARE"));
             exception
                when SMB.Protocol_Error =>
-                  if Is_Negotiate_Tamper and then Authenticated then
-                     raise Program_Error with
-                       "tampered NEGOTIATE was not caught by authentication";
-                  elsif not Is_Negotiate_Tamper and then not Authenticated then
+                  if Is_Negotiate_Tamper or else not Authenticated then
                      raise Program_Error with
                        "authenticated-path proxy failed before authentication";
                   end if;
                   Rejected := True;
                when E : SMB.Authentication_Error =>
-                  if not Is_Negotiate_Tamper then
+                  --  Only the failed signature check of the final
+                  --  SESSION_SETUP response counts: an unsigned logon
+                  --  failure would say nothing about the preauth hash.
+                  if not Is_Negotiate_Tamper
+                    or else Ada.Strings.Fixed.Index
+                      (Ada.Exceptions.Exception_Message (E),
+                       "server did not complete signed SMB authentication") = 0
+                  then
                      raise;
                   end if;
                   Ada.Text_IO.Put_Line

@@ -280,7 +280,9 @@ def session_key_from_type3(packet: bytes, user: str, password: str) -> bytes | N
 # SMB 3.1.1 NEGOTIATE responses that the proxy alters, with no way to fix
 # the signatures that follow: the client hashes the altered response into
 # its preauth integrity hash, so the keys it derives differ from the
-# server's, and it must reject the signed final SESSION_SETUP response.
+# server's, and it must reject the signed final SESSION_SETUP response. The
+# cipher, salt and GUID changes test the hash alone; the signing algorithm
+# change also makes the client check with the other algorithm.
 NEGOTIATE_TAMPERS = (
     "negotiate-signing-algorithm",
     "negotiate-cipher",
@@ -356,7 +358,8 @@ def smb3_kdf(key: bytes, label: bytes, context: bytes) -> bytes:
 
 
 class SigningState:
-    """How the client signs and checks messages, as it sees the connection:
+    """How the client signs and checks messages, from the messages the
+    proxy relays (the server's responses as they came, before any change):
     HMAC-SHA256 with the session key for SMB 2.1; for 3.1.1, AES-CMAC or
     AES-GMAC, as the NEGOTIATE response says, with the key derived from the
     session key and the preauth integrity hash of the NEGOTIATE and
@@ -521,6 +524,7 @@ class AdversarialProxy:
             selected_read_header: bytes | None = None
             signing = SigningState()
             session_setup_requests = 0
+            final_session_setup_signed = False
 
             def sign(message: bytes | bytearray) -> bytes:
                 return signing.sign(session_key, message)
@@ -634,6 +638,16 @@ class AdversarialProxy:
                     response_command = struct.unpack_from("<H", payload, 12)[0]
                     response_status = struct.unpack_from("<I", payload, 8)[0]
                     signing.response(payload)
+                    if (
+                        self.mode in NEGOTIATE_TAMPERS
+                        and response_command == 1
+                        and response_status == 0
+                    ):
+                        # The server completed the logon and signed it: the
+                        # client's rejection can only be its own check.
+                        if struct.unpack_from("<I", payload, 16)[0] & 8 == 0:
+                            raise RuntimeError("final SESSION_SETUP response unsigned")
+                        final_session_setup_signed = True
                     if self.mode in NEGOTIATE_TAMPERS and response_command == 0:
                         if mutated:
                             raise RuntimeError("second NEGOTIATE response")
@@ -1438,6 +1452,10 @@ class AdversarialProxy:
                     raise RuntimeError(
                         "expected two SESSION_SETUP requests, got "
                         f"{session_setup_requests}"
+                    )
+                if not final_session_setup_signed:
+                    raise RuntimeError(
+                        "the server did not complete the logon with a signed response"
                     )
             if self.mode == "malformed-signed-set-info":
                 if set_info_requests != 1:
