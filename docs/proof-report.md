@@ -5592,8 +5592,14 @@ body, which followed `Build_Write` across the READ/WRITE branches. `Complete`
 now asserts the parsed limits after reading them and the engine's after
 `Mark_Negotiated`, and `Prepare_Next` asserts the data inside the WRITE
 branch. On the Mac, every check of `Complete` (14 min) and of
-`Prepare_Next` (7 min) then proved (`--limit-subp`), before the next full
-proof on GitHub Actions.
+`Prepare_Next` (7 min) then proved (`--limit-subp`), and on GitHub Actions
+`Prepare_Next` did too, but `Complete`'s postcondition still ran out:
+`--report=statistics` showed one of its VCs taking Z3 359 s and 2,978,598
+steps on the Mac (CVC5 failed on it at once), more than the slower runner
+allows. `Complete` now also asserts each clause of the postcondition's
+NEGOTIATE case right after `Mark_Negotiated` (LARGE_MTU from the packet,
+the two ranges, the two limits), and the slowest VC of the postcondition
+took Z3 0.3 s and 2,284 steps; no check of `Complete` took more than 0.6 s.
 
 `Credit_Tests` grows to 191 checks: WRITE charges and refusals,
 `Current_Write_Chunk`, the MaxWriteSize clamp, 1 MiB WRITEs through

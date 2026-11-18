@@ -1052,6 +1052,32 @@ is
            (SMB.Engine.Has_Large_MTU (State) = Info.Large_MTU
             and then SMB.Engine.Current_Max_Read (State) = Info.Max_Read
             and then SMB.Engine.Current_Max_Write (State) = Info.Max_Write);
+         --  The negotiated limits as the postcondition states them, one
+         --  clause at a time: together, they kept Z3 busy for six minutes.
+         pragma Assert
+           (SMB.Engine.Has_Large_MTU (State) =
+              ((SMB.Core_Wire.Encoded_U32 (Packet, 88)
+                  and SMB.Core_Protocol.Large_MTU_Capability) /= 0));
+         pragma Assert
+           (SMB.Engine.Current_Max_Read (State) in
+              1 .. SMB.Core_Protocol.Maximum_Read_Chunk);
+         pragma Assert
+           (SMB.Engine.Current_Max_Write (State) in
+              1 .. SMB.Core_Protocol.Maximum_Write_Chunk);
+         pragma Assert
+           (SMB.Engine.Current_Max_Read (State) =
+              Natural (SMB.DWord'Min
+                ((if SMB.Engine.Has_Large_MTU (State)
+                  then SMB.Core_Protocol.Maximum_Read_Chunk
+                  else SMB.Core_Protocol.Maximum_IO_Chunk),
+                 SMB.Core_Wire.Encoded_U32 (Packet, 96))));
+         pragma Assert
+           (SMB.Engine.Current_Max_Write (State) =
+              Natural (SMB.DWord'Min
+                ((if SMB.Engine.Has_Large_MTU (State)
+                  then SMB.Core_Protocol.Maximum_Write_Chunk
+                  else SMB.Core_Protocol.Maximum_IO_Chunk),
+                 SMB.Core_Wire.Encoded_U32 (Packet, 100))));
          pragma Assert
            (SMB.Engine.Current_Dialect (State) = SMB.SMB2_Dialect_0311
             or else
