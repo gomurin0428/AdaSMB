@@ -495,7 +495,7 @@ opens a received one. It is a stateless SPARK unit, like
   proves with `PROOF_REPORT=statistics`, and `tests/proof_steps.py` puts the
   most steps any check took, per prover, in the job summary. Without a
   limit, on GitHub Actions, the most were Z3 930,070
-  (`Core_Connection.Complete`'s postcondition, 2,284 once #138 is in), CVC5
+  (`Core_Connection.Complete`'s postcondition, 2,284 since #138), CVC5
   558,271 (`smb-core_protocol.ads:425`) and Alt-Ergo 34,121.
 * Mutants get a lower limit where the unit allows it (the maintainer's
   choice, so that `make prove` and the pull request's proof are not
@@ -510,8 +510,9 @@ opens a received one. It is a stateless SPARK unit, like
 * A steps limit (or a time limit, as before) can still count a mutant as
   detected that breaks nothing: one that leaves every goal true but makes
   one need more than the limit. The margin makes that less likely at
-  20,000; at `PROOF_STEPS` the margin over main is small until #138
-  (930,070 of 1,000,000). Such a mutant shows among those only the proof
+  20,000; at `PROOF_STEPS` the largest count left on main after #138 is
+  CVC5's 558,271, of 1,000,000 (before #138, Z3's 930,070 once made #141's
+  first proof run out). Such a mutant shows among those only the proof
   detected, as Undecided, which the pull request judges. AdaMutant's
   equivalence check runs on survivors only, so an equivalent mutant whose
   goal got harder shows there too.
