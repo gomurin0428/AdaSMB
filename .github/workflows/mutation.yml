@@ -3,7 +3,14 @@ name: Mutation
 on:
   schedule:
     - cron: '0 18 * * 6' # Saturday 18:00 UTC (Sunday 03:00 JST)
+  # Run by hand, it can take the files to mutate, in one job, to try
+  # something on a few units; by default it mutates every file in 8 shards.
   workflow_dispatch:
+    inputs:
+      files:
+        description: Files to mutate, separated by spaces (all when empty)
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -15,7 +22,7 @@ concurrency:
 env:
   ADA_TOOLCHAIN: gnat_native=16.1.0 gprbuild=26.0.1
   TOOLCHAIN_KEY: alr2.1.1-gnat16.1.0-gprbuild26.0.1-v1
-  ADAMUTANT_COMMIT: 33e56e3d85d513757ff2efe5076765adc7ce4146
+  ADAMUTANT_COMMIT: d1d049ec74e043351b3395ec31cfc232419873e2
 
 jobs:
   # The proof of each mutant takes the goals it does not change from
@@ -41,10 +48,21 @@ jobs:
           path: proof-cache
           key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
           restore-keys: proof-cache-${{ runner.os }}-gnatprove16.1.0-
+      # Only the units to mutate, when files are given by hand.
       - name: Prove
+        env:
+          FILES: ${{ inputs.files }}
         run: |
           mkdir -p proof-cache
-          time make prove PROOF_CACHE=proof-cache
+          units=$(for file in $FILES; do basename "$file"; done | tr '\n' ' ')
+          time make prove PROOF_CACHE=proof-cache PROOF_REPORT=statistics PROOF_UNITS="$units"
+      - name: Show the proof steps
+        if: always()
+        run: python3 tests/proof_steps.py gnatprove.out >> "$GITHUB_STEP_SUMMARY"
+      - name: Prove the units to mutate at the low steps limit
+        env:
+          FILES: ${{ inputs.files }}
+        run: python3 tests/mutant_low_steps.py proof-cache ${FILES:---all}
       - name: Save the proof cache
         if: always()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -60,7 +78,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        # One shard for files given by hand.
+        shard: ${{ fromJSON(inputs.files && '[1]' || '[1, 2, 3, 4, 5, 6, 7, 8]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -86,8 +105,13 @@ jobs:
       - name: Mutate the files of this shard
         env:
           PROOF_CACHE: ${{ github.workspace }}/proof-cache
+          FILES: ${{ inputs.files }}
         run: |
-          files=$(python3 tests/mutation_shards.py ${{ matrix.shard }}/8)
+          if [ -n "$FILES" ]; then
+            files=$(for file in $FILES; do printf -- '--mutate %s ' "$file"; done)
+          else
+            files=$(python3 tests/mutation_shards.py ${{ matrix.shard }}/8)
+          fi
           adamutant run --concurrency 4 $files
       - name: Report
         if: always()

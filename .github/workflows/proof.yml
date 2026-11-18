@@ -1,6 +1,11 @@
 name: Proof
 
 on:
+  # After each merge, so that main's proof cache, the one a new pull request
+  # starts from, follows main: a pull request can read only its own caches
+  # and main's. With the cache, this proves only what the merge changed.
+  push:
+    branches: [main]
   schedule:
     - cron: '0 18 * * 0' # Sunday 18:00 UTC (Monday 03:00 JST)
   workflow_dispatch:

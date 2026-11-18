@@ -5492,3 +5492,53 @@ mutants no longer fail CI: `tests/mutation_survivors.py` lists them, and
 those only the proof detects, in the job summary, for the pull request to
 judge. On this Mac, the proof cache that a run without counterexamples filled
 was used by a run with them (`smb-core_request.adb`: 26 s, then 3 s).
+
+## AdaMutant 2c9351e and a steps limit
+
+AdaMutant 2c9351e gives each sandbox its own proof cache and recommends a
+steps limit for the provers: with the cache, GNATprove 16.1 lets a prover
+that stops at a time limit run about four times as long, and in #137 seven
+of the thirteen undetected mutants were proofs that ran out of time.
+`make prove` and `tests/mutant_prove.py` now pass `--steps=PROOF_STEPS`
+(1,000,000).
+
+The limit was chosen from measurements, on main's code:
+
+* Without a limit, on GitHub Actions (`--report=statistics`, 5,463 proved
+  checks with statistics), the most steps a check took were Z3 930,070
+  (`smb-core_connection.ads:278`), CVC5 558,271
+  (`smb-core_protocol.ads:425`) and Alt-Ergo 34,121
+  (`smb-core_client.adb:1892`). A limit of 1,000,000 keeps every check that
+  proved without one.
+* With a limit, other provers take over from a slow one: at 20,000 steps
+  `smb-core_resize.adb` proved in 8 s on the Mac, against 282 s at
+  3,000,000 and minutes without a limit; the postcondition that took CVC5
+  1,494,718 steps (159 s) was proved by Z3 in 3,450.
+* At 20,000 steps, with Z3 tried first, the whole project left checks
+  unproved: four in `Core_Text` (UTF-16 loops; one still at 200,000) and
+  one in `Core_Negotiate`. Lightening them for a lower limit was judged not
+  worth the time.
+* Z3 alone, at 20,000 steps, proved `Core_Resize` and `Core_Wire` but left
+  fifteen checks unproved in `Core_Text`, `Core_Negotiate` and
+  `Core_Framing`; the three provers stay.
+* A limit far above what checks need bounds little: a local AdaMutant run
+  over `smb-core_resize.adb` at 3,000,000 steps let the proofs of two
+  mutants that the old version had detected run out of their 20 minutes.
+
+The mutants of a unit that proves at 20,000 steps (`LOW_STEPS`) are proved
+at that limit: `tests/mutant_low_steps.py` proves each mutated unit there
+before the run and lists the ones that pass, which `tests/mutant_prove.py`
+reads; the others keep `PROOF_STEPS`. `make prove` and the pull request's
+proof are unchanged. A low limit only makes a prover give up sooner, never
+proves anything false, and a unit is listed only when its unmodified code
+proves at the limit, so no mutant is counted as detected for the limit
+alone. Over `smb-core_resize.adb` on the Mac (145 mutants, concurrency 2),
+AdaMutant 33e56e3 with no limit detected 131 (9 by the proof) and left 12,
+mostly proofs out of time, in 13,438 s; 2c9351e at 20,000 steps detected 142
+(20 by the proof) and left 2, in 3,253 s.
+
+GNATprove's exit status with `-u` counts the unproved checks that an earlier
+run left in the object directory for other units as well. A mutant that the
+proof detected in one unit would then make the proof of a later mutant of
+another unit in the same sandbox fail, and that mutant would be counted as
+detected. Both scripts now remove the earlier results first.

@@ -58,6 +58,7 @@ of date.
 | after 0.3.0 | Setting a file's size: SET_INFO FileEndOfFileInformation (`SMB.Core_Resize`, `SMB.Core_Request`) | merged (#135) |
 | after 0.3.0 | The proof cache in `proof.yml` (`make prove PROOF_CACHE=`) | merged (#136) |
 | after 0.3.0 | Multi-credit READs: LARGE_MTU, the engine's credit count, READs up to 960 KiB | #137 |
+| after 0.3.0 | AdaMutant 2c9351e: a proof cache per sandbox, a steps limit, main's cache kept current | #139 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -416,6 +417,53 @@ opens a received one. It is a stateless SPARK unit, like
 * Hostile transform headers are covered by unit tests through the engine;
   the adversarial proxy still speaks 2.1 only. Teaching it 3.1.1 would let
   the proxy tests run against the 3.1.1 Samba.
+
+## AdaMutant 2c9351e (#139)
+
+* AdaMutant gives each sandbox a proof cache of its own
+  (`ADAMUTANT_PROVE_CACHE`) and removes what a proof wrote when the proof
+  runs out of time (an entry cut short stops GNATprove). Each sandbox's
+  baseline run of `tests/mutant_prove.py` hard-links into it the entries of
+  `PROOF_CACHE`, which CI's whole proof filled. Before, the sandboxes all
+  wrote into `PROOF_CACHE` itself.
+* The proof of a mutant has its own time limit, `prove_timeout_ms` (20
+  minutes); the tests' margin, `timeout_ms`, is back to a minute.
+* `PROOF_STEPS` in the Makefile (1,000,000) is the provers' steps limit for
+  `make prove` and for each mutant's proof; the cache keys hold it, so the
+  two must agree, and `mutant_prove.py` reads it from the Makefile. CI
+  proves with `PROOF_REPORT=statistics`, and `tests/proof_steps.py` puts the
+  most steps any check took, per prover, in the job summary. Without a
+  limit, on GitHub Actions, the most were Z3 930,070
+  (`Core_Connection.Complete`'s postcondition, 2,284 since #138), CVC5
+  558,271 (`smb-core_protocol.ads:425`) and Alt-Ergo 34,121.
+* Mutants get a lower limit where the unit allows it (the maintainer's
+  choice, so that `make prove` and the pull request's proof are not
+  affected): before each mutation run, `tests/mutant_low_steps.py` proves
+  each mutated unit at `LOW_STEPS` (20,000) into `PROOF_CACHE/low/cache`
+  and lists those that proved in `PROOF_CACHE/low/units.txt`; their
+  mutants are proved at 20,000, the others at `PROOF_STEPS`. The list is
+  made anew each run from the units it checks, so a unit that stops
+  proving at 20,000 falls back by itself, and a mutant is never counted as
+  detected because of the low limit alone. Not every unit proves there
+  (`Core_Text`, `Core_Negotiate` do not); rewriting them for it was judged
+  not worth the time.
+* The effect, on the Mac over `smb-core_resize.adb` (145 mutants,
+  concurrency 2): AdaMutant 33e56e3 with no limit, 131 detected (9 by the
+  proof), 12 undetected (mostly proofs out of time), 13,438 s; 2c9351e at
+  20,000 steps, 142 detected (20 by the proof), 2 undetected, 3,253 s. At
+  3,000,000 steps, two mutants' proofs still ran out of their 20 minutes.
+* GNATprove's exit status with `-u` also counts the unproved checks that an
+  earlier run left in the object directory for other units. In a sandbox,
+  a mutant of one unit that the proof detected would then make the proof
+  of a later mutant of another unit fail too, a false detection. Both
+  scripts now remove the earlier results (`*.spark`) first.
+* `proof.yml` also runs on each push to main, so main's proof cache, the
+  one a new pull request starts from, follows main. Before, it was saved
+  only by the weekly run, and a pull request after a change to widely used
+  records (#137) proved nearly everything again.
+* GNATprove's cache keys hold each goal's source position, so lines added
+  in the middle of a large unit (`smb-core_client.adb`) make the goals
+  after them miss the cache.
 
 ## File information (#134)
 

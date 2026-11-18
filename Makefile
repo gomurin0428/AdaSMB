@@ -7,6 +7,19 @@ MUTATION_BASE ?= origin/main
 # results of unchanged proof goals are taken from it instead of the provers.
 # Empty means no cache.
 PROOF_CACHE ?=
+# The provers' steps limit (--steps; 0 for none). A goal stops at the same
+# point under any load, and one that a mutant makes fail stops there rather
+# than at the time limit, which GNATprove 16.1 overruns about fourfold when
+# it uses the proof cache. The most steps any check took without a limit,
+# on GitHub Actions, was 930,070 (Z3), so every check that proved without
+# it still proves. The cache keys hold it, so tests/mutant_prove.py reads it
+# from here.
+PROOF_STEPS ?= 1000000
+# The report: "statistics" adds each check's provers, time and steps, which
+# tests/proof_steps.py sums up.
+PROOF_REPORT ?= all
+# Source files to prove alone (gnatprove -u); the whole project when empty.
+PROOF_UNITS ?=
 
 .PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test aes-test cmac-test ccm-test gcm-test kdf-test signing-test clock-test check stack-check clean example prove mutation mutation-diff
 
@@ -86,23 +99,28 @@ stack-check:
 
 # With PROOF_CACHE, the whole project is proved into the cache first, so that
 # the proof of each mutant (tests/mutant_prove.py) proves only the goals the
-# mutant changes. The undetected mutants are listed, not failed: a person
+# mutant changes; the mutated units that also prove at a much lower steps
+# limit are proved there too, and their mutants at that limit
+# (tests/mutant_low_steps.py). The undetected mutants are listed, not failed: a person
 # judges them.
 mutation:
 	$(if $(PROOF_CACHE),$(MAKE) prove PROOF_CACHE=$(PROOF_CACHE))
+	$(if $(PROOF_CACHE),$(PYTHON) tests/mutant_low_steps.py $(PROOF_CACHE) --all)
 	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run
 	$(PYTHON) tests/mutation_survivors.py
 
 mutation-diff:
 	$(if $(PROOF_CACHE),$(MAKE) prove PROOF_CACHE=$(PROOF_CACHE))
+	$(if $(PROOF_CACHE),$(PYTHON) tests/mutant_low_steps.py $(PROOF_CACHE) --since $(MUTATION_BASE))
 	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run --since $(MUTATION_BASE)
 	$(PYTHON) tests/mutation_survivors.py
 
 prove:
 	@command -v gnatprove >/dev/null 2>&1 || { echo "gnatprove is required"; exit 127; }
-	@gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=all \
-		--checks-as-errors=on --prover=cvc5,z3,altergo -j4 \
+	@gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=$(PROOF_REPORT) \
+		--steps=$(PROOF_STEPS) --checks-as-errors=on --prover=cvc5,z3,altergo -j4 \
 		$(if $(PROOF_CACHE),--memcached-server=file:$(abspath $(PROOF_CACHE))) \
+		$(if $(PROOF_UNITS),-u $(PROOF_UNITS)) \
 		> gnatprove.out 2>&1; result=$$?; \
 		cat gnatprove.out; exit $$result
 
