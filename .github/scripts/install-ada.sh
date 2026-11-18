@@ -16,6 +16,9 @@ case "${RUNNER_OS}/${RUNNER_ARCH}" in
   Windows/X64)
     asset=x86_64-windows
     digest=863013b1f94da6f3b7d0d5a74022ac3370424eeea9a470ebdb33d188d61b9125 ;;
+  Linux/ARM64)
+    asset=aarch64-linux
+    digest=d76c93ad3dc631826144e10bdabc6b3bf98783805bebfd5e4a0e852dd524d812 ;;
   macOS/ARM64)
     asset=aarch64-macos
     digest=2c4867bfff3b95ecd9d846df460a52983d2b0072808b341f8fa5d82494fb309e ;;
