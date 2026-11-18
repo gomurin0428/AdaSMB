@@ -5467,11 +5467,12 @@ LARGE_MTU and in sixteen without; and a 512 KiB READ that starts with one
 credit and gets 4, 2 and 1 back, in requests of 64, 256, 128 and 64 KiB. The
 integration client writes a 1 MiB file and reads it back in one call. The
 adversarial proxy clears LARGE_MTU in the SMB 2.1 NEGOTIATE response of the
-two modes that need a transfer in several 64 KiB requests.
+three modes that need a transfer in several 64 KiB requests.
 
 The review before merging found the CI failure that the first push had: the
 proxy's `interrupted-read-after-progress` test expected the 70,001-byte
-fixture in two READs, and the client now reads it in one. It also asked for
+fixture in two READs, and the client now reads it in one; the next push
+showed `read-reserved-fields` expecting three. It also asked for
 the contracts above (the CreditRequest in `Core_Client`'s header steps, and
 `Invalidate`'s reset), the tests above, and docs that say how credits from
 unauthenticated responses are counted and that the receive deadline covers

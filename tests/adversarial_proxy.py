@@ -722,6 +722,7 @@ class AdversarialProxy:
                         self.mode in {
                             "interrupted-read-after-progress",
                             "lost-write-response-after-progress",
+                            "read-reserved-fields",
                         }
                         and len(payload) >= 128
                         and payload[12:14] == b"\x00\x00"

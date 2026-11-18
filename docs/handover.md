@@ -487,9 +487,9 @@ opens a received one. It is a stateless SPARK unit, like
   two requests or, without LARGE_MTU, sixteen, and chunks that shrink with
   small grants), and the integration client reads a 1 MiB file back in one
   call. The adversarial proxy clears LARGE_MTU in the SMB 2.1 NEGOTIATE
-  response for `interrupted-read-after-progress` and
-  `lost-write-response-after-progress`, which need a transfer in several
-  64 KiB requests.
+  response for `interrupted-read-after-progress`, `read-reserved-fields`
+  and `lost-write-response-after-progress`, which need a transfer in
+  several 64 KiB requests.
 * `Credit_Target` (32) is what the CreditRequest asks to be back at; a
   server may grant more. Samba 4.19 grants the charge plus the request
   minus one, so the count grows by about fourteen per 960 KiB READ until
