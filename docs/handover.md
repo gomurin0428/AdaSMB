@@ -520,7 +520,8 @@ opens a received one. It is a stateless SPARK unit, like
   mutants.
 * #141 (from #139's review): the proof cache is not saved from a cancelled
   or timed-out run (a prover stopped while writing leaves an entry cut
-  short); `proof.yml` runs after merges are queued, not cancelled; the
+  short); a `proof.yml` run after a merge is not cancelled by the next
+  merge (only one more waits; a scheduled or by-hand run still cancels); the
   Mutation workflow's run by hand proves only the given SPARK units and
   does not cancel the weekly run, and its shards fail when the cache is
   missing; `make prove PROOF_UNITS=` removes earlier results first.

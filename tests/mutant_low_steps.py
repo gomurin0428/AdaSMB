@@ -73,11 +73,13 @@ def low_units(cache: str) -> set[str]:
     return set(listing.read_text(encoding="utf-8").split())
 
 
-def most_steps(output: str) -> int:
+def most_steps(output: str) -> int | None:
     """The most steps any prover but Trivial took on a proved check, from
-    GNATprove's output with --report=statistics."""
-    return max((int(steps) for prover, _vcs, _seconds, steps
-                in PROVER.findall(output) if prover != "Trivial"), default=0)
+    GNATprove's output with --report=statistics; None when the output has
+    no statistics, so that a unit is not listed on no evidence."""
+    steps = [int(count) for prover, _vcs, _seconds, count
+             in PROVER.findall(output) if prover != "Trivial"]
+    return max(steps) if steps else None
 
 
 def changed_units(base: str) -> list[str]:
@@ -113,7 +115,8 @@ def main() -> int:
         ]
         result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
         most = most_steps(result.stdout + result.stderr)
-        listed = result.returncode == 0 and most <= MARGIN_STEPS
+        listed = (result.returncode == 0 and most is not None
+                  and most <= MARGIN_STEPS)
         verdict = ("not proved" if result.returncode != 0
                    else f"proved, at most {most} steps")
         print(f"{unit}: {verdict} at {LOW_STEPS}"

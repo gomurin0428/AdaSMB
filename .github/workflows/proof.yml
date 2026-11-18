@@ -13,8 +13,9 @@ on:
 permissions:
   contents: read
 
-# A run after a merge is not cancelled by the next merge: each one saves
-# main's cache.
+# A running proof after a merge is not cancelled by the next merge, so it
+# saves main's cache; GitHub still keeps only one waiting run, and a
+# scheduled or by-hand run cancels as before.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}

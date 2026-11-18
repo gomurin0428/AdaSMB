@@ -21,8 +21,8 @@ The cache keys hold the provers' limits, so the switches here, the steps
 limit (PROOF_STEPS, as in the Makefile) included, must be those of
 `make prove` for the goals to hit the cache. A unit that
 tests/mutant_low_steps.py listed in PROOF_CACHE/low/units.txt, because it
-proves unmodified at the much lower LOW_STEPS, is proved at that limit
-instead, so that a goal a mutant breaks fails sooner; its goals come from
+proves unmodified at the much lower LOW_STEPS with no check taking more than
+half of it, is proved at that limit instead, so that a goal a mutant breaks fails sooner; its goals come from
 PROOF_CACHE/low/cache, which the baseline links in too.
 
 A mutated file that proof.gpr does not prove (a non-SPARK unit) passes: no
