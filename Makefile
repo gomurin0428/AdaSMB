@@ -18,6 +18,8 @@ PROOF_STEPS ?= 1000000
 # The report: "statistics" adds each check's provers, time and steps, which
 # tests/proof_steps.py sums up.
 PROOF_REPORT ?= all
+# Source files to prove alone (gnatprove -u); the whole project when empty.
+PROOF_UNITS ?=
 
 .PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test aes-test cmac-test ccm-test gcm-test kdf-test signing-test clock-test check stack-check clean example prove mutation mutation-diff
 
@@ -118,6 +120,7 @@ prove:
 	@gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=$(PROOF_REPORT) \
 		--steps=$(PROOF_STEPS) --checks-as-errors=on --prover=cvc5,z3,altergo -j4 \
 		$(if $(PROOF_CACHE),--memcached-server=file:$(abspath $(PROOF_CACHE))) \
+		$(if $(PROOF_UNITS),-u $(PROOF_UNITS)) \
 		> gnatprove.out 2>&1; result=$$?; \
 		cat gnatprove.out; exit $$result
 

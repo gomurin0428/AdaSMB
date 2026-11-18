@@ -48,10 +48,14 @@ jobs:
           path: proof-cache
           key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
           restore-keys: proof-cache-${{ runner.os }}-gnatprove16.1.0-
+      # Only the units to mutate, when files are given by hand.
       - name: Prove
+        env:
+          FILES: ${{ inputs.files }}
         run: |
           mkdir -p proof-cache
-          time make prove PROOF_CACHE=proof-cache PROOF_REPORT=statistics
+          units=$(for file in $FILES; do basename "$file"; done)
+          time make prove PROOF_CACHE=proof-cache PROOF_REPORT=statistics PROOF_UNITS="$units"
       - name: Show the proof steps
         if: always()
         run: python3 tests/proof_steps.py gnatprove.out >> "$GITHUB_STEP_SUMMARY"
