@@ -60,6 +60,7 @@ of date.
 | after 0.3.0 | Multi-credit READs: LARGE_MTU, the engine's credit count, READs up to 960 KiB | #137 |
 | after 0.3.0 | AdaMutant 2c9351e: a proof cache per sandbox, a steps limit, main's cache kept current | #139 |
 | after 0.3.0 | The adversarial proxy over SMB 3.1.1: NEGOTIATE tampering, signing with the 3.1.1 key | #142 |
+| after 0.3.0 | The adversarial proxy over SMB 3.1.1: encryption (open and encrypt again) | #144 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -415,11 +416,9 @@ opens a received one. It is a stateless SPARK unit, like
   * The index is a third-party repository: leave the Claude session URL
     and any `Claude-Session:` commit trailer out of pull requests and
     commits there.
-* The adversarial proxy speaks 3.1.1 signing since #142 (below), not yet
-  encryption: hostile transform headers are covered by unit tests through
-  the engine, and the proxy modes that need to alter encrypted traffic
-  still run over 2.1. Teaching the proxy to decrypt and encrypt again
-  (AES-CCM and AES-GCM with keys from the preauth hash) is the next part.
+* The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
+  below). Hostile transform headers themselves are covered by unit tests
+  through the engine. The other proxy modes still run over 2.1 only.
 
 ## The adversarial proxy over SMB 3.1.1 (#142)
 
@@ -454,6 +453,25 @@ opens a received one. It is a stateless SPARK unit, like
   the 14 `RESPONSE_MUTATIONS` (READ and WRITE fields, header fields) run as
   in the 2.1 run, the proxy signing the altered responses with the 3.1.1
   key.
+* Since #144 they also run in the four encrypted runs. `SigningState`
+  takes the cipher from the NEGOTIATE response and derives the keys
+  (SMB3KDF with "SMBC2SCipherKey\0" and "SMBS2CCipherKey\0", 32 bytes,
+  L = 256, for the AES-256 ciphers). The proxy opens each transform message
+  (AES-CCM with an 11-byte nonce or AES-GCM with a 12-byte one, the header
+  from the Nonce field on as associated data): an encrypted request only to
+  look at it, forwarding the original bytes, and every encrypted response,
+  passed on or altered, which `to_client` encrypts again under the same
+  nonce and SessionId with the new OriginalMessageSize. In the encrypted
+  runs the proxy requires the response it alters to have come encrypted. Inside encryption the proxy, like the
+  client, neither checks nor rewrites the Signature field: the tag
+  authenticated the response when it was opened, and servers differ on the
+  SIGNED flag there (Windows clears it, Samba copies the request's; the
+  first CI run of #144 met Samba's). The KDF matches
+  `tests/kdf_conformance.py`'s for every label at 16 and 32 bytes, and
+  `open` and `seal` reproduce Microsoft's published AES-128-CCM and
+  AES-128-GCM transform messages (checked by hand, not by a test). Samba
+  picks AES-128-GCM where it may choose, so AES-128-CCM never reaches the
+  proxy in CI.
 * Still over 2.1 only: everything else the proxies do, among them the
   directory, SET_INFO, CREATE, reserved-field, security-buffer,
   connection-level, unsigned and tampered-signature, interrupted READ and

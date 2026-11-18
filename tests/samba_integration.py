@@ -49,15 +49,18 @@ def smbd_diagnostics(work: pathlib.Path) -> str:
     return "\n".join(lines)
 
 
-def run_response_mutation_cases(env: dict[str, str], share: pathlib.Path) -> None:
-    """Signed READ and WRITE responses that the proxy alters and signs
-    again, with the 2.1 key or the 3.1.1 one: the client must reject each,
-    and a rejected WRITE must have reached the server once."""
+def run_response_mutation_cases(env: dict[str, str], share: pathlib.Path,
+                                encrypted: bool = False) -> None:
+    """READ and WRITE responses that the proxy alters, then signs again with
+    the 2.1 or the 3.1.1 key, or, in an encrypted session (where each must
+    come encrypted), encrypts again: the client must reject each, and a
+    rejected WRITE must have reached the server once."""
     for index, mode in enumerate(RESPONSE_MUTATIONS, start=21):
         (share / "mutation-write.bin").write_bytes(b"A" * 64)
         (share / "mutation-write.bin").chmod(0o666)
         proxy_port = PORT + index
-        proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD)
+        proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD,
+                                 encrypted=encrypted)
         proxy.start()
         mutation_env = env.copy()
         mutation_env.update(
@@ -224,9 +227,9 @@ def main() -> int:
             (share / f"pagination-{index:04}.txt").touch()
         # ADASMB_SMB311_ONLY=1 runs the integration client in its default,
         # 3.1.1-only policy against a server that speaks only 3.1.1, then
-        # the proxy cases that 3.1.1 can run (NEGOTIATE tampering, and the
-        # signed response mutations when nothing is encrypted). The other
-        # proxy tests below need the 2.1 server.
+        # the proxy cases that 3.1.1 runs (NEGOTIATE tampering and the
+        # response mutations, signed or encrypted). The other proxy tests
+        # below need the 2.1 server.
         smb311_only = os.environ.get("ADASMB_SMB311_ONLY") == "1"
         protocol = "SMB3_11" if smb311_only else "SMB2_10"
         # ADASMB_SMB_ENCRYPT sets "server smb encrypt": "off" leaves 3.1.1
@@ -365,13 +368,12 @@ def main() -> int:
                             print(log.read_text(encoding="utf-8", errors="replace"),
                                   file=sys.stderr)
                         raise
-                    # The proxy cases over 3.1.1: NEGOTIATE tampering in
-                    # every run, and, signed but not encrypted, the signed
-                    # response mutations, which the proxy signs again with
-                    # the 3.1.1 key.
+                    # The proxy cases over 3.1.1: NEGOTIATE tampering, and
+                    # the response mutations, which the proxy signs again
+                    # with the 3.1.1 key or, when the session encrypts,
+                    # opens and encrypts again with its keys.
                     run_negotiate_tamper_cases(env, encrypting=encrypt != "off")
-                    if encrypt == "off":
-                        run_response_mutation_cases(env, share)
+                    run_response_mutation_cases(env, share, encrypted=encrypt != "off")
                     print("local Samba SMB 3.1.1 integration tests passed")
                     return 0
                 if os.environ.get("ADASMB_DIRECTORY_ONLY") == "1":
