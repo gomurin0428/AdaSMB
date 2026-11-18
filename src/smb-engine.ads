@@ -23,8 +23,9 @@ is
    pragma Unevaluated_Use_Of_Old (Allow);
 
    Maximum_Handles : constant := 256;
-   --  The most credits counted as on hand, and the balance the client asks
-   --  the server to keep it at once multi-credit requests are on.
+   --  The most credits counted as on hand, and the count that a request's
+   --  CreditRequest asks to be back at once multi-credit requests are on (a
+   --  server may grant more).
    Maximum_Credits : constant := 8_192;
    Credit_Target : constant := 32;
 
@@ -1170,6 +1171,8 @@ is
        and Current_Encryption_Key (State) = SMB.AES.Key_256'(others => 0)
        and Current_Decryption_Key (State) = SMB.AES.Key_256'(others => 0)
        and Next_Nonce (State) = 0
+       and Current_Credits (State) = 0
+       and not Has_Large_MTU (State)
        and not Is_Encrypting (State)
        and not Holds_Decrypted_Response (State)
        and SMB.Core_Protocol."="

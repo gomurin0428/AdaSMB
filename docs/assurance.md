@@ -37,7 +37,7 @@ replace a successful GNATprove run.
 | `SMB.Core_Resize` | SET_INFO FileEndOfFileInformation lifecycle on an open handle that may write: a size no larger than 2**63 - 1, request construction/signing for a live writable handle only, send acknowledgement and response acceptance; as for `SMB.Core_Query`, `Complete` either succeeds, changes nothing (`Invalid_State_Status`), or fails the operation and invalidates the connection |
 | `SMB.Core_Request` | The header and signature of a request whose body is in place, shared by `SMB.Core_Query` and `SMB.Core_Resize`: the header fields written from the engine's expectation, and only the signature field changed by signing |
 | `SMB.Core_Connection` | Bounded NEGOTIATE, TREE_CONNECT, TREE_DISCONNECT, and LOGOFF lifecycle; request construction/signing, send acknowledgement, response correlation, receipt consumption, and phase-specific transitions; an SMB 3.1.1 NEGOTIATE with negotiate contexts, and a negotiated dialect of 3.1.1, or 2.1 only when it was offered |
-| `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC or AES-128-GMAC, as negotiated, with the derived key for 3.1.1), the negotiated dialect, cipher, signing algorithm and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime; the credit count (one on connection, each request's charge spent, each response's grant added up to 8,192), a READ's charge of one credit per 64 KiB only with SMB2_GLOBAL_CAP_LARGE_MTU and only with the credits on hand, and message ids that advance by the charge |
+| `SMB.Engine` | Phases, pending requests, signed final-response acceptance (HMAC-SHA256 for SMB 2.1, AES-128-CMAC or AES-128-GMAC, as negotiated, with the derived key for 3.1.1), the negotiated dialect, cipher, signing algorithm and preauth hash, 3.1.1 encryption (cipher keys, a nonce counter that advances once per sealed request and never wraps, and acceptance of decrypted responses only), SMB 2.x async-interim correlation, single-use response receipts and handle identity/lifetime; the credit count (one on connection, each request's charge spent, each response's grant added up to 8,192), a READ's charge of one credit per 64 KiB, only with SMB2_GLOBAL_CAP_LARGE_MTU and, above one credit, only with the credits on hand, and message ids that advance by the charge |
 
 Supported response bodies are parsed in the core after header/correlation and
 required signature validation. A successful final Session Setup also needs the
@@ -191,10 +191,17 @@ interim.
 
 The facade remains synchronous and keeps one outstanding request. One absolute
 receive deadline covers all interim frames and the final response; an interim
-does not renew it. Credit handling remains the existing single-request profile:
-first interim credit must be positive, a repeat may grant zero, an async final
-must grant zero, and synchronous responses must grant positive credit. This is
-not a full credit-window implementation. Async NEGOTIATE, SESSION_SETUP, and
+does not renew it. The engine counts credits: one on connection, each
+request's charge spent, each response's grant added (an interim's too), up to
+8,192. A first interim must grant credit, a repeat may grant zero, an async
+final must grant zero, and synchronous responses must grant positive credit.
+Only a READ with SMB2_GLOBAL_CAP_LARGE_MTU takes more than one credit, and
+only when the count covers it; a one-credit request is sent even with no
+credit counted. Grants in responses that are not authenticated (an interim
+under signing alone, the unsigned NEGOTIATE and first SESSION_SETUP responses
+of SMB 2.1) are counted as they are, so an on-path attacker could inflate the
+count and get the connection dropped: a denial of service, which it could
+cause anyway. One outstanding request remains the rule. Async NEGOTIATE, SESSION_SETUP, and
 TREE_CONNECT, compounds, cancellation, concurrent requests, and transport
 timing guarantees are outside this proof boundary.
 Normative references and observed validation results are listed in the

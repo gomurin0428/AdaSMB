@@ -44,7 +44,6 @@ package body SMB.Crypto is
       Result : SMB.Bytes (0 .. Total - 1) := (others => 0);
       Bits   : constant U64 := U64 (Length) * 8;
    begin
-      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: copying an empty Message changes nothing
       if Length > 0 then
          Result (0 .. Length - 1) := Message;
       end if;
@@ -94,7 +93,6 @@ package body SMB.Crypto is
         (0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15);
       Orders_3 : constant Round_Shifts (0 .. 15) :=
         (0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
-      --  adamutant:disable-next-line NumericLiteral: every byte is stored before return; the value is for flow analysis
       State : Digest_128 := (others => 0);
    begin
       A := 16#67452301#;
@@ -164,7 +162,6 @@ package body SMB.Crypto is
    procedure SHA256_Compress (H : in out Hash_State; Block : Block_Bytes)
      with Global => null
    is
-      --  adamutant:disable-next-line NumericLiteral: the loops below write every word first; the value is for flow analysis
       W : Word_Array (0 .. 63) := (others => 0);
    begin
       for I in 0 .. 15 loop
@@ -194,10 +191,8 @@ package body SMB.Crypto is
       begin
          for I in 0 .. 63 loop
             T1 := HH + (Ror (E, 6) xor Ror (E, 11) xor Ror (E, 25))
-              --  adamutant:disable-next-line LogicalOperator: the two terms of Ch share no bit, so xor equals or
               + ((E and F) xor ((not E) and G)) + SHA256_K (I) + W (I);
             T2 := (Ror (A, 2) xor Ror (A, 13) xor Ror (A, 22))
-              --  adamutant:disable-next-line LogicalOperator: or-ing in B and C still gives the majority
               + ((A and B) xor (A and C) xor (B and C));
             HH := G; G := F; F := E; E := D + T1;
             D := C; C := B; B := A; A := T1 + T2;
@@ -215,7 +210,6 @@ package body SMB.Crypto is
    begin
       Context :=
         (H => SHA256_IV,
-         --  adamutant:disable-next-line NumericLiteral: Update and Finish write every byte before it is read
          Block => (others => 0),
          Used => 0,
          Total => 0);
@@ -252,13 +246,11 @@ package body SMB.Crypto is
          SHA256_Compress (Context.H, Context.Block);
          Context.Block := (others => 0);
       end if;
-      --  adamutant:disable-next-line NumericLiteral: byte 56, the top byte of the bit count, is 0 for every input up to Maximum_Hash_Input and is already cleared
       for I in 0 .. 7 loop
          Context.Block (56 + I) :=
            SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#);
       end loop;
       SHA256_Compress (Context.H, Context.Block);
-      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: every byte is written below; the clear is for flow analysis
       Digest := (others => 0);
       for I in 0 .. 7 loop
          for J in 0 .. 3 loop
@@ -323,7 +315,6 @@ package body SMB.Crypto is
    procedure SHA512_Compress (H : in out Hash_State_64; Block : Block_Bytes_128)
      with Global => null
    is
-      --  adamutant:disable-next-line NumericLiteral: the loops below write every word first; the value is for flow analysis
       W : Word64_Array (0 .. 79) := (others => 0);
    begin
       for I in 0 .. 15 loop
@@ -352,10 +343,8 @@ package body SMB.Crypto is
       begin
          for I in 0 .. 79 loop
             T1 := HH + (Ror64 (E, 14) xor Ror64 (E, 18) xor Ror64 (E, 41))
-              --  adamutant:disable-next-line LogicalOperator: the two terms of Ch share no bit, so xor equals or
               + ((E and F) xor ((not E) and G)) + SHA512_K (I) + W (I);
             T2 := (Ror64 (A, 28) xor Ror64 (A, 34) xor Ror64 (A, 39))
-              --  adamutant:disable-next-line LogicalOperator: or-ing in B and C still gives the majority
               + ((A and B) xor (A and C) xor (B and C));
             HH := G; G := F; F := E; E := D + T1;
             D := C; C := B; B := A; A := T1 + T2;
@@ -371,7 +360,6 @@ package body SMB.Crypto is
    begin
       Context :=
         (H => SHA512_IV,
-         --  adamutant:disable-next-line NumericLiteral: Update and Finish write every byte before it is read
          Block => (others => 0),
          Used => 0,
          Total => 0,
@@ -411,13 +399,11 @@ package body SMB.Crypto is
       end if;
       --  The length field is the last 16 bytes. Its upper half stays zero
       --  for every input this package accepts.
-      --  adamutant:disable-next-line NumericLiteral: byte 120, the top byte of the bit count, is 0 for every input up to Maximum_Hash_Input and is already cleared
       for I in 0 .. 7 loop
          Context.Block (120 + I) :=
            SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#);
       end loop;
       SHA512_Compress (Context.H, Context.Block);
-      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: every byte is written below; the clear is for flow analysis
       Digest := (others => 0);
       for I in 0 .. 7 loop
          for J in 0 .. 7 loop
@@ -501,7 +487,6 @@ package body SMB.Crypto is
    begin
       Context :=
         (H => MD5_IV,
-         --  adamutant:disable-next-line NumericLiteral: Update and Finish write every byte before it is read
          Block => (others => 0),
          Used => 0,
          Total => 0);
@@ -543,7 +528,6 @@ package body SMB.Crypto is
            SMB.Byte (Interfaces.Shift_Right (Bits, I * 8) and 16#FF#);
       end loop;
       MD5_Compress (Context.H, Context.Block);
-      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: every byte is written below; the clear is for flow analysis
       Digest := (others => 0);
       Store_Le (Digest, 0, Context.H (0)); Store_Le (Digest, 4, Context.H (1));
       Store_Le (Digest, 8, Context.H (2)); Store_Le (Digest, 12, Context.H (3));
@@ -564,16 +548,13 @@ package body SMB.Crypto is
       Key : SMB.Bytes)
    is
       K0 : SMB.Bytes (0 .. 63) := (others => 0);
-      --  adamutant:disable-next-line NumericLiteral: the loop below writes every byte; the value is for flow analysis
       Inner_Pad : SMB.Bytes (0 .. 63) := (others => 0);
    begin
       if Key'Length > 64 then
          K0 (0 .. 15) := MD5 (Key);
-      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: copying an empty Key changes nothing
       elsif Key'Length > 0 then
          K0 (0 .. Key'Length - 1) := Key;
       end if;
-      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: the loop below writes every byte; the clear is for flow analysis
       Context.Outer_Pad := (others => 0);
       for I in 0 .. 63 loop
          Inner_Pad (I) := K0 (I) xor 16#36#;
@@ -606,13 +587,11 @@ package body SMB.Crypto is
       MD5_Update (Outer, Inner_Digest);
       MD5_Finish (Outer, Digest);
       --  The wipe only clears secrets: nothing reads them afterwards.
-      --  adamutant:disable NumericLiteral
       Context :=
         (Inner =>
            (H => (others => 0), Block => (others => 0), Used => 0, Total => 0),
          Outer_Pad => (others => 0),
          Length => 0);
-      --  adamutant:enable NumericLiteral
    end HMAC_MD5_Finish;
 
    function HMAC_MD5 (Key, Message : SMB.Bytes) return Digest_128 is
@@ -630,16 +609,13 @@ package body SMB.Crypto is
       Key : SMB.Bytes)
    is
       K0 : SMB.Bytes (0 .. 63) := (others => 0);
-      --  adamutant:disable-next-line NumericLiteral: the loop below writes every byte; the value is for flow analysis
       Inner_Pad : SMB.Bytes (0 .. 63) := (others => 0);
    begin
       if Key'Length > 64 then
          K0 (0 .. 31) := SHA256 (Key);
-      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: copying an empty Key changes nothing
       elsif Key'Length > 0 then
          K0 (0 .. Key'Length - 1) := Key;
       end if;
-      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: the loop below writes every byte; the clear is for flow analysis
       Context.Outer_Pad := (others => 0);
       for I in 0 .. 63 loop
          Inner_Pad (I) := K0 (I) xor 16#36#;
@@ -672,13 +648,11 @@ package body SMB.Crypto is
       SHA256_Update (Outer, Inner_Digest);
       SHA256_Finish (Outer, Digest);
       --  The wipe only clears secrets: nothing reads them afterwards.
-      --  adamutant:disable NumericLiteral
       Context :=
         (Inner =>
            (H => (others => 0), Block => (others => 0), Used => 0, Total => 0),
          Outer_Pad => (others => 0),
          Length => 0);
-      --  adamutant:enable NumericLiteral
    end HMAC_SHA256_Finish;
 
    function HMAC_SHA256 (Key, Message : SMB.Bytes) return Digest_256 is
@@ -698,7 +672,6 @@ package body SMB.Crypto is
       if Left'Length /= Right'Length then
          return False;
       end if;
-      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: for empty arrays the loop is empty too
       if Left'Length > 0 then
          for I in 0 .. Left'Length - 1 loop
             Difference := Difference or

@@ -124,6 +124,17 @@ package body Credit_Tests is
       Check (SMB.Engine.Current_Credits (State) = 157,
              "four exchanges at forty credits each:"
              & Natural'Image (SMB.Engine.Current_Credits (State)));
+      declare
+         Copy : Engine := State;
+      begin
+         SMB.Engine.Invalidate (Copy, Status);
+         Check (SMB.Engine.Current_Credits (Copy) = 0
+                and then not SMB.Engine.Has_Large_MTU (Copy),
+                "Invalidate drops the credits and LARGE_MTU");
+         SMB.Engine.Mark_Connected (Copy, Status);
+         Check (Status = SMB.Ok and then SMB.Engine.Current_Credits (Copy) = 1,
+                "a new connection starts at one credit");
+      end;
 
       --  A one-credit request records charge 1 and asks for enough to reach
       --  the target; a response's grant is added.
@@ -391,6 +402,7 @@ package body Credit_Tests is
             Amount : constant Natural :=
               Natural (SMB.Wire.U32 (Output, 64 + 4));
             Charge : constant SMB.Word := SMB.Wire.U16 (Output, 6);
+            Request : constant SMB.Word := SMB.Wire.U16 (Output, 14);
             Message_Id : constant SMB.QWord := SMB.Wire.U64 (Output, 24);
             Expected_Amount : constant Natural :=
               (if Large_MTU and then Requests = 0 then Read_Chunk
@@ -404,6 +416,9 @@ package body Credit_Tests is
                and then Amount = Expected_Amount
                and then Charge = SMB.Word
                  (SMB.Core_Protocol.Credit_Charge (Amount))
+               and then Request =
+                 SMB.Engine.Credit_Request_For
+                   (Large_MTU, SMB.Engine.Current_Credits (State), Charge)
                and then (Requests = 0
                          or else Message_Id =
                            Previous_Id
@@ -439,6 +454,56 @@ package body Credit_Tests is
       Free (Value);
    end Test_Large_Read;
 
+   --  A READ of 512 KiB that starts with one credit and gets 4, 2 and 1
+   --  credits back: requests of 64, 256, 128 and 64 KiB.
+   procedure Test_Small_Grants is
+      Total : constant := 524_288;
+      Grants : constant array (1 .. 4) of SMB.Word := (4, 2, 1, 1);
+      Amounts : constant array (1 .. 4) of Natural :=
+        (Credit, 4 * Credit, 2 * Credit, Credit);
+      State : Engine;
+      Token : Handle;
+      Value : Transfer_Access := new SMB.Core_Client.Transfer (Total);
+      Output : SMB.Bytes (0 .. 255);
+      Used : Natural;
+      Status : SMB.Core_Status;
+      Nt_Status : SMB.DWord;
+      Requests : Natural := 0;
+   begin
+      Shared (State, True, 1, Maximum_Read => Read_Chunk);
+      Open_Handle (State, Token, SMB.Engine.Read_Only);
+      SMB.Core_Client.Start_Read (Value.all, State, Token, 0, Total, Status);
+      while SMB.Core_Client.Transfer_Stage_Of (Value.all) /=
+        SMB.Core_Client.Transfer_Finished
+        and then Requests < Amounts'Last
+      loop
+         Requests := Requests + 1;
+         SMB.Core_Client.Prepare_Next (Value.all, State, Output, Used, Status);
+         declare
+            Offset : constant Natural :=
+              SMB.Core_Client.Transfer_Completed_Of (Value.all);
+            Amount : constant Natural :=
+              Natural (SMB.Wire.U32 (Output, 64 + 4));
+            Response : Bytes_Access;
+         begin
+            Check (Status = SMB.Ok and then Amount = Amounts (Requests),
+                   "small grants: request" & Natural'Image (Requests)
+                   & " of" & Natural'Image (Amount) & " bytes");
+            SMB.Core_Client.Transfer_Send_Succeeded (Value.all, State, Status);
+            Response := Read_Response
+              (SMB.Wire.U64 (Output, 24), Offset, Amount, Grants (Requests));
+            SMB.Core_Client.Complete_Read
+              (Value.all, State, Response.all, Nt_Status, Status);
+            Free (Response);
+         end;
+      end loop;
+      Check (SMB.Core_Client.Transfer_Stage_Of (Value.all) =
+               SMB.Core_Client.Transfer_Finished
+             and then Requests = 4,
+             "small grants: 512 KiB in four requests");
+      Free (Value);
+   end Test_Small_Grants;
+
    procedure Run is
    begin
       Test_Counting;
@@ -446,6 +511,7 @@ package body Credit_Tests is
       Test_Read_Chunk;
       Test_Large_Read (True);
       Test_Large_Read (False);
+      Test_Small_Grants;
       Ada.Text_IO.Put_Line
         ("credits and multi-credit READs:" & Natural'Image (Checks)
          & " checks passed");

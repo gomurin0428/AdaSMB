@@ -62,8 +62,9 @@ directory operations.
   SMB2_GLOBAL_CAP_LARGE_MTU (Windows and Samba do), one READ can carry up to
   960 KiB on up to fifteen credits, as far as the server's MaxReadSize and
   the credits it has granted allow; otherwise, and for every WRITE, a request
-  carries at most 64 KiB. Received offsets, lengths and their sums are
-  range-checked. SMB1, SMB 3.0 and 3.0.2, compression, compound requests,
+  carries at most 64 KiB. `Connect`'s `Timeout_Seconds` bounds the wait for
+  each whole response, so on a link slower than about 1 Mbit/s raise it.
+  Received offsets, lengths and their sums are range-checked. SMB1, SMB 3.0 and 3.0.2, compression, compound requests,
   Kerberos and guest/null fallback are not implemented.
 * Stack usage is outside the proofs. Frame, transfer, request and directory
   listing buffers live on the heap, and the socket is read 16 KiB at a time.
@@ -215,12 +216,14 @@ The test programs, and the library with them, are built with
 leaves an output unset then fails the tests on every platform, instead of
 passing whenever a stale value happens to be the expected one.
 
-`make mutation` checks the tests themselves with
+`make mutation` checks the tests and the proof with
 [AdaMutant](https://github.com/gomurin0428/AdaMutant), which must be on `PATH`
-(or named with `ADAMUTANT=`). It makes one small change at a time to the
-library source (an operator, a literal, a condition, or a whole assignment or
-call replaced by `null`), rebuilds `test_suite` and runs it. A change the tests
-do not notice is a surviving mutant. When `test_suite` misses a mutant of a
+(or named with `ADAMUTANT=`), as must GNATprove. It makes one small change at a
+time to the library source (an operator, a literal, a condition, or a whole
+assignment or call replaced by `null`), rebuilds `test_suite` and runs it; a
+mutant the tests do not notice then goes to GNATprove, which proves the
+mutated unit ([`tests/mutant_prove.py`](tests/mutant_prove.py)). A change that
+neither notices is a surviving mutant. When `test_suite` misses a mutant of a
 unit that a comparison test covers (NTLM, hashes, AES, AES-CMAC, AES-CCM,
 AES-GCM, the key derivation and signing, UTF conversion, the clock),
 [`tests/mutant_tests.py`](tests/mutant_tests.py) also runs that comparison test, so only the mutants that every applicable test
@@ -232,10 +235,15 @@ they need a live server, so only the integration tests (Samba and Windows)
 and the transport tests exercise them, and those are too slow to run once per mutant. The settings are
 in [`adamutant.toml`](adamutant.toml), and the HTML and JSON reports go to
 `.adamutant/reports`. [`tests/mutation_survivors.py`](tests/mutation_survivors.py)
-lists the mutants no test detected; `make mutation-diff` fails if there is one.
-A mutant that cannot change behavior, or that sits in a defensive branch no
-input can reach, is disabled in the source with an
-`adamutant:disable-next-line` comment that says why.
+lists, for a person to judge, the mutants that neither the tests nor the proof
+detected, and those that only the proof detected (candidates for a missing
+test), in AdaMutant's groups: confirmed by a counterexample run with the real
+code, a contract that says too little, and undecided. Undetected mutants do
+not fail the run, and nothing is excluded by hand: a mutant whose object code
+at `-O2` is unchanged is recognized as equivalent, and the rest are judged in
+the pull request. With `PROOF_CACHE=dir`, the mutation targets first prove
+the whole project into the cache, so that each mutant's proof proves only the
+goals it changes.
 
 `make unicode-test` uses Python 3's standard codecs as an independent
 reference and checks all 1,112,063 Unicode scalars except NUL, every
@@ -341,12 +349,15 @@ cached).
     each of AES-128-GCM, AES-128-CCM, AES-256-GCM and AES-256-CCM as the
     only cipher allowed), the comparison tests and the TCP transport test
   * macOS (ARM64): build with warnings as errors
-  * Pull requests only: mutation testing of the `src/*.adb` lines the pull
-    request changes (`make mutation-diff`); a mutant no test detects fails
-    the job
+  * Pull requests only: the full proof into the proof cache, which must pass,
+    then mutation testing of the `src/*.adb` lines the pull request changes,
+    with the tests and then the proof; the undetected mutants, and those only
+    the proof detects, are listed in the job summary for the pull request to
+    judge
 * `mutation.yml` (every Saturday 18:00 UTC, which is Sunday 03:00 JST, and
-  manual runs): mutation testing of all of `src/*.adb`, split over eight jobs
-  of about the same number of mutants. The reports are kept as artifacts.
+  manual runs): the full proof into the proof cache, then mutation testing of
+  all of `src/*.adb` with the tests and the proof, split over eight jobs of
+  about the same number of mutants. The reports are kept as artifacts.
 * `proof.yml` (every Sunday 18:00 UTC, which is Monday 03:00 JST, and manual
   runs): the full proof with `make prove`, with GNATprove's proof cache
   (`--memcached-server=file:...`) kept between runs, so that goals that did not

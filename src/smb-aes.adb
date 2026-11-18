@@ -187,7 +187,6 @@ package body SMB.AES is
    is
       Substituted : constant Block := Sub_Bytes
         ((Value (0), Value (1), Value (2), Value (3),
-          --  adamutant:disable-next-line NumericLiteral: only the first four bytes are used
           others => 0));
    begin
       return Substituted (0 .. 3);
@@ -202,7 +201,6 @@ package body SMB.AES is
       Long : constant Boolean := Key'Length = 32;
       Key_Words : constant Positive := (if Long then 8 else 4);
       Rounds : constant Round_Count := (if Long then 14 else 10);
-      --  adamutant:disable-next-line NumericLiteral: the key and the loop below write every byte that Encrypt reads; the value is for flow analysis
       W : SMB.Bytes (0 .. 239) := (others => 0);
    begin
       W (0 .. Key'Length - 1) := Key;

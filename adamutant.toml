@@ -1,6 +1,8 @@
 # Mutation testing with AdaMutant (https://github.com/gomurin0428/AdaMutant).
 # "make mutation" runs every mutant, "make mutation-diff" only the mutants on
-# lines changed since origin/main.
+# lines changed since origin/main. Each mutant goes to the tests first, and
+# only the mutants that the tests do not detect go to the proof. Nothing is
+# excluded by hand: the undetected mutants are listed for a person to judge.
 
 # Bodies only. src/platform holds the operating system entropy calls, which no
 # unit test can check.
@@ -12,10 +14,21 @@ exclude = ["src/smb-client.adb", "src/smb-transport.adb"]
 build = "gprbuild -q -p -P smb_tests.gpr test_suite.adb"
 # test_suite, then the comparison tests of the mutated unit.
 test = "python tests/mutant_tests.py"
+# GNATprove on the mutated unit, with counterexamples and, when PROOF_CACHE
+# is set, the proof cache (see tests/mutant_prove.py).
+prove = "python tests/mutant_prove.py"
+# A mutant whose object code at -O2 is the same as before is equivalent.
+equivalence_build = "gprbuild -q -p -c -P smb_tests.gpr test_suite.adb -cargs -O2 -g0"
+# AdaMutant gives the tests and the proof of a mutant the time they took
+# without a mutant, times 1.5, plus timeout_ms. The baseline proof is one
+# small unit and takes seconds, but a mutant that breaks proofs can keep the
+# provers busy for minutes, so the margin is 20 minutes. A test that a mutant
+# makes loop forever waits as long.
+timeout_ms = 1200000
 # A mutant of a length or a loop bound can allocate without limit. The largest
 # test process, the signing comparison, peaks at about 350 MB.
 test_memory_limit_mb = 2048
-sandbox_exclude = [".git", "build", "alire", "config"]
+sandbox_exclude = [".git", "build", "alire", "config", "proof-cache"]
 
 [thresholds]
 high = 80

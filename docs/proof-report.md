@@ -5428,8 +5428,12 @@ on hand, that the message id advances by the charge without wrapping, and
 the CreditRequest (`Credit_Request_For`). `Current_Read_Chunk`'s
 postcondition states that a chunk above 64 KiB has LARGE_MTU and a charge
 the credits cover, which is why `Prepare_Next` never asks `Begin_Request`
-for a READ it would refuse. Each `Prepare_Header` writes the charge and the
-CreditRequest, and its postcondition says so.
+for a READ it would refuse. Each `Prepare_Header` (and `Core_Client`'s
+`Prepare_Unsigned_Header`) writes the charge and the CreditRequest, and its
+postcondition says so; `Prepare_Next`'s postcondition
+(`Transfer_Packet_Matches`) does not repeat them, and the unit tests check
+both on the wire. `Invalidate`'s postcondition gives a count of zero and no
+LARGE_MTU.
 
 GNATprove 16.1.0 proved every check of the changed units, with no
 `pragma Assume` or justification. On the Mac: `smb-core_wire.adb` 448,
@@ -5448,8 +5452,9 @@ That run restored `main`'s proof cache and still took 64 min 33 s, against
 unchanged. The cache saves most on changes that leave such specifications
 alone.
 
-`test_suite` adds `Credit_Tests` (68 checks): the count from connection
-through each exchange, a grant of seven, the 8,192 cap, an error response's
+`test_suite` adds `Credit_Tests` (75 checks): the count from connection
+through each exchange, the reset on `Invalidate` and one credit on the next
+connection, a grant of seven, the 8,192 cap, an error response's
 and an interim response's grants and the async final's none; the charges
 at the 64 KiB boundaries, a fifteen-credit READ and the message id fifteen
 on, a two-credit READ refused with one credit on hand, a READ past 64 KiB
@@ -5457,5 +5462,32 @@ refused without LARGE_MTU, a WRITE past 64 KiB refused even with it, and the
 CreditRequest in each case; `Current_Read_Chunk` against the credits and the
 negotiated limit, and the parser's clamp with and without the bit; and a
 1 MiB READ through `SMB.Core_Client` in two requests (960 KiB, then 64 KiB,
-fifteen message ids apart) with LARGE_MTU and in sixteen without. The
-integration client writes a 1 MiB file and reads it back in one call.
+fifteen message ids apart, the CreditRequest on the wire each time) with
+LARGE_MTU and in sixteen without; and a 512 KiB READ that starts with one
+credit and gets 4, 2 and 1 back, in requests of 64, 256, 128 and 64 KiB. The
+integration client writes a 1 MiB file and reads it back in one call. The
+adversarial proxy clears LARGE_MTU in the SMB 2.1 NEGOTIATE response of the
+two modes that need a transfer in several 64 KiB requests.
+
+The review before merging found the CI failure that the first push had: the
+proxy's `interrupted-read-after-progress` test expected the 70,001-byte
+fixture in two READs, and the client now reads it in one. It also asked for
+the contracts above (the CreditRequest in `Core_Client`'s header steps, and
+`Invalidate`'s reset), the tests above, and docs that say how credits from
+unauthenticated responses are counted and that the receive deadline covers
+a whole 960 KiB response. The counting itself it found correct.
+
+### Mutation testing with the proof
+
+This pull request also moves to the current AdaMutant (`33e56e3`), which
+sends each mutant that the tests miss to GNATprove and has no comments that
+disable a mutant. All 706 `adamutant:disable` comments are gone. `prove` is
+`tests/mutant_prove.py`: GNATprove on the mutated unit, with counterexamples
+and the proof cache, which CI first fills with the full proof of the pull
+request, so a mutant's proof proves only the goals it changes; a unit that
+`proof.gpr` does not prove passes. `equivalence_build` compiles at `-O2`, and
+a mutant whose object code is unchanged is ignored as equivalent. Undetected
+mutants no longer fail CI: `tests/mutation_survivors.py` lists them, and
+those only the proof detects, in the job summary, for the pull request to
+judge. On this Mac, the proof cache that a run without counterexamples filled
+was used by a run with them (`smb-core_request.adb`: 26 s, then 3 s).

@@ -4,7 +4,6 @@ package body SMB.Engine
 is
    use type SMB.Core_Protocol.Response_Info;
 
-   --  adamutant:disable-next-line NumericLiteral: owner ids only need to differ
    Next_Owner_Id : SMB.QWord := 0;
 
    function Last_Allocated_Owner_Id return SMB.QWord is (Next_Owner_Id);
@@ -34,9 +33,7 @@ is
      (Packet : SMB.Bytes;
       Offset, Length : Natural) return SMB.Bytes is
    begin
-      --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: callers handle an empty token before slicing
       if Length = 0 then
-         --  adamutant:disable-next-line NumericLiteral: unreachable, as above
          return SMB.Bytes'(1 .. 0 => 0);
       end if;
       return Packet
@@ -99,20 +96,16 @@ is
          Status := SMB.Invalid_State_Status;
          return;
       end if;
-      --  adamutant:disable-next-line ConditionalExpression: needs 2**64 engines
       if Next_Owner_Id = SMB.QWord'Last then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Counter_Exhausted;
          return;
       end if;
       Next_Owner_Id := Next_Owner_Id + 1;
-      --  adamutant:disable-next-line StatementDeletion: the state is already disconnected
       State.Current := Disconnected;
       State.Owner_Id := Next_Owner_Id;
       State.Epoch := 0;
       --  Initialize only runs on a disconnected state with no key, request,
       --  receipt or handle, which Invalidate left with these values.
-      --  adamutant:disable StatementDeletion, NumericLiteral, BooleanLiteral
       State.Next_Message_Id := 0;
       State.Next_Ticket := 0;
       State.Session_Id := 0;
@@ -145,7 +138,6 @@ is
       State.Receipt_Close_Token := (others => 0);
       State.Receipt_Info := (others => <>);
       State.Handles := (others => <>);
-      --  adamutant:enable StatementDeletion, NumericLiteral, BooleanLiteral
       Status := SMB.Ok;
    end Initialize;
 
@@ -161,7 +153,6 @@ is
       --  The client may send its first request, the NEGOTIATE, on one
       --  credit (MS-SMB2 3.2.4.1.5); every response grants more.
       State.Credits := 1;
-      --  adamutant:disable-next-line StatementDeletion, BooleanLiteral: a disconnected state has it off
       State.Large_MTU := False;
       Status := SMB.Ok;
    end Mark_Connected;
@@ -177,19 +168,15 @@ is
       if State.Current /= Transport_Connected
         --  Without a receipt, Receipt_Info holds limits of 0, which the
         --  nonzero limits below fail.
-        --  adamutant:disable LogicalOperator
         or else not State.Receipt_Valid
         or else State.Receipt_Command /= 0
-        --  adamutant:enable LogicalOperator
         or else State.Receipt_Status /= SMB.Success
         or else State.Receipt_Signed
         or else State.Receipt_MIC_Valid
         or else State.Pending
         or else Maximum_Read = 0
         or else Maximum_Write = 0
-        --  adamutant:disable-next-line EqualityOperator: the parser clamps both limits to 65,536
         or else Maximum_Read > SMB.Maximum_Frame_Size
-        --  adamutant:disable-next-line EqualityOperator: the parser clamps both limits to 65,536
         or else Maximum_Write > SMB.Maximum_Frame_Size
         or else State.Receipt_Info.Max_Read /= Maximum_Read
         or else State.Receipt_Info.Max_Write /= Maximum_Write
@@ -200,7 +187,6 @@ is
       State.Max_Read := Maximum_Read;
       State.Max_Write := Maximum_Write;
       State.Large_MTU := State.Receipt_Info.Large_MTU;
-      --  adamutant:disable-next-line StatementDeletion: no session exists before negotiation
       State.Session_Id := 0;
       State.Dialect := State.Receipt_Info.Dialect;
       State.Cipher :=
@@ -208,7 +194,6 @@ is
          else SMB.Core_Negotiate.No_Cipher);
       State.Signing := Signing;
       State.Preauth := Preauth;
-      --  adamutant:disable-next-line StatementDeletion, BooleanLiteral: no session, so no key, exists before negotiation
       State.Has_SMB3_Key := False;
       State.Current := Negotiated;
       State.Receipt_Valid := False;
@@ -223,7 +208,6 @@ is
       if State.Dialect /= SMB.SMB2_Dialect_0311
         or else not State.Has_Key
         or else State.Has_SMB3_Key
-        --  adamutant:disable-next-line LogicalOperator, BooleanLiteral: the cipher keys exist only with the signing key
         or else State.Has_Cipher_Keys
       then
          Status := SMB.Invalid_State_Status;
@@ -252,13 +236,11 @@ is
       if State.Current /= Negotiated
         --  A receipt of another command or phase fails the command and status
         --  checks as well.
-        --  adamutant:disable LogicalOperator
         or else not State.Receipt_Valid
         or else State.Receipt_Command /= 1
         or else State.Receipt_Status /= SMB.Status_More_Processing_Required
         or else State.Receipt_Signed
         or else State.Receipt_MIC_Valid
-        --  adamutant:enable LogicalOperator
         or else State.Receipt_Info.Session_Id /= Session_Id
         or else State.Pending
         or else State.Has_Key
@@ -283,12 +265,10 @@ is
    begin
       --  A receipt of another command or phase fails the command and status
       --  checks as well.
-      --  adamutant:disable LogicalOperator
       if State.Current /= Negotiated or else not State.Has_Key
         or else State.Session_Id = 0
         or else State.Pending
         or else not State.Receipt_Valid
-        --  adamutant:enable LogicalOperator
         or else State.Receipt_Command /= 1
         or else State.Receipt_Status /= SMB.Success
         or else not State.Receipt_Signed
@@ -311,11 +291,9 @@ is
    begin
       --  A receipt of another command or phase fails the command and status
       --  checks as well.
-      --  adamutant:disable LogicalOperator
       if State.Current /= Authenticated or else Tree_Id = 0
         or else State.Pending
         or else not State.Receipt_Valid
-        --  adamutant:enable LogicalOperator
         or else State.Receipt_Command /= 3
         or else State.Receipt_Status /= SMB.Success
         or else not State.Receipt_Signed
@@ -351,9 +329,7 @@ is
       if State.Pending then
          Status := SMB.Invalid_State_Status;
          return;
-      --  adamutant:disable-next-line ConditionalExpression: needs 2**64 requests
       elsif State.Next_Message_Id = SMB.QWord'Last then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Counter_Exhausted;
          return;
       end if;
@@ -390,9 +366,7 @@ is
             return;
          end if;
          if Command = 5 then
-            --  adamutant:disable-next-line ConditionalExpression: needs 2**64 handles
             if State.Next_Ticket = SMB.QWord'Last then
-               --  adamutant:disable-next-line StatementDeletion: unreachable, as above
                Status := SMB.Counter_Exhausted;
                return;
             end if;
@@ -459,11 +433,8 @@ is
          Status := SMB.Resource_Limit;
          return;
       end if;
-      --  adamutant:disable-next-line ConditionalExpression: needs 2**64 requests
       if State.Next_Message_Id > SMB.QWord'Last - SMB.QWord (Charge) then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Counter_Exhausted;
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          return;
       end if;
       State.Receipt_Valid := False;
@@ -476,7 +447,6 @@ is
         (Command => Command,
          Message_Id => Message_Id,
          Tree_Id =>
-           --  adamutant:disable-next-line NumericLiteral: before a tree is connected its id is 0 either way
            (if Command = 0 or else Command = 2 or else Command = 3
             then 0 else State.Tree_Id),
          Session_Id => State.Session_Id,
@@ -492,12 +462,9 @@ is
              (State.Large_MTU,
               State.Credits - Natural'Min (State.Credits, Charge),
               SMB.Word (Charge)));
-      --  adamutant:disable-next-line StatementDeletion: the aggregate above already set it
       Expected.Request_Amount := Request_Amount;
-      --  adamutant:disable-next-line StatementDeletion: the aggregate above already set it
       Expected.Close_Token := Close_Token;
       State.Pending_Expected := Expected;
-      --  adamutant:disable-next-line StatementDeletion: without a pending request the async id is already 0
       State.Pending_Async_Id := 0;
       State.Pending := True;
       State.Credits := State.Credits - Natural'Min (State.Credits, Charge);
@@ -533,22 +500,17 @@ is
       State.Large_MTU := False;
       State.Receipt_Valid := False;
       --  Nothing reads the receipt fields once Receipt_Valid is False.
-      --  adamutant:disable StatementDeletion, NumericLiteral, BooleanLiteral
       State.Receipt_Command := 0;
       State.Receipt_Status := 0;
       State.Receipt_Signed := False;
       State.Receipt_MIC_Valid := False;
       State.Receipt_Close_Token := (others => 0);
-      --  adamutant:enable StatementDeletion, NumericLiteral, BooleanLiteral
       State.Receipt_Info := (others => <>);
       State.Next_Message_Id := 0;
       State.Next_Ticket := 0;
       State.Handles := (others => <>);
-      --  adamutant:disable-next-line ConditionalExpression: needs 2**64 invalidations
       if State.Epoch = SMB.QWord'Last then
-         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
          State.Owner_Id := 0;
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Counter_Exhausted;
          return;
       end if;
@@ -566,15 +528,12 @@ is
       Output := (others => 0);
       Used := 0;
       if not State.Encrypting
-        --  adamutant:disable-next-line LogicalOperator, ConditionalExpression, EqualityOperator: encryption needs the cipher keys, which need a cipher
         or else State.Cipher = SMB.Core_Negotiate.No_Cipher
       then
          Status := SMB.Invalid_State_Status;
          return;
       end if;
-      --  adamutant:disable-next-line ConditionalExpression, EqualityOperator: needs 2**64 requests
       if State.Nonce_Counter = SMB.QWord'Last then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Counter_Exhausted;
          return;
       end if;
@@ -599,7 +558,6 @@ is
       if not State.Encrypting
         or else not State.Pending
         or else State.Decrypted
-        --  adamutant:disable-next-line LogicalOperator, ConditionalExpression, EqualityOperator: encryption needs the cipher keys, which need a cipher
         or else State.Cipher = SMB.Core_Negotiate.No_Cipher
       then
          Status := SMB.Invalid_State_Status;
@@ -669,7 +627,6 @@ is
       end if;
       --  A pending request of these commands is signed both ways and needs an
       --  authenticated state, so neither branch is reachable.
-      --  adamutant:disable ConditionalExpression, LogicalOperator, StatementDeletion, EqualityOperator
       if not State.Has_Key
         or else not State.Pending_Expected.Request_Signed
         or else not State.Pending_Expected.Signed
@@ -684,7 +641,6 @@ is
       then
          Invalidate (State, Ignore_Status);
          Status := SMB.Invalid_State_Status;
-         --  adamutant:enable ConditionalExpression, LogicalOperator, StatementDeletion, EqualityOperator
          return;
       end if;
       SMB.Core_Wire.Validate_Header
@@ -769,7 +725,6 @@ is
         State.Pending_Expected.Signed and then not State.Decrypted;
       Header_Signed :=
         (if State.Decrypted
-         --  adamutant:disable-next-line EqualityOperator: a response of a bare header fails parsing either way
          then Packet'Length >= SMB.Core_Wire.Header_Size
            and then (SMB.Core_Wire.Encoded_U32 (Packet, 16) and 8) /= 0
          else State.Pending_Expected.Signed);
@@ -787,7 +742,6 @@ is
          Async_Id => State.Pending_Async_Id);
       if Wire_Status /= SMB.Ok then
          Invalidate (State, Ignore_Status);
-         --  adamutant:disable-next-line StatementDeletion: Validate_Header leaves it at 0 when it fails
          Nt_Status := 0;
          Status := Wire_Status;
          return;
@@ -812,13 +766,9 @@ is
             return;
          end if;
       elsif Expect_Signature then
-         --  adamutant:disable-next-line ConditionalExpression: only a request made with a key expects a signed reply
          if not State.Has_Key then
-            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Invalidate (State, Ignore_Status);
-            --  adamutant:disable-next-line StatementDeletion, NumericLiteral: unreachable, as above
             Nt_Status := 0;
-            --  adamutant:disable-next-line StatementDeletion: unreachable, as above
             Status := SMB.Signature_Error;
             return;
          end if;
@@ -857,7 +807,6 @@ is
                   or else Parsed.Count > State.Pending_Expected.Request_Amount)
       then
          Invalidate (State, Ignore_Status);
-         --  adamutant:disable-next-line StatementDeletion: Nt_Status is Success, which is 0
          Nt_Status := 0;
          Status := SMB.Invalid_Value;
          return;
@@ -869,7 +818,6 @@ is
                     State.Pending_Expected.Request_Amount)
       then
          Invalidate (State, Ignore_Status);
-         --  adamutant:disable-next-line StatementDeletion, NumericLiteral: Nt_Status is Success, which is 0
          Nt_Status := 0;
          Status := SMB.Invalid_Value;
          return;
@@ -883,10 +831,8 @@ is
               SMB.Core_NTLM.Mechanism_List_MIC
                 (SMB.Crypto.Digest_128 (State.Signing_Key), True);
          begin
-            --  adamutant:disable-next-line ConditionalExpression, NumericLiteral: an empty or one-byte token fails validation either way
             if Parsed.Data_Length = 0 then
                declare
-                  --  adamutant:disable-next-line NumericLiteral: a one-byte token fails validation as well
                   Empty : constant SMB.Bytes := (1 .. 0 => 0);
                begin
                   SMB.Core_NTLM.Validate_Final_Token
@@ -901,7 +847,6 @@ is
                begin
                   SMB.Core_NTLM.Validate_Final_Token
                     (Token, Mic_Status, Expected_MIC);
-                  --  adamutant:disable-next-line ConditionalExpression: the branch holds only assertions
                   if Mic_Status = SMB.Ok then
                      declare
                         Tail_Last : constant Natural :=
@@ -929,7 +874,6 @@ is
             end if;
             if Mic_Status /= SMB.Ok then
                Invalidate (State, Ignore_Status);
-               --  adamutant:disable-next-line StatementDeletion: Nt_Status is Success, which is 0
                Nt_Status := 0;
                Status := SMB.Invalid_Protocol;
                return;
@@ -967,7 +911,6 @@ is
       State.Receipt_Close_Token := State.Pending_Expected.Close_Token;
       State.Pending := False;
       State.Pending_Async_Id := 0;
-      --  adamutant:disable-next-line StatementDeletion: nothing reads it without a pending request
       State.Pending_Expected := (others => <>);
       State.Credits :=
         Natural'Min
@@ -990,14 +933,12 @@ is
          State.Current := Authenticated;
          State.Receipt_Valid := False;
          --  Nothing reads the receipt fields once Receipt_Valid is False.
-         --  adamutant:disable StatementDeletion, NumericLiteral, BooleanLiteral
          State.Receipt_Command := 0;
          State.Receipt_Status := 0;
          State.Receipt_Signed := False;
          State.Receipt_MIC_Valid := False;
          State.Receipt_Close_Token := (others => 0);
          State.Receipt_Info := (others => <>);
-         --  adamutant:enable StatementDeletion, NumericLiteral, BooleanLiteral
       elsif Nt_Status = SMB.Success
         and then State.Receipt_Command = 2
       then
@@ -1048,9 +989,7 @@ is
             return;
          end if;
       end loop;
-      --  adamutant:disable-next-line ConditionalExpression: needs 2**64 handles
       if State.Next_Ticket = SMB.QWord'Last then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Counter_Exhausted;
          return;
       end if;
@@ -1062,9 +1001,7 @@ is
          pragma Loop_Invariant
            (if Found then not State.Handles (Slot).Active);
       end loop;
-      --  adamutant:disable-next-line ConditionalExpression: Begin_Request found a free slot, and no request ran since
       if not Found then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Resource_Limit;
          return;
       end if;
@@ -1080,7 +1017,6 @@ is
                 Epoch => State.Epoch,
                 Ticket => State.Next_Ticket);
       State.Receipt_Valid := False;
-      --  adamutant:disable-next-line StatementDeletion, NumericLiteral: nothing reads it without a receipt
       State.Receipt_Close_Token := (others => 0);
       Status := SMB.Ok;
    end Register_Handle;
@@ -1146,12 +1082,10 @@ is
       Token : Handle_Token;
       Status : out SMB.Core_Status;
       Close_Token : Handle_Token := (others => 0)) is
-      --  adamutant:disable-next-line BooleanLiteral: the CLOSE request found the handle, and it is still open
       Found : Boolean := False;
    begin
       --  The token must equal the close token and the receipt's, and match
       --  the state, so each check repeats another.
-      --  adamutant:disable LogicalOperator
       if State.Current /= Share_Connected
         or else not State.Receipt_Valid
         or else State.Receipt_Command /= 6
@@ -1168,15 +1102,12 @@ is
         or else Token.Owner /= State.Owner_Id
         or else Token.Epoch /= State.Epoch
         or else Token.Ticket = 0
-        --  adamutant:enable LogicalOperator
       then
          Status := SMB.Invalid_Handle_Status;
          return;
       end if;
       for Index in State.Handles'Range loop
-         --  adamutant:disable-next-line ConditionalExpression: the handle is open, as above
          if State.Handles (Index).Active
-           --  adamutant:disable-next-line LogicalOperator: a closed slot keeps its ticket only after a CLOSE, which needs an open handle
            and then State.Handles (Index).Ticket = Token.Ticket
          then
             Found := True;
@@ -1185,9 +1116,7 @@ is
            ((not Found)
             or else Valid_Handle (State, Token, False, False));
       end loop;
-      --  adamutant:disable-next-line ConditionalExpression: the handle is open, as above
       if not Found then
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Handle_Status;
          return;
       end if;
@@ -1196,9 +1125,7 @@ is
            and then State.Handles (Index).Ticket = Token.Ticket
          then
             State.Handles (Index).Active := False;
-            --  adamutant:disable-next-line StatementDeletion, NumericLiteral: wipes the id of a closed handle, which nothing reads
             State.Handles (Index).File_Id := (others => 0);
-            --  adamutant:disable-next-line StatementDeletion: Found is already True
             Found := True;
          end if;
          pragma Loop_Invariant (Found);
@@ -1209,12 +1136,10 @@ is
              not State.Handles (J).Active
              or else State.Handles (J).Ticket /= Token.Ticket);
       end loop;
-      --  adamutant:disable-next-line ConditionalExpression: Found is True, as above
       if Found then
          State.Receipt_Valid := False;
          Status := SMB.Ok;
       else
-         --  adamutant:disable-next-line StatementDeletion: unreachable, as above
          Status := SMB.Invalid_Handle_Status;
       end if;
    end Close_Handle;
@@ -1229,14 +1154,12 @@ is
       end if;
       State.Receipt_Valid := False;
       --  Nothing reads the receipt fields once Receipt_Valid is False.
-      --  adamutant:disable StatementDeletion, NumericLiteral, BooleanLiteral
       State.Receipt_Command := 0;
       State.Receipt_Status := 0;
       State.Receipt_Signed := False;
       State.Receipt_MIC_Valid := False;
       State.Receipt_Close_Token := (others => 0);
       State.Receipt_Info := (others => <>);
-      --  adamutant:enable StatementDeletion, NumericLiteral, BooleanLiteral
       Status := SMB.Ok;
    end Discard_Response_Receipt;
 

@@ -713,6 +713,21 @@ class AdversarialProxy:
                         connection_responses.append(0)
                         mutated = True
                         continue
+                    # These modes need a READ or WRITE in several requests,
+                    # 64 KiB each. A client with SMB2_GLOBAL_CAP_LARGE_MTU
+                    # would read the fixture in one multi-credit request, so
+                    # the proxy clears the bit in the unsigned SMB 2.1
+                    # NEGOTIATE response, as any active attacker could.
+                    if (
+                        self.mode in {
+                            "interrupted-read-after-progress",
+                            "lost-write-response-after-progress",
+                        }
+                        and len(payload) >= 128
+                        and payload[12:14] == b"\x00\x00"
+                        and struct.unpack_from("<I", payload, 8)[0] == 0
+                    ):
+                        payload[88] &= ~0x04 & 0xFF
                     if len(payload) >= 64 and (
                         payload[12:14] == b"\x03\x00"
                         or (
