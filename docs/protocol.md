@@ -210,9 +210,9 @@ Ada の整数演算だけで実装しています。既定エントロピーはU
 短い読み取りやOS API失敗を成功扱いにせず、疑似乱数にフォールバックしません。UTF-8 の overlong、surrogate、範囲外 scalar、
 embedded NUL、UTF-16 の奇数長・不正 surrogate は拒否します。
 
-フレーム最大値は 1 MiB です。READ は LARGE_MTU のとき 1 要求最大
-960 KiB（15 クレジット、応答・header・transform header 込みで 1 MiB の
-フレームに収まる大きさ）、それ以外と WRITE は 64 KiB です。TCP の header と payload は一つの deadline で完全送受信し、
+フレーム最大値は 1 MiB です。READ と WRITE は LARGE_MTU のとき 1 要求最大
+960 KiB（15 クレジット、READ 応答と WRITE 要求が header・transform header
+込みで 1 MiB のフレームに収まる大きさ）、それ以外は 64 KiB です。TCP の header と payload は一つの deadline で完全送受信し、
 dribble peer が無期限に socket を占有できないようにします。絶対、
 UNC、drive-qualified、空 component、`..` escape の share-relative path
 は API 境界で拒否します。

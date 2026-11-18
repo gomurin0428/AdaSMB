@@ -58,11 +58,11 @@ SMB パケットを生成するだけのサンプルではなく、NTLMv2 認証
   `Ada.Calendar.Time` に変換できます。`Set_Size` は書き込み用に開いた
   ファイルを切り詰め、または伸ばします（FileEndOfFileInformation）。
 * フレームは 1 MiB に制限します。SMB2_GLOBAL_CAP_LARGE_MTU を持つサーバー
-  （Windows も Samba も持ちます）なら、READ 1 つで最大 960 KiB（クレジット
-  15 個）まで、サーバーの MaxReadSize と付与済みクレジットの範囲で読みます。
-  それ以外と WRITE は 1 要求 64 KiB までです。`Connect` の `Timeout_Seconds` は
-  応答一つ全体の待ち時間の上限なので、1 Mbit/s 程度より遅い回線では大きく
-  してください。受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB 3.0・3.0.2、
+  （Windows も Samba も持ちます）なら、READ や WRITE 1 つで最大 960 KiB
+  （クレジット 15 個）まで、サーバーの MaxReadSize や MaxWriteSize と付与済み
+  クレジットの範囲で読み書きします。それ以外は 1 要求 64 KiB までです。`Connect` の `Timeout_Seconds` は
+  要求一つ全体の送信と応答一つ全体の待ち時間の上限で、どちらも 960 KiB に
+  なりうるので、1 Mbit/s 程度より遅い回線では大きくしてください。受信オフセット・長さ・加算の範囲を検査します。SMB1、SMB 3.0・3.0.2、
   compression、compound、Kerberos、guest/null fallback は実装していません。
 * スタック使用量は証明の対象外です。フレーム・転送・要求・ディレクトリ
   一覧のバッファはヒープに置き、ソケットは 16 KiB 単位で読みます。応答の
@@ -122,8 +122,8 @@ Windowsでは `OS=Windows_NT` からアダプターを自動選択します。
 CREATE/CLOSE と READ/WRITE の実際の `SMB.Client` 経路は、
 `SMB.Core_Client` の型付きコーディネータを通ります。コアが Engine の
 要求期待値から完全なパケットを構築・署名し、送信確認後だけ応答を受け付けます。
-転送状態は最大 1 MiB を保持し、各 READ 要求は最大 960 KiB、各 WRITE 要求は
-最大 64 KiB です。エンジンは応答が付与し要求が消費するクレジットを数え、READ は
+転送状態は最大 1 MiB を保持し、各 READ・WRITE 要求は最大 960 KiB です。
+エンジンは応答が付与し要求が消費するクレジットを数え、READ と WRITE は
 手元のクレジットで払える分だけを要求します。
 WRITE は開始時に入力を private snapshot へ一度だけコピーし、部分書込みは
 検証済み count だけ進めます。READ は検証済みデータを状態内へ蓄積し、

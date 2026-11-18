@@ -14,8 +14,8 @@ of date.
   (alire-project/alire-index#2357, merged on 2026-11-16).
 * After 0.3.0 the maintainer approved three pieces, in this order: file
   information (`Query_Information`, #134, and `Set_Size`, #135), reads and
-  writes larger than
-  64 KiB per request, and teaching the adversarial proxy SMB 3.1.1. A
+  writes larger than 64 KiB per request (#137 and #138), and teaching the
+  adversarial proxy SMB 3.1.1 (#142 and #144); all three are done. A
   release that includes them (0.4.0), and its Alire submission, wait for
   the maintainer's word.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
@@ -28,8 +28,8 @@ of date.
     "require encryption" option refuses servers that do not.
   * AES-128 only in 0.2.0; AES-256 is offered since #130.
   * Out of scope: compression, multichannel and Kerberos. AES-GMAC
-    signing and READs above 64 KiB, first out of scope, came in with #132
-    and #137.
+    signing and READs and WRITEs above 64 KiB, first out of scope, came in
+    with #132, #137 and #138.
 * Phase status (the phases are listed in the design document):
 
 | Phase | Item | State |
@@ -57,10 +57,11 @@ of date.
 | after 0.3.0 | File information: QUERY_INFO (`SMB.Core_Query`), directory entry times, `To_Time` | merged (#134) |
 | after 0.3.0 | Setting a file's size: SET_INFO FileEndOfFileInformation (`SMB.Core_Resize`, `SMB.Core_Request`) | merged (#135) |
 | after 0.3.0 | The proof cache in `proof.yml` (`make prove PROOF_CACHE=`) | merged (#136) |
-| after 0.3.0 | Multi-credit READs: LARGE_MTU, the engine's credit count, READs up to 960 KiB | #137 |
-| after 0.3.0 | AdaMutant 2c9351e: a proof cache per sandbox, a steps limit, main's cache kept current | #139 |
-| after 0.3.0 | The adversarial proxy over SMB 3.1.1: NEGOTIATE tampering, signing with the 3.1.1 key | #142 |
-| after 0.3.0 | The adversarial proxy over SMB 3.1.1: encryption (open and encrypt again) | #144 |
+| after 0.3.0 | Multi-credit READs: LARGE_MTU, the engine's credit count, READs up to 960 KiB | merged (#137) |
+| after 0.3.0 | AdaMutant d1d049e: a proof cache per sandbox, steps limits, main's cache kept current | merged (#139) |
+| after 0.3.0 | The adversarial proxy over SMB 3.1.1: NEGOTIATE tampering, signing with the 3.1.1 key | merged (#142) |
+| after 0.3.0 | The adversarial proxy over SMB 3.1.1: encryption (open and encrypt again) | merged (#144) |
+| after 0.3.0 | Multi-credit WRITEs: WRITEs up to 960 KiB, built and signed in place | #138 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -401,10 +402,10 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Next, in the order the maintainer approved: multi-credit WRITEs (see
-  "Multi-credit READs" below), then the adversarial proxy over 3.1.1
-  (below). The maintainer will say whether 0.4.0 follows the WRITEs or the
-  proxy.
+* The three pieces the maintainer approved after 0.3.0 are done: file
+  information (#134, #135), reads and writes above 64 KiB (#137, #138) and
+  the adversarial proxy over 3.1.1 (#142, #144). Whether 0.4.0 follows now
+  is the maintainer's call.
 * Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
     `[origin]` section added: `commit` is the tag's commit and `url` is
@@ -574,9 +575,10 @@ opens a received one. It is a stateless SPARK unit, like
   charge taken off in `Begin_Request`, each response's CreditResponse added
   in `Accept_Response` and `Inspect_Interim_Response`, at most
   `Maximum_Credits` (8,192); `Invalidate` and a LOGOFF reset it.
-* Only a READ, and only with LARGE_MTU, takes more than one credit:
-  `Core_Protocol.Credit_Charge` (one per 64 KiB started). `Begin_Request`
-  refuses a multi-credit READ the count does not cover (`Resource_Limit`)
+* Only a READ (and, since #138, a WRITE), and only with LARGE_MTU, takes
+  more than one credit: `Core_Protocol.Credit_Charge` (one per 64 KiB
+  started). `Begin_Request`
+  refuses a multi-credit request the count does not cover (`Resource_Limit`)
   and advances the message id by the charge; a one-credit request goes as
   before even with no credit counted, so a gap in the count costs speed,
   not a connection.
@@ -587,9 +589,9 @@ opens a received one. It is a stateless SPARK unit, like
   the count back to `Credit_Target` (32).
 * `Core_Client.Prepare_Next` asks for at most `Engine.Current_Read_Chunk`:
   the negotiated limit, and no more than the credits on hand pay for, one
-  credit at least. WRITE stays at 64 KiB: its body is built in a stack
-  buffer and copied (`Body_Buffer`, `Payload`), which would take about twice
-  the chunk in stack; the next pull request builds it in the output instead.
+  credit at least. WRITE stayed at 64 KiB here: its body was built in a
+  stack buffer and copied (`Body_Buffer`, `Payload`); #138 builds it in the
+  output.
 * Tests: `tests/credit_tests.adb` (counting, the reset on `Invalidate`,
   charges, the CreditRequest on the wire, the chunk limit, a 1 MiB READ in
   two requests or, without LARGE_MTU, sixteen, and chunks that shrink with
@@ -607,8 +609,65 @@ opens a received one. It is a stateless SPARK unit, like
   attacker could inflate the count and get the connection dropped, a
   denial of service it can cause anyway.
 * One receive deadline (`Timeout_Seconds`, 10 s by default) still covers a
-  whole response, now up to 960 KiB. On a link slower than about
-  0.8 Mbit/s, raise it.
+  whole response, now up to 960 KiB, and since #138 one send deadline of
+  the same length a whole request of up to 960 KiB (`Transport.Send_Frame`).
+  On a link slower than about 0.8 Mbit/s, raise it.
+
+## Multi-credit WRITEs (#138)
+
+* A WRITE takes credits as a READ does: with LARGE_MTU, one per 64 KiB
+  started, up to fifteen (`Maximum_Write_Chunk`, 960 KiB, which with the
+  headers and a transform header fits a 1 MiB frame). `Parse_Response`
+  clamps MaxWriteSize to it with the bit and to 64 KiB without;
+  `Engine.Current_Write_Chunk` is `Current_Read_Chunk`'s twin, and
+  `Begin_Request` charges a WRITE by its amount. A WRITE response's Count
+  may now be up to 960 KiB.
+* `Core_Client.Prepare_Next` builds the request body straight into
+  `Output`, a WRITE's data straight from the transfer's buffer (no
+  `Body_Buffer` or `Payload` copy any more).
+* The library is built with `-gnata`, so postconditions are checked at run
+  time, and a postcondition with `X'Old`, for an `in out` array X, copies
+  X onto the stack. Every step that took the whole request `in out`
+  (`Prepare_Header` and its `Core_Wire` calls, `Sign_Packet` and
+  `Core_Wire.Sign`, and `Core_Protocol`'s field writers in `Build_Write`)
+  kept such a copy, nested several deep: with 960 KiB WRITEs
+  `Credit_Tests` needed 10 to 12 MiB of stack and overflowed the 8 MiB main
+  thread. Now:
+  * `Build_Write` writes the 48 fixed bytes through `Build_Write_Fixed`, on
+    their own slice, and puts the data after them with one assignment.
+  * `Prepare_Next` passes `Prepare_Header` the 64-byte header slice.
+  * `Prepare_Next` signs with `Request_Signature`, which reads the request
+    (`in`) and returns the signature through `Core_Wire.Compute_Signature`
+    or `Compute_Signature_SMB3`; `Prepare_Next` zeroes the Signature field
+    first and puts the result in place. `Sign` and `Sign_SMB3` are now
+    built on the same two procedures.
+* A 1 MiB transfer through `SMB.Core_Client` in 960 KiB and 64 KiB
+  requests, WRITE or READ, now runs on a 128 KiB main-thread stack (a probe
+  built like the library, `ulimit -s 128`); `-fstack-usage` shows no
+  dynamic frame left on the WRITE path but the 64-byte header's and the
+  48-byte fixed part's. `Credit_Tests` still peaks at about 4.9 MB
+  (`gnatbind -u`), as on `main`: its `Read_Response` builds each 960 KiB
+  READ response with `SMB.Wire`'s `in out` helpers, which keep those
+  copies. That is the test's fixture, not the library.
+* `Prepare_Next` keeps a WRITE to what `Output` holds once that is more
+  than 64 KiB, so a caller that sized `Output` for 64 KiB WRITEs (64 + 48 +
+  64 KiB) gets 64 KiB WRITEs with LARGE_MTU rather than `Resource_Limit`;
+  below 64 KiB the old rule stands, and an `Output` one byte short still
+  fails. `SMB.Client.Write` sizes its buffer by the data, up to 960 KiB.
+* Tests: `Credit_Tests` (191 checks) adds WRITE charges (fifteen credits
+  for 960 KiB, three for 128 KiB and a byte, refusals past fifteen
+  credits, of nothing, with too few credits and past 64 KiB without
+  LARGE_MTU), `Current_Write_Chunk`, the MaxWriteSize clamp, and 1 MiB
+  WRITEs through `SMB.Core_Client`: two requests with LARGE_MTU, sixteen
+  without, a 512 KiB one whose chunks follow grants of 4, 2, 1 and 1, and
+  outputs that hold 192 KiB and 64 KiB of data. Each request's data,
+  StructureSize, DataOffset, zero fields, signature, charge, CreditRequest
+  and message id are checked on the wire. A WRITE response Count one above
+  the request is refused with LARGE_MTU and without. The 3.1.1 operations
+  test signs a WRITE and a READ with AES-CMAC and AES-GMAC through
+  `Prepare_Next`. `Response_Mutation_Tests` accepts a WRITE Count up to
+  960 KiB and tests the cap. The integration client's 1 MiB write now goes
+  in two WRITEs.
 
 ## Setting a file's size (#135)
 
@@ -867,6 +926,13 @@ The AES pull request touches each of these. Its diff is the template.
   `make kdf-test` need `pip install cryptography`. CI pins 50.0.2 on Windows.
 
 ## Open items
+
+* With `-gnata`, the postconditions of `Prepare_Next`,
+  `Transfer_Send_Succeeded`, `Complete_Read`, `Complete_Write` and
+  `Fail_Transfer` copy and compare the whole transfer buffer (up to 1 MiB)
+  for `Transfer_Buffer_Of (Value)'Old` on every request. The copies go on
+  GNAT's secondary stack, which this runtime grows on the heap, so they
+  cost time, not stack.
 
 * The design document's open question: whether `Connect` should send
   NETNAME. Samba and Windows Server 2025 do not need it.

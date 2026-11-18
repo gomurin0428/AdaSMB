@@ -403,9 +403,11 @@ is
          elsif (Command = 8 or else Command = 9)
            and then (Request_Amount = 0
                      or else Request_Amount >
-                       (if Command = 8 and then State.Large_MTU
+                       (if not State.Large_MTU
+                        then SMB.Core_Protocol.Maximum_IO_Chunk
+                        elsif Command = 8
                         then SMB.Core_Protocol.Maximum_Read_Chunk
-                        else SMB.Core_Protocol.Maximum_IO_Chunk))
+                        else SMB.Core_Protocol.Maximum_Write_Chunk))
          then
             Status := SMB.Invalid_Value;
             return;
@@ -424,9 +426,9 @@ is
          Status := SMB.Unsupported_Feature;
          return;
       end if;
-      --  Only a READ takes more than one credit, and only with
+      --  Only a READ or WRITE takes more than one credit, and only with
       --  SMB2_GLOBAL_CAP_LARGE_MTU; it needs those credits on hand.
-      if Command = 8 and then State.Large_MTU then
+      if (Command = 8 or else Command = 9) and then State.Large_MTU then
          Charge := SMB.Core_Protocol.Credit_Charge (Request_Amount);
       end if;
       if Charge > 1 and then Charge > State.Credits then
@@ -1186,6 +1188,15 @@ is
           else 1) * SMB.Core_Protocol.Maximum_IO_Chunk));
    function Current_Max_Write (State : Engine_State) return Natural is
      (State.Max_Write);
+   function Current_Write_Chunk (State : Engine_State) return Natural is
+     (Natural'Min
+        (Natural'Min (State.Max_Write, SMB.Core_Protocol.Maximum_Write_Chunk),
+         (if State.Large_MTU
+          then Natural'Max
+                 (1,
+                  Natural'Min
+                    (State.Credits, SMB.Core_Protocol.Maximum_Credit_Charge))
+          else 1) * SMB.Core_Protocol.Maximum_IO_Chunk));
    function Current_Async_Id (State : Engine_State) return SMB.QWord is
      (State.Pending_Async_Id);
    function Current_Signing_Key (State : Engine_State) return SMB.Bytes is

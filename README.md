@@ -59,11 +59,13 @@ directory operations.
   `To_Time` converts one to `Ada.Calendar.Time`. `Set_Size` truncates or
   extends a file opened for writing (FileEndOfFileInformation).
 * Frames are limited to 1 MiB. With a server that supports
-  SMB2_GLOBAL_CAP_LARGE_MTU (Windows and Samba do), one READ can carry up to
-  960 KiB on up to fifteen credits, as far as the server's MaxReadSize and
-  the credits it has granted allow; otherwise, and for every WRITE, a request
-  carries at most 64 KiB. `Connect`'s `Timeout_Seconds` bounds the wait for
-  each whole response, so on a link slower than about 1 Mbit/s raise it.
+  SMB2_GLOBAL_CAP_LARGE_MTU (Windows and Samba do), one READ or WRITE can
+  carry up to 960 KiB on up to fifteen credits, as far as the server's
+  MaxReadSize or MaxWriteSize and the credits it has granted allow;
+  otherwise a request carries at most 64 KiB. `Connect`'s `Timeout_Seconds`
+  bounds sending each whole request and the wait for each whole response,
+  either of which may be 960 KiB, so on a link slower than about 1 Mbit/s
+  raise it.
   Received offsets, lengths and their sums are range-checked. SMB1, SMB 3.0 and 3.0.2, compression, compound requests,
   Kerberos and guest/null fallback are not implemented.
 * Stack usage is outside the proofs. Frame, transfer, request and directory
@@ -136,9 +138,9 @@ The real `SMB.Client` paths for CREATE/CLOSE and READ/WRITE go through the
 typed coordinator in `SMB.Core_Client`. The core builds and signs complete
 packets from the Engine's request expectations and accepts a response only
 after the send has been confirmed. The transfer state holds up to 1 MiB, and
-each READ request is at most 960 KiB and each WRITE request 64 KiB. The engine
-counts the credits each response grants and each request spends, and a READ
-asks for no more than the credits on hand pay for. WRITE copies its input once into a
+each READ or WRITE request is at most 960 KiB. The engine counts the credits
+each response grants and each request spends, and a READ or WRITE asks for
+no more than the credits on hand pay for. WRITE copies its input once into a
 private snapshot at the start, and a partial write advances only by the
 verified count. READ accumulates verified data in the state and extracts the
 final result with a bounded copy in the core. On an uncertain send or receive
