@@ -15,7 +15,7 @@ concurrency:
 env:
   ADA_TOOLCHAIN: gnat_native=16.1.0 gprbuild=26.0.1
   TOOLCHAIN_KEY: alr2.1.1-gnat16.1.0-gprbuild26.0.1-v1
-  ADAMUTANT_COMMIT: 33e56e3d85d513757ff2efe5076765adc7ce4146
+  ADAMUTANT_COMMIT: 2c9351e55d25143e3abe7c5371a13bc397c9ac51
 
 jobs:
   # The proof of each mutant takes the goals it does not change from
@@ -44,7 +44,10 @@ jobs:
       - name: Prove
         run: |
           mkdir -p proof-cache
-          time make prove PROOF_CACHE=proof-cache
+          time make prove PROOF_CACHE=proof-cache PROOF_REPORT=statistics
+      - name: Show the proof steps
+        if: always()
+        run: python3 tests/proof_steps.py gnatprove.out >> "$GITHUB_STEP_SUMMARY"
       - name: Save the proof cache
         if: always()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

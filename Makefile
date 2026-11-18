@@ -7,6 +7,14 @@ MUTATION_BASE ?= origin/main
 # results of unchanged proof goals are taken from it instead of the provers.
 # Empty means no cache.
 PROOF_CACHE ?=
+# The provers' steps limit (--steps; 0 for none). A goal stops at the same
+# point under any load, and one that a mutant makes fail stops there rather
+# than at the time limit. The cache keys hold it, so tests/mutant_prove.py
+# reads it from here.
+PROOF_STEPS ?= 0
+# The report: "statistics" adds each check's provers, time and steps, which
+# tests/proof_steps.py sums up.
+PROOF_REPORT ?= all
 
 .PHONY: all build test integration transport-test unicode-test ntlm-test crypto-test aes-test cmac-test ccm-test gcm-test kdf-test signing-test clock-test check stack-check clean example prove mutation mutation-diff
 
@@ -100,8 +108,8 @@ mutation-diff:
 
 prove:
 	@command -v gnatprove >/dev/null 2>&1 || { echo "gnatprove is required"; exit 127; }
-	@gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=all \
-		--checks-as-errors=on --prover=cvc5,z3,altergo -j4 \
+	@gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=$(PROOF_REPORT) \
+		--steps=$(PROOF_STEPS) --checks-as-errors=on --prover=cvc5,z3,altergo -j4 \
 		$(if $(PROOF_CACHE),--memcached-server=file:$(abspath $(PROOF_CACHE))) \
 		> gnatprove.out 2>&1; result=$$?; \
 		cat gnatprove.out; exit $$result

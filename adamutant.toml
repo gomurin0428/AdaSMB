@@ -19,12 +19,14 @@ test = "python tests/mutant_tests.py"
 prove = "python tests/mutant_prove.py"
 # A mutant whose object code at -O2 is the same as before is equivalent.
 equivalence_build = "gprbuild -q -p -c -P smb_tests.gpr test_suite.adb -cargs -O2 -g0"
-# AdaMutant gives the tests and the proof of a mutant the time they took
-# without a mutant, times 1.5, plus timeout_ms. The baseline proof is one
-# small unit and takes seconds, but a mutant that breaks proofs can keep the
-# provers busy for minutes, so the margin is 20 minutes. A test that a mutant
-# makes loop forever waits as long.
-timeout_ms = 1200000
+# AdaMutant gives the tests of a mutant the time they took without a
+# mutant, times 1.5, plus timeout_ms: a test that a mutant makes loop
+# forever is stopped a minute after that.
+timeout_ms = 60000
+# The proof of a mutant gets 20 minutes. The baseline proof is one small
+# unit and takes seconds (the whole project is proved into the cache
+# first), so a limit taken from it would be far too short for a large unit.
+prove_timeout_ms = 1200000
 # A mutant of a length or a loop bound can allocate without limit. The largest
 # test process, the signing comparison, peaks at about 350 MB.
 test_memory_limit_mb = 2048
