@@ -97,15 +97,19 @@ stack-check:
 
 # With PROOF_CACHE, the whole project is proved into the cache first, so that
 # the proof of each mutant (tests/mutant_prove.py) proves only the goals the
-# mutant changes. The undetected mutants are listed, not failed: a person
+# mutant changes; the mutated units that also prove at a much lower steps
+# limit are proved there too, and their mutants at that limit
+# (tests/mutant_low_steps.py). The undetected mutants are listed, not failed: a person
 # judges them.
 mutation:
 	$(if $(PROOF_CACHE),$(MAKE) prove PROOF_CACHE=$(PROOF_CACHE))
+	$(if $(PROOF_CACHE),$(PYTHON) tests/mutant_low_steps.py $(PROOF_CACHE) --all)
 	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run
 	$(PYTHON) tests/mutation_survivors.py
 
 mutation-diff:
 	$(if $(PROOF_CACHE),$(MAKE) prove PROOF_CACHE=$(PROOF_CACHE))
+	$(if $(PROOF_CACHE),$(PYTHON) tests/mutant_low_steps.py $(PROOF_CACHE) --since $(MUTATION_BASE))
 	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run --since $(MUTATION_BASE)
 	$(PYTHON) tests/mutation_survivors.py
 

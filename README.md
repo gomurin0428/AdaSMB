@@ -247,7 +247,10 @@ the whole project into the cache, and AdaMutant's own cache for each sandbox
 starts from it, so that each mutant's proof proves only the goals it
 changes. The provers stop at a steps limit (`PROOF_STEPS` in the Makefile,
 which `make prove` uses too), so a goal that a mutant breaks fails at the
-same point under any load.
+same point under any load. A mutated unit that also proves at a much lower
+limit ([`tests/mutant_low_steps.py`](tests/mutant_low_steps.py) checks it
+before each run) has its mutants proved at that limit, where a broken goal
+fails sooner; `make prove` is not affected.
 
 `make unicode-test` uses Python 3's standard codecs as an independent
 reference and checks all 1,112,063 Unicode scalars except NUL, every

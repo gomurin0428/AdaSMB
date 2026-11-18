@@ -436,13 +436,27 @@ opens a received one. It is a stateless SPARK unit, like
   limit, on GitHub Actions, the most were Z3 930,070
   (`Core_Connection.Complete`'s postcondition, 2,284 since #138), CVC5
   558,271 (`smb-core_protocol.ads:425`) and Alt-Ergo 34,121.
-* A low limit would serve the mutants better: at 20,000 steps
-  `smb-core_resize.adb` proved in 8 s (with CVC5's slow attempts cut short,
-  Z3 proved what CVC5 had needed 159 s for), but a whole-project run at
-  20,000 left checks in `Core_Text` and `Core_Negotiate` unproved, and
-  rewriting them was judged not worth the time. A limit far above what
-  checks need does little: a local trial at 3,000,000 still let two
-  mutants' proofs run out of 20 minutes.
+* Mutants get a lower limit where the unit allows it (the maintainer's
+  choice, so that `make prove` and the pull request's proof are not
+  affected): before each mutation run, `tests/mutant_low_steps.py` proves
+  each mutated unit at `LOW_STEPS` (20,000) into `PROOF_CACHE/low/cache`
+  and lists those that proved in `PROOF_CACHE/low/units.txt`; their
+  mutants are proved at 20,000, the others at `PROOF_STEPS`. The list is
+  made anew each run from the units it checks, so a unit that stops
+  proving at 20,000 falls back by itself, and a mutant is never counted as
+  detected because of the low limit alone. Not every unit proves there
+  (`Core_Text`, `Core_Negotiate` do not); rewriting them for it was judged
+  not worth the time.
+* The effect, on the Mac over `smb-core_resize.adb` (145 mutants,
+  concurrency 2): AdaMutant 33e56e3 with no limit, 131 detected (9 by the
+  proof), 12 undetected (mostly proofs out of time), 13,438 s; 2c9351e at
+  20,000 steps, 142 detected (20 by the proof), 2 undetected, 3,253 s. At
+  3,000,000 steps, two mutants' proofs still ran out of their 20 minutes.
+* GNATprove's exit status with `-u` also counts the unproved checks that an
+  earlier run left in the object directory for other units. In a sandbox,
+  a mutant of one unit that the proof detected would then make the proof
+  of a later mutant of another unit fail too, a false detection. Both
+  scripts now remove the earlier results (`*.spark`) first.
 * `proof.yml` also runs on each push to main, so main's proof cache, the
   one a new pull request starts from, follows main. Before, it was saved
   only by the weekly run, and a pull request after a change to widely used

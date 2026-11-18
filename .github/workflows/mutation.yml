@@ -48,6 +48,8 @@ jobs:
       - name: Show the proof steps
         if: always()
         run: python3 tests/proof_steps.py gnatprove.out >> "$GITHUB_STEP_SUMMARY"
+      - name: Prove every unit at the low steps limit
+        run: python3 tests/mutant_low_steps.py proof-cache --all
       - name: Save the proof cache
         if: always()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
