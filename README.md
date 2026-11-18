@@ -205,6 +205,7 @@ make stack-check            # worst-case stack use per public API from GCC call 
 make example                # build/bin/smb_example
 make prove                  # needs GNATprove + cvc5/z3/alt-ergo; fails on any unproved check
 make prove PROOF_CACHE=dir  # the same, taking unchanged proof goals' results from dir
+make prove PROOF_REPORT=statistics  # each check's provers, time and steps (tests/proof_steps.py sums them up)
 make transport-test         # TCP fragmentation, send/receive timeouts, disconnects, recovery
 make integration            # opt-in test that explicitly starts a local Samba
 make mutation               # mutation testing of the tests over all of src/*.adb (needs AdaMutant)
@@ -242,8 +243,11 @@ code, a contract that says too little, and undecided. Undetected mutants do
 not fail the run, and nothing is excluded by hand: a mutant whose object code
 at `-O2` is unchanged is recognized as equivalent, and the rest are judged in
 the pull request. With `PROOF_CACHE=dir`, the mutation targets first prove
-the whole project into the cache, so that each mutant's proof proves only the
-goals it changes.
+the whole project into the cache, and AdaMutant's own cache for each sandbox
+starts from it, so that each mutant's proof proves only the goals it
+changes. The provers stop at a steps limit (`PROOF_STEPS` in the Makefile,
+which `make prove` uses too), so a goal that a mutant breaks fails at the
+same point under any load.
 
 `make unicode-test` uses Python 3's standard codecs as an independent
 reference and checks all 1,112,063 Unicode scalars except NUL, every

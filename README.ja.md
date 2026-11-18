@@ -184,6 +184,7 @@ make stack-check            # 公開 API ごとの最悪スタック使用量を
 make example                # build/bin/smb_example
 make prove                  # GNATprove + cvc5/z3/alt-ergo が必要。未証明があれば失敗
 make prove PROOF_CACHE=dir  # 同じ。変わっていない証明ゴールの結果を dir から取る
+make prove PROOF_REPORT=statistics  # 検査ごとの証明器・時間・ステップ数（tests/proof_steps.py で集計）
 make transport-test         # TCP 断片化、送受信 timeout、途中切断・復旧試験
 make integration            # 明示的にローカル Samba を起動する opt-in テスト
 make mutation               # src/*.adb 全体に対する試験のミューテーションテスト（AdaMutant が必要）
@@ -222,8 +223,11 @@ pragma・ghost コードは GNATprove が検査するので変更しません。
 分けます。検出されなかったミュータントがあっても失敗にはせず、手で除外する
 ものもありません。`-O2` のオブジェクトコードが変わらないミュータントは同値と
 自動で判定し、残りは pull request で判断します。`PROOF_CACHE=dir` を付けると、
-まずプロジェクト全体をキャッシュに証明するので、各ミュータントの証明は変わった
-ゴールだけで済みます。
+まずプロジェクト全体をキャッシュに証明し、AdaMutant がサンドボックスごとに
+持つキャッシュもそこから始まるので、各ミュータントの証明は変わったゴールだけで
+済みます。証明器はステップ数の上限（Makefile の `PROOF_STEPS`。`make prove`
+も同じ値を使います）で止まるので、ミュータントが壊したゴールは負荷によらず
+同じところで失敗します。
 
 `make unicode-test` は Python 3 の標準 codec を独立した比較対象として、
 NUL を除く全 1,112,063 Unicode スカラー、短いバイト列の全組合せ、

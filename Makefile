@@ -9,9 +9,12 @@ MUTATION_BASE ?= origin/main
 PROOF_CACHE ?=
 # The provers' steps limit (--steps; 0 for none). A goal stops at the same
 # point under any load, and one that a mutant makes fail stops there rather
-# than at the time limit. The cache keys hold it, so tests/mutant_prove.py
-# reads it from here.
-PROOF_STEPS ?= 0
+# than at the time limit, which GNATprove 16.1 overruns about fourfold when
+# it uses the proof cache. The most steps any check took without a limit,
+# on GitHub Actions, was 930,070 (Z3), so every check that proved without
+# it still proves. The cache keys hold it, so tests/mutant_prove.py reads it
+# from here.
+PROOF_STEPS ?= 1000000
 # The report: "statistics" adds each check's provers, time and steps, which
 # tests/proof_steps.py sums up.
 PROOF_REPORT ?= all
