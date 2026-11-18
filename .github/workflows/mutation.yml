@@ -15,7 +15,7 @@ concurrency:
 env:
   ADA_TOOLCHAIN: gnat_native=16.1.0 gprbuild=26.0.1
   TOOLCHAIN_KEY: alr2.1.1-gnat16.1.0-gprbuild26.0.1-v1
-  ADAMUTANT_COMMIT: 2c9351e55d25143e3abe7c5371a13bc397c9ac51
+  ADAMUTANT_COMMIT: d1d049ec74e043351b3395ec31cfc232419873e2
 
 jobs:
   # The proof of each mutant takes the goals it does not change from
