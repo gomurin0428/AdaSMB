@@ -5542,3 +5542,71 @@ run left in the object directory for other units as well. A mutant that the
 proof detected in one unit would then make the proof of a later mutant of
 another unit in the same sandbox fail, and that mutant would be counted as
 detected. Both scripts now remove the earlier results first.
+
+## Multi-credit WRITEs
+
+With SMB2_GLOBAL_CAP_LARGE_MTU a WRITE takes credits as a READ does.
+`Parse_Response` clamps MaxWriteSize to `Maximum_Write_Chunk` (fifteen
+credits, 960 KiB) with the bit and to 64 KiB without, and its postcondition,
+`Accept_Response`'s and `Core_Connection.Complete`'s say so.
+`Begin_Request`'s postcondition gives the charge
+`Core_Protocol.Credit_Charge (Request_Amount)` for a READ or a WRITE with
+LARGE_MTU, and its body refuses a WRITE above `Maximum_Write_Chunk` with the
+bit and above 64 KiB without. `Engine.Current_Write_Chunk`'s postcondition
+states, as `Current_Read_Chunk`'s does, that a chunk above 64 KiB has
+LARGE_MTU and a charge the credits cover. A WRITE response's Count may now
+be up to 960 KiB (`Parse_Response`, `Accept_Response`, `Complete_Write`).
+
+`Core_Client.Prepare_Next` builds the body straight into `Output`: the READ
+or WRITE fields through `Build_Read` or `Build_Write` on the body's slice,
+and a WRITE's data from the transfer's buffer, with no stack buffer and no
+copy. Because the library is built with `-gnata`, a postcondition with
+`X'Old` on an `in out` array X copies X at run time, so the steps that took
+the whole request `in out` now get only what they write:
+
+* `Build_Write` writes its 48 fixed bytes through `Build_Write_Fixed`, whose
+  `Output` is those 48 bytes, and assigns the data after them at once.
+* `Prepare_Next` passes `Prepare_Header` the 64-byte header slice.
+* `Prepare_Next` zeroes the Signature field and computes the signature with
+  `Request_Signature`, which only reads the request: it calls the new
+  `Core_Wire.Compute_Signature` (HMAC-SHA256) or `Compute_Signature_SMB3`
+  (AES-CMAC or AES-GMAC), whose precondition is a zero Signature field.
+  `Prepare_Next` then puts the 16 bytes in place. `Sign` and `Sign_SMB3`
+  now zero the field and call the same procedures, so their contracts and
+  proofs are unchanged.
+
+`Prepare_Next`'s postcondition (`Transfer_Packet_Matches`) is unchanged; its
+proof now goes through the slice calls, with assertions on the WRITE data
+right after `Build_Write`, and on the Flags and SessionId after the
+signature. A WRITE above 64 KiB is also kept to what `Output` holds once
+that is more than 64 KiB.
+
+GNATprove 16.1.0 proved every check of these units on the Mac, with no
+`pragma Assume` or justification: `smb-core_wire.adb` 474 checks,
+`smb-core_protocol.adb` 1,470 (47 min) and `smb-engine.adb` 1,832 (47 min).
+The first full proof on GitHub Actions left two checks unproved, both at the
+provers' time and memory limit: `Core_Connection.Complete`'s postcondition,
+whose MaxWriteSize clause now has the same LARGE_MTU condition as
+MaxReadSize's, and `Prepare_Next`'s assertion on the WRITE data after the
+body, which followed `Build_Write` across the READ/WRITE branches. `Complete`
+now asserts the parsed limits after reading them and the engine's after
+`Mark_Negotiated`, and `Prepare_Next` asserts the data inside the WRITE
+branch. On the Mac, every check of `Complete` (14 min) and of
+`Prepare_Next` (7 min) then proved (`--limit-subp`), before the next full
+proof on GitHub Actions.
+
+`Credit_Tests` grows to 191 checks: WRITE charges and refusals,
+`Current_Write_Chunk`, the MaxWriteSize clamp, 1 MiB WRITEs through
+`SMB.Core_Client` (two requests with LARGE_MTU, sixteen without, chunks that
+follow small grants, and outputs that hold 192 KiB and 64 KiB of data) with
+each request's fields, data, signature, charge, CreditRequest and message id
+checked on the wire, and a WRITE response Count one above the request
+refused with LARGE_MTU and without. The 3.1.1 operations test signs a WRITE
+and a READ through `Prepare_Next` with AES-CMAC and AES-GMAC.
+`Response_Mutation_Tests` accepts a WRITE Count up to 960 KiB and tests the
+cap.
+
+A probe built like the library runs a 1 MiB transfer through
+`SMB.Core_Client`, in a 960 KiB and a 64 KiB request, on a 128 KiB stack, as
+a WRITE and as a READ. Before the slice changes, 960 KiB WRITEs took 10 to
+12 MiB of stack in `Credit_Tests`.

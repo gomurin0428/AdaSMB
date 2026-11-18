@@ -2581,6 +2581,12 @@ is
                  (Value.Completed + 1 .. Value.Completed + Amount),
                Output (Body_First .. Body_Last), Body_Used, Field_Status);
             Command := 9;
+            if Field_Status = SMB.Ok then
+               pragma Assert
+                 (for all Index in 0 .. Amount - 1 =>
+                    Output (Body_First + 48 + Index) =
+                      Value.Buffer (Value.Completed + Index + 1));
+            end if;
          end if;
       end;
       if Field_Status = SMB.Ok then
