@@ -17,6 +17,12 @@ procedure Adversarial_Client is
         "truncated" | "oversized" | "wrong-correlation-negotiate"
         | "dribble-timeout";
    end Is_Early_Failure;
+   --  An SMB 3.1.1 NEGOTIATE response altered on the way: the keys then
+   --  differ from the server's, and the signed final SESSION_SETUP
+   --  response fails, so Authenticate must raise.
+   function Is_Negotiate_Tamper return Boolean is
+     (Mode'Length > 10
+      and then Mode (Mode'First .. Mode'First + 9) = "negotiate-");
 begin
    declare
       Client : SMB.Client.Connection;
@@ -55,12 +61,19 @@ begin
                  (Client, Ada.Environment_Variables.Value ("SMB_TEST_SHARE"));
             exception
                when SMB.Protocol_Error =>
-                  if not Authenticated then
+                  if Is_Negotiate_Tamper and then Authenticated then
+                     raise Program_Error with
+                       "tampered NEGOTIATE was not caught by authentication";
+                  elsif not Is_Negotiate_Tamper and then not Authenticated then
                      raise Program_Error with
                        "authenticated-path proxy failed before authentication";
                   end if;
                   Rejected := True;
             end;
+            if Is_Negotiate_Tamper and then SMB.Client.Is_Connected (Client) then
+               raise Program_Error with
+                 "connection stayed open after a tampered NEGOTIATE";
+            end if;
             SMB.Client.Disconnect (Client);
          end;
       end if;

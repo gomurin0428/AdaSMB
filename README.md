@@ -327,7 +327,12 @@ Run `make integration` only on a local Linux machine with root privileges. It
 creates a dedicated temporary Samba configuration, a share and an
 `ada_smb_test_only` user (with a known, test-only password), and removes them
 at the end. It does not connect to remote hosts. It needs `smbd`, `smbpasswd`
-and Python 3.
+and Python 3. It also runs protocol tests through a local proxy that alters
+the server's responses: most of them over SMB 2.1, and over 3.1.1 (the
+`ADASMB_SMB311_ONLY=1` runs, which also need Python's `cryptography`) an
+altered NEGOTIATE response, which the preauth integrity hash must expose,
+and, when signed but not encrypted, altered READ and WRITE responses that the
+proxy signs again with the 3.1.1 key.
 
 [`tests/windows_integration.py`](tests/windows_integration.py) runs the same
 integration client against the Windows SMB server of the machine it runs on.
