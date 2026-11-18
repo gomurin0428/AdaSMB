@@ -1,0 +1,46 @@
+# A throwaway benchmark: the same proofs, with no proof cache, on each free
+# standard runner. Not for merging.
+name: Runner benchmark
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    name: Prove on ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Ada toolchain and GNATprove
+        run: >
+          bash .github/scripts/install-ada.sh "$HOME/ada-prover"
+          gnat_native=16.1.0 gprbuild=26.0.1 gnatprove=16.1.0
+      - name: Machine
+        run: |
+          if command -v lscpu > /dev/null; then lscpu | head -20; free -g; else sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize; fi
+      # The postcondition of Core_Connection.Complete whose slowest VC took
+      # Z3 six minutes on a Mac mini and failed on ubuntu-24.04.
+      - name: Core_Connection.Complete
+        run: |
+          start=$(date +%s)
+          gnatprove -P proof.gpr --mode=all --level=2 --proof=progressive --report=statistics \
+            --checks-as-errors=on --prover=cvc5,z3,altergo -j3 \
+            -u smb-core_connection.adb --limit-subp=smb-core_connection.ads:269 > complete.log 2>&1 || true
+          echo "seconds: $(( $(date +%s) - start ))"
+          grep -E "medium:|high:|Success" complete.log | head || true
+          grep -B1 -- "--> smb-core_connection.ads:278:08" complete.log | head -2 || true
+      - name: Whole proof
+        run: |
+          start=$(date +%s)
+          make prove > /dev/null 2>&1 || echo "make prove failed"
+          echo "seconds: $(( $(date +%s) - start ))"
+          grep -E "medium:|high:" gnatprove.out | head -20 || true
+          tail -3 gnatprove.out
