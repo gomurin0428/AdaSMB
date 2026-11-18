@@ -15,8 +15,9 @@ of date.
 * After 0.3.0 the maintainer approved three pieces, in this order: file
   information (`Query_Information`, #134, and `Set_Size`, #135), reads and
   writes larger than 64 KiB per request (#137 and #138), and teaching the
-  adversarial proxy SMB 3.1.1. A release that includes them (0.4.0), and
-  its Alire submission, wait for the maintainer's word.
+  adversarial proxy SMB 3.1.1 (#142 and #144); all three are done. A
+  release that includes them (0.4.0), and its Alire submission, wait for
+  the maintainer's word.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -401,9 +402,10 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Next, in the order the maintainer approved: the adversarial proxy over
-  3.1.1 (below). The maintainer will say whether 0.4.0 comes before or
-  after it.
+* The three pieces the maintainer approved after 0.3.0 are done: file
+  information (#134, #135), reads and writes above 64 KiB (#137, #138) and
+  the adversarial proxy over 3.1.1 (#142, #144). Whether 0.4.0 follows now
+  is the maintainer's call.
 * Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
     `[origin]` section added: `commit` is the tag's commit and `url` is
