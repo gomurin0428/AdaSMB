@@ -17,6 +17,14 @@ procedure Adversarial_Client is
         "truncated" | "oversized" | "wrong-correlation-negotiate"
         | "dribble-timeout";
    end Is_Early_Failure;
+   --  An SMB 3.1.1 NEGOTIATE response altered on the way: the keys then
+   --  differ from the server's, and the signed final SESSION_SETUP
+   --  response fails its signature check, so Authenticate must raise
+   --  Authentication_Error ("server did not complete signed SMB
+   --  authentication").
+   function Is_Negotiate_Tamper return Boolean is
+     (Mode in "negotiate-signing-algorithm" | "negotiate-cipher"
+        | "negotiate-salt" | "negotiate-server-guid");
 begin
    declare
       Client : SMB.Client.Connection;
@@ -55,12 +63,31 @@ begin
                  (Client, Ada.Environment_Variables.Value ("SMB_TEST_SHARE"));
             exception
                when SMB.Protocol_Error =>
-                  if not Authenticated then
+                  if Is_Negotiate_Tamper or else not Authenticated then
                      raise Program_Error with
                        "authenticated-path proxy failed before authentication";
                   end if;
                   Rejected := True;
+               when E : SMB.Authentication_Error =>
+                  --  Only the failed signature check of the final
+                  --  SESSION_SETUP response counts: an unsigned logon
+                  --  failure would say nothing about the preauth hash.
+                  if not Is_Negotiate_Tamper
+                    or else Ada.Strings.Fixed.Index
+                      (Ada.Exceptions.Exception_Message (E),
+                       "server did not complete signed SMB authentication") = 0
+                  then
+                     raise;
+                  end if;
+                  Ada.Text_IO.Put_Line
+                    ("authentication rejected: "
+                     & Ada.Exceptions.Exception_Message (E));
+                  Rejected := True;
             end;
+            if Is_Negotiate_Tamper and then SMB.Client.Is_Connected (Client) then
+               raise Program_Error with
+                 "connection stayed open after a tampered NEGOTIATE";
+            end if;
             SMB.Client.Disconnect (Client);
          end;
       end if;

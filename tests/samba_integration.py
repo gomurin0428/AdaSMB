@@ -21,8 +21,8 @@ import tempfile
 import time
 
 from adversarial_proxy import (
-    AdversarialProxy, DIRECTORY_MODES, EntropyFailureProxy, RESPONSE_MUTATIONS,
-    SECURITY_BUFFER_MUTATIONS,
+    AdversarialProxy, DIRECTORY_MODES, EntropyFailureProxy, NEGOTIATE_TAMPERS,
+    RESPONSE_MUTATIONS, SECURITY_BUFFER_MUTATIONS,
 )
 from async_proxy import AsyncProxy, NEGATIVE_MODES
 from directory_limit_proxy import DirectoryLimitProxy, MODES as DIRECTORY_LIMIT_MODES
@@ -47,6 +47,49 @@ def smbd_diagnostics(work: pathlib.Path) -> str:
             text = path.read_text(encoding="utf-8", errors="replace")
             lines += [f"--- {name} ---", *text.splitlines()[-40:]]
     return "\n".join(lines)
+
+
+def run_response_mutation_cases(env: dict[str, str], share: pathlib.Path) -> None:
+    """Signed READ and WRITE responses that the proxy alters and signs
+    again, with the 2.1 key or the 3.1.1 one: the client must reject each,
+    and a rejected WRITE must have reached the server once."""
+    for index, mode in enumerate(RESPONSE_MUTATIONS, start=21):
+        (share / "mutation-write.bin").write_bytes(b"A" * 64)
+        (share / "mutation-write.bin").chmod(0o666)
+        proxy_port = PORT + index
+        proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD)
+        proxy.start()
+        mutation_env = env.copy()
+        mutation_env.update(
+            SMB_TEST_PORT=str(proxy_port),
+            SMB_TEST_BACKEND_PORT=str(PORT),
+            SMB_TEST_MODE=mode,
+        )
+        try:
+            run([str(ROOT / "build/bin/response_mutation_client")], env=mutation_env)
+        finally:
+            proxy.join()
+        expected = (b"B" + b"A" * 63) if RESPONSE_MUTATIONS[mode] == 9 else b"A" * 64
+        if (share / "mutation-write.bin").read_bytes() != expected:
+            raise RuntimeError("unexpected remote WRITE effect after response mutation")
+        (share / "mutation-write.bin").unlink()
+
+
+def run_negotiate_tamper_cases(env: dict[str, str], encrypting: bool) -> None:
+    """SMB 3.1.1 NEGOTIATE responses altered on the way: the preauth
+    integrity hash must make the client reject the session it sets up."""
+    for index, mode in enumerate(NEGOTIATE_TAMPERS, start=60):
+        if mode == "negotiate-cipher" and not encrypting:
+            continue
+        proxy_port = PORT + index
+        proxy = AdversarialProxy(mode, proxy_port, PORT)
+        proxy.start()
+        tamper_env = env.copy()
+        tamper_env.update(SMB_TEST_PORT=str(proxy_port), SMB_TEST_MODE=mode)
+        try:
+            run([str(ROOT / "build/bin/adversarial_client")], env=tamper_env)
+        finally:
+            proxy.join()
 
 
 def run_directory_mutation_cases(env: dict[str, str]) -> None:
@@ -180,9 +223,10 @@ def main() -> int:
         for index in range(1_200):
             (share / f"pagination-{index:04}.txt").touch()
         # ADASMB_SMB311_ONLY=1 runs the integration client in its default,
-        # 3.1.1-only policy against a server that speaks only 3.1.1. The
-        # proxy tests below need the 2.1 server, as their proxies re-sign
-        # with the 2.1 key.
+        # 3.1.1-only policy against a server that speaks only 3.1.1, then
+        # the proxy cases that 3.1.1 can run (NEGOTIATE tampering, and the
+        # signed response mutations when nothing is encrypted). The other
+        # proxy tests below need the 2.1 server.
         smb311_only = os.environ.get("ADASMB_SMB311_ONLY") == "1"
         protocol = "SMB3_11" if smb311_only else "SMB2_10"
         # ADASMB_SMB_ENCRYPT sets "server smb encrypt": "off" leaves 3.1.1
@@ -321,6 +365,13 @@ def main() -> int:
                             print(log.read_text(encoding="utf-8", errors="replace"),
                                   file=sys.stderr)
                         raise
+                    # The proxy cases over 3.1.1: NEGOTIATE tampering in
+                    # every run, and, signed but not encrypted, the signed
+                    # response mutations, which the proxy signs again with
+                    # the 3.1.1 key.
+                    run_negotiate_tamper_cases(env, encrypting=encrypt != "off")
+                    if encrypt == "off":
+                        run_response_mutation_cases(env, share)
                     print("local Samba SMB 3.1.1 integration tests passed")
                     return 0
                 if os.environ.get("ADASMB_DIRECTORY_ONLY") == "1":
@@ -595,26 +646,7 @@ def main() -> int:
                             env=diagnostic_env)
                     finally:
                         proxy.join()
-                for index, mode in enumerate(RESPONSE_MUTATIONS, start=21):
-                    (share / "mutation-write.bin").write_bytes(b"A" * 64)
-                    (share / "mutation-write.bin").chmod(0o666)
-                    proxy_port = PORT + index
-                    proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD)
-                    proxy.start()
-                    mutation_env = env.copy()
-                    mutation_env.update(
-                        SMB_TEST_PORT=str(proxy_port),
-                        SMB_TEST_BACKEND_PORT=str(PORT),
-                        SMB_TEST_MODE=mode,
-                    )
-                    try:
-                        run([str(ROOT / "build/bin/response_mutation_client")], env=mutation_env)
-                    finally:
-                        proxy.join()
-                    expected = (b"B" + b"A" * 63) if RESPONSE_MUTATIONS[mode] == 9 else b"A" * 64
-                    if (share / "mutation-write.bin").read_bytes() != expected:
-                        raise RuntimeError("unexpected remote WRITE effect after response mutation")
-                    (share / "mutation-write.bin").unlink()
+                run_response_mutation_cases(env, share)
                 for index, mode in enumerate(SECURITY_BUFFER_MUTATIONS, start=40):
                     proxy_port = PORT + index
                     proxy = AdversarialProxy(mode, proxy_port, PORT, user=USER, password=PASSWORD)
