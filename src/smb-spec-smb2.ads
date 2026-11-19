@@ -311,4 +311,140 @@ is
        Write_Channel_Info_Offset => 0,
        Write_Channel_Info_Length => 0,
        Flags => 0));
+
+   --  A variable part that a request places by an offset counted from the
+   --  start of the header (SecurityBufferOffset, PathOffset): Value at
+   --  Offset, after the Fixed bytes of fields, in Data, which starts after
+   --  the header.
+   function Has_Bytes_At_Offset
+     (Data : SMB.Bytes; Fixed : Natural; Offset : SMB.Word; Value : SMB.Bytes)
+      return Boolean is
+     (Natural (Offset) >= Header_Size
+      and then Natural (Offset) - Header_Size >= Fixed
+      and then Has_Bytes (Data, Natural (Offset) - Header_Size, Value))
+   with Pre =>
+     Data'Length <= SMB.Maximum_Frame_Size
+     and then Value'Length <= SMB.Maximum_Frame_Size;
+
+   --  2.2.5: the SMB2 SESSION_SETUP Request, after the header: 24 bytes of
+   --  fields (StructureSize 25 counts a byte of Buffer), then the security
+   --  token at SecurityBufferOffset.
+   Session_Setup_Request_Size : constant := 25;
+   Session_Setup_Fields_Size : constant := 24;
+   Negotiate_Signing_Enabled : constant SMB.Byte := 16#01#;
+   Negotiate_Signing_Required : constant SMB.Byte := 16#02#;
+
+   type Session_Setup_Request is record
+      Flags : SMB.Byte;
+      Security_Mode : SMB.Byte;
+      Capabilities : SMB.DWord;
+      Channel : SMB.DWord;
+      Security_Buffer_Offset : SMB.Word;
+      Security_Buffer_Length : SMB.Word;
+      Previous_Session_Id : SMB.QWord;
+   end record;
+
+   function Is_Session_Setup_Request
+     (Data : SMB.Bytes; Request : Session_Setup_Request; Token : SMB.Bytes)
+      return Boolean is
+     (Data'Length >= Session_Setup_Fields_Size
+      and then
+        SMB.Spec.Encoding.LE16 (Data, 0) = Session_Setup_Request_Size
+      and then Data (Data'First + 2) = Request.Flags
+      and then Data (Data'First + 3) = Request.Security_Mode
+      and then SMB.Spec.Encoding.LE32 (Data, 4) = Request.Capabilities
+      and then SMB.Spec.Encoding.LE32 (Data, 8) = Request.Channel
+      and then
+        SMB.Spec.Encoding.LE16 (Data, 12) = Request.Security_Buffer_Offset
+      and then
+        SMB.Spec.Encoding.LE16 (Data, 14) = Request.Security_Buffer_Length
+      and then
+        SMB.Spec.Encoding.LE64 (Data, 16) = Request.Previous_Session_Id
+      and then Natural (Request.Security_Buffer_Length) = Token'Length
+      and then
+        Has_Bytes_At_Offset
+          (Data, Session_Setup_Fields_Size, Request.Security_Buffer_Offset,
+           Token))
+   with Pre =>
+     Data'Length <= SMB.Maximum_Frame_Size
+     and then Token'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   --  The SESSION_SETUP this client sends (3.2.4.2.3), on its first
+   --  channel and with no session to reconnect: "The Flags field MUST be
+   --  set to 0"; it requires signing, so SMB2_NEGOTIATE_SIGNING_REQUIRED
+   --  (MUST), with SMB2_NEGOTIATE_SIGNING_ENABLED too (2.2.5: the server
+   --  ignores it); no DFS, so Capabilities 0; Channel 0 (2.2.5: "The client
+   --  MUST set this to 0"); PreviousSessionId 0 (MUST); and the token right
+   --  after the fields (64 + 24 = 88).
+   function Client_Session_Setup
+     (Token_Length : SMB.Word) return Session_Setup_Request is
+     ((Flags => 0,
+       Security_Mode =>
+         Negotiate_Signing_Enabled + Negotiate_Signing_Required,
+       Capabilities => 0,
+       Channel => 0,
+       Security_Buffer_Offset => Header_Size + Session_Setup_Fields_Size,
+       Security_Buffer_Length => Token_Length,
+       Previous_Session_Id => 0));
+
+   --  2.2.9: the SMB2 TREE_CONNECT Request, after the header: 8 bytes of
+   --  fields (StructureSize 9 counts a byte of Buffer), then the path,
+   --  "\\server\share" in UTF-16, at PathOffset.
+   Tree_Connect_Request_Size : constant := 9;
+   Tree_Connect_Fields_Size : constant := 8;
+
+   type Tree_Connect_Request is record
+      Flags : SMB.Word;
+      Path_Offset : SMB.Word;
+      Path_Length : SMB.Word;
+   end record;
+
+   function Is_Tree_Connect_Request
+     (Data : SMB.Bytes; Request : Tree_Connect_Request; Path : SMB.Bytes)
+      return Boolean is
+     (Data'Length >= Tree_Connect_Fields_Size
+      and then SMB.Spec.Encoding.LE16 (Data, 0) = Tree_Connect_Request_Size
+      and then SMB.Spec.Encoding.LE16 (Data, 2) = Request.Flags
+      and then SMB.Spec.Encoding.LE16 (Data, 4) = Request.Path_Offset
+      and then SMB.Spec.Encoding.LE16 (Data, 6) = Request.Path_Length
+      and then Natural (Request.Path_Length) = Path'Length
+      and then
+        Has_Bytes_At_Offset
+          (Data, Tree_Connect_Fields_Size, Request.Path_Offset, Path))
+   with Pre =>
+     Data'Length <= SMB.Maximum_Frame_Size
+     and then Path'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   --  The TREE_CONNECT this client sends (3.2.4.2.4), with no remoted
+   --  identity, cluster reconnect or redirection: Flags 0 (in 2.1 the
+   --  field is reserved and "The client MUST set this to 0"), and the path
+   --  right after the fields (64 + 8 = 72).
+   function Client_Tree_Connect
+     (Path_Length : SMB.Word) return Tree_Connect_Request is
+     ((Flags => 0,
+       Path_Offset => Header_Size + Tree_Connect_Fields_Size,
+       Path_Length => Path_Length));
+
+   --  2.2.7 and 2.2.11: the SMB2 LOGOFF and TREE_DISCONNECT Requests, the
+   --  same 4 bytes: StructureSize 4 and a Reserved field that "The client
+   --  MUST set ... to 0".
+   Logoff_Request_Size : constant := 4;
+   Tree_Disconnect_Request_Size : constant := 4;
+
+   function Is_Logoff_Request (Data : SMB.Bytes) return Boolean is
+     (Data'Length >= Logoff_Request_Size
+      and then SMB.Spec.Encoding.LE16 (Data, 0) = Logoff_Request_Size
+      and then SMB.Spec.Encoding.LE16 (Data, 2) = 0)
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   function Is_Tree_Disconnect_Request (Data : SMB.Bytes) return Boolean is
+     (Data'Length >= Tree_Disconnect_Request_Size
+      and then
+        SMB.Spec.Encoding.LE16 (Data, 0) = Tree_Disconnect_Request_Size
+      and then SMB.Spec.Encoding.LE16 (Data, 2) = 0)
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 end SMB.Spec.SMB2;
