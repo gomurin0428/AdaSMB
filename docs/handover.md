@@ -457,8 +457,14 @@ opens a received one. It is a stateless SPARK unit, like
   SIGNING_REQUIRED (MUST, since the client requires signing) with
   SIGNING_ENABLED (the server ignores it), Capabilities 0 (no DFS),
   Channel 0 and PreviousSessionId 0 (MUST), the token at 88;
-  `Client_Tree_Connect` has Flags 0 and the path at 72. No deviation from
-  the standard came up.
+  `Client_Tree_Connect` has Flags 0 and the path at 72 (the offsets are
+  this client's choice; the standard asks only that they describe where
+  the token and the path are). The builders' bytes deviate from neither
+  section. Two deviations around them, which #153's audit recorded, stay
+  for later phases: the share path is not checked against 2.2.9's MUSTs
+  (a server component under 256 characters, a share under 81 without
+  MS-FSCC 2.1.6's characters), and `Disconnect` sends TREE_DISCONNECT
+  without first closing the open files (3.2.4.22).
 * `Build_Session_Setup`, `Build_Tree_Connect` and `Build_Simple` state
   their exact status, `Used`, the request against the specification and
   zero bytes past it, as the transfer builders do. `Build_Tree_Connect`

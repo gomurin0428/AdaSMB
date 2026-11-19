@@ -625,6 +625,28 @@ procedure Spec_Test is
            (Full_Tree, Full_Tree_Request, Full_Path),
          "requests with every field set");
       Passed;
+      --  SecurityBufferLength is the token's length, and an offset never
+      --  points into the fields.
+      declare
+         Overlap : SMB.Bytes := Full_Setup;
+         Tree_Overlap : SMB.Bytes := Full_Tree;
+      begin
+         Overlap (Overlap'First + 12) := 16#50#;
+         Tree_Overlap (Tree_Overlap'First + 4) := 16#42#;
+         pragma Assert
+           (not S.Is_Session_Setup_Request
+              (Setup_Body, Blog_Setup, Token (Token'First .. Token'Last - 1))
+            and then not S.Is_Session_Setup_Request
+              (Overlap,
+               (Full_Setup_Request with delta Security_Buffer_Offset => 80),
+               SMB.Bytes'(16#38#, 16#37#, 16#36#))
+            and then not S.Is_Tree_Connect_Request
+              (Tree_Overlap,
+               (Full_Tree_Request with delta Path_Offset => 66),
+               SMB.Bytes'(16#52#, 16#51#, 16#42#, 16#00#)),
+            "SecurityBufferLength, and offsets into the fields");
+      end;
+      Passed;
       for Index in Full_Setup'Range loop
          declare
             Changed : SMB.Bytes := Full_Setup;

@@ -376,7 +376,8 @@ is
    --  (MUST), with SMB2_NEGOTIATE_SIGNING_ENABLED too (2.2.5: the server
    --  ignores it); no DFS, so Capabilities 0; Channel 0 (2.2.5: "The client
    --  MUST set this to 0"); PreviousSessionId 0 (MUST); and the token right
-   --  after the fields (64 + 24 = 88).
+   --  after the fields (64 + 24 = 88: the client's choice, since the offset
+   --  only has to describe where the token is).
    function Client_Session_Setup
      (Token_Length : SMB.Word) return Session_Setup_Request is
      ((Flags => 0,
@@ -420,7 +421,9 @@ is
    --  The TREE_CONNECT this client sends (3.2.4.2.4), with no remoted
    --  identity, cluster reconnect or redirection: Flags 0 (in 2.1 the
    --  field is reserved and "The client MUST set this to 0"), and the path
-   --  right after the fields (64 + 8 = 72).
+   --  right after the fields (64 + 8 = 72, the client's choice). The form
+   --  of the path (2.2.9's limits on the server and share components) is
+   --  not part of this specification; the client checks only part of it.
    function Client_Tree_Connect
      (Path_Length : SMB.Word) return Tree_Connect_Request is
      ((Flags => 0,
