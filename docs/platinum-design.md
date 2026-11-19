@@ -121,7 +121,8 @@ specification tests passing.
 3. **SMB2 messages.** `SMB.Spec.SMB2`; complete contracts for the header,
    `Core_Request`, the `Core_Protocol` builders, the transform header and
    the QUERY_INFO and SET_INFO packets, with exact statuses. The cheapest
-   tier, done first to settle the patterns.
+   tier, done first to settle the patterns. The header writers came first
+   (#150); a specification is stated as fields read at their offsets.
 4. **Text.** Whole-string UTF-8 and UTF-16 specifications, and exact
    outputs and statuses for both conversions.
 5. **Hashes and HMAC**, with the incremental model; then `KDF`,

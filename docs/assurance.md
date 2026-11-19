@@ -302,20 +302,29 @@ implementation.
 
 | Specification | Standard | Used by |
 | --- | --- | --- |
-| `SMB.Spec.Encoding` | MS-SMB2 1.3, MS-DTYP 2.2: little-endian 16-, 32- and 64-bit integers, as sums of bytes times powers of 256 | Not yet (phase 3 ties `SMB.Core_Wire` to it) |
+| `SMB.Spec.Encoding` | MS-SMB2 1.3, MS-DTYP 2.2: little-endian 16-, 32- and 64-bit integers, as sums of bytes times powers of 256 | `Core_Wire`'s integer reads (`Encoded_U16`, `Encoded_U32`, `Encoded_U64` and so `Read_U*` and `Write_U*`), `Header_Nt_Status` |
+| `SMB.Spec.SMB2` | MS-SMB2 2.2.1: the SYNC header as a record of its fields, `Is_Sync_Header` (bytes that encode one) and `Request_Header` (a client's own request, 3.2.4.1) | `Core_Wire.Initialize_Header`, `Core_Request.Prepare_Header` |
 
-Where each unit stands, from the survey at 0.4.0:
+Where each unit stands, from the survey at 0.4.0 and the phases since:
 
 * **Complete already:** `Core_Framing`, `Core_Transport`, `Core_Clock`; the
   path, share and UTF-16 validators of `Core_Text`; the integer readers and
   writers of `Core_Wire`; the transfer arithmetic of `Core_Protocol`.
-* **Fields stated, gaps left:** the header of `Core_Wire`, `Core_Request`, the
+* **Complete against a specification:** the header writers,
+  `Core_Wire.Initialize_Header` and `Core_Request.Prepare_Header` (exact
+  status; on success the 64 bytes are the header `SMB.Spec.SMB2` gives, the
+  rest of the packet unchanged; on failure nothing changed).
+* **Fields stated, gaps left:** `Core_Wire.Validate_Header` (phase 7), the
+  header copies in `Core_Client` and `Core_Connection` (phase 9), the
   builders and `Parse_Response` of `Core_Protocol`, the header of
   `Core_Transform`, `Core_Negotiate`'s response checks, `Core_Query`,
   `Core_Resize`.
 * **Outputs not stated:** every digest, MAC, cipher and derived key (`Crypto`,
-  `AES` and its modes, `KDF`), `Core_Preauth.Update`, and `Core_Auth`'s NTLMv2
-  response, Type 3 message and session key.
+  `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
+  `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,
+  `Core_Request.Sign_Packet`) and `Core_Wire.GMAC_Nonce`,
+  `Core_Preauth.Update`, and `Core_Auth`'s NTLMv2 response, Type 3 message
+  and session key.
 * **Partial frames over large state:** `Engine`, `Core_Connection`,
   `Core_Client`.
 

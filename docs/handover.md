@@ -68,7 +68,8 @@ of date.
 | after 0.3.0 | Tests for what only the proof reached in #138's mutation run | merged (#145) |
 | after 0.3.0 | Release 0.4.0 (`alire.toml`, tag, GitHub release) | merged (#146) |
 | after 0.4.0 | SPARK Platinum design ([platinum-design.md](platinum-design.md)) | merged (#148) |
-| after 0.4.0 | Platinum phase 2: Ada 2022, the run-time contract policy, `SMB.Spec`, `spec_test` | #149 |
+| after 0.4.0 | Platinum phase 2: Ada 2022, the run-time contract policy, `SMB.Spec`, `spec_test` | merged (#149) |
+| after 0.4.0 | Platinum phase 3, the header: `SMB.Spec.SMB2`, `Initialize_Header` and `Prepare_Header` proved against it | #150 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -412,8 +413,10 @@ opens a received one. It is a stateless SPARK unit, like
 * Follow alire-project/alire-index#2375 (smb 0.4.0) until it is merged,
   answer its review if there is one, and record the merge here.
 * SPARK Platinum ([platinum-design.md](platinum-design.md)), whose
-  decisions the maintainer approved on 2026-11-18: phase 2 is #149; phase 3
-  (the SMB2 message specifications) comes next. After Platinum, the
+  decisions the maintainer approved on 2026-11-18: phase 2 is merged
+  (#149); phase 3 (the SMB2 messages) started with the header (#150). Next
+  in phase 3: the request bodies of the `Core_Protocol` builders, then the
+  transform header and the QUERY_INFO and SET_INFO packets. After Platinum, the
   maintainer wants the remaining SMB features in this order: Kerberos,
   several requests in flight, several shares per connection, DFS, share
   listing (DCE/RPC), then the remaining file operations (times and
@@ -433,6 +436,70 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, the SMB2 header (#150)
+
+* `SMB.Spec.SMB2` models the SYNC header (MS-SMB2 2.2.1.2) as a record of
+  its field values. `Is_Sync_Header (Data, Header)` says that Data starts
+  with ProtocolId and each field read little-endian at its offset
+  (`SMB.Spec.Encoding.LE16`/`LE32`/`LE64`) equals the record's, and the
+  Signature bytes are its Signature: that fixes all 64 bytes.
+  `Request_Header` is the header of a client's own request (3.2.4.1):
+  Status, NextCommand, Reserved and Signature zero.
+* State a specification by fields read at offsets, not byte by byte with
+  `LE_Byte`: a first version said "byte I is `Sync_Header_Byte (H, I)`",
+  whose `LE_Byte` divides by `2 ** (8 * Index)` with Index unknown, and
+  the provers ran out of steps on every check of `Initialize_Header`, even
+  the trivial ones.
+* After such a run, delete `build/proof-obj` before proving again:
+  GNATprove kept the failed attempts in its session and reported them
+  again in seconds, without retrying, until the directory was removed.
+  CI starts from an empty directory and is not affected.
+* `Core_Wire`'s `Encoded_U16`, `Encoded_U32` and `Encoded_U64` have
+  postconditions equating them to `LE16`, `LE32` and `LE64`, so every
+  contract stated with them is now stated against the specification too.
+  `Header_Nt_Status` is `LE32 (Data, 8)`.
+* `Initialize_Header`'s postcondition adds `Is_Sync_Header (Data,
+  Request_Header (...))` with Flags 0; `Core_Request.Prepare_Header`'s adds
+  the same with Flags `SMB2_FLAGS_SIGNED` when the request is signed, its
+  exact status, and that a failure leaves the packet unchanged. The body
+  of `Initialize_Header` checks, after each write, that the fields no write
+  touches (ProtocolId, Status, Flags, NextCommand, Reserved, Signature) are
+  still as the zero fill left them, so each check follows from one write.
+* The existing `Encoded_U*` clauses of those postconditions stay: callers
+  use them, and dropping them would mean re-proving the callers from the
+  header record.
+* `spec_test` checks `Is_Sync_Header` on the WRITE request and READ
+  response headers of Microsoft's encryption blog (A.2) and three
+  SESSION_SETUP headers of its A.1, chosen because their fields differ
+  where the A.2 ones agree: CreditCharge 1 against CreditRequest 0x80, a
+  Status, Flags 1 and 9, a Signature that is not zero. NextCommand, which
+  none of them sets, is checked on a changed copy. It also checks that
+  changing any one value of the record breaks the match, a changed
+  ProtocolId or StructureSize, 63 bytes, the command codes and flags
+  against 2.2.1.2's tables, and `Request_Header`. The review's mutants of
+  the specification (offsets swapped or moved, a check removed, a constant
+  changed) all fail it; with only the A.2 headers, nine of them passed.
+* The assertions in a body run in the library build too (`contracts.adc`
+  checks assertions; ghost code is enabled). Those in `Initialize_Header`
+  and `Prepare_Header` cost about 150 ns a call, whatever the packet's
+  size. A later phase must not put a costly specification (a digest of the
+  whole message, say) in a body's `pragma Assert`: that would run it in
+  production, which the run-time policy means to avoid. Find out first
+  whether GNAT 16's assertion levels (a ghost level that is never
+  executed) can hold such proof-only steps.
+* Found in the review, not changed here: `Write_U32` and `Write_U64` keep
+  a loop invariant over the whole of `Data` with `Data'Loop_Entry`, which
+  runs in production too, and `Prepare_Header` is called on the whole
+  output buffer: about 6 ns per packet byte, some milliseconds for the
+  header of a 1 MiB WRITE. A follow-up writes those bytes without a loop.
+* `Is_Sync_Header` says how a header is encoded, not which headers are
+  valid: a SYNC header with SMB2_FLAGS_ASYNC_COMMAND, or a request with
+  SERVER_TO_REDIR, still matches. The validity predicates come with
+  response acceptance (phase 7).
+* Not in this pull request: `Validate_Header` (response acceptance, phase
+  7) and the header copies in `Core_Client` and `Core_Connection` (with
+  their coordinators, phase 9).
 
 ## Platinum phase 2: infrastructure (#149)
 
