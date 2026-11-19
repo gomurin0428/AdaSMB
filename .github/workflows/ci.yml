@@ -162,7 +162,7 @@ jobs:
           gprbuild -p -P smb.gpr --subdirs=stack-usage -cargs:Ada -fcallgraph-info=su
           python tests/check_stack_usage.py build/obj/stack-usage
           gprbuild -p -P smb.gpr -XADASMB_CONTRACT_CHECKS=all --subdirs=stack-usage-all -cargs:Ada -fcallgraph-info=su
-          python tests/check_stack_usage.py build/obj/stack-usage-all
+          python tests/check_stack_usage.py --all-contracts build/obj/stack-usage-all
       - name: Unit tests
         run: |
           ./build/bin/test_suite.exe
