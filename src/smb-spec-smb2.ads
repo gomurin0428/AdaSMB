@@ -101,11 +101,16 @@ is
            Data (Data'First + 48 + Index) = Header.Signature (Index)))
    with Pre => Data'Length <= SMB.Maximum_Frame_Size;
 
-   --  The header of a request the client sends on its own (3.2.4.1): no
-   --  status or channel sequence, not part of a compound (NextCommand 0),
-   --  the Reserved field zero (2.2.1.2: the client "SHOULD set this field
-   --  to 0"), and the Signature zero, which signing (3.2.4.1.1) then fills
-   --  in when Flags has SMB2_FLAGS_SIGNED.
+   --  The header of a request from this client, which never compounds
+   --  requests and negotiates neither multichannel nor persistent handles:
+   --  (ChannelSequence/Reserved)/Status zero (2.2.1.2: the Status of a
+   --  request is set to 0, and 3.2.4.1 sets ChannelSequence only with those
+   --  capabilities), NextCommand zero (not part of a compound), Reserved
+   --  zero (2.2.1.2: the client "SHOULD set this field to 0"), and the
+   --  Signature zero, which signing (3.2.4.1.1) then fills in when Flags
+   --  has SMB2_FLAGS_SIGNED. The flags a request must not carry
+   --  (SERVER_TO_REDIR, ASYNC_COMMAND) are the caller's to leave out; the
+   --  validity predicates come with response acceptance (phase 7).
    function Request_Header
      (Command : SMB.Word;
       Credit_Charge : SMB.Word;

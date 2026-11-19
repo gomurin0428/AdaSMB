@@ -470,9 +470,33 @@ opens a received one. It is a stateless SPARK unit, like
   use them, and dropping them would mean re-proving the callers from the
   header record.
 * `spec_test` checks `Is_Sync_Header` on the WRITE request and READ
-  response headers of Microsoft's encryption blog (A.2), that changing any
-  one field of the record no longer matches, that 63 bytes are not a
-  header, and `Request_Header`.
+  response headers of Microsoft's encryption blog (A.2) and three
+  SESSION_SETUP headers of its A.1, chosen because their fields differ
+  where the A.2 ones agree: CreditCharge 1 against CreditRequest 0x80, a
+  Status, Flags 1 and 9, a Signature that is not zero. NextCommand, which
+  none of them sets, is checked on a changed copy. It also checks that
+  changing any one value of the record breaks the match, a changed
+  ProtocolId or StructureSize, 63 bytes, the command codes and flags
+  against 2.2.1.2's tables, and `Request_Header`. The review's mutants of
+  the specification (offsets swapped or moved, a check removed, a constant
+  changed) all fail it; with only the A.2 headers, nine of them passed.
+* The assertions in a body run in the library build too (`contracts.adc`
+  checks assertions; ghost code is enabled). Those in `Initialize_Header`
+  and `Prepare_Header` cost about 150 ns a call, whatever the packet's
+  size. A later phase must not put a costly specification (a digest of the
+  whole message, say) in a body's `pragma Assert`: that would run it in
+  production, which the run-time policy means to avoid. Find out first
+  whether GNAT 16's assertion levels (a ghost level that is never
+  executed) can hold such proof-only steps.
+* Found in the review, not changed here: `Write_U32` and `Write_U64` keep
+  a loop invariant over the whole of `Data` with `Data'Loop_Entry`, which
+  runs in production too, and `Prepare_Header` is called on the whole
+  output buffer: about 6 ns per packet byte, some milliseconds for the
+  header of a 1 MiB WRITE. A follow-up writes those bytes without a loop.
+* `Is_Sync_Header` says how a header is encoded, not which headers are
+  valid: a SYNC header with SMB2_FLAGS_ASYNC_COMMAND, or a request with
+  SERVER_TO_REDIR, still matches. The validity predicates come with
+  response acceptance (phase 7).
 * Not in this pull request: `Validate_Header` (response acceptance, phase
   7) and the header copies in `Core_Client` and `Core_Connection` (with
   their coordinators, phase 9).

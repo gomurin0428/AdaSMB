@@ -320,8 +320,11 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   `Core_Transform`, `Core_Negotiate`'s response checks, `Core_Query`,
   `Core_Resize`.
 * **Outputs not stated:** every digest, MAC, cipher and derived key (`Crypto`,
-  `AES` and its modes, `KDF`), `Core_Preauth.Update`, and `Core_Auth`'s NTLMv2
-  response, Type 3 message and session key.
+  `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
+  `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,
+  `Core_Request.Sign_Packet`) and `Core_Wire.GMAC_Nonce`,
+  `Core_Preauth.Update`, and `Core_Auth`'s NTLMv2 response, Type 3 message
+  and session key.
 * **Partial frames over large state:** `Engine`, `Core_Connection`,
   `Core_Client`.
 
