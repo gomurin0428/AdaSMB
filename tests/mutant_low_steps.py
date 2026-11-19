@@ -36,7 +36,8 @@ LOW_STEPS = 20000
 # A listed unit's checks all proved within this many steps.
 MARGIN_STEPS = LOW_STEPS // 2
 # The switches of `make prove` but the steps limit; mutant_prove.py adds
-# --counterexamples=on and -j1, which leave the cache keys as they are.
+# --counterexamples=on, -j1 and AdaMutant's --proof-warnings=off (GNATprove's
+# default), which leave the cache keys as they are.
 SWITCHES = [
     "--mode=all", "--level=2", "--proof=progressive",
     "--checks-as-errors=on", "--prover=cvc5,z3,altergo",

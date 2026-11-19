@@ -8,19 +8,51 @@ and every mutant that only the proof detected, in AdaMutant's three groups:
 confirmed by a counterexample run with the real code, a contract that says
 too little, and undecided. Undetected mutants are not a failure; with --fail,
 the script exits 1 if there is one.
+
+The report does not say which mutants change a contract, which AdaMutant
+leaves out of the candidates for a missing test (no test can detect a weaker
+postcondition), nor where the proof proves anything. Both are in AdaMutant's
+console output, which tests/adamutant_run.sh keeps in .adamutant/console.txt:
+when it is there, the candidates are those the console lists, and its list
+of places where the proof proves anything is added.
 """
 
 import argparse
 import json
 import os
+import re
 import sys
 from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / ".adamutant" / "reports" / "mutation-report.json"
+CONSOLE = ROOT / ".adamutant" / "console.txt"
 DETECTED = {"Killed", "Timeout"}
 UNDETECTED = {"Survived", "NoCoverage"}
+CANDIDATES = "Detected only by the proof"
+VACUOUS = "The proof of the unmodified project proves anything here"
+
+
+def console_lists(text: str) -> tuple[set[str], list[str]]:
+    """The ids of the candidates for a missing test, and the places where
+    the proof proves anything, from AdaMutant's console output. A section
+    starts with an unindented line and ends at the next one."""
+    candidates: set[str] = set()
+    vacuous: list[str] = []
+    section = ""
+    for line in text.splitlines():
+        if line and not line[0].isspace():
+            section = (CANDIDATES if line.startswith(CANDIDATES)
+                       else VACUOUS if line.startswith(VACUOUS) else "")
+            continue
+        if section == CANDIDATES:
+            match = re.match(r"\s+#(\d+) ", line)
+            if match:
+                candidates.add(match.group(1))
+        elif section == VACUOUS and line.strip():
+            vacuous.append(line.strip())
+    return candidates, vacuous
 
 
 def cell(text: str) -> str:
@@ -35,16 +67,20 @@ def proof_group(reason: str) -> str:
     return "Undecided"
 
 
-def summary(report: dict) -> tuple[str, int]:
+def summary(report: dict, console: str | None = None) -> tuple[str, int]:
     counts: Counter[str] = Counter()
     rows = []
     proof_rows = []
+    candidates, vacuous = console_lists(console) if console is not None else (None, [])
     for path, entry in sorted(report["files"].items()):
         lines = entry["source"].splitlines()
         for mutant in entry["mutants"]:
             counts[mutant["status"]] += 1
             reason = mutant.get("statusReason", "")
             by_proof = mutant["status"] == "Killed" and reason.startswith("proof failed")
+            if by_proof and candidates is not None and str(mutant["id"]) not in candidates:
+                # A mutant of a contract, which no test could detect.
+                continue
             if mutant["status"] not in UNDETECTED and not by_proof:
                 continue
             start, end = mutant["location"]["start"], mutant["location"]["end"]
@@ -91,6 +127,14 @@ def summary(report: dict) -> tuple[str, int]:
             "|---|---|---|---|---|---|",
             *proof_rows,
         ]
+    if vacuous:
+        text += [
+            "",
+            "Where the proof of the unmodified project proves anything "
+            "(mutants there survive the proof):",
+            "",
+            *(f"- {cell(place)}" for place in vacuous),
+        ]
     return "\n".join(text) + "\n", undetected
 
 
@@ -98,7 +142,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--fail", action="store_true", help="exit 1 if any mutant went undetected")
     args = parser.parse_args()
-    text, undetected = summary(json.loads(REPORT.read_text(encoding="utf-8")))
+    console = CONSOLE.read_text(encoding="utf-8") if CONSOLE.is_file() else None
+    text, undetected = summary(json.loads(REPORT.read_text(encoding="utf-8")), console)
     sys.stdout.write(text)
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:

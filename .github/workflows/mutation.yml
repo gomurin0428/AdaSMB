@@ -104,7 +104,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/adamutant
-          key: adamutant-${{ runner.os }}-${{ runner.arch }}-${{ env.ADAMUTANT_COMMIT }}
+          key: adamutant-${{ runner.os }}-${{ runner.arch }}-${{ env.ADAMUTANT_COMMIT }}-alr-v1
       - name: Build AdaMutant
         run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
       - name: Install Python cryptography
@@ -132,8 +132,9 @@ jobs:
           fi
           # The proved units to mutate, which the proof that looks for where
           # the proof proves anything covers (tests/mutant_prove.py).
-          export ADASMB_MUTATION_UNITS=$(python3 -c 'import sys; sys.path.insert(0, "tests"); from mutant_low_steps import proved_sources; from pathlib import Path; print(" ".join(sorted({Path(f).name for f in sys.argv[1:] if f != "--mutate"} & proved_sources())))' $files)
-          adamutant run --concurrency 4 $files
+          units=$(python3 tests/mutation_units.py $files)
+          export ADASMB_MUTATION_UNITS="$units"
+          sh tests/adamutant_run.sh --concurrency 4 $files
       - name: Report
         if: always()
         run: python3 tests/mutation_survivors.py

@@ -261,7 +261,11 @@ in [`adamutant.toml`](adamutant.toml), and the HTML and JSON reports go to
 lists, for a person to judge, the mutants that neither the tests nor the proof
 detected, and those that only the proof detected (candidates for a missing
 test), in AdaMutant's groups: confirmed by a counterexample run with the real
-code, a contract that says too little, and undecided. Undetected mutants do
+code, a contract that says too little, and undecided. Mutants of a contract
+are not candidates (no test could detect them), and the places where the
+proof proves anything are listed too: both come from AdaMutant's console
+output, which [`tests/adamutant_run.sh`](tests/adamutant_run.sh) keeps in
+`.adamutant/console.txt`. Undetected mutants do
 not fail the run, and nothing is excluded by hand: a mutant whose object code
 at `-O2` is unchanged is recognized as equivalent, and the rest are judged in
 the pull request. With `PROOF_CACHE=dir`, the mutation targets first prove

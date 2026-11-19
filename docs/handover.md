@@ -706,18 +706,37 @@ opens a received one. It is a stateless SPARK unit, like
   `--proof-warnings=on` and no mutant, AdaMutant runs it once on the
   unmodified project to find where the proof proves anything (an always
   False precondition, unreachable code); `mutant_prove.py` then proves the
-  units the workflow names in `ADASMB_MUTATION_UNITS` (the proved units to
-  mutate), without the shared proof cache, whose goals differ.
+  units that `tests/mutation_units.py` lists in `ADASMB_MUTATION_UNITS`
+  (the proved units to mutate; the workflows and the Makefile set it, and
+  when it is empty nothing is proved), without the shared proof cache,
+  whose goals differ.
+* AdaMutant leaves the mutants of a contract out of the candidates for a
+  missing test, but its JSON report does not mark them, so
+  `tests/adamutant_run.sh` keeps the console output in
+  `.adamutant/console.txt` and `mutation_survivors.py` takes the
+  candidates, and the places where the proof proves anything, from it. On
+  the trial's report it listed 53 candidates without the console and 29,
+  as AdaMutant does, with it.
 * The trial (by hand, `files` = `src/smb-core_request.adb
-  src/smb-core_resize.adb`) made 242 mutants, 38 of them contract
-  mutants, and took 90 minutes, 25 of them before the first mutant (the
-  baseline and the proof with proof warnings). Score 95.4 %: 230 detected,
-  11 undetected, 1 equivalent. It listed two places where the proof proves
-  anything, both failure branches of `Core_Request.Prepare_Header` after
-  calls that cannot fail (the mutants there survive, as expected), and
-  among the survivors the early length check of `Prepare_Header`, which
+  src/smb-core_resize.adb`) made 242 mutants, some 35 of them in
+  contracts, and took 90 minutes, 25 of them before the first mutant (the
+  baseline and the proof with proof warnings; d1d049e took 24 minutes on
+  the same files). Score 95.4 %: 230 detected, 11 undetected, 1
+  equivalent. It listed two places where the proof proves anything, both
+  failure branches of `Core_Request.Prepare_Header` after calls that
+  cannot fail: there the mutants of the conditions and of the `return;`
+  survive, and a deleted `Status := Field_Status;` is caught only by flow
+  analysis ("might not be initialized") and listed as Undecided. Among the
+  survivors is also the early length check of `Prepare_Header`, which
   `Initialize_Header` repeats, so removing it changes nothing. These are
   for the pull requests that touch those units to judge.
+* The executable cache is saved per branch: pull requests can read only
+  their own and main's, and main gets it only from the weekly run or a run
+  by hand there. Run `mutation.yml` by hand on main with a small `files`
+  after merging, so pull requests stop building AdaMutant. Watch the first
+  weekly run's time: the contract mutants add proofs, and the two largest
+  shards took about 2.5 hours of AdaMutant time on 2026-11-14 against the
+  job's 350 minutes.
 
 ## AdaMutant d1d049e (#139, #141)
 

@@ -35,8 +35,9 @@ AdaMutant passes the switches in ADAMUTANT_PROVE_SWITCHES as arguments
 AdaMutant runs this once more on the unmodified project, in a copy with a
 cache of its own, to find where the proof proves anything (a precondition
 that is always False, code that is never reached): that run proves the
-units to mutate, which the workflow names in ADASMB_MUTATION_UNITS, or the
-baseline unit when it names none.
+units to mutate, which the workflows and the Makefile name in
+ADASMB_MUTATION_UNITS (tests/mutation_units.py): none when it is empty, the
+baseline unit when it is not set.
 """
 
 import os
@@ -111,8 +112,16 @@ def main() -> int:
     mutated = os.environ.get("ADAMUTANT_MUTANT_FILE", "")
     vacuity = not mutated and "--proof-warnings=on" in switches
     if vacuity:
-        units = sorted(set(os.environ.get("ADASMB_MUTATION_UNITS", "").split())
-                       & proved_sources()) or [BASELINE_UNIT]
+        named = os.environ.get("ADASMB_MUTATION_UNITS")
+        if named is None:
+            units = [BASELINE_UNIT]
+        else:
+            units = sorted(set(named.split()) & proved_sources())
+            if not units:
+                # AdaMutant does not count this proof's exit status.
+                print("mutant_prove.py: no proved unit to mutate; "
+                      "no proof warnings to look for", flush=True)
+                return 0
         low = False
         # Its goals differ from those of the other proofs, so the shared
         # cache would not answer them.

@@ -84,7 +84,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/adamutant
-          key: adamutant-${{ runner.os }}-${{ runner.arch }}-${{ env.ADAMUTANT_COMMIT }}
+          key: adamutant-${{ runner.os }}-${{ runner.arch }}-${{ env.ADAMUTANT_COMMIT }}-alr-v1
       - name: Build AdaMutant
         run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
       - name: Install Python cryptography
@@ -129,8 +129,9 @@ jobs:
         env:
           PROOF_CACHE: ${{ github.workspace }}/proof-cache
         run: |
-          export ADASMB_MUTATION_UNITS=$(python3 -c 'import sys; sys.path.insert(0, "tests"); from mutant_low_steps import changed_units, proved_sources; print(" ".join(sorted(set(changed_units(sys.argv[1])) & proved_sources())))' "origin/$GITHUB_BASE_REF")
-          adamutant run --since "origin/$GITHUB_BASE_REF" --concurrency 4
+          units=$(python3 tests/mutation_units.py --since "origin/$GITHUB_BASE_REF")
+          export ADASMB_MUTATION_UNITS="$units"
+          sh tests/adamutant_run.sh --since "origin/$GITHUB_BASE_REF" --concurrency 4
       # Undetected mutants, and those that only the proof detects, are for
       # the pull request to judge; they do not fail the job.
       - name: List the mutants to judge
