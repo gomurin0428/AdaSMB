@@ -16,7 +16,7 @@ of date.
   information (`Query_Information`, #134, and `Set_Size`, #135), reads and
   writes larger than 64 KiB per request (#137 and #138), and teaching the
   adversarial proxy SMB 3.1.1 (#142 and #144). With all three done, the
-  maintainer asked on 2026-11-19 for 0.4.0, on the Alire index too: it is
+  maintainer asked on 2026-11-18 for 0.4.0, on the Alire index too: it is
   tagged `v0.4.0` with a GitHub release (#146), and its index submission
   follows.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
@@ -65,7 +65,7 @@ of date.
 | after 0.3.0 | Multi-credit WRITEs: WRITEs up to 960 KiB, built and signed in place | merged (#138) |
 | after 0.3.0 | From #139's review: a margin for the low limit, no cache saved from a cancelled run | merged (#141) |
 | after 0.3.0 | Tests for what only the proof reached in #138's mutation run | merged (#145) |
-| after 0.3.0 | Release 0.4.0 (`alire.toml`, tag, GitHub release) | #146 |
+| after 0.3.0 | Release 0.4.0 (`alire.toml`, tag, GitHub release) | merged (#146) |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -407,8 +407,8 @@ opens a received one. It is a stateless SPARK unit, like
 ## Next steps
 
 * Submit 0.4.0 to the Alire index (the maintainer asked for it on
-  2026-11-19), as below, and record the index pull request here. Nothing
-  else is approved yet: ask the maintainer what comes next.
+  2026-11-18), as below, and record the index pull request here. Nothing
+  else is queued: propose the next pieces to the maintainer.
 * Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
     `[origin]` section added: `commit` is the tag's commit and `url` is

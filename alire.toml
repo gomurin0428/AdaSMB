@@ -9,7 +9,7 @@ open/read/write/close, a file's information (size, attributes, times),
 setting a file's size, directory listing with each entry's size,
 attributes and times, mkdir, delete and rename on one share per
 connection. With servers that support multi-credit requests
-(SMB2_GLOBAL_CAP_LARGE_MTU), a READ or WRITE carries up to 960 KiB.
+(SMB2_GLOBAL_CAP_LARGE_MTU), a READ or WRITE can carry up to 960 KiB.
 
 SMB 3.1.1 sessions are protected by the SHA-512 preauth integrity hash and
 signed with AES-128-GMAC or AES-128-CMAC, as the server chooses, under
