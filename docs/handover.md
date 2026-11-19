@@ -69,7 +69,8 @@ of date.
 | after 0.3.0 | Release 0.4.0 (`alire.toml`, tag, GitHub release) | merged (#146) |
 | after 0.4.0 | SPARK Platinum design ([platinum-design.md](platinum-design.md)) | merged (#148) |
 | after 0.4.0 | Platinum phase 2: Ada 2022, the run-time contract policy, `SMB.Spec`, `spec_test` | merged (#149) |
-| after 0.4.0 | Platinum phase 3, the header: `SMB.Spec.SMB2`, `Initialize_Header` and `Prepare_Header` proved against it | #150 |
+| after 0.4.0 | Platinum phase 3, the header: `SMB.Spec.SMB2`, `Initialize_Header` and `Prepare_Header` proved against it | merged (#150) |
+| after 0.4.0 | `Write_U64` without loop invariants, which ran over the whole packet in production | #151 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -488,11 +489,17 @@ opens a received one. It is a stateless SPARK unit, like
   production, which the run-time policy means to avoid. Find out first
   whether GNAT 16's assertion levels (a ghost level that is never
   executed) can hold such proof-only steps.
-* Found in the review, not changed here: `Write_U32` and `Write_U64` keep
-  a loop invariant over the whole of `Data` with `Data'Loop_Entry`, which
-  runs in production too, and `Prepare_Header` is called on the whole
-  output buffer: about 6 ns per packet byte, some milliseconds for the
-  header of a 1 MiB WRITE. A follow-up writes those bytes without a loop.
+* Found in the review and fixed in #151: `Write_U64` kept a loop
+  invariant over the whole of `Data` with `Data'Loop_Entry`, which ran in
+  production too, and `Prepare_Header` is called on the whole output
+  buffer: about 400 microseconds for the header of a 64 KiB request, some
+  milliseconds for a 1 MiB WRITE. Without the invariants GNATprove unrolls
+  the eight iterations, as it already did for `Write_U32`'s four, and the
+  header takes about 70 ns. A loop invariant that compares a whole buffer
+  with its `'Loop_Entry` costs that much on every iteration in the
+  library build; prefer a short loop without one, or a local
+  `Assertion_Policy (Loop_Invariant => Ignore)` where a long loop needs
+  it, as `Validate_Header` and others do.
 * `Is_Sync_Header` says how a header is encoded, not which headers are
   valid: a SYNC header with SMB2_FLAGS_ASYNC_COMMAND, or a request with
   SERVER_TO_REDIR, still matches. The validity predicates come with

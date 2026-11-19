@@ -124,19 +124,13 @@ package body SMB.Core_Wire with SPARK_Mode is
          Status := SMB.Invalid_Offset;
          return;
       end if;
+      --  No loop invariant: GNATprove unrolls a loop this short, and an
+      --  invariant over the whole of Data would be checked at run time on
+      --  every byte of the packet, eight times.
       for I in 0 .. 7 loop
          Data (Data'First + Offset + I) :=
            SMB.Byte
              (Interfaces.Shift_Right (Value, I * 8) and 16#FF#);
-         pragma Loop_Invariant
-           (for all Written in 0 .. I =>
-              Data (Data'First + Offset + Written) =
-                U64_Byte (Value, Written));
-         pragma Loop_Invariant
-           (for all Index in Data'Range =>
-              (if Index < Data'First + Offset
-                 or else Index > Data'First + Offset + I
-               then Data (Index) = Data'Loop_Entry (Index)));
       end loop;
       Lemma_U64_Bytes (Value);
       pragma Assert
