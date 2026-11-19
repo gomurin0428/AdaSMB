@@ -1,4 +1,5 @@
 with SMB.Core_Wire;
+with SMB.Spec.SMB2;
 
 package SMB.Core_Protocol is
    pragma SPARK_Mode (On);
@@ -77,6 +78,17 @@ package SMB.Core_Protocol is
    end record;
    Network_Open_Information_Class : constant := 34;
    Network_Open_Information_Size : constant := 56;
+
+   --  Every byte of Data from Used on is zero: what a builder leaves past
+   --  the request it writes, and the whole buffer when it fails.
+   --  Its body, as those of SMB.Spec.SMB2's requests, is hidden from the
+   --  callers, which use the builders' other clauses; the builders unhide
+   --  what they prove.
+   function Zero_After (Data : SMB.Bytes; Used : Natural) return Boolean is
+     (for all Index in Data'Range =>
+        (if Index - Data'First >= Used then Data (Index) = 0))
+   with Ghost,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
    procedure Build_Negotiate
      (Guid : SMB.Bytes;
@@ -200,10 +212,20 @@ package SMB.Core_Protocol is
      and then Amount <= Maximum_Read_Chunk
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       Status =
+         (if Output'Length >= SMB.Spec.SMB2.Read_Request_Size then SMB.Ok
+          else SMB.Resource_Limit)
+       and then
+         Used = (if Status = SMB.Ok then SMB.Spec.SMB2.Read_Request_Size else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 49
+            SMB.Spec.SMB2.Is_Read_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Read
+                 (File_Id => File_Id,
+                  Offset => Offset,
+                  Length => SMB.DWord (Amount)))
             and then
               Output (Output'First + 4) =
                 SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 0)
@@ -235,10 +257,23 @@ package SMB.Core_Protocol is
      and then Data'Length <= Maximum_Write_Chunk
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       Status =
+         (if Output'Length >= SMB.Spec.SMB2.Write_Fields_Size + Data'Length
+          then SMB.Ok else SMB.Resource_Limit)
+       and then
+         Used =
+           (if Status = SMB.Ok
+            then SMB.Spec.SMB2.Write_Fields_Size + Data'Length else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 48 + Data'Length
+            SMB.Spec.SMB2.Is_Write_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Write
+                 (File_Id => File_Id,
+                  Offset => Offset,
+                  Length => SMB.DWord (Data'Length)),
+               Data)
             and then
               Output (Output'First + 4) =
                 SMB.Core_Wire.U32_Byte
@@ -274,10 +309,17 @@ package SMB.Core_Protocol is
    with Pre => File_Id'Length = 16
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       Status =
+         (if Output'Length >= SMB.Spec.SMB2.Close_Request_Size then SMB.Ok
+          else SMB.Resource_Limit)
+       and then
+         Used =
+           (if Status = SMB.Ok then SMB.Spec.SMB2.Close_Request_Size else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 24
+            SMB.Spec.SMB2.Is_Close_Request
+              (Output, (Flags => 0, File_Id => File_Id))
             and then
               Output (Output'First + 8 .. Output'First + 23) = File_Id);
 

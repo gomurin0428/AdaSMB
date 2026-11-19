@@ -15,6 +15,7 @@ with SMB.Spec.Encoding;
 with SMB.Spec.SMB2;
 
 procedure Spec_Test is
+   use type Interfaces.Unsigned_8;
    use type Interfaces.Unsigned_16;
    use type Interfaces.Unsigned_32;
    use type Interfaces.Unsigned_64;
@@ -313,9 +314,221 @@ procedure Spec_Test is
          "Request_Header");
       Passed;
    end Test_SMB2_Header;
+   --  MS-SMB2 2.2.15, 2.2.19 and 2.2.21: the CLOSE, READ and WRITE
+   --  requests. The READ and WRITE are the bodies of the blog's A.2
+   --  messages above (test_suite decrypts them); where their fields are all
+   --  zero, a READ with every field set tells the fields apart, and a CLOSE,
+   --  of which no message is published here, is built from the layout.
+   procedure Test_SMB2_Transfer is
+      package S renames SMB.Spec.SMB2;
+      use type SMB.Bytes;
+      File_Id : constant SMB.Bytes (0 .. 15) :=
+        (16#05#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
+         16#01#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#);
+      Read_Body : constant SMB.Bytes :=
+        (16#31#, 16#00#, 16#00#, 16#00#, 16#17#, 16#00#, 16#00#, 16#00#,
+         16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#)
+        & File_Id
+        & (16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+           16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+           16#00#);
+      Payload : constant SMB.Bytes :=
+        (16#53#, 16#6D#, 16#62#, 16#33#, 16#20#, 16#65#, 16#6E#, 16#63#,
+         16#72#, 16#79#, 16#70#, 16#74#, 16#69#, 16#6F#, 16#6E#, 16#20#,
+         16#74#, 16#65#, 16#73#, 16#74#, 16#69#, 16#6E#, 16#67#);
+      Write_Body : constant SMB.Bytes :=
+        (16#31#, 16#00#, 16#70#, 16#00#, 16#17#, 16#00#, 16#00#, 16#00#,
+         16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#)
+        & File_Id
+        & (16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+           16#70#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#)
+        & Payload;
+      --  Every READ field set, each to a value of its own whose bytes all
+      --  differ, so that a field read at the wrong offset or width differs.
+      Full_Read : constant SMB.Bytes (10 .. 58) :=
+        (16#31#, 16#00#, 16#50#, 16#01#, 16#04#, 16#03#, 16#02#, 16#01#,
+         16#08#, 16#07#, 16#06#, 16#05#, 16#04#, 16#03#, 16#02#, 16#01#)
+        & File_Id
+        & (16#14#, 16#13#, 16#12#, 16#11#, 16#24#, 16#23#, 16#22#, 16#21#,
+           16#34#, 16#33#, 16#32#, 16#31#, 16#42#, 16#41#, 16#52#, 16#51#,
+           16#AA#);
+      --  The same for WRITE, with its data 8 bytes after the fields
+      --  (DataOffset 120), the gap zero.
+      Full_Write : constant SMB.Bytes (100 .. 158) :=
+        (16#31#, 16#00#, 16#78#, 16#00#, 16#03#, 16#00#, 16#00#, 16#00#,
+         16#18#, 16#17#, 16#16#, 16#15#, 16#14#, 16#13#, 16#12#, 16#11#)
+        & File_Id
+        & (16#24#, 16#23#, 16#22#, 16#21#, 16#34#, 16#33#, 16#32#, 16#31#,
+           16#42#, 16#41#, 16#52#, 16#51#, 16#64#, 16#63#, 16#62#, 16#61#,
+           0, 0, 0, 0, 0, 0, 0, 0,
+           16#AA#, 16#BB#, 16#CC#);
+      Full_Payload : constant SMB.Bytes := (16#AA#, 16#BB#, 16#CC#);
+      Close_Body : constant SMB.Bytes :=
+        (16#18#, 16#00#, 16#02#, 16#01#, 16#00#, 16#00#, 16#00#, 16#00#)
+        & File_Id;
+      --  The blog's client sends the READ's Padding as 0, not the 0x50 that
+      --  MS-SMB2 3.2.4.6 recommends, and a WRITE's WriteChannelInfoOffset as
+      --  112, where this client sends 0x50 and 0.
+      Blog_Read : constant S.Read_Request :=
+        (S.Client_Read (File_Id, 0, 23) with delta Padding => 0)
+      with Ghost;
+      Blog_Write : constant S.Write_Request :=
+        (S.Client_Write (File_Id, 0, 23)
+         with delta Write_Channel_Info_Offset => 112)
+      with Ghost;
+      Full_Read_Request : constant S.Read_Request :=
+        (Padding => 16#50#, Flags => 1, Length => 16#0102_0304#,
+         Offset => 16#0102_0304_0506_0708#, File_Id => File_Id,
+         Minimum_Count => 16#1112_1314#, Channel => 16#2122_2324#,
+         Remaining_Bytes => 16#3132_3334#,
+         Read_Channel_Info_Offset => 16#4142#,
+         Read_Channel_Info_Length => 16#5152#, Buffer => 16#AA#)
+      with Ghost;
+      Full_Write_Request : constant S.Write_Request :=
+        (Data_Offset => 120, Length => 3,
+         Offset => 16#1112_1314_1516_1718#, File_Id => File_Id,
+         Channel => 16#2122_2324#, Remaining_Bytes => 16#3132_3334#,
+         Write_Channel_Info_Offset => 16#4142#,
+         Write_Channel_Info_Length => 16#5152#, Flags => 16#6162_6364#)
+      with Ghost;
+      Full_Close_Request : constant S.Close_Request :=
+        (Flags => 16#0102#, File_Id => File_Id)
+      with Ghost;
+   begin
+      pragma Assert (S.Is_Read_Request (Read_Body, Blog_Read),
+                     "the blog's READ request");
+      Passed;
+      pragma Assert
+        (not S.Is_Read_Request (Read_Body, S.Client_Read (File_Id, 0, 23))
+         and then S.Client_Read (File_Id, 0, 23).Padding = 16#50#
+         and then S.Client_Read (File_Id, 0, 23).Buffer = 0,
+         "this client's READ: Padding 0x50, Buffer byte 0");
+      Passed;
+      pragma Assert (S.Is_Read_Request (Full_Read, Full_Read_Request),
+                     "a READ with every field set, at other bounds");
+      Passed;
+      pragma Assert
+        (not S.Is_Read_Request
+           (Full_Read, (Full_Read_Request with delta Padding => 16#51#))
+         and then not S.Is_Read_Request
+           (Full_Read, (Full_Read_Request with delta Flags => 0))
+         and then not S.Is_Read_Request
+           (Full_Read, (Full_Read_Request with delta Length => 1))
+         and then not S.Is_Read_Request
+           (Full_Read, (Full_Read_Request with delta Offset => 16#0708#))
+         and then not S.Is_Read_Request
+           (Full_Read,
+            (Full_Read_Request with delta
+               File_Id => (15 => 5, others => 0)))
+         and then not S.Is_Read_Request
+           (Full_Read, (Full_Read_Request with delta Minimum_Count => 3))
+         and then not S.Is_Read_Request
+           (Full_Read, (Full_Read_Request with delta Channel => 0))
+         and then not S.Is_Read_Request
+           (Full_Read, (Full_Read_Request with delta Remaining_Bytes => 1))
+         and then not S.Is_Read_Request
+           (Full_Read,
+            (Full_Read_Request with delta Read_Channel_Info_Offset => 16#4152#))
+         and then not S.Is_Read_Request
+           (Full_Read,
+            (Full_Read_Request with delta Read_Channel_Info_Length => 16#4142#))
+         and then not S.Is_Read_Request
+           (Full_Read (10 .. 57), Full_Read_Request),
+         "each READ field");
+      Passed;
+      pragma Assert
+        (S.Is_Write_Request (Full_Write, Full_Write_Request, Full_Payload),
+         "a WRITE with every field set, its data after a gap");
+      Passed;
+      pragma Assert
+        (S.Is_Close_Request (Close_Body, Full_Close_Request),
+         "a CLOSE with Flags set");
+      Passed;
+      --  Every byte is fixed: changing any one breaks the match. A field
+      --  read at another offset or width, a check left out, the gap or the
+      --  data read elsewhere, all fail here.
+      for Index in Full_Read'Range loop
+         declare
+            Changed : SMB.Bytes := Full_Read;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            pragma Assert
+              (not S.Is_Read_Request (Changed, Full_Read_Request),
+               "every READ byte");
+         end;
+      end loop;
+      Passed;
+      for Index in Full_Write'Range loop
+         declare
+            Changed : SMB.Bytes := Full_Write;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            pragma Assert
+              (not S.Is_Write_Request
+                 (Changed, Full_Write_Request, Full_Payload),
+               "every WRITE byte");
+         end;
+      end loop;
+      Passed;
+      for Index in Close_Body'Range loop
+         declare
+            Changed : SMB.Bytes := Close_Body;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            pragma Assert
+              (not S.Is_Close_Request (Changed, Full_Close_Request),
+               "every CLOSE byte");
+         end;
+      end loop;
+      Passed;
+      --  The data starts after the fields, never inside them.
+      pragma Assert
+        (not S.Is_Write_Request
+           (Write_Body (0 .. 47) & Payload,
+            (Blog_Write with delta Data_Offset => 64 + 40),
+            Write_Body (40 .. 47) & Payload),
+         "data inside the fields");
+      Passed;
+      pragma Assert (S.Is_Write_Request (Write_Body, Blog_Write, Payload),
+                     "the blog's WRITE request");
+      Passed;
+      pragma Assert
+        (S.Is_Write_Fields (Write_Body, Blog_Write)
+         and then not S.Is_Write_Request
+           (Write_Body, S.Client_Write (File_Id, 0, 23), Payload)
+         and then not S.Is_Write_Request
+           (Write_Body, Blog_Write, Payload (1 .. 22))
+         and then not S.Is_Write_Request
+           (Write_Body, (Blog_Write with delta Data_Offset => 113), Payload)
+         and then not S.Is_Write_Request
+           (Write_Body, (Blog_Write with delta Length => 22), Payload)
+         and then not S.Is_Write_Request
+           (Write_Body, (Blog_Write with delta Offset => 1), Payload)
+         and then not S.Is_Write_Request
+           (Write_Body, (Blog_Write with delta Flags => 1), Payload),
+         "the WRITE's fields and data");
+      Passed;
+      pragma Assert
+        (S.Close_Flag_Postquery_Attrib = 1
+         and then not S.Is_Close_Request
+           (Close_Body,
+            (Flags => S.Close_Flag_Postquery_Attrib, File_Id => File_Id))
+         and then not S.Is_Close_Request
+           (Close_Body (Close_Body'First .. Close_Body'Last - 1),
+            Full_Close_Request),
+         "a CLOSE request");
+      Passed;
+      pragma Assert
+        (S.Read_Request_Size = 49 and then S.Write_Request_Size = 49
+         and then S.Close_Request_Size = 24
+         and then S.Client_Write (File_Id, 0, 0).Data_Offset = 112,
+         "structure sizes");
+      Passed;
+   end Test_SMB2_Transfer;
 begin
    Test_Encoding;
    Test_SMB2_Header;
+   Test_SMB2_Transfer;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;
