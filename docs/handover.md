@@ -1,6 +1,6 @@
 # Handover
 
-State of the SMB 3.1.1 work since release 0.3.0, for whoever picks it up. Fold what
+State of the SMB 3.1.1 work at release 0.4.0, for whoever picks it up. Fold what
 stays useful into the other documents, and delete this file, once it is out
 of date.
 
@@ -15,9 +15,10 @@ of date.
 * After 0.3.0 the maintainer approved three pieces, in this order: file
   information (`Query_Information`, #134, and `Set_Size`, #135), reads and
   writes larger than 64 KiB per request (#137 and #138), and teaching the
-  adversarial proxy SMB 3.1.1 (#142 and #144); all three are done. A
-  release that includes them (0.4.0), and its Alire submission, wait for
-  the maintainer's word.
+  adversarial proxy SMB 3.1.1 (#142 and #144). With all three done, the
+  maintainer asked on 2026-11-18 for 0.4.0, on the Alire index too: it is
+  tagged `v0.4.0` with a GitHub release (#146), and its index submission
+  follows.
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -62,7 +63,9 @@ of date.
 | after 0.3.0 | The adversarial proxy over SMB 3.1.1: NEGOTIATE tampering, signing with the 3.1.1 key | merged (#142) |
 | after 0.3.0 | The adversarial proxy over SMB 3.1.1: encryption (open and encrypt again) | merged (#144) |
 | after 0.3.0 | Multi-credit WRITEs: WRITEs up to 960 KiB, built and signed in place | merged (#138) |
-| after 0.3.0 | From #139's review: a margin for the low limit, no cache saved from a cancelled run | #141 |
+| after 0.3.0 | From #139's review: a margin for the low limit, no cache saved from a cancelled run | merged (#141) |
+| after 0.3.0 | Tests for what only the proof reached in #138's mutation run | merged (#145) |
+| after 0.3.0 | Release 0.4.0 (`alire.toml`, tag, GitHub release) | merged (#146) |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -403,10 +406,9 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* The three pieces the maintainer approved after 0.3.0 are done: file
-  information (#134, #135), reads and writes above 64 KiB (#137, #138) and
-  the adversarial proxy over 3.1.1 (#142, #144). Whether 0.4.0 follows now
-  is the maintainer's call.
+* Submit 0.4.0 to the Alire index (the maintainer asked for it on
+  2026-11-18), as below, and record the index pull request here. Nothing
+  else is queued: propose the next pieces to the maintainer.
 * Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
     `[origin]` section added: `commit` is the tag's commit and `url` is
