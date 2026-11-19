@@ -1,0 +1,26 @@
+--  The run-time checks of the library build (ADASMB_CONTRACT_CHECKS=proved, the
+--  default), as docs/platinum-design.md decides: preconditions, which guard
+--  the core against its trusted callers, and the assertions in the code stay
+--  checked; postconditions are not run, because GNATprove proves them and the
+--  specifications they use are costly to run (one such as "the digest is
+--  SHA-256 of the message" would compute the hash again on every call). Ghost
+--  code stays (Check) because some preconditions call ghost functions; it
+--  runs only where a precondition, an assertion or a ghost statement uses it.
+--  -XADASMB_CONTRACT_CHECKS=all, and the test build, check everything.
+--
+--  It applies to every source of smb.gpr, including the trusted units that
+--  GNATprove does not prove (SMB.Client, SMB.Transport, the platform units);
+--  tests/check_sources.py keeps postconditions out of those.
+pragma Assertion_Policy
+  (Pre => Check,
+   Pre'Class => Check,
+   Post => Ignore,
+   Post'Class => Ignore,
+   Refined_Post => Ignore,
+   Contract_Cases => Ignore,
+   Assert => Check,
+   Assert_And_Cut => Check,
+   Assume => Check,
+   Loop_Invariant => Check,
+   Loop_Variant => Check,
+   Ghost => Check);

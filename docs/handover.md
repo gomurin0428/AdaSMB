@@ -67,6 +67,8 @@ of date.
 | after 0.3.0 | From #139's review: a margin for the low limit, no cache saved from a cancelled run | merged (#141) |
 | after 0.3.0 | Tests for what only the proof reached in #138's mutation run | merged (#145) |
 | after 0.3.0 | Release 0.4.0 (`alire.toml`, tag, GitHub release) | merged (#146) |
+| after 0.4.0 | SPARK Platinum design ([platinum-design.md](platinum-design.md)) | merged (#148) |
+| after 0.4.0 | Platinum phase 2: Ada 2022, the run-time contract policy, `SMB.Spec`, `spec_test` | #149 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -408,8 +410,15 @@ opens a received one. It is a stateless SPARK unit, like
 ## Next steps
 
 * Follow alire-project/alire-index#2375 (smb 0.4.0) until it is merged,
-  answer its review if there is one, and record the merge here. Nothing
-  else is queued: propose the next pieces to the maintainer.
+  answer its review if there is one, and record the merge here.
+* SPARK Platinum ([platinum-design.md](platinum-design.md)), whose
+  decisions the maintainer approved on 2026-11-18: phase 2 is #149; phase 3
+  (the SMB2 message specifications) comes next. After Platinum, the
+  maintainer wants the remaining SMB features in this order: Kerberos,
+  several requests in flight, several shares per connection, DFS, share
+  listing (DCE/RPC), then the remaining file operations (times and
+  attributes, locks, leases, change notification, ACLs, streams, reparse
+  points, server-side copy) and durable handles.
 * Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
     `[origin]` section added: `commit` is the tag's commit and `url` is
@@ -424,6 +433,50 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 2: infrastructure (#149)
+
+* The build is Ada 2022 (`-gnat2022`, as `proof.gpr` already was), with
+  `-gnatwJ`: Ada 2022 calls `(...)` array aggregates obsolescent, and the
+  code has hundreds of them.
+* `contracts.adc` is the library build's run-time policy (the scenario
+  variable `ADASMB_CONTRACT_CHECKS`, `proved` by default), as the design
+  decided: preconditions and assertions (including loop invariants and
+  variants) checked; postconditions (`Post`, `Refined_Post`,
+  `Contract_Cases`) ignored. Ghost code stays `Check`, not `Ignore` as the
+  design first said: some preconditions call ghost functions
+  (`Core_Connection`'s `Body_Matches_Kind`), and SPARK rejects a checked
+  contract that references ignored ghost code. Ghost code then runs only
+  where a precondition, an assertion or a ghost statement uses it. The
+  policy covers every source of `smb.gpr`, so `tests/check_sources.py`
+  rejects a postcondition in a unit that `proof.gpr` does not prove.
+* `smb_tests.gpr` no longer `with`s `smb.gpr`: it compiles the library's
+  sources itself (with the same `ADASMB_OS` platform choice), so the tests
+  check every contract. `smb_example.gpr` keeps the library build.
+* `SMB.Spec` (ghost) roots the specification packages; the first is
+  `SMB.Spec.Encoding`, little-endian integers as sums of bytes times
+  powers of 256. `tests/spec_test.adb` runs them: a ghost function can be
+  called only from ghost code or an assertion, so each check is a
+  `pragma Assert` (the program forces the `Check` policy) followed by a
+  count. `make test` runs it after `test_suite`.
+  Windows CI runs it too.
+* `tests/check_sources.py` requires every `smb-spec*.ads` to declare a
+  ghost package, and the context clause of every `smb-spec*` file to name
+  only `SMB`, `SMB.Spec.*` and `Interfaces` (comments stripped, any case,
+  several clauses per line). A specification that needs big integers will
+  have to add `Ada.Numerics.Big_Numbers` both there and to the exceptions
+  of the `FORBIDDEN` list.
+* `proof.gpr` includes the specification packages; GNATprove proves them
+  free of run-time errors (30 checks). A specification with an array
+  parameter bounds it as the core does, `Data'Length <=
+  SMB.Maximum_Frame_Size`, before it uses `Data'Length`, so that the core's
+  preconditions imply the specification's. (`Data'Last < Natural'Last`
+  also proves the specification but not its use from `Core_Wire`, and
+  `Data'Length <= Natural'Last` fails a range check: `Data'Length` is
+  converted to `Integer` first.)
+* `make stack-check` (and Windows CI) measures both the library build and
+  the `-XADASMB_CONTRACT_CHECKS=all` build; the largest call is
+  `Authenticate`, 232,960 and 235,136 bytes.
 
 ## The adversarial proxy over SMB 3.1.1 (#142)
 
@@ -844,9 +897,9 @@ The AES pull request touches each of these. Its diff is the template.
   * GNATprove on the changed units with no unproved checks;
   * a changed-line mutation run (CI runs it), whose undetected mutants and
     proof-only detections the pull request lists with a judgement for each.
-* `smb.gpr` compiles with `-gnat2012`, so `src/` cannot use Ada 2022
-  features such as iterated component aggregates. `proof.gpr` uses
-  `-gnat2022`.
+* `smb.gpr`, `smb_tests.gpr` and `smb_example.gpr` compile with
+  `-gnat2022` since #149, as `proof.gpr` always did (before, `src/` could
+  not use Ada 2022 features).
 * Mutation triage rules, since #137 (AdaMutant with the proof, no
   exclusion comments; the maintainer's decision: survivors are not a
   failure, a person judges them):
@@ -949,7 +1002,8 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Open items
 
-* With `-gnata`, the postconditions of `Prepare_Next`,
+* In the test build and with `-XADASMB_CONTRACT_CHECKS=all` (not in the
+  default library build, since #149), the postconditions of `Prepare_Next`,
   `Transfer_Send_Succeeded`, `Complete_Read`, `Complete_Write` and
   `Fail_Transfer` copy and compare the whole transfer buffer (up to 1 MiB)
   for `Transfer_Buffer_Of (Value)'Old` on every request. The copies go on

@@ -10,7 +10,9 @@ replace a successful GNATprove run.
 
 `proof.gpr` explicitly includes twenty-four units (twenty-three bodies plus
 `SMB`'s types). These are the implementations called by `SMB.Client` and
-`SMB.Transport`, not a parallel model.
+`SMB.Transport`, not a parallel model. It also includes the specification
+packages (`SMB.Spec` and its children, ghost code; see "Complete functional
+specifications" below), proved free of run-time errors like the rest.
 
 | Unit | Runtime responsibility |
 | --- | --- |
@@ -225,8 +227,12 @@ Prefix-processing loop invariants in `Core_Transport` and `Core_Text` use
 runtime assertion policy `Ignore` to avoid repeatedly rescanning a growing prefix. This does **not**
 remove them from GNATprove: their initialization and preservation are proved,
 as specified by [AdaCore's assertion-policy documentation](https://docs.adacore.com/spark2014-docs/html/ug/en/source/assertion_pragmas.html).
-Compiler run-time checks and pre/postcondition checking remain enabled in the
-project builds; no proof assumption or check-suppression pragma is introduced.
+Compiler run-time checks remain enabled in the project builds, and no proof
+assumption or check-suppression pragma is introduced. The library build checks
+the core's preconditions at run time but not its postconditions and other
+assertions, which GNATprove proves ([`contracts.adc`](../contracts.adc), from
+0.5.0 on); the test programs compile the same sources with every contract
+checked.
 
 `Validate_Path` now binds status to the executable `Lexically_Valid_Path`
 predicate: empty input is allowed only on request; NUL, colon, leading/trailing
@@ -284,6 +290,34 @@ the contracts actually written in the source. It does not prove that every
 encoded bit matches SMB, or that a hash has the mathematical/security properties
 of its standard. Known-answer vectors and interoperation tests supply different
 evidence.
+
+## Complete functional specifications
+
+The plan in [platinum-design.md](platinum-design.md) takes the core to SPARK's
+Platinum level: every output of every proved subprogram determined by its
+postcondition, in terms of ghost specification packages (`SMB.Spec.*`)
+transcribed from the standards, which `tests/spec_test.adb` runs on published
+vectors and known values and `tests/check_sources.py` keeps independent of the
+implementation.
+
+| Specification | Standard | Used by |
+| --- | --- | --- |
+| `SMB.Spec.Encoding` | MS-SMB2 1.3, MS-DTYP 2.2: little-endian 16-, 32- and 64-bit integers, as sums of bytes times powers of 256 | Not yet (phase 3 ties `SMB.Core_Wire` to it) |
+
+Where each unit stands, from the survey at 0.4.0:
+
+* **Complete already:** `Core_Framing`, `Core_Transport`, `Core_Clock`; the
+  path, share and UTF-16 validators of `Core_Text`; the integer readers and
+  writers of `Core_Wire`; the transfer arithmetic of `Core_Protocol`.
+* **Fields stated, gaps left:** the header of `Core_Wire`, `Core_Request`, the
+  builders and `Parse_Response` of `Core_Protocol`, the header of
+  `Core_Transform`, `Core_Negotiate`'s response checks, `Core_Query`,
+  `Core_Resize`.
+* **Outputs not stated:** every digest, MAC, cipher and derived key (`Crypto`,
+  `AES` and its modes, `KDF`), `Core_Preauth.Update`, and `Core_Auth`'s NTLMv2
+  response, Type 3 message and session key.
+* **Partial frames over large state:** `Engine`, `Core_Connection`,
+  `Core_Client`.
 
 ## Remaining non-SPARK code: complete subprogram inventory
 
@@ -344,7 +378,8 @@ does not make the above bodies formally verified.
   static frame chain below each public `SMB.Client` subprogram from GCC
   call-graph data (GNAT runtime frames and the indirect entropy callback are not
   counted) and enforces 256 KiB per call (the largest is `Authenticate` at
-  about 230 KiB), all with runtime contract checks enabled. `Core_Auth` writes
+  about 230 KiB), both for the library build and for the build that checks
+  every contract at run time (`-XADASMB_CONTRACT_CHECKS=all`). `Core_Auth` writes
   the SPNEGO wrapping and the NTLMv2 blob in place and computes HMAC-MD5 over
   the challenge, the blob and the Type1/Type2/Type3 messages incrementally, so
   no stack frame on the NTLM path grows with the server's challenge or target
