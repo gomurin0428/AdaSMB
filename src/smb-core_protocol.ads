@@ -81,10 +81,14 @@ package SMB.Core_Protocol is
 
    --  Every byte of Data from Used on is zero: what a builder leaves past
    --  the request it writes, and the whole buffer when it fails.
+   --  Its body, as those of SMB.Spec.SMB2's requests, is hidden from the
+   --  callers, which use the builders' other clauses; the builders unhide
+   --  what they prove.
    function Zero_After (Data : SMB.Bytes; Used : Natural) return Boolean is
      (for all Index in Data'Range =>
         (if Index - Data'First >= Used then Data (Index) = 0))
-   with Ghost;
+   with Ghost,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
    procedure Build_Negotiate
      (Guid : SMB.Bytes;

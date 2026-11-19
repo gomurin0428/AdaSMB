@@ -6701,7 +6701,10 @@ procedure Test_Suite is
         (Read_Body (32) = 0 and then Read_Body (33) = 0
          and then Read_Body (34) = 0 and then Read_Body (35) = 0,
          "READ minimum-count wire offset");
-      Assert (Read_Body (48) = 1, "READ dynamic buffer byte");
+      --  MS-SMB2 3.2.4.6: Padding SHOULD be 0x50, and the first byte of
+      --  Buffer MUST be 0.
+      Assert (Read_Body (2) = 16#50#, "READ padding");
+      Assert (Read_Body (48) = 0, "READ buffer byte");
       SMB.Core_Protocol.Build_Create
         (SMB.Bytes'(1 .. 0 => 0), 0, 1, False,
          Create_Body, Used, Status);
@@ -6915,9 +6918,9 @@ procedure Test_Suite is
       SMB.Core_Protocol.Build_Read
         (File_Id, Offset, 65_536, Output, Used, Status);
       Expect
-        (Hex ("3100" & "00" & "00" & "00000100" & "8877665544332211")
+        (Hex ("3100" & "50" & "00" & "00000100" & "8877665544332211")
          & File_Id
-         & Hex ("00000000" & "00000000" & "00000000" & "0000" & "0000" & "01"),
+         & Hex ("00000000" & "00000000" & "00000000" & "0000" & "0000" & "00"),
          "READ request");
 
       SMB.Core_Protocol.Build_Write

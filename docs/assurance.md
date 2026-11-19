@@ -318,7 +318,7 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   the request `SMB.Spec.SMB2` gives, and every byte after it zero; on
   failure the whole buffer zero).
 * **Fields stated, gaps left:** `Core_Wire.Validate_Header` (phase 7), the
-  header copies in `Core_Client` and `Core_Connection` (phase 9), the
+  header copies in `Core_Client` and `Core_Connection` (phase 9), the other
   builders and `Parse_Response` of `Core_Protocol`, the header of
   `Core_Transform`, `Core_Negotiate`'s response checks, `Core_Query`,
   `Core_Resize`.

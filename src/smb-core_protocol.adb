@@ -422,9 +422,15 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", SMB.Spec.SMB2.Is_Read_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
    begin
       Begin_Build (Output, 49, Status);
       Put_U16 (Output, 0, 49, Status);
+      --  Padding: "SHOULD be set to 0x50" (MS-SMB2 3.2.4.6).
+      Put_Byte (Output, 2, 16#50#, Status);
       Put_Byte
         (Output, 4, SMB.Core_Wire.U32_Byte (SMB.DWord (Amount), 0), Status);
       pragma Assert
@@ -458,10 +464,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
            (for all Index in 0 .. 15 =>
               Output (Output'First + 16 + Index) =
                 File_Id (File_Id'First + Index)));
-      Put_U32 (Output, 32, 0, Status);
-      if Status = SMB.Ok then
-         Put_Byte (Output, 48, 1, Status);
-      end if;
+      --  MinimumCount 0, and the first byte of Buffer, which "MUST be set to
+      --  0" (3.2.4.6), stay as Begin_Build cleared them.
       Finish (49, Output'Length, Used, Status);
    end Build_Read;
 
@@ -504,6 +508,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
                Output (Output'First + 16 + Index) =
                  File_Id (File_Id'First + Index)))
    is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", SMB.Spec.SMB2.Is_Write_Fields);
    begin
       Begin_Build (Output, 48, Status);
       Put_U16 (Output, 0, 49, Status);
@@ -553,6 +559,12 @@ package body SMB.Core_Protocol with SPARK_Mode is
            Offset => Offset,
            Length => SMB.DWord (Data'Length))
       with Ghost;
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", SMB.Spec.SMB2.Is_Write_Fields);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", SMB.Spec.SMB2.Is_Write_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
    begin
       Begin_Build (Output, Required, Status);
       if Status /= SMB.Ok then
@@ -563,13 +575,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
       --  The fields go into their own 48 bytes, and the data, up to
       --  960 KiB, straight after them: the field steps' postconditions,
       --  checked at run time, then copy only those 48 bytes for 'Old.
+      --  It always succeeds on 48 bytes.
       Build_Write_Fixed
         (File_Id, Offset, Data'Length,
          Output (Output'First .. Output'First + 47), Status);
-      if Status /= SMB.Ok then
-         Used := 0;
-         return;
-      end if;
       --  The fields, proved on the slice, hold in the whole buffer.
       pragma Assert
         (SMB.Spec.SMB2.Is_Write_Fields
@@ -580,7 +589,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
            Data;
       end if;
       pragma Assert (SMB.Spec.SMB2.Is_Write_Fields (Output, Request));
-      pragma Assert (SMB.Spec.SMB2.Has_Bytes (Output, 48, Data));
       Used := Required;
    end Build_Write;
 
@@ -589,6 +597,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Close_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
    begin
       if Output'Length < 24 then
          Clear (Output);

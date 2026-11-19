@@ -163,12 +163,12 @@ is
       and then SMB.Spec.Encoding.LE16 (Data, 2) = Request.Flags
       and then SMB.Spec.Encoding.LE32 (Data, 4) = 0
       and then Has_Bytes (Data, 8, Request.File_Id))
-   with Pre => Data'Length <= SMB.Maximum_Frame_Size;
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
    --  2.2.19: the SMB2 READ Request, after the header. StructureSize is 49
    --  "regardless of how long Buffer[] actually is", and counts one byte of
-   --  Buffer, which carries the read channel information; with none, the
-   --  standard does not give that byte a value.
+   --  Buffer, which carries the read channel information.
    Read_Request_Size : constant := 49;
    Channel_None : constant SMB.DWord := 16#0000_0000#;
 
@@ -203,19 +203,22 @@ is
       and then
         SMB.Spec.Encoding.LE16 (Data, 46) = Request.Read_Channel_Info_Length
       and then Data (Data'First + 48) = Request.Buffer)
-   with Pre => Data'Length <= SMB.Maximum_Frame_Size;
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
-   --  The READ this client sends: no read flags (it negotiates 2.1 or
-   --  3.1.1 and uses neither SMB2_READFLAG), no channel, so RemainingBytes
-   --  and the channel information fields zero (2.2.19, SMB2_CHANNEL_NONE:
-   --  they "MUST be set to 0 by the client"). Its own choices, where the
-   --  standard leaves them: Padding 0 (no placement requested),
-   --  MinimumCount 0, and the Buffer byte 1.
+   --  The READ this client sends (3.2.4.6), not over RDMA, asking for
+   --  neither unbuffered nor compressed reads: Flags 0; "The Padding field
+   --  SHOULD be set to 0x50"; MinimumCount "SHOULD" be 0 when the
+   --  application gives none; in 3.1.1, Channel SMB2_CHANNEL_NONE and the
+   --  channel information zero (MUST), RemainingBytes then "MUST be set to
+   --  0" (2.2.19); "The first byte of the Buffer field MUST be set to 0".
+   --  In 2.1, Channel is reserved and MUST be 0; the other channel fields
+   --  are unused there, and this client sends them as zero too.
    function Client_Read
      (File_Id : File_Id_Field;
       Offset : SMB.QWord;
       Length : SMB.DWord) return Read_Request is
-     ((Padding => 0,
+     ((Padding => 16#50#,
        Flags => 0,
        Length => Length,
        Offset => Offset,
@@ -225,7 +228,7 @@ is
        Remaining_Bytes => 0,
        Read_Channel_Info_Offset => 0,
        Read_Channel_Info_Length => 0,
-       Buffer => 1));
+       Buffer => 0));
 
    --  2.2.21: the SMB2 WRITE Request, after the header: 48 bytes of fields
    --  (StructureSize 49 counts the first byte of Buffer too), then Buffer,
@@ -262,25 +265,39 @@ is
       and then
         SMB.Spec.Encoding.LE16 (Data, 42) = Request.Write_Channel_Info_Length
       and then SMB.Spec.Encoding.LE32 (Data, 44) = Request.Flags)
-   with Pre => Data'Length <= SMB.Maximum_Frame_Size;
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
-   --  The fields, then Payload (Length bytes) at DataOffset.
+   --  The fields, then Payload (Length bytes) at DataOffset, after the
+   --  fields; "The client MUST fill the bytes, if any, between the beginning
+   --  of the Buffer field and the beginning of the data (at DataOffset)
+   --  with zeros" (3.2.4.7).
    function Is_Write_Request
      (Data : SMB.Bytes; Request : Write_Request; Payload : SMB.Bytes)
       return Boolean is
      (Is_Write_Fields (Data, Request)
-      and then Natural (Request.Data_Offset) >= Header_Size
+      and then Natural (Request.Data_Offset) >= Header_Size + Write_Fields_Size
       and then SMB.QWord (Request.Length) = SMB.QWord (Payload'Length)
+      and then Natural (Request.Data_Offset) - Header_Size <= Data'Length
+      and then
+        (for all Index in Write_Fields_Size ..
+                          Natural (Request.Data_Offset) - Header_Size - 1 =>
+           Data (Data'First + Index) = 0)
       and then
         Has_Bytes
           (Data, Natural (Request.Data_Offset) - Header_Size, Payload))
    with Pre =>
      Data'Length <= SMB.Maximum_Frame_Size
-     and then Payload'Length <= SMB.Maximum_Frame_Size;
+     and then Payload'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
-   --  The WRITE this client sends: the data straight after the fields
-   --  (DataOffset 64 + 48 = 112), no channel (RemainingBytes and the
-   --  channel information zero, as for READ), and no write flags.
+   --  The WRITE this client sends (3.2.4.7), not over RDMA, asking for
+   --  neither write-through nor unbuffered writes (Flags 0): DataOffset is
+   --  "an implementation-specific value", here the data straight after the
+   --  fields (64 + 48 = 112); RemainingBytes "MUST be set to 0"; in 3.1.1,
+   --  Channel SMB2_CHANNEL_NONE and the channel information zero (MUST). In
+   --  2.1, Channel is reserved and MUST be 0, and the channel information
+   --  fields, unused there, are zero too.
    function Client_Write
      (File_Id : File_Id_Field;
       Offset : SMB.QWord;

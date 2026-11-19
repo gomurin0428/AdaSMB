@@ -450,28 +450,58 @@ opens a received one. It is a stateless SPARK unit, like
   fields, then the data at DataOffset counted from the header), stated as
   fields read at their offsets, as for the header. `Has_Bytes` says that
   bytes from an offset are a given array.
-* `Client_Read` and `Client_Write` are this client's requests: no channel,
-  so RemainingBytes and the channel information zero (the standard's MUST
-  for SMB2_CHANNEL_NONE), no read or write flags, the WRITE's data
-  straight after its fields (DataOffset 112). Where the standard leaves a
-  value open, the record says what this client sends: READ's Padding and
-  MinimumCount 0, and the one Buffer byte that StructureSize 49 counts, 1.
-  MS-SMB2 gives that byte no value; Microsoft's blog trace sends 0, and
-  Samba and Windows Server accept 1.
+* `Client_Read` and `Client_Write` are this client's requests, from
+  MS-SMB2 3.2.4.6 and 3.2.4.7 (not over RDMA, no unbuffered, compressed or
+  write-through operation): no channel, so RemainingBytes and the channel
+  information zero, no read or write flags, MinimumCount 0 (SHOULD, when
+  the application gives none), and the WRITE's data straight after its
+  fields (DataOffset, "implementation-specific", 112).
+* **A protocol fix that the specification found.** 3.2.4.6 says "The first
+  byte of the Buffer field MUST be set to 0" and "The Padding field SHOULD
+  be set to 0x50". `Build_Read` sent Buffer byte 1 and Padding 0. A first
+  version of this pull request wrote the 1 into the specification as the
+  client's choice, reading only 2.2.19 (which gives the byte no value);
+  the review read 3.2.4.6. `Build_Read` now sends 0 and 0x50, and the
+  specification says so. Samba and Windows Server accepted the old bytes,
+  so nothing failed before; read a request's client section (3.2.4.x) as
+  well as its layout (2.2.x) when writing the next ones.
+* `Is_Write_Request` requires the data after the fields (DataOffset at
+  least 112) and the bytes between the fields and the data zero (3.2.4.7:
+  the client "MUST fill" them "with zeros").
 * `Build_Close`, `Build_Read` and `Build_Write` state their exact status
   (`Resource_Limit` when the buffer is too short) and `Used`, the request
   against the specification, and `Zero_After (Output, Used)`: every byte
   past the request is zero, the whole buffer when they fail. Their former
   clauses stay, since `Core_Client` uses them.
+* The bodies of the request predicates and of `Zero_After` are hidden
+  (`Annotate => (GNATprove, Hide_Info, "Expression_Function_Body")`), and
+  each builder unhides what it proves (`pragma Annotate (GNATprove,
+  Unhide_Info, "Expression_Function_Body", F)` in its declarative part).
+  Visible, their quantifiers went into the context of every caller of a
+  builder: `Core_Client.Prepare_Next` and `Prepare_Close`, which use only
+  the former clauses, no longer proved within the steps limit (2 and 1
+  minutes on main, failing after 9 and 11). Hide a specification's
+  predicates the same way when callers do not need them; a caller that
+  does unhides them.
+* `Build_Write` no longer asserts the data with `Has_Bytes` after copying
+  it: the assertion ran in the library build too (`contracts.adc` checks
+  assertions) and took about 1 ms (`-O2`) to 2.5 ms (no `-O`) for 960 KiB
+  of data, against 0.03 ms without; the postcondition proves without it.
+  The failure branch after `Build_Write_Fixed`, which always succeeds, is
+  gone.
 * For that, the helpers say what they return: `Begin_Build` its exact
   status, `Finish` its status from the status before, and `Put_Byte`,
   `Put_U16`, `Put_U32`, `Put_U64` and `Copy` that a write that fits keeps
   `Ok`. `Build_Write_Fixed` (the 48 bytes of a WRITE) always succeeds, and
   `Build_Write` carries its fields from the slice to the whole buffer.
 * `spec_test` checks the READ and WRITE request bodies of the blog's A.2
-  messages, a READ with every field set to a value of its own (the blog's
-  are mostly zero), a CLOSE built from the layout, that each field of the
-  record is read at its own offset, and the WRITE's data and DataOffset.
+  messages (the blog's client sends READ Padding 0), and a READ, a WRITE
+  (its data after an 8-byte gap) and a CLOSE whose fields all hold
+  multi-byte values whose bytes differ: changing any one byte of each
+  breaks the match, so every byte is fixed and each field is read at its
+  own offset and width. The review's 15 mutants of the specification that
+  the first version let through (swapped fields, wrong widths, checks left
+  out, `Has_Bytes` skipping a byte) all fail it.
 * Proving a few subprograms of the 47-minute `Core_Protocol` alone
   (`--limit-subp`) took 2 to 10 minutes each; after a failed attempt,
   delete `build/proof-obj` first (see #150): stale failures came back for
