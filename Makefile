@@ -94,9 +94,13 @@ check: stack-check
 	$(GPRBUILD) -p -P smb_example.gpr -cargs:Ada -gnatwe
 	$(PYTHON) tests/check_sources.py
 
+# The library build, then the build that checks every contract at run time
+# (contracts.adc), whose postconditions keep copies of their 'Old values.
 stack-check:
 	$(GPRBUILD) -p -P smb.gpr --subdirs=stack-usage -cargs:Ada -fcallgraph-info=su
-	$(PYTHON) tests/check_stack_usage.py
+	$(PYTHON) tests/check_stack_usage.py build/obj/stack-usage
+	$(GPRBUILD) -p -P smb.gpr -XADASMB_CONTRACT_CHECKS=all --subdirs=stack-usage-all -cargs:Ada -fcallgraph-info=su
+	$(PYTHON) tests/check_stack_usage.py build/obj/stack-usage-all
 
 # With PROOF_CACHE, the whole project is proved into the cache first, so that
 # the proof of each mutant (tests/mutant_prove.py) proves only the goals the

@@ -11,12 +11,12 @@ is
    use type SMB.QWord;
 
    --  The 2, 4 or 8 bytes of Data from Offset on (counted from Data'First).
-   --  Data'Last below Natural'Last keeps Data'Length an Integer.
+   --  The bound on Data'Length is the core's: every frame fits it.
    function LE16 (Data : SMB.Bytes; Offset : Natural) return SMB.Word is
      (SMB.Word (Data (Data'First + Offset))
       + SMB.Word (Data (Data'First + Offset + 1)) * 256)
    with Pre =>
-     Data'Last < Natural'Last
+     Data'Length <= SMB.Maximum_Frame_Size
      and then Data'Length >= 2 and then Offset <= Data'Length - 2;
 
    function LE32 (Data : SMB.Bytes; Offset : Natural) return SMB.DWord is
@@ -25,14 +25,14 @@ is
       + SMB.DWord (Data (Data'First + Offset + 2)) * 2 ** 16
       + SMB.DWord (Data (Data'First + Offset + 3)) * 2 ** 24)
    with Pre =>
-     Data'Last < Natural'Last
+     Data'Length <= SMB.Maximum_Frame_Size
      and then Data'Length >= 4 and then Offset <= Data'Length - 4;
 
    function LE64 (Data : SMB.Bytes; Offset : Natural) return SMB.QWord is
      (SMB.QWord (LE32 (Data, Offset))
       + SMB.QWord (LE32 (Data, Offset + 4)) * 2 ** 32)
    with Pre =>
-     Data'Last < Natural'Last
+     Data'Length <= SMB.Maximum_Frame_Size
      and then Data'Length >= 8 and then Offset <= Data'Length - 8;
 
    --  Byte Index (0 for the least significant) of Value's encoding.

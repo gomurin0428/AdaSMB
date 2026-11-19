@@ -297,7 +297,8 @@ The plan in [platinum-design.md](platinum-design.md) takes the core to SPARK's
 Platinum level: every output of every proved subprogram determined by its
 postcondition, in terms of ghost specification packages (`SMB.Spec.*`)
 transcribed from the standards, which `tests/spec_test.adb` runs on published
-vectors and `tests/check_sources.py` keeps independent of the implementation.
+vectors and known values and `tests/check_sources.py` keeps independent of the
+implementation.
 
 | Specification | Standard | Used by |
 | --- | --- | --- |
@@ -377,7 +378,8 @@ does not make the above bodies formally verified.
   static frame chain below each public `SMB.Client` subprogram from GCC
   call-graph data (GNAT runtime frames and the indirect entropy callback are not
   counted) and enforces 256 KiB per call (the largest is `Authenticate` at
-  about 230 KiB), all with runtime contract checks enabled. `Core_Auth` writes
+  about 230 KiB), both for the library build and for the build that checks
+  every contract at run time (`-XADASMB_CONTRACT_CHECKS=all`). `Core_Auth` writes
   the SPNEGO wrapping and the NTLMv2 blob in place and computes HMAC-MD5 over
   the challenge, the blob and the Type1/Type2/Type3 messages incrementally, so
   no stack frame on the NTLM path grows with the server's challenge or target

@@ -160,9 +160,13 @@ jobs:
           done
           python tests/check_sources.py
           gprbuild -p -P smb.gpr --subdirs=stack-usage -cargs:Ada -fcallgraph-info=su
-          python tests/check_stack_usage.py
+          python tests/check_stack_usage.py build/obj/stack-usage
+          gprbuild -p -P smb.gpr -XADASMB_CONTRACT_CHECKS=all --subdirs=stack-usage-all -cargs:Ada -fcallgraph-info=su
+          python tests/check_stack_usage.py build/obj/stack-usage-all
       - name: Unit tests
-        run: ./build/bin/test_suite.exe
+        run: |
+          ./build/bin/test_suite.exe
+          ./build/bin/spec_test.exe
       - name: Windows SMB server integration
         # The runner is a disposable virtual machine whose job is an
         # administrator. The harness adds a test-only local account and

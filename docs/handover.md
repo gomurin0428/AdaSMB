@@ -440,13 +440,16 @@ opens a received one. It is a stateless SPARK unit, like
   `-gnatwJ`: Ada 2022 calls `(...)` array aggregates obsolescent, and the
   code has hundreds of them.
 * `contracts.adc` is the library build's run-time policy (the scenario
-  variable `ADASMB_CONTRACT_CHECKS`, `proved` by default): preconditions
-  checked; postconditions, `Contract_Cases`, assertions, loop invariants and
-  variants ignored. Ghost code stays `Check`, not `Ignore` as the design
-  first said: some preconditions call ghost functions
+  variable `ADASMB_CONTRACT_CHECKS`, `proved` by default), as the design
+  decided: preconditions and assertions (including loop invariants and
+  variants) checked; postconditions (`Post`, `Refined_Post`,
+  `Contract_Cases`) ignored. Ghost code stays `Check`, not `Ignore` as the
+  design first said: some preconditions call ghost functions
   (`Core_Connection`'s `Body_Matches_Kind`), and SPARK rejects a checked
-  assertion that references ignored ghost code. Ghost code then runs only
-  where a precondition or a ghost statement uses it.
+  contract that references ignored ghost code. Ghost code then runs only
+  where a precondition, an assertion or a ghost statement uses it. The
+  policy covers every source of `smb.gpr`, so `tests/check_sources.py`
+  rejects a postcondition in a unit that `proof.gpr` does not prove.
 * `smb_tests.gpr` no longer `with`s `smb.gpr`: it compiles the library's
   sources itself (with the same `ADASMB_OS` platform choice), so the tests
   check every contract. `smb_example.gpr` keeps the library build.
@@ -456,12 +459,24 @@ opens a received one. It is a stateless SPARK unit, like
   called only from ghost code or an assertion, so each check is a
   `pragma Assert` (the program forces the `Check` policy) followed by a
   count. `make test` runs it after `test_suite`.
-* `tests/check_sources.py` requires every `smb-spec*` file to be ghost and
-  its context clause to name only `SMB`, `SMB.Spec.*` and `Interfaces`.
+  Windows CI runs it too.
+* `tests/check_sources.py` requires every `smb-spec*.ads` to declare a
+  ghost package, and the context clause of every `smb-spec*` file to name
+  only `SMB`, `SMB.Spec.*` and `Interfaces` (comments stripped, any case,
+  several clauses per line). A specification that needs big integers will
+  have to add `Ada.Numerics.Big_Numbers` both there and to the exceptions
+  of the `FORBIDDEN` list.
 * `proof.gpr` includes the specification packages; GNATprove proves them
   free of run-time errors (30 checks). A specification with an array
-  parameter needs `Data'Last < Natural'Last` (or another bound) before it
-  uses `Data'Length`, as the core's subprograms bound frames.
+  parameter bounds it as the core does, `Data'Length <=
+  SMB.Maximum_Frame_Size`, before it uses `Data'Length`, so that the core's
+  preconditions imply the specification's. (`Data'Last < Natural'Last`
+  also proves the specification but not its use from `Core_Wire`, and
+  `Data'Length <= Natural'Last` fails a range check: `Data'Length` is
+  converted to `Integer` first.)
+* `make stack-check` (and Windows CI) measures both the library build and
+  the `-XADASMB_CONTRACT_CHECKS=all` build; the largest call is
+  `Authenticate`, 232,960 and 235,136 bytes.
 
 ## The adversarial proxy over SMB 3.1.1 (#142)
 
@@ -987,7 +1002,8 @@ The AES pull request touches each of these. Its diff is the template.
 
 ## Open items
 
-* With `-gnata`, the postconditions of `Prepare_Next`,
+* In the test build and with `-XADASMB_CONTRACT_CHECKS=all` (not in the
+  default library build, since #149), the postconditions of `Prepare_Next`,
   `Transfer_Send_Succeeded`, `Complete_Read`, `Complete_Write` and
   `Fail_Transfer` copy and compare the whole transfer buffer (up to 1 MiB)
   for `Transfer_Buffer_Of (Value)'Old` on every request. The copies go on

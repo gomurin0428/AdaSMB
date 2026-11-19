@@ -28,14 +28,22 @@ procedure Spec_Test is
    --  MS-SMB2 and MS-DTYP: little-endian unsigned integers.
    procedure Test_Encoding is
       package E renames SMB.Spec.Encoding;
+      --  The header of the WRITE request in Microsoft's "SMB 3.1.1
+      --  Encryption in Windows 10" blog, appendix A.2 (the message
+      --  test_suite decrypts): ProtocolId FE 'S' 'M' 'B', StructureSize 64,
+      --  CreditCharge 1, Status 0, Command WRITE (9), CreditRequest 1, Flags
+      --  SMB2_FLAGS_SIGNED, NextCommand 0, MessageId 5, Reserved 0xFEFF,
+      --  TreeId 1, SessionId 0x0000100000000021, Signature 0.
       Header : constant SMB.Bytes :=
-        --  The first 16 bytes of an SMB2 header (MS-SMB2 2.2.1): ProtocolId
-        --  FE 'S' 'M' 'B', StructureSize 64, CreditCharge 1, Status
-        --  STATUS_MORE_PROCESSING_REQUIRED (0xC0000016), Command
-        --  SESSION_SETUP (1), CreditResponse 33.
         (16#FE#, 16#53#, 16#4D#, 16#42#, 16#40#, 16#00#, 16#01#, 16#00#,
-         16#16#, 16#00#, 16#00#, 16#C0#, 16#01#, 16#00#, 16#21#, 16#00#);
-      Shifted : constant SMB.Bytes (100 .. 115) := Header;
+         16#00#, 16#00#, 16#00#, 16#00#, 16#09#, 16#00#, 16#01#, 16#00#,
+         16#08#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+         16#05#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+         16#FF#, 16#FE#, 16#00#, 16#00#, 16#01#, 16#00#, 16#00#, 16#00#,
+         16#21#, 16#00#, 16#00#, 16#00#, 16#00#, 16#10#, 16#00#, 16#00#,
+         16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+         16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#);
+      Shifted : constant SMB.Bytes (100 .. 163) := Header;
       Values : constant array (Positive range <>) of SMB.QWord :=
         (0, 1, 16#FF#, 16#100#, 16#FFFF#, 16#1_0000#, 16#FFFF_FFFF#,
          16#1_0000_0000#, 16#0123_4567_89AB_CDEF#, 16#8000_0000_0000_0000#,
@@ -55,17 +63,27 @@ procedure Spec_Test is
       Passed;
       pragma Assert (E.LE16 (Header, 6) = 1, "CreditCharge");
       Passed;
-      pragma Assert (E.LE32 (Header, 8) = 16#C000_0016#, "Status");
+      pragma Assert (E.LE32 (Header, 8) = 0, "Status");
       Passed;
-      pragma Assert (E.LE16 (Header, 12) = 1, "Command");
+      pragma Assert (E.LE16 (Header, 12) = 9, "Command");
       Passed;
-      pragma Assert (E.LE16 (Header, 14) = 33, "CreditResponse");
+      pragma Assert (E.LE16 (Header, 14) = 1, "CreditRequest");
       Passed;
-      pragma Assert (E.LE64 (Header, 8) = 16#0021_0001_C000_0016#, "64 bits");
+      pragma Assert (E.LE32 (Header, 16) = 8, "Flags");
+      Passed;
+      pragma Assert (E.LE64 (Header, 24) = 5, "MessageId");
+      Passed;
+      pragma Assert (E.LE32 (Header, 32) = 16#FEFF#, "Reserved");
+      Passed;
+      pragma Assert (E.LE32 (Header, 36) = 1, "TreeId");
+      Passed;
+      pragma Assert
+        (E.LE64 (Header, 40) = 16#0000_1000_0000_0021#, "SessionId");
       Passed;
       --  Offsets count from Data'First, whatever it is.
       pragma Assert
-        (E.LE16 (Shifted, 4) = 64 and then E.LE32 (Shifted, 8) = 16#C000_0016#,
+        (E.LE16 (Shifted, 4) = 64
+         and then E.LE64 (Shifted, 40) = 16#0000_1000_0000_0021#,
          "offsets from Data'First");
       Passed;
       --  LE_Byte is the inverse of LE64, and shorter reads give the low bits.

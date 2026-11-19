@@ -196,13 +196,14 @@ make mutation-diff          # 同じことを origin/main から変わった行�
 たまたま期待値と一致して通ることがなく、どのプラットフォームでも試験に失敗
 します。
 
-ライブラリのビルド（`smb.gpr`）が実行時に検査するのは、SPARK のコアの事前条件
-だけです。それ以外の契約は GNATprove が証明しており、中には実行すると重い仕様で
-結果を述べるものもあるためです（[`contracts.adc`](contracts.adc)）。試験
-プログラムはライブラリのソースをすべての契約を検査してコンパイルし、
-`-XADASMB_CONTRACT_CHECKS=all` を付ければライブラリのビルドも同じになります。
-`spec_test` は仕様パッケージ（`SMB.Spec.*`、
-[docs/platinum-design.md](docs/platinum-design.md)）だけを公開ベクタで動かします。
+ライブラリのビルド（`smb.gpr`）は、SPARK のコアの事前条件とアサーションを実行時に
+検査しますが、事後条件は検査しません。事後条件は GNATprove が証明しており、
+[docs/platinum-design.md](docs/platinum-design.md) の計画が進むにつれて、実行すると
+重い仕様で結果を述べるようになるためです（[`contracts.adc`](contracts.adc)）。試験
+プログラムはライブラリのソースを、すべての契約を検査してコンパイルします（ユニット
+自身が検査を外している箇所を除く）。`-XADASMB_CONTRACT_CHECKS=all` を付ければ
+ライブラリのビルドも同じになります。`spec_test` は仕様パッケージ（`SMB.Spec.*`）
+だけを、公開ベクタと既知の値で動かします。
 
 `make mutation` は [AdaMutant](https://github.com/gomurin0428/AdaMutant) で
 試験と証明を検査します。AdaMutant と GNATprove は `PATH` に置きます（AdaMutant は
