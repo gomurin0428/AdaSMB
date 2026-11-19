@@ -29,6 +29,14 @@ A mutated file that proof.gpr does not prove (a non-SPARK unit) passes: no
 proof can detect its mutants. The baseline run, with no mutant, proves one
 small unit: the whole project is proved before AdaMutant runs, and the
 baseline only has to show that the command works.
+
+AdaMutant passes the switches in ADAMUTANT_PROVE_SWITCHES as arguments
+(adamutant.toml), and they go to GNATprove. With `--proof-warnings=on`,
+AdaMutant runs this once more on the unmodified project, in a copy with a
+cache of its own, to find where the proof proves anything (a precondition
+that is always False, code that is never reached): that run proves the
+units to mutate, which the workflow names in ADASMB_MUTATION_UNITS, or the
+baseline unit when it names none.
 """
 
 import os
@@ -99,20 +107,32 @@ def cache_directory(baseline: bool, low: bool) -> str:
 
 
 def main() -> int:
+    switches = sys.argv[1:]
     mutated = os.environ.get("ADAMUTANT_MUTANT_FILE", "")
-    unit = Path(mutated).name if mutated else BASELINE_UNIT
-    low = unit in low_units(os.environ.get("PROOF_CACHE", ""))
-    cache = cache_directory(baseline=not mutated, low=low)
-    if unit not in proved_sources():
-        print(f"mutant_prove.py: {unit} is not proved; nothing to do")
-        return 0
+    vacuity = not mutated and "--proof-warnings=on" in switches
+    if vacuity:
+        units = sorted(set(os.environ.get("ADASMB_MUTATION_UNITS", "").split())
+                       & proved_sources()) or [BASELINE_UNIT]
+        low = False
+        # Its goals differ from those of the other proofs, so the shared
+        # cache would not answer them.
+        cache = os.environ.get("ADAMUTANT_PROVE_CACHE", "")
+    else:
+        unit = Path(mutated).name if mutated else BASELINE_UNIT
+        if unit not in proved_sources():
+            print(f"mutant_prove.py: {unit} is not proved; nothing to do")
+            return 0
+        units = [unit]
+        low = unit in low_units(os.environ.get("PROOF_CACHE", ""))
+        cache = cache_directory(baseline=not mutated, low=low)
     steps = str(LOW_STEPS) if low else proof_steps()
     command = [
         os.environ.get("GNATPROVE", "gnatprove"), "-P", "proof.gpr",
         "--mode=all", "--level=2", "--proof=progressive",
         f"--steps={steps}",
         "--checks-as-errors=on", "--prover=cvc5,z3,altergo",
-        "--counterexamples=on", "-j1", "-u", unit,
+        "--counterexamples=on", "-j1" if not vacuity else "-j4",
+        *switches, "-u", *units,
     ]
     if cache:
         command.append(f"--memcached-server=file:{cache}")

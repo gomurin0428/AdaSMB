@@ -207,7 +207,8 @@ make mutation-diff          # 同じことを origin/main から変わった行�
 
 `make mutation` は [AdaMutant](https://github.com/gomurin0428/AdaMutant) で
 試験と証明を検査します。AdaMutant と GNATprove は `PATH` に置きます（AdaMutant は
-`ADAMUTANT=` でも指定できます）。ライブラリのソースに一度に一つだけ小さな変更
+`ADAMUTANT=` でも指定できます）。AdaMutant は Alire でビルドします（`alr build`。
+Libadalang も取得し、初回は 20 分ほどかかります）。ライブラリのソースに一度に一つだけ小さな変更
 （演算子、リテラル、属性、条件、代入・呼び出し・`raise`・`return;` 一つを
 `null` に置換）を加え、
 `test_suite` を作り直して実行し、試験が気づかなかったミュータントは
@@ -219,8 +220,13 @@ GNATprove で変更したユニットを証明します
 該当するすべての試験が見逃したミュータントだけが生き残ります。変更前の
 ベースラインではすべての照合試験を実行するため、`make mutation` と
 `make mutation-diff` にはそれらの試験が必要とするもの（Python の
-`cryptography` パッケージを含む）が必要です。契約・
-pragma・ghost コードは GNATprove が検査するので変更しません。
+`cryptography` パッケージを含む）が必要です。本体の中の契約・アサーション・
+ghost コードも変更します（`and` の一方やアサーション pragma を取り除くものを含む）。
+そうしたミュータントが証明を通れば、どこにも使われていない契約の一部（呼び出し側が
+使わない事後条件の節、証明に要らないアサーション）か、本体がもっと強く言える契約を
+示します。ミュータントの前に、AdaMutant は変更するユニットを GNATprove の証明警告
+付きでもう一度証明し、何でも証明できてしまう箇所（常に False の事前条件、到達しない
+コード）を一覧にします。
 `src/smb-client.adb` と `src/smb-transport.adb` は対象外です。動作中の
 サーバーが必要で、統合試験（Samba と Windows）と転送試験でしか動かせず、それらを
 ミュータントごとに実行するには時間がかかりすぎるためです。設定は
