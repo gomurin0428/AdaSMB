@@ -1447,7 +1447,7 @@ is
            (Before_Begin, State, Token, Metadata_Snapshot_Of (Value).File_Id,
             Metadata_Snapshot_Of (Value).Access_Mode,
             Metadata_Snapshot_Of (Value).Directory));
-      --  The name, then any padding up to Need (a short rename target).
+      --  The name; any padding after it, up to Need, is zero (Build_Rename).
       Lemma_Slice_Equals
         (Output, Name, Header_Length + 52, Header_Length + 51 + Name'Length);
       pragma Assert

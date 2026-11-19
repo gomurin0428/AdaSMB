@@ -1307,6 +1307,13 @@ package body Core_Client_Tests is
            (Status = SMB.Ok
             and then SMB.Wire.Verify_Signature (Output (0 .. Used - 1), Key),
             Label & ": signed SET_INFO " & SMB.Core_Status'Image (Status));
+         --  The one-character name is padded: FILE_RENAME_INFORMATION is
+         --  24 bytes (BufferLength), the request 64 + 32 + 24.
+         Check
+           (Used = 120 and then SMB.Wire.U32 (Output, 64 + 4) = 24
+            and then SMB.Wire.U32 (Output, 64 + 48) = 2
+            and then Output (64 + 54) = 0 and then Output (64 + 55) = 0,
+            Label & ": padded to 24 bytes");
          Message_Id := SMB.Wire.U64 (Output, 24);
          Client.Metadata_Send_Succeeded (Value, State, Status);
          Check (Status = SMB.Ok, Label & ": send acknowledgement");
