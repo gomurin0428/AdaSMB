@@ -6988,6 +6988,15 @@ procedure Test_Suite is
          & File_Id & Hex ("00000000000000000000000000000000" & "04000000"
                           & "62006300"),
          "SET_INFO rename request");
+      --  A one-character target: the structure is 20 bytes and the name,
+      --  padded with zeros to 24 (MS-FSCC 2.4.42.2).
+      SMB.Core_Protocol.Build_Rename
+        (File_Id, Hex ("6200"), Output, Used, Status);
+      Expect
+        (Hex ("2100" & "01" & "0a" & "18000000" & "6000" & "0000" & "00000000")
+         & File_Id & Hex ("00000000000000000000000000000000" & "02000000"
+                          & "6200" & "0000"),
+         "SET_INFO rename request padded to 24 bytes");
       SMB.Core_Protocol.Build_Rename
         (File_Id, SMB.Bytes'(0 => 16#62#), Output, Used, Status);
       Expect_Failure (SMB.Invalid_Length, "odd rename target");

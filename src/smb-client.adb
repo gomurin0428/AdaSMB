@@ -1409,7 +1409,9 @@ package body SMB.Client is
       Old_UTF16 : constant SMB.Bytes := Encode_Name (Old_Name);
    begin
       declare
-         Payload : SMB.Bytes (0 .. 63 + 52 + New_UTF16'Length) :=
+         Payload : SMB.Bytes
+           (0 .. 63 + SMB.Core_Protocol.Rename_Request_Length
+                        (New_UTF16'Length)) :=
            (others => 0);
          Used : Natural;
          Core_Status : SMB.Core_Status;

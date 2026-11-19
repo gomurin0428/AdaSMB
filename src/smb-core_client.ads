@@ -1385,7 +1385,8 @@ is
                (Metadata_Snapshot_Of (Value), State, Token)'Old
              or else Name'Length = 0 or else Name'Length mod 2 /= 0
              or else Output'Length <
-               SMB.Core_Wire.Header_Size + 52 + Name'Length
+               SMB.Core_Wire.Header_Size
+                 + SMB.Core_Protocol.Rename_Request_Length (Name'Length)
           then Status /= SMB.Ok
             and then Metadata_Snapshot_Of (Value) =
               Metadata_Snapshot_Of (Value)'Old
@@ -1410,7 +1411,9 @@ is
          (if Status = SMB.Ok then
             Metadata_Stage_Of (Value) = Metadata_Prepared
             and then Metadata_Kind_Of (Value) = Rename_Metadata
-            and then Used = SMB.Core_Wire.Header_Size + 52 + Name'Length
+            and then Used =
+              SMB.Core_Wire.Header_Size
+                + SMB.Core_Protocol.Rename_Request_Length (Name'Length)
             and then SMB.Engine.Pending_Request_Matches
               (State, Metadata_Expected_Of (Value))
             and then Metadata_Packet_Matches (Value, State, Output, Used)
@@ -2017,7 +2020,8 @@ private
       and then Used =
         (if Value.Kind = Disposition_Metadata
          then SMB.Core_Wire.Header_Size + 33
-         else SMB.Core_Wire.Header_Size + 52 + Value.Name_Length)
+         else SMB.Core_Wire.Header_Size
+           + SMB.Core_Protocol.Rename_Request_Length (Value.Name_Length))
       and then SMB.Core_Wire.Encoded_U16 (Packet, 4) =
         SMB.Word (SMB.Core_Wire.Header_Size)
       and then SMB.Core_Wire.Encoded_U16 (Packet, 12) = 17
@@ -2058,7 +2062,9 @@ private
              (Packet'First + SMB.Core_Wire.Header_Size + 3) = 10
            and then SMB.Core_Wire.Encoded_U32
              (Packet, SMB.Core_Wire.Header_Size + 4) =
-               SMB.DWord (20 + Value.Name_Length)
+               SMB.DWord
+                 (SMB.Core_Protocol.Rename_Information_Length
+                    (Value.Name_Length))
            and then
              (for all Index in 32 .. 47 =>
                 Packet
