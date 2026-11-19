@@ -17,8 +17,9 @@ of date.
   writes larger than 64 KiB per request (#137 and #138), and teaching the
   adversarial proxy SMB 3.1.1 (#142 and #144). With all three done, the
   maintainer asked on 2026-11-18 for 0.4.0, on the Alire index too: it is
-  tagged `v0.4.0` with a GitHub release (#146), and its index submission
-  follows.
+  tagged `v0.4.0` with a GitHub release (#146) and submitted to the index
+  as alire-project/alire-index#2375 (open; its manifest is the tag's
+  `alire.toml` with `[origin]` commit 1225e38).
 * The work toward 0.2.0 followed [smb3-design.md](smb3-design.md); read it
   first. The maintainer approved its decisions:
   * SMB 3.1.1 only (no 3.0 or 3.0.2).
@@ -406,8 +407,8 @@ opens a received one. It is a stateless SPARK unit, like
 
 ## Next steps
 
-* Submit 0.4.0 to the Alire index (the maintainer asked for it on
-  2026-11-18), as below, and record the index pull request here. Nothing
+* Follow alire-project/alire-index#2375 (smb 0.4.0) until it is merged,
+  answer its review if there is one, and record the merge here. Nothing
   else is queued: propose the next pieces to the maintainer.
 * Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
