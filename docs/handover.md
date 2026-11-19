@@ -61,7 +61,8 @@ of date.
 | after 0.3.0 | AdaMutant d1d049e: a proof cache per sandbox, steps limits, main's cache kept current | merged (#139) |
 | after 0.3.0 | The adversarial proxy over SMB 3.1.1: NEGOTIATE tampering, signing with the 3.1.1 key | merged (#142) |
 | after 0.3.0 | The adversarial proxy over SMB 3.1.1: encryption (open and encrypt again) | merged (#144) |
-| after 0.3.0 | Multi-credit WRITEs: WRITEs up to 960 KiB, built and signed in place | #138 |
+| after 0.3.0 | Multi-credit WRITEs: WRITEs up to 960 KiB, built and signed in place | merged (#138) |
+| after 0.3.0 | From #139's review: a margin for the low limit, no cache saved from a cancelled run | #141 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -478,7 +479,7 @@ opens a received one. It is a stateless SPARK unit, like
   connection-level, unsigned and tampered-signature, interrupted READ and
   lost WRITE modes, `AsyncProxy` and the directory limits.
 
-## AdaMutant 2c9351e (#139)
+## AdaMutant d1d049e (#139, #141)
 
 * AdaMutant gives each sandbox a proof cache of its own
   (`ADAMUTANT_PROVE_CACHE`) and removes what a proof wrote when the proof
@@ -500,13 +501,31 @@ opens a received one. It is a stateless SPARK unit, like
   choice, so that `make prove` and the pull request's proof are not
   affected): before each mutation run, `tests/mutant_low_steps.py` proves
   each mutated unit at `LOW_STEPS` (20,000) into `PROOF_CACHE/low/cache`
-  and lists those that proved in `PROOF_CACHE/low/units.txt`; their
-  mutants are proved at 20,000, the others at `PROOF_STEPS`. The list is
-  made anew each run from the units it checks, so a unit that stops
-  proving at 20,000 falls back by itself, and a mutant is never counted as
-  detected because of the low limit alone. Not every unit proves there
-  (`Core_Text`, `Core_Negotiate` do not); rewriting them for it was judged
-  not worth the time.
+  and lists in `PROOF_CACHE/low/units.txt` those that proved with no check
+  taking more than 10,000 steps (#141's margin); their mutants are proved
+  at 20,000, the others at `PROOF_STEPS`. The list is made anew each run
+  from the units it checks, so a unit that stops proving there falls back
+  by itself. Not every unit proves there (`Core_Text`, `Core_Negotiate` do
+  not); rewriting them for it was judged not worth the time.
+* A steps limit (or a time limit, as before) can still count a mutant as
+  detected that breaks nothing: one that leaves every goal true but makes
+  one need more than the limit. The margin makes that less likely at
+  20,000; at `PROOF_STEPS` the largest count left on main after #138 is
+  CVC5's 558,271, of 1,000,000 (before #138, Z3's 930,070 once made #141's
+  first proof run out). Such a mutant shows among those only the proof
+  detected, as Undecided, which the pull request judges. AdaMutant's
+  equivalence check runs on survivors only, so an equivalent mutant whose
+  goal got harder shows there too.
+* d1d049e (since 2c9351e) also deletes `raise` statements and value-less
+  `return`s and swaps more attributes, so the next full run has new
+  mutants.
+* #141 (from #139's review): the proof cache is not saved from a cancelled
+  or timed-out run (a prover stopped while writing leaves an entry cut
+  short); a `proof.yml` run after a merge is not cancelled by the next
+  merge (only one more waits; a scheduled or by-hand run still cancels); the
+  Mutation workflow's run by hand proves only the given SPARK units and
+  does not cancel the weekly run, and its shards fail when the cache is
+  missing; `make prove PROOF_UNITS=` removes earlier results first.
 * The effect, on the Mac over `smb-core_resize.adb` (145 mutants,
   concurrency 2): AdaMutant 33e56e3 with no limit, 131 detected (9 by the
   proof), 12 undetected (mostly proofs out of time), 13,438 s; 2c9351e at

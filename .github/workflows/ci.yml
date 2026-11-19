@@ -108,8 +108,10 @@ jobs:
       # mutants are proved there (tests/mutant_low_steps.py).
       - name: Prove the changed units at the low steps limit
         run: python3 tests/mutant_low_steps.py proof-cache --since "origin/$GITHUB_BASE_REF"
+      # Not when cancelled or timed out: a prover stopped while writing
+      # leaves an entry cut short, which stops GNATprove when read.
       - name: Save the proof cache
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: proof-cache

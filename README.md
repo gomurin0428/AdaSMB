@@ -222,8 +222,9 @@ passing whenever a stale value happens to be the expected one.
 `make mutation` checks the tests and the proof with
 [AdaMutant](https://github.com/gomurin0428/AdaMutant), which must be on `PATH`
 (or named with `ADAMUTANT=`), as must GNATprove. It makes one small change at a
-time to the library source (an operator, a literal, a condition, or a whole
-assignment or call replaced by `null`), rebuilds `test_suite` and runs it; a
+time to the library source (an operator, a literal, an attribute, a
+condition, or a whole assignment, call, `raise` or `return;` replaced by
+`null`), rebuilds `test_suite` and runs it; a
 mutant the tests do not notice then goes to GNATprove, which proves the
 mutated unit ([`tests/mutant_prove.py`](tests/mutant_prove.py)). A change that
 neither notices is a surviving mutant. When `test_suite` misses a mutant of a
@@ -250,9 +251,9 @@ starts from it, so that each mutant's proof proves only the goals it
 changes. The provers stop at a steps limit (`PROOF_STEPS` in the Makefile,
 which `make prove` uses too), so a goal that a mutant breaks fails at the
 same point under any load. A mutated unit that also proves at a much lower
-limit ([`tests/mutant_low_steps.py`](tests/mutant_low_steps.py) checks it
-before each run) has its mutants proved at that limit, where a broken goal
-fails sooner; `make prove` is not affected.
+limit, with room to spare ([`tests/mutant_low_steps.py`](tests/mutant_low_steps.py)
+checks it before each run), has its mutants proved at that limit, where a
+broken goal fails sooner; `make prove` is not affected.
 
 `make unicode-test` uses Python 3's standard codecs as an independent
 reference and checks all 1,112,063 Unicode scalars except NUL, every

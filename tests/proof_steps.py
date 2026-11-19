@@ -11,6 +11,7 @@ reported here.
 Usage: proof_steps.py GNATPROVE_OUTPUT
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,6 +21,10 @@ PROVER = re.compile(r"(\w[\w-]*): (\d+) VC in max ([\d.]+) seconds and (\d+) ste
 
 
 def limit() -> int:
+    """PROOF_STEPS as `make prove` used it: from the environment (make
+    passes a value given on its command line) or the Makefile."""
+    if os.environ.get("PROOF_STEPS"):
+        return int(os.environ["PROOF_STEPS"])
     text = (ROOT / "Makefile").read_text(encoding="utf-8")
     found = re.search(r"^PROOF_STEPS\s*\?=\s*(\d+)\s*$", text, re.M)
     return int(found.group(1)) if found else 0
@@ -28,7 +33,11 @@ def limit() -> int:
 def main() -> int:
     if len(sys.argv) != 2:
         sys.exit(__doc__)
-    lines = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines()
+    output = Path(sys.argv[1])
+    if not output.is_file():
+        print("### Proof steps\n\nNo proof ran.")
+        return 0
+    lines = output.read_text(encoding="utf-8", errors="replace").splitlines()
     most: dict[str, tuple[int, str, str]] = {}
     checks = 0
     for index, line in enumerate(lines):
@@ -59,7 +68,7 @@ def main() -> int:
     print("| --- | --- | --- | --- |")
     for prover, (steps, where, what) in sorted(most.items()):
         print(f"| {prover} | {steps} | {what} | `{where}` |")
-    if steps_limit:
+    if steps_limit and most:
         highest = max(steps for steps, _, _ in most.values())
         print()
         print(f"Highest: {highest}, {highest * 100 // steps_limit}% of the limit.")

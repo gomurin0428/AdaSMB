@@ -5493,9 +5493,9 @@ those only the proof detects, in the job summary, for the pull request to
 judge. On this Mac, the proof cache that a run without counterexamples filled
 was used by a run with them (`smb-core_request.adb`: 26 s, then 3 s).
 
-## AdaMutant 2c9351e and a steps limit
+## AdaMutant d1d049e and steps limits
 
-AdaMutant 2c9351e gives each sandbox its own proof cache and recommends a
+AdaMutant 2c9351e (pinned at d1d049e) gives each sandbox its own proof cache and recommends a
 steps limit for the provers: with the cache, GNATprove 16.1 lets a prover
 that stops at a time limit run about four times as long, and in #137 seven
 of the thirteen undetected mutants were proofs that ran out of time.
@@ -5529,10 +5529,13 @@ The mutants of a unit that proves at 20,000 steps (`LOW_STEPS`) are proved
 at that limit: `tests/mutant_low_steps.py` proves each mutated unit there
 before the run and lists the ones that pass, which `tests/mutant_prove.py`
 reads; the others keep `PROOF_STEPS`. `make prove` and the pull request's
-proof are unchanged. A low limit only makes a prover give up sooner, never
-proves anything false, and a unit is listed only when its unmodified code
-proves at the limit, so no mutant is counted as detected for the limit
-alone. Over `smb-core_resize.adb` on the Mac (145 mutants, concurrency 2),
+proof are unchanged. A limit only makes a prover give up sooner and never
+proves anything false, but it can count as detected a mutant that leaves
+every goal true and makes one need more steps than the limit. #141 lists a
+unit only when no check of its unmodified code took more than 10,000
+steps, half the limit, which makes that less likely; such a mutant shows
+among the proof-only detections, as Undecided, for the pull request to
+judge. Over `smb-core_resize.adb` on the Mac (145 mutants, concurrency 2),
 AdaMutant 33e56e3 with no limit detected 131 (9 by the proof) and left 12,
 mostly proofs out of time, in 13,438 s; 2c9351e at 20,000 steps detected 142
 (20 by the proof) and left 2, in 3,253 s.

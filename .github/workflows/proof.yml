@@ -13,9 +13,12 @@ on:
 permissions:
   contents: read
 
+# A running proof after a merge is not cancelled by the next merge, so it
+# saves main's cache; GitHub still keeps only one waiting run, and a
+# scheduled or by-hand run cancels as before.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   prove:
@@ -47,8 +50,10 @@ jobs:
           mkdir -p proof-cache
           du -sh proof-cache
           time make prove PROOF_CACHE=proof-cache
+      # Not when cancelled or timed out: a prover stopped while writing
+      # leaves an entry cut short, which stops GNATprove when read.
       - name: Save the proof cache
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: proof-cache

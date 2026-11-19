@@ -199,7 +199,8 @@ make mutation-diff          # 同じことを origin/main から変わった行�
 `make mutation` は [AdaMutant](https://github.com/gomurin0428/AdaMutant) で
 試験と証明を検査します。AdaMutant と GNATprove は `PATH` に置きます（AdaMutant は
 `ADAMUTANT=` でも指定できます）。ライブラリのソースに一度に一つだけ小さな変更
-（演算子、リテラル、条件、代入や呼び出し一つを `null` に置換）を加え、
+（演算子、リテラル、属性、条件、代入・呼び出し・`raise`・`return;` 一つを
+`null` に置換）を加え、
 `test_suite` を作り直して実行し、試験が気づかなかったミュータントは
 GNATprove で変更したユニットを証明します
 （[`tests/mutant_prove.py`](tests/mutant_prove.py)）。どちらも気づかなかった
@@ -227,8 +228,8 @@ pragma・ghost コードは GNATprove が検査するので変更しません。
 持つキャッシュもそこから始まるので、各ミュータントの証明は変わったゴールだけで
 済みます。証明器はステップ数の上限（Makefile の `PROOF_STEPS`。`make prove`
 も同じ値を使います）で止まるので、ミュータントが壊したゴールは負荷によらず
-同じところで失敗します。変異させるユニットのうち、ずっと低い上限でも証明できる
-もの（[`tests/mutant_low_steps.py`](tests/mutant_low_steps.py) が実行のたびに
+同じところで失敗します。変異させるユニットのうち、ずっと低い上限でも余裕を持って
+証明できるもの（[`tests/mutant_low_steps.py`](tests/mutant_low_steps.py) が実行のたびに
 確かめます）は、ミュータントもその上限で証明するので、壊れたゴールがより早く
 失敗します。`make prove` には影響しません。
 
