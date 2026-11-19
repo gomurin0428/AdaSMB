@@ -552,6 +552,12 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", SMB.Spec.SMB2.Is_Write_Fields);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", SMB.Spec.SMB2.Is_Write_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
       Required : constant Natural := 48 + Data'Length;
       Request : constant SMB.Spec.SMB2.Write_Request :=
         SMB.Spec.SMB2.Client_Write
@@ -559,12 +565,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
            Offset => Offset,
            Length => SMB.DWord (Data'Length))
       with Ghost;
-      pragma Annotate
-        (GNATprove, Unhide_Info, "Expression_Function_Body", SMB.Spec.SMB2.Is_Write_Fields);
-      pragma Annotate
-        (GNATprove, Unhide_Info, "Expression_Function_Body", SMB.Spec.SMB2.Is_Write_Request);
-      pragma Annotate
-        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
    begin
       Begin_Build (Output, Required, Status);
       if Status /= SMB.Ok then
