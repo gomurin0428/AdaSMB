@@ -70,7 +70,8 @@ of date.
 | after 0.4.0 | SPARK Platinum design ([platinum-design.md](platinum-design.md)) | merged (#148) |
 | after 0.4.0 | Platinum phase 2: Ada 2022, the run-time contract policy, `SMB.Spec`, `spec_test` | merged (#149) |
 | after 0.4.0 | Platinum phase 3, the header: `SMB.Spec.SMB2`, `Initialize_Header` and `Prepare_Header` proved against it | merged (#150) |
-| after 0.4.0 | `Write_U64` without loop invariants, which ran over the whole packet in production | #151 |
+| after 0.4.0 | `Write_U64` without loop invariants, which ran over the whole packet in production | merged (#151) |
+| after 0.4.0 | Platinum phase 3, CLOSE, READ and WRITE: their requests in `SMB.Spec.SMB2`, `Build_Close`, `Build_Read`, `Build_Write` proved against them | #152 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -415,9 +416,12 @@ opens a received one. It is a stateless SPARK unit, like
   answer its review if there is one, and record the merge here.
 * SPARK Platinum ([platinum-design.md](platinum-design.md)), whose
   decisions the maintainer approved on 2026-11-18: phase 2 is merged
-  (#149); phase 3 (the SMB2 messages) started with the header (#150). Next
-  in phase 3: the request bodies of the `Core_Protocol` builders, then the
-  transform header and the QUERY_INFO and SET_INFO packets. After Platinum, the
+  (#149); phase 3 (the SMB2 messages) started with the header (#150) and
+  CLOSE, READ and WRITE (#152). Next in phase 3: the other
+  `Core_Protocol` builders (NEGOTIATE, SESSION_SETUP, TREE_CONNECT, CREATE,
+  QUERY_DIRECTORY, the SET_INFO and QUERY_INFO ones, LOGOFF and
+  TREE_DISCONNECT), then the transform header and `Core_Query` and
+  `Core_Resize`. After Platinum, the
   maintainer wants the remaining SMB features in this order: Kerberos,
   several requests in flight, several shares per connection, DFS, share
   listing (DCE/RPC), then the remaining file operations (times and
@@ -437,6 +441,41 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, CLOSE, READ and WRITE (#152)
+
+* `SMB.Spec.SMB2` adds the CLOSE (2.2.15), READ (2.2.19) and WRITE
+  (2.2.21) requests as records with `Is_Close_Request`, `Is_Read_Request`,
+  `Is_Write_Fields` (the 48 bytes of fields) and `Is_Write_Request` (the
+  fields, then the data at DataOffset counted from the header), stated as
+  fields read at their offsets, as for the header. `Has_Bytes` says that
+  bytes from an offset are a given array.
+* `Client_Read` and `Client_Write` are this client's requests: no channel,
+  so RemainingBytes and the channel information zero (the standard's MUST
+  for SMB2_CHANNEL_NONE), no read or write flags, the WRITE's data
+  straight after its fields (DataOffset 112). Where the standard leaves a
+  value open, the record says what this client sends: READ's Padding and
+  MinimumCount 0, and the one Buffer byte that StructureSize 49 counts, 1.
+  MS-SMB2 gives that byte no value; Microsoft's blog trace sends 0, and
+  Samba and Windows Server accept 1.
+* `Build_Close`, `Build_Read` and `Build_Write` state their exact status
+  (`Resource_Limit` when the buffer is too short) and `Used`, the request
+  against the specification, and `Zero_After (Output, Used)`: every byte
+  past the request is zero, the whole buffer when they fail. Their former
+  clauses stay, since `Core_Client` uses them.
+* For that, the helpers say what they return: `Begin_Build` its exact
+  status, `Finish` its status from the status before, and `Put_Byte`,
+  `Put_U16`, `Put_U32`, `Put_U64` and `Copy` that a write that fits keeps
+  `Ok`. `Build_Write_Fixed` (the 48 bytes of a WRITE) always succeeds, and
+  `Build_Write` carries its fields from the slice to the whole buffer.
+* `spec_test` checks the READ and WRITE request bodies of the blog's A.2
+  messages, a READ with every field set to a value of its own (the blog's
+  are mostly zero), a CLOSE built from the layout, that each field of the
+  record is read at its own offset, and the WRITE's data and DataOffset.
+* Proving a few subprograms of the 47-minute `Core_Protocol` alone
+  (`--limit-subp`) took 2 to 10 minutes each; after a failed attempt,
+  delete `build/proof-obj` first (see #150): stale failures came back for
+  `Build_Write` until it was.
 
 ## Platinum phase 3, the SMB2 header (#150)
 

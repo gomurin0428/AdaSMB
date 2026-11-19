@@ -43,7 +43,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
                    then Output (Index) = Output'Old (Index)))
            else Output = Output'Old)
           and then
-            (if Status'Old /= SMB.Ok then Status = Status'Old);
+            (if Status'Old /= SMB.Ok then Status = Status'Old)
+          and then
+            (if Status'Old = SMB.Ok
+               and then Position < Output'Length
+             then Status = SMB.Ok);
 
    procedure Put_Byte
      (Output : in out SMB.Bytes;
@@ -69,6 +73,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
      Output'Length <= SMB.Maximum_Frame_Size
      and then Value'Length <= SMB.Maximum_Frame_Size,
      Post =>
+       Status =
+         (if Position <= Output'Length
+            and then Value'Length <= Output'Length - Position
+          then SMB.Ok else SMB.Resource_Limit)
+       and then
        (if Status = SMB.Ok then
           Position <= Output'Length
           and then Value'Length <= Output'Length - Position
@@ -145,6 +154,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
            else Output = Output'Old)
           and then
             (if Status'Old /= SMB.Ok then Status = Status'Old)
+          and then
+            (if Status'Old = SMB.Ok
+               and then Position <= Output'Length
+                 and then Output'Length - Position >= 2
+             then Status = SMB.Ok)
    is
    begin
       if Status = SMB.Ok then
@@ -178,6 +192,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
            else Output = Output'Old)
           and then
             (if Status'Old /= SMB.Ok then Status = Status'Old)
+          and then
+            (if Status'Old = SMB.Ok
+               and then Position <= Output'Length
+                 and then Output'Length - Position >= 4
+             then Status = SMB.Ok)
    is
    begin
       if Status = SMB.Ok then
@@ -206,6 +225,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
            else Output = Output'Old)
           and then
             (if Status'Old /= SMB.Ok then Status = Status'Old)
+          and then
+            (if Status'Old = SMB.Ok
+               and then Position <= Output'Length
+                 and then Output'Length - Position >= 8
+             then Status = SMB.Ok)
    is
    begin
       if Status = SMB.Ok then
@@ -219,11 +243,14 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Status : out SMB.Core_Status)
    with Pre => Output'Length <= SMB.Maximum_Frame_Size,
         Post =>
-          (if Status = SMB.Ok then
-             Required <= Output'Length
-             and then
-               (for all Index in Output'Range => Output (Index) = 0)
-           else Required > Output'Length)
+          Status =
+            (if Required <= Output'Length then SMB.Ok
+             else SMB.Resource_Limit)
+          and then
+            (if Status = SMB.Ok then Required <= Output'Length
+             else Required > Output'Length)
+          and then
+            (for all Index in Output'Range => Output (Index) = 0)
    is
    begin
       Status := SMB.Ok;
@@ -246,7 +273,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
              then Used = Required and then Required <= Capacity
              else Used = 0)
           and then
-            (if Status'Old /= SMB.Ok then Status = Status'Old)
+            Status =
+              (if Status'Old /= SMB.Ok then Status'Old
+               elsif Required <= Capacity then SMB.Ok
+               else SMB.Resource_Limit)
    is
    begin
       if Status = SMB.Ok and then Required <= Capacity then
@@ -447,6 +477,14 @@ package body SMB.Core_Protocol with SPARK_Mode is
      and then Length <= Maximum_Write_Chunk
      and then Output'Length = 48,
      Post =>
+       Status = SMB.Ok
+       and then SMB.Spec.SMB2.Is_Write_Fields
+         (Output,
+          SMB.Spec.SMB2.Client_Write
+            (File_Id => File_Id,
+             Offset => Offset,
+             Length => SMB.DWord (Length)))
+       and then
        (if Status = SMB.Ok then
           Output (Output'First + 4) =
             SMB.Core_Wire.U32_Byte (SMB.DWord (Length), 0)
@@ -509,12 +547,19 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Used : out Natural;
       Status : out SMB.Core_Status) is
       Required : constant Natural := 48 + Data'Length;
+      Request : constant SMB.Spec.SMB2.Write_Request :=
+        SMB.Spec.SMB2.Client_Write
+          (File_Id => File_Id,
+           Offset => Offset,
+           Length => SMB.DWord (Data'Length))
+      with Ghost;
    begin
       Begin_Build (Output, Required, Status);
       if Status /= SMB.Ok then
          Used := 0;
          return;
       end if;
+      pragma Assert (Required <= Output'Length);
       --  The fields go into their own 48 bytes, and the data, up to
       --  960 KiB, straight after them: the field steps' postconditions,
       --  checked at run time, then copy only those 48 bytes for 'Old.
@@ -525,10 +570,17 @@ package body SMB.Core_Protocol with SPARK_Mode is
          Used := 0;
          return;
       end if;
+      --  The fields, proved on the slice, hold in the whole buffer.
+      pragma Assert
+        (SMB.Spec.SMB2.Is_Write_Fields
+           (Output (Output'First .. Output'First + 47), Request));
+      pragma Assert (SMB.Spec.SMB2.Is_Write_Fields (Output, Request));
       if Data'Length > 0 then
          Output (Output'First + 48 .. Output'First + 47 + Data'Length) :=
            Data;
       end if;
+      pragma Assert (SMB.Spec.SMB2.Is_Write_Fields (Output, Request));
+      pragma Assert (SMB.Spec.SMB2.Has_Bytes (Output, 48, Data));
       Used := Required;
    end Build_Write;
 
