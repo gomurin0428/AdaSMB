@@ -201,12 +201,35 @@ package SMB.Core_Protocol is
       Used : out Natural;
       Status : out SMB.Core_Status)
    with Pre => Name'Length <= Maximum_Name_Bytes
-     and then Output'Length <= SMB.Maximum_Frame_Size,
+     and then Output'Length <= SMB.Maximum_Frame_Size
+     --  MS-SMB2 2.2.13: with FILE_DIRECTORY_FILE, "the CreateDisposition
+     --  field MUST be set to FILE_CREATE, FILE_OPEN_IF, or FILE_OPEN".
+     and then (if Directory then Disposition in 1 .. 3),
      Post =>
-       Used <= Output'Length
+       --  An odd length (not UTF-16) comes before a short buffer.
+       Status =
+         (if Name'Length mod 2 /= 0 then SMB.Invalid_Length
+          elsif Output'Length < 56 + Natural'Max (1, Name'Length)
+          then SMB.Resource_Limit
+          else SMB.Ok)
+       and then
+         Used =
+           (if Status = SMB.Ok then 56 + Natural'Max (1, Name'Length)
+            else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 56 + Natural'Max (1, Name'Length)
+            SMB.Spec.SMB2.Is_Create_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Create
+                 (Desired_Access => Access_Mask,
+                  Disposition => Disposition,
+                  Directory => Directory,
+                  Name_Length => SMB.Word (Name'Length)),
+               Name)
+            --  An empty name leaves the one byte of Buffer zero.
+            and then (if Name'Length = 0 then Output (Output'First + 56) = 0)
+            and then Used = 56 + Natural'Max (1, Name'Length)
             and then
               (for all Byte_Index in 0 .. 3 =>
                  Output (Output'First + 24 + Byte_Index) =
@@ -362,10 +385,16 @@ package SMB.Core_Protocol is
    with Pre => File_Id'Length = 16
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       Status = (if Output'Length >= 34 then SMB.Ok else SMB.Resource_Limit)
+       and then Used = (if Status = SMB.Ok then 34 else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 34
+            SMB.Spec.SMB2.Is_Query_Directory_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Query_Directory (File_Id, Restart),
+               SMB.Spec.SMB2.Every_Name)
+            and then Used = 34
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
             and then Output (Output'First + 2) = 37
             and then Output (Output'First + 3) =

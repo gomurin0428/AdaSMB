@@ -76,6 +76,7 @@ of date.
 | after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | merged (#156) |
 | after 0.4.0 | Rename: FILE_RENAME_INFORMATION padded to 24 bytes; Windows Server refused a one-character target | merged (#153) |
 | after 0.4.0 | Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT against the specification | #155 |
+| after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | #156 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -422,8 +423,9 @@ opens a received one. It is a stateless SPARK unit, like
   decisions the maintainer approved on 2026-11-18: phase 2 is merged
   (#149); phase 3 (the SMB2 messages) started with the header (#150) and
   CLOSE, READ and WRITE (#152), then SESSION_SETUP, TREE_CONNECT, LOGOFF
-  and TREE_DISCONNECT (#155). Next in phase 3: CREATE and QUERY_DIRECTORY,
-  the SET_INFO and QUERY_INFO builders (after #153's rename fix), the 3.1.1
+  and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#156). Next
+  in phase 3: the SET_INFO and QUERY_INFO builders (after #153's rename
+  fix), the 3.1.1
   NEGOTIATE (and dropping the unused 2.1 `Build_Negotiate`), then the
   transform header and `Core_Query` and `Core_Resize`. After Platinum, the
   maintainer wants the remaining SMB features in this order: Kerberos,
@@ -445,6 +447,40 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, CREATE and QUERY_DIRECTORY (#156)
+
+* `SMB.Spec.SMB2` adds CREATE (2.2.13) and QUERY_DIRECTORY (2.2.33), with
+  `Client_Create` and `Client_Query_Directory` from the client sections
+  3.2.4.3 and 3.2.4.17. CREATE: SecurityFlags 0 (MUST), no oplock
+  (RequestedOplockLevel NONE: when the server supports leasing, 3.2.4.3
+  says the client "SHOULD" ask for a lease, which this client does not
+  support), ImpersonationLevel Impersonation, SmbCreateFlags and Reserved
+  0, the application's DesiredAccess and disposition, FileAttributes
+  FILE_ATTRIBUTE_DIRECTORY or 0, ShareAccess read, write and delete,
+  CreateOptions FILE_DIRECTORY_FILE or FILE_NON_DIRECTORY_FILE, the name
+  at 120 (SHOULD) and no create contexts (MUST). QUERY_DIRECTORY:
+  FileIdBothDirectoryInformation, SMB2_RESTART_SCANS on the first page,
+  FileIndex 0 (MUST), the pattern `*` at 96 and OutputBufferLength 65536.
+* **A MUST the client did not keep.** 2.2.13: with FILE_DIRECTORY_FILE,
+  "the CreateDisposition field MUST be set to FILE_CREATE, FILE_OPEN_IF,
+  or FILE_OPEN". `Build_Create` and `Core_Client.Prepare_Create` accepted
+  a directory with FILE_OVERWRITE or FILE_OVERWRITE_IF (the public API
+  never asks for one). `Build_Create` now requires it, and
+  `Prepare_Create` refuses it with `Invalid_Value`, as it refuses a
+  disposition outside 1 to 5.
+* `Build_Create` puts the fields into their own 56 bytes with
+  `Build_Create_Fields`, then the name after them, as `Build_Write` does:
+  in one procedure, the chain of nine writes and the name's copy went past
+  the provers. `Is_Create_Request` is `Is_Create_Fields` and the name.
+  `Build_Create` and `Build_Query_Directory` state their exact status (an
+  odd name before a short buffer), `Used`, the request, and zero bytes
+  after it; `Build_Create` refuses an odd name before writing anything.
+* `spec_test` (78 checks): a CREATE and a QUERY_DIRECTORY whose fields all
+  hold distinct multi-byte values, every byte flipped in turn, wrong
+  lengths and offsets into the fields, and this client's requests. No
+  CREATE or QUERY_DIRECTORY bytes are published here; MS-SMB2 4.5 gives a
+  CREATE only field by field, with values this client does not send.
 
 ## Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT (#155)
 

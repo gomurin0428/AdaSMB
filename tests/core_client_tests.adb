@@ -620,6 +620,7 @@ package body Core_Client_Tests is
       --  Arguments and output size.
       declare
          Zero, Six, Odd, Short, Short_Close, No_Handle : Client.Operation;
+         Overwrite_Directory : Client.Operation;
       begin
          Client.Prepare_Create
            (Zero, State, Name, SMB.Engine.Read_Only, False, 0, False,
@@ -633,6 +634,12 @@ package body Core_Client_Tests is
            (Odd, State, Name (1 .. 3), SMB.Engine.Read_Only, False, 1, False,
             Output, Used, Status);
          Expect (Odd, SMB.Invalid_Value, Client.Failed, "odd name length");
+         --  A directory is only opened or created (MS-SMB2 2.2.13).
+         Client.Prepare_Create
+           (Overwrite_Directory, State, Name, SMB.Engine.Read_Only, False, 4,
+            True, Output, Used, Status);
+         Expect (Overwrite_Directory, SMB.Invalid_Value, Client.Failed,
+                 "directory with FILE_OVERWRITE");
          Output := (others => 16#EE#);
          Client.Prepare_Create
            (Short, State, Name, SMB.Engine.Read_Only, False, 1, False,

@@ -695,11 +695,143 @@ procedure Spec_Test is
          "structure sizes and security modes");
       Passed;
    end Test_SMB2_Session;
+   --  MS-SMB2 2.2.13 and 2.2.33: CREATE and QUERY_DIRECTORY. No message is
+   --  published here for either, so the vectors are built from the layout,
+   --  every field a distinct multi-byte value, the name and the pattern
+   --  after a 4-byte gap; every byte flipped in turn (but the gap's) breaks
+   --  the match.
+   procedure Test_SMB2_Create is
+      package S renames SMB.Spec.SMB2;
+      use type SMB.Bytes;
+      use type S.Create_Request;
+      use type S.Query_Directory_Request;
+      File_Id : constant SMB.Bytes (0 .. 15) :=
+        (16#05#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
+        16#01#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#);
+      Name : constant SMB.Bytes := (16#41#, 16#00#, 16#42#, 16#00#);
+      Full_Create : constant SMB.Bytes (400 .. 463) :=
+        (16#39#, 16#00#, 16#81#, 16#42#, 16#14#, 16#13#, 16#12#, 16#11#,
+        16#28#, 16#27#, 16#26#, 16#25#, 16#24#, 16#23#, 16#22#, 16#21#,
+        16#38#, 16#37#, 16#36#, 16#35#, 16#34#, 16#33#, 16#32#, 16#31#,
+        16#44#, 16#43#, 16#42#, 16#41#, 16#54#, 16#53#, 16#52#, 16#51#,
+        16#64#, 16#63#, 16#62#, 16#61#, 16#74#, 16#73#, 16#72#, 16#71#,
+        16#84#, 16#83#, 16#82#, 16#81#, 16#7C#, 16#00#, 16#04#, 16#00#,
+        16#94#, 16#93#, 16#92#, 16#91#, 16#A4#, 16#A3#, 16#A2#, 16#A1#)
+        & (0, 0, 0, 0) & Name;
+      Full_Query : constant SMB.Bytes :=
+        (16#21#, 16#00#, 16#26#, 16#05#, 16#14#, 16#13#, 16#12#, 16#11#,
+        16#05#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
+        16#01#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
+        16#64#, 16#00#, 16#02#, 16#00#, 16#24#, 16#23#, 16#22#, 16#21#)
+        & (0, 0, 0, 0) & (16#2A#, 16#00#);
+      Full_Create_Request : constant S.Create_Request :=
+        (Security_Flags => 16#81#, Requested_Oplock_Level => 16#42#,
+         Impersonation_Level => 16#1112_1314#,
+         Smb_Create_Flags => 16#2122_2324_2526_2728#,
+         Reserved => 16#3132_3334_3536_3738#,
+         Desired_Access => 16#4142_4344#, File_Attributes => 16#5152_5354#,
+         Share_Access => 16#6162_6364#, Create_Disposition => 16#7172_7374#,
+         Create_Options => 16#8182_8384#, Name_Offset => 124,
+         Name_Length => 4, Create_Contexts_Offset => 16#9192_9394#,
+         Create_Contexts_Length => 16#A1A2_A3A4#)
+      with Ghost;
+      Full_Query_Request : constant S.Query_Directory_Request :=
+        (File_Information_Class => 16#26#, Flags => 16#05#,
+         File_Index => 16#1112_1314#, File_Id => File_Id,
+         File_Name_Offset => 100, File_Name_Length => 2,
+         Output_Buffer_Length => 16#2122_2324#)
+      with Ghost;
+   begin
+      pragma Assert
+        (S.Is_Create_Request (Full_Create, Full_Create_Request, Name)
+         and then S.Is_Query_Directory_Request
+           (Full_Query, Full_Query_Request, S.Every_Name),
+         "CREATE and QUERY_DIRECTORY with every field set");
+      Passed;
+      for Index in Full_Create'Range loop
+         declare
+            Changed : SMB.Bytes := Full_Create;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            pragma Assert
+              (Index in Full_Create'First + 56 .. Full_Create'First + 59
+               or else not S.Is_Create_Request
+                 (Changed, Full_Create_Request, Name),
+               "every CREATE byte");
+         end;
+      end loop;
+      Passed;
+      for Index in Full_Query'Range loop
+         declare
+            Changed : SMB.Bytes := Full_Query;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            pragma Assert
+              (Index in Full_Query'First + 32 .. Full_Query'First + 35
+               or else not S.Is_Query_Directory_Request
+                 (Changed, Full_Query_Request, S.Every_Name),
+               "every QUERY_DIRECTORY byte");
+         end;
+      end loop;
+      Passed;
+      --  NameLength and FileNameLength are the lengths of what follows, and
+      --  an offset never points into the fields.
+      pragma Assert
+        (not S.Is_Create_Request
+           (Full_Create, Full_Create_Request, Name (Name'First .. Name'Last - 2))
+         and then not S.Is_Create_Request
+           (Full_Create,
+            (Full_Create_Request with delta Name_Offset => 64 + 52), Name)
+         and then not S.Is_Query_Directory_Request
+           (Full_Query, Full_Query_Request, SMB.Bytes'(16#2A#, 16#00#, 0, 0))
+         and then not S.Is_Query_Directory_Request
+           (Full_Query,
+            (Full_Query_Request with delta File_Name_Offset => 64 + 30),
+            S.Every_Name),
+         "lengths, and offsets into the fields");
+      Passed;
+      --  This client's CREATE: a file and a directory.
+      pragma Assert
+        (S.Client_Create (16#0012_0089#, S.File_Open_If, False, 4)
+         = (Security_Flags => 0, Requested_Oplock_Level => S.Oplock_Level_None,
+            Impersonation_Level => S.Impersonation, Smb_Create_Flags => 0,
+            Reserved => 0, Desired_Access => 16#0012_0089#,
+            File_Attributes => 0, Share_Access => 7,
+            Create_Disposition => 3, Create_Options => 16#40#,
+            Name_Offset => 120, Name_Length => 4,
+            Create_Contexts_Offset => 0, Create_Contexts_Length => 0)
+         and then S.Client_Create (1, S.File_Create, True, 0).File_Attributes
+           = 16#10#
+         and then S.Client_Create (1, S.File_Create, True, 0).Create_Options
+           = 1,
+         "this client's CREATE");
+      Passed;
+      pragma Assert
+        (S.Client_Query_Directory (File_Id, True)
+         = (File_Information_Class => 16#25#, Flags => 1, File_Index => 0,
+            File_Id => File_Id, File_Name_Offset => 96,
+            File_Name_Length => 2, Output_Buffer_Length => 65_536)
+         and then S.Client_Query_Directory (File_Id, False).Flags = 0,
+         "this client's QUERY_DIRECTORY");
+      Passed;
+      pragma Assert
+        (S.Create_Request_Size = 57 and then S.Query_Directory_Request_Size = 33
+         and then S.Impersonation = 2 and then S.File_Open = 1
+         and then S.File_Create = 2 and then S.File_Open_If = 3
+         and then S.File_Directory_File = 1
+         and then S.File_Non_Directory_File = 16#40#
+         and then S.File_Attribute_Directory = 16#10#
+         and then S.File_Id_Both_Directory_Information = 16#25#
+         and then S.Restart_Scans = 1,
+         "structure sizes and constants");
+      Passed;
+   end Test_SMB2_Create;
 begin
    Test_Encoding;
    Test_SMB2_Header;
    Test_SMB2_Transfer;
    Test_SMB2_Session;
+   Test_SMB2_Create;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;

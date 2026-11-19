@@ -367,6 +367,87 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Finish (Required, Output'Length, Used, Status);
    end Build_Tree_Connect;
 
+   --  The 56 bytes of a CREATE's fields (MS-SMB2 2.2.13), as Client_Create
+   --  gives them; Build_Create puts the name after them.
+   procedure Build_Create_Fields
+     (Access_Mask, Disposition : SMB.DWord;
+      Directory : Boolean;
+      Name_Length : SMB.Word;
+      Output : out SMB.Bytes;
+      Status : out SMB.Core_Status)
+   with Pre => Output'Length = 56,
+     Post =>
+       Status = SMB.Ok
+       and then SMB.Spec.SMB2.Is_Create_Fields
+         (Output,
+          SMB.Spec.SMB2.Client_Create
+            (Desired_Access => Access_Mask,
+             Disposition => Disposition,
+             Directory => Directory,
+             Name_Length => Name_Length))
+       and then
+         (for all Byte_Index in 0 .. 3 =>
+            Output (Output'First + 24 + Byte_Index) =
+              SMB.Core_Wire.U32_Byte (Access_Mask, Byte_Index))
+       and then
+         (for all Byte_Index in 0 .. 3 =>
+            Output (Output'First + 28 + Byte_Index) =
+              SMB.Core_Wire.U32_Byte
+                ((if Directory then 16#10# else 0), Byte_Index))
+       and then
+         (for all Byte_Index in 0 .. 3 =>
+            Output (Output'First + 36 + Byte_Index) =
+              SMB.Core_Wire.U32_Byte (Disposition, Byte_Index))
+       and then
+         (for all Byte_Index in 0 .. 3 =>
+            Output (Output'First + 40 + Byte_Index) =
+              SMB.Core_Wire.U32_Byte
+                ((if Directory then 1 else 16#40#), Byte_Index))
+       and then
+         (for all Byte_Index in 0 .. 1 =>
+            Output (Output'First + 46 + Byte_Index) =
+              SMB.Core_Wire.U16_Byte (Name_Length, Byte_Index))
+   is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Create_Fields);
+
+      --  The fields that stay as Begin_Build cleared them: SecurityFlags,
+      --  RequestedOplockLevel, SmbCreateFlags, Reserved and the create
+      --  contexts' offset and length. Checked after each write, so that
+      --  each check follows from one write's frame.
+      function Zero_Fields_Hold return Boolean is
+        (Output (Output'First + 2) = 0
+         and then Output (Output'First + 3) = 0
+         and then (for all I in 8 .. 23 => Output (Output'First + I) = 0)
+         and then (for all I in 48 .. 55 => Output (Output'First + I) = 0))
+      with Ghost,
+        Pre => Output'Length = 56;
+   begin
+      Begin_Build (Output, 56, Status);
+      pragma Assert (Zero_Fields_Hold);
+      Put_U16 (Output, 0, 57, Status);
+      pragma Assert (Zero_Fields_Hold);
+      Put_U32 (Output, 4, 2, Status);
+      pragma Assert (Zero_Fields_Hold);
+      Put_U32 (Output, 24, Access_Mask, Status);
+      pragma Assert (Zero_Fields_Hold);
+      Put_U32 (Output, 28, (if Directory then 16#10# else 0), Status);
+      pragma Assert (Zero_Fields_Hold);
+      Put_U32 (Output, 32, 7, Status);
+      pragma Assert (Zero_Fields_Hold);
+      Put_U32 (Output, 36, Disposition, Status);
+      pragma Assert (Zero_Fields_Hold);
+      Put_U32 (Output, 40, (if Directory then 1 else 16#40#), Status);
+      pragma Assert (Zero_Fields_Hold);
+      Put_U16 (Output, 44, 120, Status);
+      pragma Assert (Zero_Fields_Hold);
+      Output (Output'First + 46 .. Output'First + 47) :=
+        (SMB.Core_Wire.U16_Byte (Name_Length, 0),
+         SMB.Core_Wire.U16_Byte (Name_Length, 1));
+      pragma Assert (Zero_Fields_Hold);
+   end Build_Create_Fields;
+
    procedure Build_Create
      (Name : SMB.Bytes;
       Access_Mask, Disposition : SMB.DWord;
@@ -374,56 +455,54 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
-      Name_Bytes : constant Natural := Natural'Max (1, Name'Length);
-      Required : constant Natural := 56 + Name_Bytes;
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Create_Fields);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Create_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
+      Required : constant Natural := 56 + Natural'Max (1, Name'Length);
+      Request : constant SMB.Spec.SMB2.Create_Request :=
+        SMB.Spec.SMB2.Client_Create
+          (Desired_Access => Access_Mask,
+           Disposition => Disposition,
+           Directory => Directory,
+           Name_Length => SMB.Word (Name'Length))
+      with Ghost;
    begin
-      Begin_Build (Output, Required, Status);
-      Put_U16 (Output, 0, 57, Status);
-      Put_U32 (Output, 4, 2, Status);
-      Put_U32 (Output, 32, 7, Status);
-      Put_U16 (Output, 44, 120, Status);
+      --  A name that is not UTF-16 is refused before anything is written,
+      --  so that a failure leaves the whole buffer zero.
       if Name'Length mod 2 /= 0 then
+         Clear (Output);
+         Used := 0;
          Status := SMB.Invalid_Length;
-      elsif Name'Length > SMB.Word'Last then
-         Status := SMB.Resource_Limit;
-      else
-         if Status = SMB.Ok and then Name'Length > 0 then
-            Copy (Output, 56, Name, Status);
-         end if;
+         return;
       end if;
-      Finish (Required, Output'Length, Used, Status);
-      if Status = SMB.Ok then
-         Output (Output'First + 24 .. Output'First + 31) :=
-           (SMB.Core_Wire.U32_Byte (Access_Mask, 0),
-            SMB.Core_Wire.U32_Byte (Access_Mask, 1),
-            SMB.Core_Wire.U32_Byte (Access_Mask, 2),
-            SMB.Core_Wire.U32_Byte (Access_Mask, 3),
-            SMB.Core_Wire.U32_Byte
-              ((if Directory then 16#10# else 0), 0),
-            SMB.Core_Wire.U32_Byte
-              ((if Directory then 16#10# else 0), 1),
-            SMB.Core_Wire.U32_Byte
-              ((if Directory then 16#10# else 0), 2),
-            SMB.Core_Wire.U32_Byte
-              ((if Directory then 16#10# else 0), 3));
-         Output (Output'First + 36 .. Output'First + 39) :=
-           (SMB.Core_Wire.U32_Byte (Disposition, 0),
-            SMB.Core_Wire.U32_Byte (Disposition, 1),
-            SMB.Core_Wire.U32_Byte (Disposition, 2),
-            SMB.Core_Wire.U32_Byte (Disposition, 3));
-         Output (Output'First + 40 .. Output'First + 43) :=
-           (SMB.Core_Wire.U32_Byte
-              ((if Directory then 1 else 16#40#), 0),
-            SMB.Core_Wire.U32_Byte
-              ((if Directory then 1 else 16#40#), 1),
-            SMB.Core_Wire.U32_Byte
-              ((if Directory then 1 else 16#40#), 2),
-            SMB.Core_Wire.U32_Byte
-              ((if Directory then 1 else 16#40#), 3));
-         Output (Output'First + 46 .. Output'First + 47) :=
-           (SMB.Core_Wire.U16_Byte (SMB.Word (Name'Length), 0),
-            SMB.Core_Wire.U16_Byte (SMB.Word (Name'Length), 1));
+      Begin_Build (Output, Required, Status);
+      if Status /= SMB.Ok then
+         Used := 0;
+         return;
       end if;
+      pragma Assert (Required <= Output'Length);
+      --  The fields go into their own 56 bytes (it always succeeds there),
+      --  the name straight after them; with no name, the one byte of
+      --  Buffer stays zero.
+      Build_Create_Fields
+        (Access_Mask, Disposition, Directory, SMB.Word (Name'Length),
+         Output (Output'First .. Output'First + 55), Status);
+      --  The fields, proved on the slice, hold in the whole buffer.
+      pragma Assert
+        (SMB.Spec.SMB2.Is_Create_Fields
+           (Output (Output'First .. Output'First + 55), Request));
+      pragma Assert (SMB.Spec.SMB2.Is_Create_Fields (Output, Request));
+      if Name'Length > 0 then
+         Output (Output'First + 56 .. Output'First + 55 + Name'Length) :=
+           Name;
+      end if;
+      pragma Assert (SMB.Spec.SMB2.Is_Create_Fields (Output, Request));
+      Used := Required;
    end Build_Create;
 
    procedure Build_Read
@@ -634,6 +713,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Query_Directory_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
       Required : constant Natural := 34;
    begin
       Begin_Build (Output, Required, Status);
