@@ -23,7 +23,7 @@ concurrency:
 env:
   ADA_TOOLCHAIN: gnat_native=16.1.0 gprbuild=26.0.1
   TOOLCHAIN_KEY: alr2.1.1-gnat16.1.0-gprbuild26.0.1-v1
-  ADAMUTANT_COMMIT: d1d049ec74e043351b3395ec31cfc232419873e2
+  ADAMUTANT_COMMIT: 2c874914d9f4428c24ca0ba94f9d705549186723
 
 jobs:
   # The proof of each mutant takes the goals it does not change from
@@ -99,6 +99,12 @@ jobs:
         run: >
           bash .github/scripts/install-ada.sh "$HOME/ada-prover"
           gnat_native=16.1.0 gprbuild=26.0.1 gnatprove=16.1.0
+      # AdaMutant's build with Libadalang takes about 20 minutes: the
+      # executable is kept for each commit.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/adamutant
+          key: adamutant-${{ runner.os }}-${{ runner.arch }}-${{ env.ADAMUTANT_COMMIT }}-alr-v1
       - name: Build AdaMutant
         run: bash .github/scripts/install-adamutant.sh "$HOME/adamutant" "$ADAMUTANT_COMMIT"
       - name: Install Python cryptography
@@ -124,7 +130,11 @@ jobs:
           else
             files=$(python3 tests/mutation_shards.py ${{ matrix.shard }}/8)
           fi
-          adamutant run --concurrency 4 $files
+          # The proved units to mutate, which the proof that looks for where
+          # the proof proves anything covers (tests/mutant_prove.py).
+          units=$(python3 tests/mutation_units.py $files)
+          export ADASMB_MUTATION_UNITS="$units"
+          sh tests/adamutant_run.sh --concurrency 4 $files
       - name: Report
         if: always()
         run: python3 tests/mutation_survivors.py

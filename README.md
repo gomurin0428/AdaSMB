@@ -231,7 +231,9 @@ on their own, on published vectors and known values.
 
 `make mutation` checks the tests and the proof with
 [AdaMutant](https://github.com/gomurin0428/AdaMutant), which must be on `PATH`
-(or named with `ADAMUTANT=`), as must GNATprove. It makes one small change at a
+(or named with `ADAMUTANT=`), as must GNATprove; AdaMutant builds with Alire
+(`alr build`, which brings Libadalang; the first build takes about 20
+minutes). It makes one small change at a
 time to the library source (an operator, a literal, an attribute, a
 condition, or a whole assignment, call, `raise` or `return;` replaced by
 `null`), rebuilds `test_suite` and runs it; a
@@ -243,8 +245,15 @@ AES-GCM, the key derivation and signing, UTF conversion, the clock),
 [`tests/mutant_tests.py`](tests/mutant_tests.py) also runs that comparison test, so only the mutants that every applicable test
 misses survive. The unmutated baseline runs every comparison test, so
 `make mutation` and `make mutation-diff` need what those tests need, including
-Python's `cryptography` package. Contracts, pragmas and ghost code are not
-mutated, because GNATprove checks them. `src/smb-client.adb` and `src/smb-transport.adb` are left out:
+Python's `cryptography` package. The contracts, assertions and ghost code in
+the bodies are mutated too, an operand of an `and` or an assertion pragma
+left out among them: such a mutant that the proof still proves shows a part
+of a contract that nothing needs (a postcondition clause no caller uses, an
+assertion the proof does not need), or one the body could make stronger.
+Before the mutants, AdaMutant proves the units to mutate once more with
+GNATprove's proof warnings, and lists where the proof proves anything (a
+precondition that is always False, code that is never reached).
+`src/smb-client.adb` and `src/smb-transport.adb` are left out:
 they need a live server, so only the integration tests (Samba and Windows)
 and the transport tests exercise them, and those are too slow to run once per mutant. The settings are
 in [`adamutant.toml`](adamutant.toml), and the HTML and JSON reports go to
@@ -252,7 +261,11 @@ in [`adamutant.toml`](adamutant.toml), and the HTML and JSON reports go to
 lists, for a person to judge, the mutants that neither the tests nor the proof
 detected, and those that only the proof detected (candidates for a missing
 test), in AdaMutant's groups: confirmed by a counterexample run with the real
-code, a contract that says too little, and undecided. Undetected mutants do
+code, a contract that says too little, and undecided. Mutants of a contract
+are not candidates (no test could detect them), and the places where the
+proof proves anything are listed too: both come from AdaMutant's console
+output, which [`tests/adamutant_run.sh`](tests/adamutant_run.sh) keeps in
+`.adamutant/console.txt`. Undetected mutants do
 not fail the run, and nothing is excluded by hand: a mutant whose object code
 at `-O2` is unchanged is recognized as equivalent, and the rest are judged in
 the pull request. With `PROOF_CACHE=dir`, the mutation targets first prove

@@ -71,7 +71,8 @@ of date.
 | after 0.4.0 | Platinum phase 2: Ada 2022, the run-time contract policy, `SMB.Spec`, `spec_test` | merged (#149) |
 | after 0.4.0 | Platinum phase 3, the header: `SMB.Spec.SMB2`, `Initialize_Header` and `Prepare_Header` proved against it | merged (#150) |
 | after 0.4.0 | `Write_U64` without loop invariants, which ran over the whole packet in production | merged (#151) |
-| after 0.4.0 | Platinum phase 3, CLOSE, READ and WRITE: their requests in `SMB.Spec.SMB2`, `Build_Close`, `Build_Read`, `Build_Write` proved against them | #152 |
+| after 0.4.0 | Platinum phase 3, CLOSE, READ and WRITE: their requests in `SMB.Spec.SMB2`, `Build_Close`, `Build_Read`, `Build_Write` proved against them | merged (#152) |
+| after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | #154 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -683,6 +684,59 @@ opens a received one. It is a stateless SPARK unit, like
   directory, SET_INFO, CREATE, reserved-field, security-buffer,
   connection-level, unsigned and tampered-signature, interrupted READ and
   lost WRITE modes, `AsyncProxy` and the directory limits.
+
+## AdaMutant 2c87491 (#154)
+
+* AdaMutant finds the places to mutate on Libadalang's syntax tree now,
+  and builds with Alire (`alr build`). `.github/scripts/fetch-alr.sh`
+  downloads and checks alr 2.1.1 (taken out of `install-ada.sh`, which uses
+  it too); `install-adamutant.sh` builds AdaMutant with it and keeps only
+  the executable (Libadalang is linked in). The first build took 16.5
+  minutes on a GitHub runner; both mutation workflows cache the executable
+  for each commit.
+* Contracts, assertions and ghost code in the bodies are mutated too,
+  among them ConjunctDeletion (an operand of an `and` left out) and
+  AssertionDeletion. A survivor of those is a contract part that nothing
+  needs, or one the body could make stronger: read AdaMutant's README
+  ("How to read the mutants of a contract"). The mutated files are still
+  the bodies only; mutating the specifications (`.ads`) would need the
+  proof of every unit that uses the changed contract, which
+  `mutant_prove.py` does not do.
+* The prove command gets `$ADAMUTANT_PROVE_SWITCHES`. With
+  `--proof-warnings=on` and no mutant, AdaMutant runs it once on the
+  unmodified project to find where the proof proves anything (an always
+  False precondition, unreachable code); `mutant_prove.py` then proves the
+  units that `tests/mutation_units.py` lists in `ADASMB_MUTATION_UNITS`
+  (the proved units to mutate; the workflows and the Makefile set it, and
+  when it is empty nothing is proved), without the shared proof cache,
+  whose goals differ.
+* AdaMutant leaves the mutants of a contract out of the candidates for a
+  missing test, but its JSON report does not mark them, so
+  `tests/adamutant_run.sh` keeps the console output in
+  `.adamutant/console.txt` and `mutation_survivors.py` takes the
+  candidates, and the places where the proof proves anything, from it. On
+  the trial's report it listed 53 candidates without the console and 29,
+  as AdaMutant does, with it.
+* The trial (by hand, `files` = `src/smb-core_request.adb
+  src/smb-core_resize.adb`) made 242 mutants, some 35 of them in
+  contracts, and took 90 minutes, 25 of them before the first mutant (the
+  baseline and the proof with proof warnings; d1d049e took 24 minutes on
+  the same files). Score 95.4 %: 230 detected, 11 undetected, 1
+  equivalent. It listed two places where the proof proves anything, both
+  failure branches of `Core_Request.Prepare_Header` after calls that
+  cannot fail: there the mutants of the conditions and of the `return;`
+  survive, and a deleted `Status := Field_Status;` is caught only by flow
+  analysis ("might not be initialized") and listed as Undecided. Among the
+  survivors is also the early length check of `Prepare_Header`, which
+  `Initialize_Header` repeats, so removing it changes nothing. These are
+  for the pull requests that touch those units to judge.
+* The executable cache is saved per branch: pull requests can read only
+  their own and main's, and main gets it only from the weekly run or a run
+  by hand there. Run `mutation.yml` by hand on main with a small `files`
+  after merging, so pull requests stop building AdaMutant. Watch the first
+  weekly run's time: the contract mutants add proofs, and the two largest
+  shards took about 2.5 hours of AdaMutant time on 2026-11-14 against the
+  job's 350 minutes.
 
 ## AdaMutant d1d049e (#139, #141)
 

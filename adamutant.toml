@@ -15,8 +15,10 @@ build = "gprbuild -q -p -P smb_tests.gpr test_suite.adb"
 # test_suite, then the comparison tests of the mutated unit.
 test = "python tests/mutant_tests.py"
 # GNATprove on the mutated unit, with counterexamples and, when PROOF_CACHE
-# is set, the proof cache (see tests/mutant_prove.py).
-prove = "python tests/mutant_prove.py"
+# is set, the proof cache (see tests/mutant_prove.py). AdaMutant's switches
+# (ADAMUTANT_PROVE_SWITCHES) let it look for where the proof proves
+# anything, in a proof of the units to mutate of its own.
+prove = "python tests/mutant_prove.py $ADAMUTANT_PROVE_SWITCHES"
 # A mutant whose object code at -O2 is the same as before is equivalent.
 equivalence_build = "gprbuild -q -p -c -P smb_tests.gpr test_suite.adb -cargs -O2 -g0"
 # AdaMutant gives the tests of a mutant the time they took without a

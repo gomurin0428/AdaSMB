@@ -16,8 +16,8 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-# "#12 src/smb-wire.adb:82:27 ArithmeticOperator + -> -"; mutants disabled by
-# a comment end with "(ignored)" and do not run.
+# "#12 src/smb-wire.adb:82:27 ArithmeticOperator + -> -"; mutants that
+# AdaMutant ignores end with "(ignored)" and do not run.
 MUTANT = re.compile(r"^#\d+ (\S+):\d+:\d+ (?!.*\(ignored\)$)", re.MULTILINE)
 
 

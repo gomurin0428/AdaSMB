@@ -111,13 +111,17 @@ stack-check:
 mutation:
 	$(if $(PROOF_CACHE),$(MAKE) prove PROOF_CACHE=$(PROOF_CACHE))
 	$(if $(PROOF_CACHE),$(PYTHON) tests/mutant_low_steps.py $(PROOF_CACHE) --all)
-	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run
+	units=$$($(PYTHON) tests/mutation_units.py --all) && \
+	ADASMB_MUTATION_UNITS="$$units" ADAMUTANT=$(ADAMUTANT) \
+	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) sh tests/adamutant_run.sh
 	$(PYTHON) tests/mutation_survivors.py
 
 mutation-diff:
 	$(if $(PROOF_CACHE),$(MAKE) prove PROOF_CACHE=$(PROOF_CACHE))
 	$(if $(PROOF_CACHE),$(PYTHON) tests/mutant_low_steps.py $(PROOF_CACHE) --since $(MUTATION_BASE))
-	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) $(ADAMUTANT) run --since $(MUTATION_BASE)
+	units=$$($(PYTHON) tests/mutation_units.py --since $(MUTATION_BASE)) && \
+	ADASMB_MUTATION_UNITS="$$units" ADAMUTANT=$(ADAMUTANT) \
+	PROOF_CACHE=$(if $(PROOF_CACHE),$(abspath $(PROOF_CACHE))) sh tests/adamutant_run.sh --since $(MUTATION_BASE)
 	$(PYTHON) tests/mutation_survivors.py
 
 # With PROOF_UNITS, GNATprove's exit status would also count the unproved
