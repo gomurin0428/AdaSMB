@@ -492,14 +492,20 @@ opens a received one. It is a stateless SPARK unit, like
 * Found in the review and fixed in #151: `Write_U64` kept a loop
   invariant over the whole of `Data` with `Data'Loop_Entry`, which ran in
   production too, and `Prepare_Header` is called on the whole output
-  buffer: about 400 microseconds for the header of a 64 KiB request, some
-  milliseconds for a 1 MiB WRITE. Without the invariants GNATprove unrolls
-  the eight iterations, as it already did for `Write_U32`'s four, and the
-  header takes about 70 ns. A loop invariant that compares a whole buffer
-  with its `'Loop_Entry` costs that much on every iteration in the
-  library build; prefer a short loop without one, or a local
+  buffer. Preparing a header took about 400 microseconds for a 64 KiB
+  buffer and 6 to 8 ms for 1 MiB at `-O2`, and about 2.4 ms and 39 ms in
+  the default build, which has no `-O`. `'Loop_Entry` also put a copy of
+  the whole buffer on the stack (`Write_U64`'s frame was dynamic). Without
+  the invariants GNATprove unrolls the eight iterations, as it does for
+  `Write_U32`'s four. The header now takes well under a microsecond,
+  whatever the buffer's size, and `tests/check_stack_usage.py` requires
+  `Write_U64`'s frame to be static. A loop invariant that compares a whole
+  buffer with its `'Loop_Entry` costs that much on every iteration in the
+  library build. Prefer a short loop without one, or a local
   `Assertion_Policy (Loop_Invariant => Ignore)` where a long loop needs
-  it, as `Validate_Header` and others do.
+  it, as `Validate_Header`, `Core_Transport` and `Core_Text` do. The
+  invariants over the 256-slot handle table in `Engine` (`Validate_Handle`,
+  `Close_Handle`) are bounded, not packet-sized, and stay.
 * `Is_Sync_Header` says how a header is encoded, not which headers are
   valid: a SYNC header with SMB2_FLAGS_ASYNC_COMMAND, or a request with
   SERVER_TO_REDIR, still matches. The validity predicates come with
