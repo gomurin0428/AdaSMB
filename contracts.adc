@@ -1,0 +1,21 @@
+--  The run-time checks of the library build (ADASMB_CONTRACT_CHECKS=proved, the
+--  default): GNATprove proves every contract of the SPARK core, so only the
+--  preconditions, which guard the core against its trusted callers, are
+--  checked. Postconditions and the other assertions, where the specifications
+--  are used, are not run: one such as "the digest is SHA-256 of the message"
+--  would compute the hash again on every call. Ghost code stays (Check),
+--  because some preconditions call ghost functions; it runs only where a
+--  precondition or a ghost statement uses it. The test build
+--  (ADASMB_CONTRACT_CHECKS=all) checks everything.
+pragma Assertion_Policy
+  (Pre => Check,
+   Pre'Class => Check,
+   Post => Ignore,
+   Post'Class => Ignore,
+   Contract_Cases => Ignore,
+   Assert => Ignore,
+   Assert_And_Cut => Ignore,
+   Assume => Ignore,
+   Loop_Invariant => Ignore,
+   Loop_Variant => Ignore,
+   Ghost => Check);

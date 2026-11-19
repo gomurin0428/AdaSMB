@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reject accidental runtime dependencies outside the Pure Ada profile."""
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,9 +34,29 @@ for path in SOURCES:
 if "/dev/urandom" not in SOURCE:
     raise SystemExit("the default entropy source is not documented in code")
 
+# The specification packages (SMB.Spec.*) transcribe the standards and may
+# not depend on the implementation: only on SMB's types, Interfaces and other
+# specification packages.
+SPEC_ALLOWED = re.compile(r"^(SMB|SMB\.Spec(\.\w+)*|Interfaces(\.\w+)*)$")
+for path in sorted((ROOT / "src").glob("smb-spec*.ad?")):
+    content = path.read_text(encoding="utf-8")
+    if not re.search(r"\bwith\s+Ghost\b", content):
+        raise SystemExit(f"specification package is not ghost: {path.name}")
+    # The context clause: what comes before the unit itself.
+    context = re.split(r"^\s*(?:private\s+)?(?:package|procedure|function|generic)\b",
+                       content, maxsplit=1, flags=re.MULTILINE)[0]
+    for clause in re.findall(r"^\s*(?:limited\s+|private\s+)*with\s+([^;]+);",
+                             context, re.MULTILINE):
+        for unit in (name.strip() for name in clause.split(",")):
+            if not SPEC_ALLOWED.match(unit):
+                raise SystemExit(
+                    f"specification {path.name} depends on {unit}")
+
 PROOF_PROJECT = (ROOT / "proof.gpr").read_text(encoding="utf-8")
 PROOF_UNITS = {
     "smb.ads",
+    "smb-spec.ads",
+    "smb-spec-encoding.ads",
     "smb-crypto.ads",
     "smb-crypto.adb",
     "smb-aes.ads",

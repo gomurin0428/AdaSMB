@@ -108,9 +108,16 @@ Each phase is one or more pull requests, with the proofs and the
 specification tests passing.
 
 1. This document.
-2. **Infrastructure.** The Ada 2022 build, the run-time policy above, the
-   `SMB.Spec` root, `spec_test`, the independence check, and a Platinum
-   column in [assurance.md](assurance.md) that each later phase fills in.
+2. **Infrastructure** (#149). The Ada 2022 build, the run-time policy above,
+   the `SMB.Spec` root, `spec_test`, the independence check, and a Platinum
+   section in [assurance.md](assurance.md) that each later phase fills in.
+   Two adjustments while doing it: ghost code stays enabled in the library
+   build, because some preconditions call ghost functions and SPARK does not
+   allow a checked precondition to use ignored ghost code (postconditions
+   and assertions, where the costly specifications are used, are ignored);
+   and the test project compiles the library's sources itself, so that the
+   tests check every contract while the library build checks only
+   preconditions.
 3. **SMB2 messages.** `SMB.Spec.SMB2`; complete contracts for the header,
    `Core_Request`, the `Core_Protocol` builders, the transform header and
    the QUERY_INFO and SET_INFO packets, with exact statuses. The cheapest

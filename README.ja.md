@@ -168,7 +168,7 @@ QUERY_INFO は `SMB.Core_Query`、ファイルサイズの設定は `SMB.Core_Re
 
 ```sh
 make build                  # 静的ライブラリ build/lib/libsmb.a
-make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテスト
+make test                   # 暗号、wire、UTF-8/UTF-16、SPNEGO のテストと spec_test
 make unicode-test           # Python 標準 codec との Unicode 全スカラー差分試験
 make ntlm-test              # NTLM challenge と認証出力の差分試験
 make crypto-test            # OpenSSL / Python と hash・HMAC の差分試験
@@ -195,6 +195,14 @@ make mutation-diff          # 同じことを origin/main から変わった行�
 （`-gnatVa`）付きでビルドします。出力を設定し忘れたサブプログラムは、古い値が
 たまたま期待値と一致して通ることがなく、どのプラットフォームでも試験に失敗
 します。
+
+ライブラリのビルド（`smb.gpr`）が実行時に検査するのは、SPARK のコアの事前条件
+だけです。それ以外の契約は GNATprove が証明しており、中には実行すると重い仕様で
+結果を述べるものもあるためです（[`contracts.adc`](contracts.adc)）。試験
+プログラムはライブラリのソースをすべての契約を検査してコンパイルし、
+`-XADASMB_CONTRACT_CHECKS=all` を付ければライブラリのビルドも同じになります。
+`spec_test` は仕様パッケージ（`SMB.Spec.*`、
+[docs/platinum-design.md](docs/platinum-design.md)）だけを公開ベクタで動かします。
 
 `make mutation` は [AdaMutant](https://github.com/gomurin0428/AdaMutant) で
 試験と証明を検査します。AdaMutant と GNATprove は `PATH` に置きます（AdaMutant は

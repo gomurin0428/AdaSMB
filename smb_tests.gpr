@@ -1,7 +1,15 @@
-with "smb.gpr";
-
+--  The library's sources are compiled here, not through smb.gpr, so that the
+--  tests run with every contract checked (smb.gpr's library build checks only
+--  the preconditions; see contracts.adc).
 project SMB_Tests is
-   for Source_Dirs use ("tests");
+   type Platform_Kind is ("Unix", "Windows_NT");
+   Platform : Platform_Kind := external ("ADASMB_OS", external ("OS", "Unix"));
+   case Platform is
+      when "Windows_NT" =>
+         for Source_Dirs use ("tests", "src", "src/platform/windows");
+      when "Unix" =>
+         for Source_Dirs use ("tests", "src", "src/platform/unix");
+   end case;
    for Object_Dir use "build/test-obj";
    for Exec_Dir use "build/bin";
    for Main use
@@ -9,7 +17,8 @@ project SMB_Tests is
       "transport_client.adb", "cleanup_client.adb", "unicode_probe.adb",
       "auth_diagnostic_client.adb", "response_mutation_client.adb",
       "security_buffer_client.adb", "async_client.adb", "ntlm_av_probe.adb",
-      "crypto_probe.adb", "clock_probe.adb", "entropy_failure_client.adb");
+      "crypto_probe.adb", "clock_probe.adb", "entropy_failure_client.adb",
+      "spec_test.adb");
    for Languages use ("Ada");
 
    --  Every scalar the code leaves unset starts invalid, and every use is
@@ -23,6 +32,6 @@ project SMB_Tests is
 
    package Compiler is
       for Default_Switches ("Ada") use
-        ("-gnat2012", "-gnatW8", "-gnata", "-gnatwa");
+        ("-gnat2022", "-gnatW8", "-gnata", "-gnatwa", "-gnatwJ");
    end Compiler;
 end SMB_Tests;

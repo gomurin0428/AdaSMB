@@ -4,6 +4,8 @@ project Proof is
    for Object_Dir use "build/proof-obj";
    for Source_Files use
      ("smb.ads",
+      "smb-spec.ads",
+      "smb-spec-encoding.ads",
       "smb-crypto.ads",
       "smb-crypto.adb",
       "smb-aes.ads",

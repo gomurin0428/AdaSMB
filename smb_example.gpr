@@ -9,6 +9,6 @@ project SMB_Example is
 
    package Compiler is
       for Default_Switches ("Ada") use
-        ("-gnat2012", "-gnatW8", "-gnata", "-gnatwa");
+        ("-gnat2022", "-gnatW8", "-gnata", "-gnatwa", "-gnatwJ");
    end Compiler;
 end SMB_Example;

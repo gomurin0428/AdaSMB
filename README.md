@@ -191,7 +191,7 @@ rejected at compile time.
 
 ```sh
 make build                  # static library build/lib/libsmb.a
-make test                   # crypto, wire, UTF-8/UTF-16 and SPNEGO tests
+make test                   # crypto, wire, UTF-8/UTF-16 and SPNEGO tests, then spec_test
 make unicode-test           # all Unicode scalars against Python's standard codecs
 make ntlm-test              # NTLM challenge handling and authentication output
 make crypto-test            # hashes and HMAC against OpenSSL / Python
@@ -218,6 +218,15 @@ The test programs, and the library with them, are built with
 `pragma Initialize_Scalars` and validity checks (`-gnatVa`). A subprogram that
 leaves an output unset then fails the tests on every platform, instead of
 passing whenever a stale value happens to be the expected one.
+
+The library build (`smb.gpr`) checks at run time only the preconditions of
+the SPARK core: GNATprove proves its other contracts, and some of them state
+results in terms of specifications that would be costly to run
+([`contracts.adc`](contracts.adc)). The test programs compile the library's
+sources with every contract checked, and `-XADASMB_CONTRACT_CHECKS=all`
+gives the library build the same. `spec_test` runs the specification
+packages (`SMB.Spec.*`, see [docs/platinum-design.md](docs/platinum-design.md))
+on their own, on published vectors.
 
 `make mutation` checks the tests and the proof with
 [AdaMutant](https://github.com/gomurin0428/AdaMutant), which must be on `PATH`

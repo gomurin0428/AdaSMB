@@ -34,6 +34,7 @@ example:
 test:
 	$(GPRBUILD) -p -P smb_tests.gpr
 	./build/bin/test_suite
+	./build/bin/spec_test
 
 integration: test
 	$(PYTHON) tests/transport_integration.py
