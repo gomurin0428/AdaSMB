@@ -1121,6 +1121,34 @@ procedure Test_Suite is
         (Status = SMB.Ok and then Signed (100) = 16#A5#
          and then Signed (164) = 16#A5#,
          "signature preserved bytes outside signature field");
+      --  Compute_Signature and Compute_Signature_SMB3 called directly: Sign
+      --  and Sign_SMB3 check the length and the key before calling them, so
+      --  only a direct call reaches their own checks.
+      declare
+         Short : constant SMB.Bytes (0 .. 62) := (others => 0);
+         Message : constant SMB.Bytes (0 .. 63) := (others => 0);
+         No_Key : constant SMB.Bytes (1 .. 0) := (others => 0);
+         Signature : SMB.Core_Wire.Signature_Bytes;
+      begin
+         SMB.Core_Wire.Compute_Signature (Short, Key, Signature, Status);
+         Assert (Status = SMB.Invalid_Length,
+                 "HMAC signature of a message shorter than a header");
+         SMB.Core_Wire.Compute_Signature (Message, No_Key, Signature, Status);
+         Assert (Status = SMB.Invalid_Value, "HMAC signature with no key");
+         SMB.Core_Wire.Compute_Signature (Message, Key, Signature, Status);
+         Assert (Status = SMB.Ok, "HMAC signature of a bare header");
+         for Algorithm in SMB.Core_Negotiate.SMB3_Signing_Id loop
+            SMB.Core_Wire.Compute_Signature_SMB3
+              (Short, SMB.AES.Key_128'(others => 16#11#), Algorithm,
+               Signature, Status);
+            Assert (Status = SMB.Invalid_Length,
+                    "SMB 3.1.1 signature of a message shorter than a header");
+            SMB.Core_Wire.Compute_Signature_SMB3
+              (Message, SMB.AES.Key_128'(others => 16#11#), Algorithm,
+               Signature, Status);
+            Assert (Status = SMB.Ok, "SMB 3.1.1 signature of a bare header");
+         end loop;
+      end;
       Signed := (others => 16#A5#);
       SMB.Core_Wire.Initialize_Header
         (Signed, 8, 123, 0, 0, 1, Status);
@@ -6914,6 +6942,13 @@ procedure Test_Suite is
            (Status = SMB.Ok and then Used = 48 + 258
             and then Large (4 .. 7) = Hex ("02010000"),
             "WRITE length with a second byte");
+         Large := (others => 16#EE#);
+         SMB.Core_Protocol.Build_Write
+           (File_Id, Offset, Data (1 .. 3), Large (0 .. 49), Used, Status);
+         Assert
+           (Status = SMB.Resource_Limit and then Used = 0
+            and then (for all Index in 0 .. 49 => Large (Index) = 0),
+            "WRITE request one byte over the output");
       end;
 
       SMB.Core_Protocol.Build_Close (File_Id, Output (0 .. 23), Used, Status);
