@@ -46,7 +46,9 @@ the cryptography's contracts track only bookkeeping such as `Ready` and
   sockets, entropy, allocation) is not part of this plan; Platinum covers
   the SPARK core.
 
-## Decisions to approve
+## Decisions
+
+The maintainer approved all of these on 2026-11-18.
 
 * **Specifications are ghost packages.** Each area gets a child package
   that is ghost as a whole (`package SMB.Spec.SHA2 with Ghost`), written from
