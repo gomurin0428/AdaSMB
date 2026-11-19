@@ -2,6 +2,8 @@ with Interfaces;
 with SMB.AES;
 with SMB.AES.GCM;
 with SMB.Core_Negotiate;
+with SMB.Spec.Encoding;
+with SMB.Spec.SMB2;
 
 package SMB.Core_Wire is
    pragma SPARK_Mode (On);
@@ -21,7 +23,8 @@ package SMB.Core_Wire is
    with Pre =>
      Data'Length <= SMB.Maximum_Frame_Size
      and then Offset <= Data'Length
-     and then Data'Length - Offset >= 2;
+     and then Data'Length - Offset >= 2,
+     Post => Encoded_U16'Result = SMB.Spec.Encoding.LE16 (Data, Offset);
 
    function U16_Byte (Value : SMB.Word; Position : Natural)
      return SMB.Byte is
@@ -41,7 +44,8 @@ package SMB.Core_Wire is
    with Pre =>
      Data'Length <= SMB.Maximum_Frame_Size
      and then Offset <= Data'Length
-     and then Data'Length - Offset >= 4;
+     and then Data'Length - Offset >= 4,
+     Post => Encoded_U32'Result = SMB.Spec.Encoding.LE32 (Data, Offset);
 
    function U32_Byte (Value : SMB.DWord; Position : Natural)
      return SMB.Byte is
@@ -72,7 +76,8 @@ package SMB.Core_Wire is
    with Pre =>
      Data'Length <= SMB.Maximum_Frame_Size
      and then Offset <= Data'Length
-     and then Data'Length - Offset >= 8;
+     and then Data'Length - Offset >= 8,
+     Post => Encoded_U64'Result = SMB.Spec.Encoding.LE64 (Data, Offset);
 
    type Expected_Header is record
       Command       : Command_Code;
@@ -212,7 +217,17 @@ package SMB.Core_Wire is
          (if Data'Length >= Header_Size then SMB.Ok else SMB.Invalid_Length)
        and then
        (if Status = SMB.Ok then
-          Encoded_U16 (Data, 4) = Header_Size
+          SMB.Spec.SMB2.Is_Sync_Header
+            (Data,
+             SMB.Spec.SMB2.Request_Header
+               (Command => SMB.Word (Command),
+                Credit_Charge => Charge,
+                Credit_Request => Credit,
+                Flags => 0,
+                Message_Id => Message_Id,
+                Tree_Id => Tree_Id,
+                Session_Id => Session_Id))
+          and then Encoded_U16 (Data, 4) = Header_Size
           and then Encoded_U16 (Data, 6) = Charge
           and then
           Encoded_U16 (Data, 12) = SMB.Word (Command)
@@ -232,7 +247,8 @@ package SMB.Core_Wire is
    function Header_Nt_Status (Data : SMB.Bytes) return SMB.DWord
    with Pre =>
      Data'Length >= Header_Size
-     and then Data'Length <= SMB.Maximum_Frame_Size;
+     and then Data'Length <= SMB.Maximum_Frame_Size,
+     Post => Header_Nt_Status'Result = SMB.Spec.Encoding.LE32 (Data, 8);
 
    procedure Validate_Header
      (Data : SMB.Bytes;

@@ -6,6 +6,17 @@ is
       Expected : SMB.Engine.Request_Expectation;
       Status : out SMB.Core_Status) is
       Field_Status : SMB.Core_Status;
+      --  The header Initialize_Header writes, before the Flags.
+      Unsigned : constant SMB.Spec.SMB2.Sync_Header :=
+        SMB.Spec.SMB2.Request_Header
+          (Command => SMB.Word (Expected.Command),
+           Credit_Charge => Expected.Credit_Charge,
+           Credit_Request => Expected.Credit_Request,
+           Flags => 0,
+           Message_Id => Expected.Message_Id,
+           Tree_Id => Expected.Tree_Id,
+           Session_Id => Expected.Session_Id)
+      with Ghost;
    begin
       if Packet'Length < Header_Length then
          Status := SMB.Invalid_Length;
@@ -19,12 +30,18 @@ is
          Status := Field_Status;
          return;
       end if;
+      pragma Assert (SMB.Spec.SMB2.Is_Sync_Header (Packet, Unsigned));
       if Expected.Request_Signed then
          SMB.Core_Wire.Write_U32 (Packet, 16, 8, Field_Status);
          if Field_Status /= SMB.Ok then
             Status := Field_Status;
             return;
          end if;
+         --  Only the Flags changed.
+         pragma Assert
+           (SMB.Spec.SMB2.Is_Sync_Header
+              (Packet,
+               (Unsigned with delta Flags => SMB.Spec.SMB2.Flags_Signed)));
       end if;
       Status := SMB.Ok;
    end Prepare_Header;

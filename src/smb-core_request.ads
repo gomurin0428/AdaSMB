@@ -2,6 +2,7 @@ with SMB.AES;
 with SMB.Core_Negotiate;
 with SMB.Core_Wire;
 with SMB.Engine;
+with SMB.Spec.SMB2;
 
 --  The two steps that finish a request whose body is in place: writing its
 --  header from the engine's expectation, and signing it. SMB.Core_Query and
@@ -23,9 +24,23 @@ is
       Status : out SMB.Core_Status)
    with Pre => Packet'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       (if Packet'Length >= Header_Length then Status = SMB.Ok)
+       Status =
+         (if Packet'Length >= Header_Length then SMB.Ok
+          else SMB.Invalid_Length)
        and then (if Status = SMB.Ok then
-          SMB.Core_Wire.Encoded_U16 (Packet, 4) =
+          SMB.Spec.SMB2.Is_Sync_Header
+            (Packet,
+             SMB.Spec.SMB2.Request_Header
+               (Command => SMB.Word (Expected.Command),
+                Credit_Charge => Expected.Credit_Charge,
+                Credit_Request => Expected.Credit_Request,
+                Flags =>
+                  (if Expected.Request_Signed
+                   then SMB.Spec.SMB2.Flags_Signed else 0),
+                Message_Id => Expected.Message_Id,
+                Tree_Id => Expected.Tree_Id,
+                Session_Id => Expected.Session_Id))
+          and then SMB.Core_Wire.Encoded_U16 (Packet, 4) =
             SMB.Word (Header_Length)
           and then SMB.Core_Wire.Encoded_U16 (Packet, 6) =
             Expected.Credit_Charge
@@ -44,7 +59,8 @@ is
           and then
             (for all Index in Packet'Range =>
                (if Index - Packet'First >= Header_Length then
-                  Packet (Index) = Packet'Old (Index))));
+                  Packet (Index) = Packet'Old (Index)))
+        else Packet = Packet'Old);
 
    --  Signs the first Used bytes of Packet with HMAC-SHA256 and Key for
    --  SMB 2.1, and with AES-128-CMAC or AES-128-GMAC, as Signing says, and

@@ -168,6 +168,24 @@ package body SMB.Core_Wire with SPARK_Mode is
       Status : out SMB.Core_Status;
       Charge : SMB.Word := 1) is
       Field_Status : SMB.Core_Status;
+
+      --  What the zero fill and ProtocolId leave, which no field write
+      --  changes: ProtocolId, Status, Flags, NextCommand, Reserved and the
+      --  Signature. Checked after each write, so that each check follows
+      --  from one write's frame.
+      function Fixed_Fields_Hold return Boolean is
+        (Data'Length >= Header_Size
+         and then Data (Data'First) = 16#FE#
+         and then Data (Data'First + 1) = 16#53#
+         and then Data (Data'First + 2) = 16#4D#
+         and then Data (Data'First + 3) = 16#42#
+         and then Encoded_U32 (Data, 8) = 0
+         and then Encoded_U32 (Data, 16) = 0
+         and then Encoded_U32 (Data, 20) = 0
+         and then Encoded_U32 (Data, 32) = 0
+         and then
+           (for all Index in 48 .. 63 => Data (Data'First + Index) = 0))
+      with Ghost, Pre => Data'Length <= SMB.Maximum_Frame_Size;
    begin
       if Data'Length < Header_Size then
          Status := SMB.Invalid_Length;
@@ -177,20 +195,28 @@ package body SMB.Core_Wire with SPARK_Mode is
         (others => 0);
       Data (Data'First .. Data'First + 3) :=
         (16#FE#, 16#53#, 16#4D#, 16#42#);
+      pragma Assert (Fixed_Fields_Hold);
       --  The buffer holds a whole header, so every field write succeeds.
       Write_U16 (Data, 4, Header_Size, Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
+      pragma Assert (Fixed_Fields_Hold);
       Write_U16 (Data, 6, Charge, Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
+      pragma Assert (Fixed_Fields_Hold);
       Write_U16 (Data, 12, SMB.Word (Command), Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
+      pragma Assert (Fixed_Fields_Hold);
       Write_U16 (Data, 14, Credit, Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
+      pragma Assert (Fixed_Fields_Hold);
       Write_U64 (Data, 24, Message_Id, Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
+      pragma Assert (Fixed_Fields_Hold);
       Write_U32 (Data, 36, Tree_Id, Field_Status);
       pragma Assert (Field_Status = SMB.Ok);
+      pragma Assert (Fixed_Fields_Hold);
       Write_U64 (Data, 40, Session_Id, Status);
+      pragma Assert (Fixed_Fields_Hold);
    end Initialize_Header;
 
    procedure Validate_Header
