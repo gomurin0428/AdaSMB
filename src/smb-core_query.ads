@@ -328,5 +328,19 @@ private
          SMB.Spec.SMB2.Client_Query_Info
            (SMB.Spec.FSCC.File_Network_Open_Information,
             SMB.Spec.FSCC.Network_Open_Information_Size,
-            Snapshot.File_Id)));
+            Snapshot.File_Id))
+      --  The header, as the specification gives this client's request:
+      --  every byte but the Signature, which signing fills in.
+      and then SMB.Spec.SMB2.Is_Sync_Header
+        (Packet,
+         (SMB.Spec.SMB2.Request_Header
+            (Command => SMB.Spec.SMB2.Query_Info,
+             Credit_Charge => Snapshot.Expected.Credit_Charge,
+             Credit_Request => Snapshot.Expected.Credit_Request,
+             Flags => SMB.Spec.SMB2.Flags_Signed,
+             Message_Id => Snapshot.Expected.Message_Id,
+             Tree_Id => Snapshot.Expected.Tree_Id,
+             Session_Id => Snapshot.Expected.Session_Id)
+          with delta Signature =>
+            Packet (Packet'First + 48 .. Packet'First + 63))));
 end SMB.Core_Query;

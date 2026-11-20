@@ -312,5 +312,19 @@ private
          Packet (Packet'First + 96 .. Packet'First + (Used - 1)))
       and then SMB.Spec.FSCC.Is_End_Of_File_Information
         (Packet (Packet'First + 96 .. Packet'First + (Used - 1)),
-         Snapshot.Size));
+         Snapshot.Size)
+      --  The header, as the specification gives this client's request:
+      --  every byte but the Signature, which signing fills in.
+      and then SMB.Spec.SMB2.Is_Sync_Header
+        (Packet,
+         (SMB.Spec.SMB2.Request_Header
+            (Command => SMB.Spec.SMB2.Set_Info,
+             Credit_Charge => Snapshot.Expected.Credit_Charge,
+             Credit_Request => Snapshot.Expected.Credit_Request,
+             Flags => SMB.Spec.SMB2.Flags_Signed,
+             Message_Id => Snapshot.Expected.Message_Id,
+             Tree_Id => Snapshot.Expected.Tree_Id,
+             Session_Id => Snapshot.Expected.Session_Id)
+          with delta Signature =>
+            Packet (Packet'First + 48 .. Packet'First + 63))));
 end SMB.Core_Resize;
