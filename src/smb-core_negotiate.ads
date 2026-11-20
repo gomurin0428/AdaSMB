@@ -34,14 +34,14 @@ package SMB.Core_Negotiate is
 
    --  The body of a NEGOTIATE request that offers 3.1.1, and 2.1 too when
    --  Allow_21 is set. SecurityMode is 3 (signing enabled and required) and
-   --  Capabilities is SMB2_GLOBAL_CAP_ENCRYPTION. The preauth integrity
-   --  context offers SHA-512 with Salt, and the encryption context offers
-   --  AES-128-GCM, AES-128-CCM, AES-256-GCM and AES-256-CCM, in the order a
-   --  Windows client offers them by default. The signing context offers
-   --  AES-GMAC, then AES-CMAC. The server chooses from each. The
-   --  postcondition states it against the specification
-   --  (SMB.Spec.SMB2.Negotiation), and repeats the fixed fields byte by
-   --  byte for callers, which provers find far more easily.
+   --  Capabilities is SMB2_GLOBAL_CAP_ENCRYPTION and _LARGE_MTU. The
+   --  preauth integrity context offers SHA-512 with Salt, and the
+   --  encryption context offers AES-128-GCM, AES-128-CCM, AES-256-GCM and
+   --  AES-256-CCM, in the order a Windows client offers them by default.
+   --  The signing context offers AES-GMAC, then AES-CMAC. The server
+   --  chooses from each. The postcondition states it against the
+   --  specification (SMB.Spec.SMB2.Negotiation), and repeats the fixed
+   --  fields byte by byte for callers, which provers find far more easily.
    function Request
      (Guid : Guid_Bytes; Salt : Salt_Bytes; Allow_21 : Boolean)
       return Request_Bytes

@@ -457,9 +457,10 @@ opens a received one. It is a stateless SPARK unit, like
   StructureSize 36, DialectCount above 0, Reserved and Reserved2 0, and
   ClientStartTime 0 when 0x0311 is not offered), the negotiate context
   (2.2.3.1: ContextType, DataLength, Reserved 0), the alignment rules
-  (the first context at the first 8-byte boundary after the dialects,
-  each later one "at the first 8-byte-aligned offset following the
-  previous"), and the three contexts this client sends
+  (the first context at the first 8-byte boundary after the dialects, as
+  3.2.4.2.2.2 pads "to make the next field 8-byte aligned"; each later
+  one "at the first 8-byte-aligned offset following the previous"), and
+  the three contexts this client sends
   (2.2.3.1.1, 2.2.3.1.2, 2.2.3.1.7, each count "MUST be greater than
   zero").
 * This client's request comes from 3.2.4.2.2.2: the dialects are the
@@ -476,13 +477,15 @@ opens a received one. It is a stateless SPARK unit, like
   ... body or declaration", not elsewhere in a private part.
 * `Core_Protocol.Build_Negotiate`, the 2.1-only NEGOTIATE that had no
   caller since 0.2.0, is gone.
-* `spec_test` (+8 checks): Windows 10's NEGOTIATE requests from the
-  Microsoft Open Specifications blog's "SMB 3.1.1 Pre-authentication
-  integrity in Windows 10" (appendices A.1, A.2 and B), A.1 with every
-  byte flipped but the padding; ClientStartTime without 3.1.1; no empty
-  dialect or algorithm list; exact context data; the alignment; this
-  client's request for both dialect sets, at high indices, with every
-  byte flipped, and the wrong length, dialects or salt; its fields and the
+* `spec_test` (+9 checks): the NEGOTIATE requests of the test client in
+  the Microsoft Open Specifications blog's "SMB 3.1.1 Pre-authentication
+  integrity in Windows 10" (appendices A.1, with Windows 10's contexts,
+  A.2 and B), A.1 with every byte flipped but the padding; every byte of
+  ClientStartTime without 3.1.1; no empty dialect or algorithm list, no
+  unknown-only dialects, an aligned context offset, DialectCount and the
+  GUID's length; exact context data; the alignment; this client's
+  request for both dialect sets, at high indices, with every byte
+  flipped, and the wrong length, dialects or salt; its fields and the
   constants.
 * Proof notes: arrays of 16-bit values are indexed by a subtype bounded
   like `SMB.Bytes`'s lengths, or every `'Length` needs a range check that

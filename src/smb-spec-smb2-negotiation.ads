@@ -78,17 +78,25 @@ is
    function Offers_0311 (Dialects : Word_List) return Boolean is
      (for some Dialect of Dialects => Dialect = Dialect_0311);
 
+   --  The dialects 2.2.3 defines; Dialects "MUST contain at least one" of
+   --  them.
+   function Is_Known_Dialect (Dialect : SMB.Word) return Boolean is
+     (Dialect = Dialect_0202 or else Dialect = Dialect_0210
+      or else Dialect = Dialect_0300 or else Dialect = Dialect_0302
+      or else Dialect = Dialect_0311);
+
    --  The fixed fields and the dialects of a NEGOTIATE request:
    --  * StructureSize 36;
    --  * DialectCount, the number of Dialects, which "MUST be greater than
    --    0";
    --  * Reserved: "The client MUST set this to 0";
    --  * ClientGuid, 16 bytes;
-   --  * if Dialects contains 0x0311, NegotiateContextOffset,
+   --  * if Dialects contains 0x0311, NegotiateContextOffset (the offset "to
+   --    the first, 8-byte-aligned negotiate context"),
    --    NegotiateContextCount and Reserved2 ("The client MUST set this to
    --    0"); otherwise ClientStartTime, which "The client MUST set ... to
    --    0";
-   --  * Dialects from offset 36.
+   --  * Dialects from offset 36, at least one of them a known one.
    --  What follows the dialects, the padding and the contexts, is stated
    --  apart.
    function Is_Negotiate_Request
@@ -106,10 +114,12 @@ is
       and then SMB.Spec.Encoding.LE32 (Data, 8) = Request.Capabilities
       and then Client_Guid'Length = 16
       and then Has_Bytes (Data, 12, Client_Guid)
+      and then (for some Dialect of Dialects => Is_Known_Dialect (Dialect))
       and then
         (if Offers_0311 (Dialects) then
            SMB.Spec.Encoding.LE32 (Data, 28) =
              Request.Negotiate_Context_Offset
+           and then Request.Negotiate_Context_Offset mod 8 = 0
            and then SMB.Spec.Encoding.LE16 (Data, 32) =
              Request.Negotiate_Context_Count
            and then SMB.Spec.Encoding.LE16 (Data, 34) = 0
@@ -184,6 +194,11 @@ is
      Position <= SMB.Maximum_Frame_Size
      and then Data_Length <=
        SMB.Maximum_Frame_Size - Position - Context_Header_Size;
+
+   --  The predicates on a context's data below take the data to be exactly
+   --  its fields: DataLength is "The length, in bytes, of the Data field",
+   --  and this client sends no more. (A receiver's check would read the
+   --  fields from a longer Data too.)
 
    --  2.2.3.1.1: SMB2_PREAUTH_INTEGRITY_CAPABILITIES: HashAlgorithmCount,
    --  "MUST be greater than zero"; SaltLength, "The size, in bytes, of the
