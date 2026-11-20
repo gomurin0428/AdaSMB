@@ -375,7 +375,10 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Name_Length : SMB.Word;
       Output : out SMB.Bytes;
       Status : out SMB.Core_Status)
-   with Pre => Output'Length = 56,
+   with Pre =>
+     Output'Length = 56
+     and then Disposition <= 5
+     and then (if Directory then Disposition in 1 .. 3),
      Post =>
        Status = SMB.Ok
        and then SMB.Spec.SMB2.Is_Create_Fields

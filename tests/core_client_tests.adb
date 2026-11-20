@@ -640,6 +640,21 @@ package body Core_Client_Tests is
             True, Output, Used, Status);
          Expect (Overwrite_Directory, SMB.Invalid_Value, Client.Failed,
                  "directory with FILE_OVERWRITE");
+         --  FILE_OPEN_IF, the largest a directory may take, is accepted (on
+         --  an engine of its own, so that the request it prepares leaves
+         --  this one free).
+         declare
+            Directory_State : Engine;
+            Directory_Token : Handle;
+            Open_If_Directory : Client.Operation;
+         begin
+            Share (Directory_State, Directory_Token);
+            Client.Prepare_Create
+              (Open_If_Directory, Directory_State, Name, SMB.Engine.Read_Only,
+               False, 3, True, Output, Used, Status);
+            Expect (Open_If_Directory, SMB.Ok, Client.Prepared,
+                    "directory with FILE_OPEN_IF");
+         end;
          Output := (others => 16#EE#);
          Client.Prepare_Create
            (Short, State, Name, SMB.Engine.Read_Only, False, 1, False,

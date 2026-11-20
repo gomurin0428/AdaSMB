@@ -202,8 +202,11 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => Name'Length <= Maximum_Name_Bytes
      and then Output'Length <= SMB.Maximum_Frame_Size
-     --  MS-SMB2 2.2.13: with FILE_DIRECTORY_FILE, "the CreateDisposition
-     --  field MUST be set to FILE_CREATE, FILE_OPEN_IF, or FILE_OPEN".
+     --  MS-SMB2 2.2.13: CreateDisposition "MUST contain one of" FILE_SUPERSEDE
+     --  to FILE_OVERWRITE_IF (0 to 5), and with FILE_DIRECTORY_FILE "the
+     --  CreateDisposition field MUST be set to FILE_CREATE, FILE_OPEN_IF, or
+     --  FILE_OPEN".
+     and then Disposition <= 5
      and then (if Directory then Disposition in 1 .. 3),
      Post =>
        --  An odd length (not UTF-16) comes before a short buffer.

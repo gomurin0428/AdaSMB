@@ -709,15 +709,15 @@ procedure Spec_Test is
         (16#05#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
         16#01#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#);
       Name : constant SMB.Bytes := (16#41#, 16#00#, 16#42#, 16#00#);
-      Full_Create : constant SMB.Bytes (400 .. 463) :=
+      Full_Create : constant SMB.Bytes (400 .. 467) :=
         (16#39#, 16#00#, 16#81#, 16#42#, 16#14#, 16#13#, 16#12#, 16#11#,
         16#28#, 16#27#, 16#26#, 16#25#, 16#24#, 16#23#, 16#22#, 16#21#,
         16#38#, 16#37#, 16#36#, 16#35#, 16#34#, 16#33#, 16#32#, 16#31#,
         16#44#, 16#43#, 16#42#, 16#41#, 16#54#, 16#53#, 16#52#, 16#51#,
         16#64#, 16#63#, 16#62#, 16#61#, 16#74#, 16#73#, 16#72#, 16#71#,
-        16#84#, 16#83#, 16#82#, 16#81#, 16#7C#, 16#00#, 16#04#, 16#00#,
+        16#84#, 16#83#, 16#82#, 16#81#, 16#80#, 16#00#, 16#04#, 16#00#,
         16#94#, 16#93#, 16#92#, 16#91#, 16#A4#, 16#A3#, 16#A2#, 16#A1#)
-        & (0, 0, 0, 0) & Name;
+        & (0, 0, 0, 0, 0, 0, 0, 0) & Name;
       Full_Query : constant SMB.Bytes :=
         (16#21#, 16#00#, 16#26#, 16#05#, 16#14#, 16#13#, 16#12#, 16#11#,
         16#05#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
@@ -731,7 +731,7 @@ procedure Spec_Test is
          Reserved => 16#3132_3334_3536_3738#,
          Desired_Access => 16#4142_4344#, File_Attributes => 16#5152_5354#,
          Share_Access => 16#6162_6364#, Create_Disposition => 16#7172_7374#,
-         Create_Options => 16#8182_8384#, Name_Offset => 124,
+         Create_Options => 16#8182_8384#, Name_Offset => 128,
          Name_Length => 4, Create_Contexts_Offset => 16#9192_9394#,
          Create_Contexts_Length => 16#A1A2_A3A4#)
       with Ghost;
@@ -754,7 +754,7 @@ procedure Spec_Test is
          begin
             Changed (Index) := Changed (Index) xor 16#01#;
             pragma Assert
-              (Index in Full_Create'First + 56 .. Full_Create'First + 59
+              (Index in Full_Create'First + 56 .. Full_Create'First + 63
                or else not S.Is_Create_Request
                  (Changed, Full_Create_Request, Name),
                "every CREATE byte");
@@ -774,21 +774,62 @@ procedure Spec_Test is
          end;
       end loop;
       Passed;
-      --  NameLength and FileNameLength are the lengths of what follows, and
-      --  an offset never points into the fields.
-      pragma Assert
-        (not S.Is_Create_Request
-           (Full_Create, Full_Create_Request, Name (Name'First .. Name'Last - 2))
-         and then not S.Is_Create_Request
-           (Full_Create,
-            (Full_Create_Request with delta Name_Offset => 64 + 52), Name)
-         and then not S.Is_Query_Directory_Request
-           (Full_Query, Full_Query_Request, SMB.Bytes'(16#2A#, 16#00#, 0, 0))
-         and then not S.Is_Query_Directory_Request
-           (Full_Query,
-            (Full_Query_Request with delta File_Name_Offset => 64 + 30),
-            S.Every_Name),
-         "lengths, and offsets into the fields");
+      --  NameLength and FileNameLength are the lengths of what follows; an
+      --  offset into the fields is refused even when the data says so and
+      --  the bytes there are the name; the name is 8-byte aligned; Buffer
+      --  has at least one byte; with no pattern, FileNameOffset and
+      --  FileNameLength are 0.
+      declare
+         Create_Overlap : SMB.Bytes := Full_Create;
+         Unaligned : SMB.Bytes := Full_Create;
+         Query_Overlap : SMB.Bytes := Full_Query;
+         No_Pattern : SMB.Bytes := Full_Query (Full_Query'First .. Full_Query'First + 31);
+         Short_Create : SMB.Bytes :=
+           Full_Create (Full_Create'First .. Full_Create'First + 55);
+         Empty : constant SMB.Bytes (1 .. 0) := (others => 0);
+      begin
+         Create_Overlap (Create_Overlap'First + 44) := 16#70#;
+         Unaligned (Unaligned'First + 44) := 16#84#;
+         Query_Overlap (Query_Overlap'First + 24) := 16#5C#;
+         No_Pattern (No_Pattern'First + 24) := 0;
+         No_Pattern (No_Pattern'First + 26) := 0;
+         Short_Create (Short_Create'First + 44) := 16#78#;
+         Short_Create (Short_Create'First + 46) := 0;
+         pragma Assert
+           (not S.Is_Create_Request
+              (Full_Create, Full_Create_Request,
+               Name (Name'First .. Name'Last - 2))
+            and then not S.Is_Create_Request
+              (Create_Overlap,
+               (Full_Create_Request with delta Name_Offset => 112),
+               SMB.Bytes'(16#94#, 16#93#, 16#92#, 16#91#))
+            and then not S.Is_Create_Request
+              (Unaligned, (Full_Create_Request with delta Name_Offset => 132),
+               SMB.Bytes'(0, 0, 0, 0))
+            and then S.Is_Create_Request
+              (Short_Create & (0 => 0),
+               (Full_Create_Request with delta
+                  Name_Offset => 120, Name_Length => 0), Empty)
+            and then not S.Is_Create_Request
+              (Short_Create,
+               (Full_Create_Request with delta
+                  Name_Offset => 120, Name_Length => 0), Empty)
+            and then not S.Is_Query_Directory_Request
+              (Full_Query & (0, 0), Full_Query_Request,
+               SMB.Bytes'(16#2A#, 16#00#, 0, 0))
+            and then not S.Is_Query_Directory_Request
+              (Query_Overlap,
+               (Full_Query_Request with delta File_Name_Offset => 92),
+               SMB.Bytes'(16#24#, 16#23#))
+            and then S.Is_Query_Directory_Request
+              (No_Pattern,
+               (Full_Query_Request with delta
+                  File_Name_Offset => 0, File_Name_Length => 0), Empty)
+            and then not S.Is_Query_Directory_Request
+              (Full_Query (Full_Query'First .. Full_Query'First + 31),
+               (Full_Query_Request with delta File_Name_Length => 0), Empty),
+            "lengths, offsets into the fields, alignment, empty parts");
+      end;
       Passed;
       --  This client's CREATE: a file and a directory.
       pragma Assert
@@ -800,10 +841,13 @@ procedure Spec_Test is
             Create_Disposition => 3, Create_Options => 16#40#,
             Name_Offset => 120, Name_Length => 4,
             Create_Contexts_Offset => 0, Create_Contexts_Length => 0)
-         and then S.Client_Create (1, S.File_Create, True, 0).File_Attributes
-           = 16#10#
-         and then S.Client_Create (1, S.File_Create, True, 0).Create_Options
-           = 1,
+         and then S.Client_Create (16#0010_0080#, S.File_Create, True, 6)
+           = (Security_Flags => 0, Requested_Oplock_Level => 0,
+              Impersonation_Level => 2, Smb_Create_Flags => 0, Reserved => 0,
+              Desired_Access => 16#0010_0080#, File_Attributes => 16#10#,
+              Share_Access => 7, Create_Disposition => 2,
+              Create_Options => 1, Name_Offset => 120, Name_Length => 6,
+              Create_Contexts_Offset => 0, Create_Contexts_Length => 0),
          "this client's CREATE");
       Passed;
       pragma Assert
@@ -822,7 +866,7 @@ procedure Spec_Test is
          and then S.File_Non_Directory_File = 16#40#
          and then S.File_Attribute_Directory = 16#10#
          and then S.File_Id_Both_Directory_Information = 16#25#
-         and then S.Restart_Scans = 1,
+         and then S.Restart_Scans = 1 and then S.Oplock_Level_None = 0,
          "structure sizes and constants");
       Passed;
    end Test_SMB2_Create;

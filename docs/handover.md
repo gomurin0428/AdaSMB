@@ -465,10 +465,12 @@ opens a received one. It is a stateless SPARK unit, like
 * **A MUST the client did not keep.** 2.2.13: with FILE_DIRECTORY_FILE,
   "the CreateDisposition field MUST be set to FILE_CREATE, FILE_OPEN_IF,
   or FILE_OPEN". `Build_Create` and `Core_Client.Prepare_Create` accepted
-  a directory with FILE_OVERWRITE or FILE_OVERWRITE_IF (the public API
-  never asks for one). `Build_Create` now requires it, and
-  `Prepare_Create` refuses it with `Invalid_Value`, as it refuses a
-  disposition outside 1 to 5.
+  a directory with any disposition (`Prepare_Create` any of 1 to 5,
+  `Build_Create` any value at all; the public API never asks for another
+  one). `Build_Create` now requires the disposition to be one of the six of
+  2.2.13 (MUST) and, for a directory, one of the three; `Prepare_Create`
+  refuses another with `Invalid_Value`, as it refuses one outside 1 to 5.
+  `Client_Create` has the same precondition.
 * `Build_Create` puts the fields into their own 56 bytes with
   `Build_Create_Fields`, then the name after them, as `Build_Write` does:
   in one procedure, the chain of nine writes and the name's copy went past
@@ -476,11 +478,19 @@ opens a received one. It is a stateless SPARK unit, like
   `Build_Create` and `Build_Query_Directory` state their exact status (an
   odd name before a short buffer), `Used`, the request, and zero bytes
   after it; `Build_Create` refuses an odd name before writing anything.
-* `spec_test` (78 checks): a CREATE and a QUERY_DIRECTORY whose fields all
-  hold distinct multi-byte values, every byte flipped in turn, wrong
-  lengths and offsets into the fields, and this client's requests. No
-  CREATE or QUERY_DIRECTORY bytes are published here; MS-SMB2 4.5 gives a
-  CREATE only field by field, with values this client does not send.
+* The predicates follow two further rules of the layouts: CREATE's
+  NameOffset points to "the 8-byte aligned file name", and with no search
+  pattern QUERY_DIRECTORY's FileNameOffset and FileNameLength "MUST be 0".
+* `spec_test` (78 checks): a CREATE (its name 8-byte aligned at 128) and a
+  QUERY_DIRECTORY whose fields all hold distinct multi-byte values, every
+  byte flipped in turn; wrong lengths; offsets into the fields with the
+  data encoding them and the bytes there as the name; an unaligned name; a
+  CREATE without its byte of Buffer; a QUERY_DIRECTORY without a pattern;
+  and this client's requests, a directory's included. The review's 22
+  mutants of the specification all fail it (with the first version of
+  the tests, 8 passed). No CREATE or QUERY_DIRECTORY bytes are published
+  here; MS-SMB2 4.5 gives a CREATE only field by field, with values this
+  client does not send.
 
 ## Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT (#155)
 

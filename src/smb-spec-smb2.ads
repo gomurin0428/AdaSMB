@@ -508,12 +508,13 @@ is
      Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
    --  The fields, a Buffer of at least one byte, and the name at
-   --  NameOffset.
+   --  NameOffset, "the 8-byte aligned file name".
    function Is_Create_Request
      (Data : SMB.Bytes; Request : Create_Request; Name : SMB.Bytes)
       return Boolean is
      (Is_Create_Fields (Data, Request)
       and then Data'Length >= Create_Request_Size
+      and then Request.Name_Offset mod 8 = 0
       and then Natural (Request.Name_Length) = Name'Length
       and then
         Has_Bytes_At_Offset
@@ -537,7 +538,11 @@ is
    --  CreateOptions FILE_DIRECTORY_FILE or FILE_NON_DIRECTORY_FILE; the
    --  name at the start of Buffer (NameOffset 64 + 56 = 120, as 2.2.13
    --  says it "SHOULD" be); and CreateContextsOffset and
-   --  CreateContextsLength 0 (MUST, with no create contexts).
+   --  CreateContextsLength 0 (MUST, with no create contexts). The
+   --  disposition is one of the six of 2.2.13 (MUST), and for a directory
+   --  one of FILE_OPEN, FILE_CREATE and FILE_OPEN_IF. The form of the name
+   --  (MS-FSCC 2.1.5, which 3.2.4.3 says the path MUST conform to) and the
+   --  bits of DesiredAccess (2.2.13.1) are not part of this specification.
    function Client_Create
      (Desired_Access : SMB.DWord;
       Disposition : SMB.DWord;
@@ -558,7 +563,10 @@ is
        Name_Offset => Header_Size + Create_Fields_Size,
        Name_Length => Name_Length,
        Create_Contexts_Offset => 0,
-       Create_Contexts_Length => 0));
+       Create_Contexts_Length => 0))
+   with Pre =>
+     Disposition <= 5
+     and then (if Directory then Disposition in File_Open .. File_Open_If);
 
    --  2.2.33: the SMB2 QUERY_DIRECTORY Request, after the header: 32 bytes
    --  of fields (StructureSize 33 counts a byte of Buffer), then the search
@@ -593,10 +601,14 @@ is
       and then
         SMB.Spec.Encoding.LE32 (Data, 28) = Request.Output_Buffer_Length
       and then Natural (Request.File_Name_Length) = Pattern'Length
+      --  FileNameOffset and FileNameLength "MUST be 0 if no search pattern
+      --  is provided".
       and then
-        Has_Bytes_At_Offset
-          (Data, Query_Directory_Fields_Size, Request.File_Name_Offset,
-           Pattern))
+        (if Pattern'Length = 0 then Request.File_Name_Offset = 0
+         else
+           Has_Bytes_At_Offset
+             (Data, Query_Directory_Fields_Size, Request.File_Name_Offset,
+              Pattern)))
    with Pre =>
      Data'Length <= SMB.Maximum_Frame_Size
      and then Pattern'Length <= SMB.Maximum_Frame_Size,

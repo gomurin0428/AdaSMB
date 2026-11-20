@@ -6898,19 +6898,19 @@ procedure Test_Suite is
         (SMB.Bytes'(0 => 16#41#), Output, Used, Status);
       Expect_Failure (SMB.Invalid_Length, "odd TREE_CONNECT path");
 
-      --  A file takes a disposition whose bytes all differ, to pin their
-      --  order; a directory only FILE_CREATE, FILE_OPEN_IF or FILE_OPEN.
+      --  A file takes FILE_OVERWRITE_IF; a directory only FILE_CREATE,
+      --  FILE_OPEN_IF or FILE_OPEN (MS-SMB2 2.2.13).
       for Directory in Boolean loop
          SMB.Core_Protocol.Build_Create
            (Hex ("6100"), 16#8112_3489#,
-            (if Directory then 2 else 16#0403_0201#), Directory,
+            (if Directory then 2 else 5), Directory,
             Output, Used, Status);
          Expect
            (Hex ("3900" & "00" & "00" & "02000000" & "0000000000000000"
                  & "0000000000000000" & "89341281"
                  & (if Directory then "10000000" else "00000000")
                  & "07000000"
-                 & (if Directory then "02000000" else "01020304")
+                 & (if Directory then "02000000" else "05000000")
                  & (if Directory then "01000000" else "40000000")
                  & "7800" & "0200" & "00000000" & "00000000" & "6100"),
             "CREATE request");
