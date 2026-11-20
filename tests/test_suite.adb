@@ -6918,6 +6918,18 @@ procedure Test_Suite is
       SMB.Core_Protocol.Build_Create
         (SMB.Bytes'(0 => 16#61#), 0, 1, False, Output, Used, Status);
       Expect_Failure (SMB.Invalid_Length, "odd CREATE name");
+      --  One byte short of the fields and the name: refused, and nothing
+      --  written.
+      declare
+         Short : SMB.Bytes (0 .. 56) := (others => 16#EE#);
+      begin
+         SMB.Core_Protocol.Build_Create
+           (Hex ("6100"), 16#8112_3489#, 1, False, Short, Used, Status);
+         Assert
+           (Status = SMB.Resource_Limit and then Used = 0
+            and then Short = (Short'Range => 0),
+            "CREATE one byte short");
+      end;
 
       SMB.Core_Protocol.Build_Read
         (File_Id, Offset, 65_536, Output, Used, Status);
