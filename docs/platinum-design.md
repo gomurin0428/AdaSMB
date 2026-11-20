@@ -21,7 +21,7 @@ the cryptography's contracts track only bookkeeping such as `Ready` and
 
 | Level reached | Units |
 | --- | --- |
-| Complete already | `Core_Framing`, `Core_Transport`, `Core_Clock`; in `Core_Text` the path, share and UTF-16 validators; in `Core_Wire` the integer readers and writers; in `Core_Protocol` the transfer arithmetic, `Credit_Charge` and `Network_Open_Information` |
+| Complete already | `Core_Framing`, `Core_Transport`, `Core_Clock`; in `Core_Text` the path and share validators; in `Core_Wire` the integer readers and writers; in `Core_Protocol` the transfer arithmetic, `Credit_Charge` and `Network_Open_Information` |
 | Fields stated, gaps left | `Core_Wire`'s header, `Core_Request`, `Core_Protocol`'s builders (CREATE's name bytes, READ/WRITE/CLOSE fixed bytes) and `Parse_Response` (which packets are accepted, the failure status, CREATE and CLOSE fields), `Core_Transform`'s header, `Core_Negotiate`'s response checks, `Core_Query`, `Core_Resize` |
 | Outputs not stated at all | every digest, MAC, cipher and key: `Crypto` (MD4, MD5, SHA-256, SHA-512, both HMACs), `AES`, `AES.CMAC`, `AES.CCM`, `AES.GCM`, `KDF`; `Core_Preauth.Update` has no postcondition; the NTLMv2 response, Type 3 message and session key in `Core_Auth` |
 | Large state, partial frames | `Engine` (about 45 fields and a 256-slot handle table behind about 55 functions), `Core_Connection`, `Core_Client` |
@@ -75,8 +75,9 @@ The maintainer approved all of these on 2026-11-18.
   use. This changes what runs in production and needs the maintainer's
   agreement. (Phase 4 found an exception: a whole-input specification
   that recurses over the input cannot run on the megabyte some tests
-  convert, so the two converters' postconditions are proved and never
-  run, and tests check them on every short input instead.)
+  convert, so the postconditions of the two converters and
+  `Validate_UTF16` are proved and never run, and tests check them on every
+  short input instead.)
 * **Ada 2022 in the build.** The proof already runs as Ada 2022, the build as
   Ada 2012. Specifications need Ada 2022 features (big integers for
   arithmetic in GF(2^128) and modular reductions, iterated aggregates),

@@ -312,7 +312,7 @@ implementation.
 Where each unit stands, from the survey at 0.4.0 and the phases since:
 
 * **Complete already:** `Core_Framing`, `Core_Transport`, `Core_Clock`; the
-  path, share and UTF-16 validators of `Core_Text`; the integer readers and
+  path and share validators of `Core_Text`; the integer readers and
   writers of `Core_Wire`; the transfer arithmetic of `Core_Protocol`.
 * **Complete against a specification:** `Core_Text.UTF8_To_UTF16` and
   `UTF16_To_UTF8` (exact status, the first failure of a scan from the

@@ -11671,11 +11671,13 @@ procedure Test_Suite is
          16#D7FF#, 16#D800#, 16#DBFF#, 16#DC00#, 16#DFFF#, 16#E000#,
          16#FFFD#, 16#FFFF#);
       Calls : Natural := 0;
+      Verdicts : Natural := 0;
 
       procedure Check (Input : SMB.Bytes) is
          Verdict : SMB.Core_Status;
       begin
          SMB.Core_Text.Validate_UTF16 (Input, Verdict);
+         Verdicts := Verdicts + 1;
          pragma Assert
            (Verdict =
               (if Input'Length mod 2 /= 0 then SMB.Invalid_Length
@@ -11733,7 +11735,8 @@ procedure Test_Suite is
       end loop;
       Ada.Text_IO.Put_Line
         ("UTF16_To_UTF8 against SMB.Spec.Unicode:" & Natural'Image (Calls)
-         & " calls passed");
+         & " calls passed; Validate_UTF16:" & Natural'Image (Verdicts)
+         & " verdicts passed");
    end Test_UTF16_To_UTF8_Specification;
 
    procedure Test_Text_And_Wire is
