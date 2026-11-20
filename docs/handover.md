@@ -75,7 +75,7 @@ of date.
 | after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | merged (#154) |
 | after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | merged (#156) |
 | after 0.4.0 | Rename: FILE_RENAME_INFORMATION padded to 24 bytes; Windows Server refused a one-character target | merged (#153) |
-| after 0.4.0 | Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT against the specification | #155 |
+| after 0.4.0 | Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT against the specification | merged (#155) |
 | after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | #157 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
