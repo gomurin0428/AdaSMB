@@ -80,6 +80,7 @@ of date.
 | after 0.4.0 | Platinum phase 3, QUERY_INFO and SET_INFO (disposition, end of file, rename) against MS-SMB2 and MS-FSCC | merged (#158) |
 | after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | merged (#159) |
 | after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | #160 |
+| after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO packets of `Core_Query` and `Core_Resize` against the specifications | #161 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -428,8 +429,8 @@ opens a received one. It is a stateless SPARK unit, like
   CLOSE, READ and WRITE (#152), then SESSION_SETUP, TREE_CONNECT, LOGOFF
   and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#157),
   then QUERY_INFO and SET_INFO (#158), then the 3.1.1 NEGOTIATE (#159),
-  then the transform header (#160). Next in phase 3: `Core_Query` and
-  `Core_Resize`. After Platinum, the maintainer wants the remaining SMB
+  then the transform header (#160), then the packets of `Core_Query` and
+  `Core_Resize` (#161), which ends phase 3. Next: phase 4 (text). After Platinum, the maintainer wants the remaining SMB
   features in this order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
   file operations (times and attributes, locks, leases, change
@@ -449,6 +450,22 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, the packets of Core_Query and Core_Resize (#161)
+
+* `Core_Query.Packet_Matches` and `Core_Resize.Packet_Matches`, which
+  their `Prepare` postconditions use, also state the request body against
+  the specifications: the QUERY_INFO for FileNetworkOpenInformation
+  (`Client_Query_Info`), and the SET_INFO with FileEndOfFileInformation
+  (`Client_Set_Info`, `Is_End_Of_File_Information`). The byte clauses
+  stay, for callers.
+* The header's fields stated there (StructureSize, Command, Flags signed,
+  MessageId, TreeId, SessionId) are as before. CreditCharge,
+  CreditRequest and the Signature come from the engine and the signing
+  key, and are stated with them (phases 5 and 9), as are the header
+  copies in `Core_Client` and `Core_Connection`.
+* This ends phase 3: every request the client builds is stated against
+  `SMB.Spec.SMB2` (and `SMB.Spec.FSCC`), but for those header fields.
 
 ## Platinum phase 3, the transform header (#160)
 

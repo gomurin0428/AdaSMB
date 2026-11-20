@@ -327,12 +327,14 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   NEGOTIATE request, `Core_Negotiate.Request` (every byte, against
   `SMB.Spec.SMB2.Negotiation`); the transform header `Core_Transform.Seal`
   writes (every byte but the Signature, against `SMB.Spec.SMB2.Transform`;
-  the Signature and the encrypted message are phase 6's).
+  the Signature and the encrypted message are phase 6's); the request
+  bodies of `Core_Query.Prepare` and `Core_Resize.Prepare` (their headers'
+  credit fields and signatures are the engine's and signing's).
 * **Fields stated, gaps left:** `Core_Wire.Validate_Header` (phase 7), the
   header copies in `Core_Client` and `Core_Connection` (phase 9), the other
   builders and `Parse_Response` of `Core_Protocol`, the header checks of
-  `Core_Transform.Unwrap`, `Core_Negotiate`'s response checks,
-  `Core_Query`, `Core_Resize`.
+  `Core_Transform.Unwrap`, `Core_Negotiate`'s response checks, the
+  headers and responses of `Core_Query` and `Core_Resize`.
 * **Outputs not stated:** every digest, MAC, cipher and derived key (`Crypto`,
   `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
   `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,

@@ -74,6 +74,9 @@ is
       Used : out Natural;
       Status : out SMB.Core_Status)
    is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Query_Info_Request);
       Id : SMB.Bytes (0 .. 15) := (others => 0);
       Mode : SMB.Engine.Access_Kind := SMB.Engine.Read_Only;
       Dir : Boolean := False;
