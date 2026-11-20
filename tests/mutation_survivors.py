@@ -15,6 +15,13 @@ postcondition), nor where the proof proves anything. Both are in AdaMutant's
 console output, which tests/adamutant_run.sh keeps in .adamutant/console.txt:
 when it is there, the candidates are those the console lists, and its list
 of places where the proof proves anything is added.
+
+When there is no report, the run did not finish. tests/adamutant_run.sh
+writes AdaMutant's exit status to .adamutant/status when it exits: a
+non-zero status is an error (a baseline that fails, a mistake in the
+configuration), and the script prints the console's errors and exits 1; no
+status means the run was stopped (the step's time limit), and the script
+says how far it got and exits 0.
 """
 
 import argparse
@@ -28,6 +35,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / ".adamutant" / "reports" / "mutation-report.json"
 CONSOLE = ROOT / ".adamutant" / "console.txt"
+STATUS = ROOT / ".adamutant" / "status"
+
+
+def write(text: str) -> None:
+    """Prints text, and adds it to the GitHub step summary when there is one."""
+    sys.stdout.write(text)
+    step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if step_summary:
+        with open(step_summary, "a", encoding="utf-8") as out:
+            out.write(text)
 DETECTED = {"Killed", "Timeout"}
 UNDETECTED = {"Survived", "NoCoverage"}
 CANDIDATES = "Detected only by the proof"
@@ -144,21 +161,30 @@ def main() -> int:
     args = parser.parse_args()
     console = CONSOLE.read_text(encoding="utf-8") if CONSOLE.is_file() else None
     if not REPORT.is_file():
-        # The run stopped before AdaMutant wrote its report (out of time):
-        # say how far it got, from the console.
+        status = STATUS.read_text(encoding="utf-8").strip() if STATUS.is_file() else ""
+        if status not in ("", "0"):
+            # AdaMutant stopped with an error: show it and fail.
+            errors = [line for line in (console or "").splitlines()
+                      if "error" in line.lower()]
+            text = ("## Mutation testing\n\nAdaMutant failed (exit status "
+                    f"{status}):\n\n" + "".join(f"    {e}\n" for e in errors[-20:]))
+            write(text)
+            return 1
+        # The run was stopped before AdaMutant wrote its report (the step's
+        # time limit), or never started: say how far it got.
         done = re.findall(r"^\[(\d+)/(\d+)\] (\w+)", console or "", re.MULTILINE)
-        text = "## Mutation testing\n\nThe run did not finish, so there is no report"
-        if done:
-            counts = Counter(status for _, _, status in done)
-            text += (f": {len(done)} of {done[-1][1]} mutants ran ("
-                     + ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
-                     + "); see the job log")
-        text += ".\n"
-        sys.stdout.write(text)
-        step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
-        if step_summary:
-            with open(step_summary, "a", encoding="utf-8") as out:
-                out.write(text)
+        if console is None:
+            text = "## Mutation testing\n\nThe run did not start or left no output.\n"
+        else:
+            text = "## Mutation testing\n\nThe run did not finish, so there is no report"
+            if done:
+                counts = Counter(status for _, _, status in done)
+                text += (f": {len(done)} of {done[-1][1]} mutants ran ("
+                         + ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
+                         + "); .adamutant/console.txt, kept with the report, has "
+                         "their ids")
+            text += ".\n"
+        write(text)
         return 1 if args.fail else 0
     text, undetected = summary(json.loads(REPORT.read_text(encoding="utf-8")), console)
     sys.stdout.write(text)

@@ -28,11 +28,13 @@ timeout_ms = 60000
 # The proof of a mutant gets 5 minutes. The baseline proof is one small
 # unit and takes seconds (the whole project is proved into the cache
 # first), so a limit taken from it would be far too short for a large unit.
-# A mutant of a contract in a large unit (Core_Client) can take 25 minutes
-# or more, since it changes many goals; with 20 minutes a pull request that
-# touched 80 such places ran past the job's 6 hours (#153). A proof that
-# does not finish counts the mutant as undetected, "(the proof timed out)",
-# for the pull request to judge.
+# A mutant of a contract in a large unit (Core_Client) changes many goals:
+# with 20 minutes, the 79 changed-line mutants of #153 (about 11 lines of
+# Core_Client's contracts) ran past the job's 6 hours, their proofs ending at
+# the limit one after another. A proof that does not finish counts the
+# mutant as undetected, "(the proof timed out)", for the pull request to
+# judge; some proofs that the tests miss and that take over 5 minutes
+# (about 1 in 10 in a trial on Core_Request and Core_Resize) do too.
 prove_timeout_ms = 300000
 # A mutant of a length or a loop bound can allocate without limit. The largest
 # test process, the signing comparison, peaks at about 350 MB.
