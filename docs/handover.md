@@ -84,6 +84,7 @@ of date.
 | after 0.4.0 | Platinum phase 4, UTF-8 to UTF-16: `SMB.Spec.Unicode` and `Core_Text.UTF8_To_UTF16` against it | merged (#162) |
 | after 0.4.0 | AdaMutant 4489d69 (the latest, at the maintainer's request) | merged (#165) |
 | after 0.4.0 | `Core_Negotiate.Request` proved a part at a time: its one postcondition goal timed out on a runner | #166 |
+| after 0.4.0 | Platinum phase 4, UTF-16 to UTF-8: `Core_Text.UTF16_To_UTF8` against `SMB.Spec.Unicode` | #163 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -434,8 +435,9 @@ opens a received one. It is a stateless SPARK unit, like
   then QUERY_INFO and SET_INFO (#158), then the 3.1.1 NEGOTIATE (#159),
   then the transform header (#160), then the requests of `Core_Query`
   and `Core_Resize` (#161), which ends phase 3's builders. Phase 4
-  (text) started with UTF-8 to UTF-16 (#162); next, UTF-16 to UTF-8 and
-  `Validate_UTF16`. After Platinum, the maintainer wants the remaining SMB
+  (text) did UTF-8 to UTF-16 (#162) and UTF-16 to UTF-8 (#163); left of
+  it, `Validate_UTF16` against the specification (it is complete against
+  `Core_Text`'s own `Valid_UTF16_Text`), then phase 5 (hashes and HMAC). After Platinum, the maintainer wants the remaining SMB
   features in this order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
   file operations (times and attributes, locks, leases, change
@@ -456,6 +458,32 @@ opens a received one. It is a stateless SPARK unit, like
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
 
+## Platinum phase 4, UTF-16 to UTF-8 (#163)
+
+* `SMB.Spec.Unicode` adds the other way: a code unit (`Code_Unit`), D91's
+  well-formed UTF-16 read back (`UTF16_Length`, `UTF16_Scalar`,
+  `Valid_UTF16_At`), Table 3-6's encoding (`UTF8_Size`, `UTF8_Byte`), and
+  the run over units with its UTF-8 (`Valid_UTF16_Run`, `UTF8_Run_Size`,
+  `UTF8_Run_Byte`, `Is_UTF8_Run`, `Is_Client_UTF16`).
+* `UTF16_To_UTF8` states its exact status (an odd length first, then the
+  first failure of a scan from the front) and, on success, its whole
+  output; on failure it leaves nothing, as `UTF8_To_UTF16` since #162.
+  Its declaration moved under the same ignored-postcondition pragma, and
+  `test_suite` checks it at run time on every input of up to three
+  units from an alphabet of D91's edges, odd lengths too, at every
+  capacity (34,866 calls). Its old partial outputs were expected by six
+  test cases, which now expect nothing.
+* The proof follows #162's: lemmas over the hidden runs
+  (`Lemma_Run16_Step`, `Lemma_Run16_Stop`, `Lemma_Extend8`, the inductive
+  `Lemma_Run8_Bytes`), invariants in the specification's terms, and
+  assertions in the decoder's branches that tie each unit to
+  `Code_Unit` (constant cost, so they stay checked). Its invariants sit at
+  the end of the loop body, so the exit was not a problem here.
+* `spec_test` (+4 checks, 115): the standard's example read back from
+  UTF-16 and its run in UTF-8, every unit alone, every scalar's UTF-16
+  read back and its UTF-8 against GNAT's encoder, ill-formed surrogates,
+  and runs.
+
 ## Core_Negotiate.Request proved a part at a time (#166)
 
 * #163's mutation job failed in its first step, the proof of the whole
@@ -472,8 +500,9 @@ opens a received one. It is a stateless SPARK unit, like
   the request, which the provers find faster).
 * AdaMutant now mutates `Request` (a body), assertions included: deleting
   one of these proof aids changes nothing a test can see, so such
-  mutants go to the proof, and some may survive where the rest suffices. The slowest goal now takes 16 s and 58k steps. The
-  declaration and its postcondition are unchanged; callers see only the
+  mutants go to the proof, and some may survive where the rest suffices.
+* The slowest goal now takes 16 s and 58k steps. The declaration and its
+  postcondition are unchanged; callers see only the
   postcondition (`Core_Connection.Prepare_Negotiate` proves unchanged).
   The assertions run once a connection.
 * Lesson: a goal near the time limit passes and fails by runner; main's
