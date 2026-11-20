@@ -303,7 +303,8 @@ implementation.
 | Specification | Standard | Used by |
 | --- | --- | --- |
 | `SMB.Spec.Encoding` | MS-SMB2 1.3, MS-DTYP 2.2: little-endian 16-, 32- and 64-bit integers, as sums of bytes times powers of 256 | `Core_Wire`'s integer reads (`Encoded_U16`, `Encoded_U32`, `Encoded_U64` and so `Read_U*` and `Write_U*`), `Header_Nt_Status` |
-| `SMB.Spec.SMB2` | MS-SMB2 2.2.1: the SYNC header as a record of its fields, `Is_Sync_Header` (bytes that encode one) and `Request_Header` (a client's own request, 3.2.4.1); 2.2.15, 2.2.19, 2.2.21: the CLOSE, READ and WRITE requests (`Is_Close_Request`, `Is_Read_Request`, `Is_Write_Request`) and this client's READ and WRITE (`Client_Read`, `Client_Write`); 2.2.5, 2.2.9, 2.2.7, 2.2.11: SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT, and this client's (`Client_Session_Setup`, `Client_Tree_Connect`); 2.2.13, 2.2.33: CREATE and QUERY_DIRECTORY (`Is_Create_Fields`, `Is_Create_Request`, `Is_Query_Directory_Request`), and this client's (`Client_Create`, `Client_Query_Directory`) | `Core_Wire.Initialize_Header`, `Core_Request.Prepare_Header`; `Core_Protocol.Build_Close`, `Build_Read`, `Build_Write`, `Build_Session_Setup`, `Build_Tree_Connect`, `Build_Simple`, `Build_Create`, `Build_Query_Directory` |
+| `SMB.Spec.SMB2` | MS-SMB2 2.2.1: the SYNC header as a record of its fields, `Is_Sync_Header` (bytes that encode one) and `Request_Header` (a client's own request, 3.2.4.1); 2.2.15, 2.2.19, 2.2.21: the CLOSE, READ and WRITE requests (`Is_Close_Request`, `Is_Read_Request`, `Is_Write_Request`) and this client's READ and WRITE (`Client_Read`, `Client_Write`); 2.2.5, 2.2.9, 2.2.7, 2.2.11: SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT, and this client's (`Client_Session_Setup`, `Client_Tree_Connect`); 2.2.13, 2.2.33: CREATE and QUERY_DIRECTORY (`Is_Create_Fields`, `Is_Create_Request`, `Is_Query_Directory_Request`), and this client's (`Client_Create`, `Client_Query_Directory`); 2.2.37, 2.2.39: QUERY_INFO and SET_INFO (`Is_Query_Info_Request`, `Is_Set_Info_Request`, `Client_Query_Info`, `Client_Set_Info`) | `Core_Wire.Initialize_Header`, `Core_Request.Prepare_Header`; `Core_Protocol.Build_Close`, `Build_Read`, `Build_Write`, `Build_Session_Setup`, `Build_Tree_Connect`, `Build_Simple`, `Build_Create`, `Build_Query_Directory`, `Build_Query_Information`, `Build_Disposition`, `Build_End_Of_File`, `Build_Rename` |
+| `SMB.Spec.FSCC` | MS-FSCC 2.4.11, 2.4.14, 2.4.42.2, 2.4.34: FileDispositionInformation, FileEndOfFileInformation, FILE_RENAME_INFORMATION_TYPE_2 and FileNetworkOpenInformation's size, with their classes | `Core_Protocol.Build_Disposition`, `Build_End_Of_File`, `Build_Rename`, `Build_Query_Information`, `Rename_Information_Length` |
 
 Where each unit stands, from the survey at 0.4.0 and the phases since:
 
@@ -314,11 +315,13 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   `Core_Wire.Initialize_Header` and `Core_Request.Prepare_Header` (exact
   status; on success the 64 bytes are the header `SMB.Spec.SMB2` gives, the
   rest of the packet unchanged; on failure nothing changed); the CLOSE, READ,
-  WRITE, SESSION_SETUP, TREE_CONNECT, LOGOFF, TREE_DISCONNECT, CREATE and
-  QUERY_DIRECTORY builders of
+  WRITE, SESSION_SETUP, TREE_CONNECT, LOGOFF, TREE_DISCONNECT, CREATE,
+  QUERY_DIRECTORY, QUERY_INFO and SET_INFO (disposition, end of file,
+  rename) builders of
   `Core_Protocol` (exact status and `Used`; on success the request
-  `SMB.Spec.SMB2` gives, and every byte after it zero; on failure the whole
-  buffer zero).
+  `SMB.Spec.SMB2` gives, with the SET_INFO information `SMB.Spec.FSCC`
+  gives, and every byte after it zero, the bytes the standards leave open
+  stated as this client's; on failure the whole buffer zero).
 * **Fields stated, gaps left:** `Core_Wire.Validate_Header` (phase 7), the
   header copies in `Core_Client` and `Core_Connection` (phase 9), the other
   builders and `Parse_Response` of `Core_Protocol`, the header of

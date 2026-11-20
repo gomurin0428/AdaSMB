@@ -748,6 +748,12 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Set_Info_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         Zero_After);
    begin
       Begin_Build (Output, 33, Status);
       Put_U16 (Output, 0, 33, Status);
@@ -770,6 +776,12 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Query_Info_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         Zero_After);
    begin
       Begin_Build (Output, 41, Status);
       Put_U16 (Output, 0, 41, Status);
@@ -790,6 +802,12 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Set_Info_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         Zero_After);
    begin
       Begin_Build (Output, 40, Status);
       Put_U16 (Output, 0, 33, Status);
@@ -812,24 +830,30 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Set_Info_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
       --  The padding after a short name stays as Begin_Build cleared it.
       Required : constant Natural := Rename_Request_Length (Name'Length);
    begin
+      --  A name that is not UTF-16 is refused before anything is written,
+      --  so that a failure leaves the whole buffer zero.
+      if Name'Length mod 2 /= 0 then
+         Clear (Output);
+         Used := 0;
+         Status := SMB.Invalid_Length;
+         return;
+      end if;
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 33, Status);
-      if Status = SMB.Ok then
-         Put_Byte (Output, 2, 1, Status);
-         Put_Byte (Output, 3, 10, Status);
-      end if;
-      if Name'Length mod 2 /= 0 then
-         Status := SMB.Invalid_Length;
-      elsif Name'Length > SMB.DWord'Last - 20 then
-         Status := SMB.Resource_Limit;
-      else
-         Put_U32
-           (Output, 4,
-            SMB.DWord (Rename_Information_Length (Name'Length)), Status);
-      end if;
+      Put_Byte (Output, 2, 1, Status);
+      Put_Byte (Output, 3, 10, Status);
+      --  Maximum_Name_Bytes keeps the length a DWord.
+      Put_U32
+        (Output, 4,
+         SMB.DWord (Rename_Information_Length (Name'Length)), Status);
       Put_U16 (Output, 8, 96, Status);
       if Status = SMB.Ok then
          Copy (Output, 16, File_Id, Status);

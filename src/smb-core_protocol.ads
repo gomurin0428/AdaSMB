@@ -1,4 +1,5 @@
 with SMB.Core_Wire;
+with SMB.Spec.FSCC;
 with SMB.Spec.SMB2;
 
 package SMB.Core_Protocol is
@@ -35,7 +36,10 @@ package SMB.Core_Protocol is
    --  STATUS_INFO_LENGTH_MISMATCH" when it is shorter (MS-SMB2 3.3.5.21.1).
    function Rename_Information_Length (Name_Length : Natural) return Natural is
      (Natural'Max (24, 20 + Name_Length))
-   with Pre => Name_Length <= Maximum_Name_Bytes;
+   with Pre => Name_Length <= Maximum_Name_Bytes,
+     Post =>
+       Rename_Information_Length'Result =
+         SMB.Spec.FSCC.Rename_Information_Length (Name_Length);
 
    --  The SET_INFO body that carries it: 32 bytes of fields, then it.
    function Rename_Request_Length (Name_Length : Natural) return Natural is
@@ -421,10 +425,19 @@ package SMB.Core_Protocol is
    with Pre => File_Id'Length = 16
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       Status = (if Output'Length >= 33 then SMB.Ok else SMB.Resource_Limit)
+       and then Used = (if Status = SMB.Ok then 33 else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 33
+            SMB.Spec.SMB2.Is_Set_Info_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Set_Info
+                 (SMB.Spec.FSCC.File_Disposition_Information, 1, File_Id),
+               Output (Output'First + 32 .. Output'First + 32))
+            and then SMB.Spec.FSCC.Is_Disposition_Information
+              (Output (Output'First + 32 .. Output'First + 32), Delete_File)
+            and then Used = 33
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
             and then Output (Output'First + 2) = 1
             and then Output (Output'First + 3) = 13
@@ -453,10 +466,19 @@ package SMB.Core_Protocol is
    with Pre => File_Id'Length = 16
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       Status = (if Output'Length >= 41 then SMB.Ok else SMB.Resource_Limit)
+       and then Used = (if Status = SMB.Ok then 41 else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 41
+            SMB.Spec.SMB2.Is_Query_Info_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Query_Info
+                 (SMB.Spec.FSCC.File_Network_Open_Information,
+                  SMB.Spec.FSCC.Network_Open_Information_Size, File_Id))
+            --  The byte of Buffer, which the standard leaves open: zero.
+            and then Output (Output'First + 40) = 0
+            and then Used = 41
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 41
             and then Output (Output'First + 2) = 1
             and then Output (Output'First + 3) =
@@ -497,12 +519,24 @@ package SMB.Core_Protocol is
       Used : out Natural;
       Status : out SMB.Core_Status)
    with Pre => File_Id'Length = 16
-     and then Output'Length <= SMB.Maximum_Frame_Size,
+     and then Output'Length <= SMB.Maximum_Frame_Size
+     --  MS-FSCC 2.4.14: EndOfFile is signed and "MUST be greater than or
+     --  equal to 0".
+     and then Size <= 2 ** 63 - 1,
      Post =>
-       Used <= Output'Length
+       Status = (if Output'Length >= 40 then SMB.Ok else SMB.Resource_Limit)
+       and then Used = (if Status = SMB.Ok then 40 else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 40
+            SMB.Spec.SMB2.Is_Set_Info_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Set_Info
+                 (SMB.Spec.FSCC.File_End_Of_File_Information, 8, File_Id),
+               Output (Output'First + 32 .. Output'First + 39))
+            and then SMB.Spec.FSCC.Is_End_Of_File_Information
+              (Output (Output'First + 32 .. Output'First + 39), Size)
+            and then Used = 40
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
             and then Output (Output'First + 2) = 1
             and then Output (Output'First + 3) =
@@ -528,10 +562,33 @@ package SMB.Core_Protocol is
      and then Name'Length <= Maximum_Name_Bytes
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       --  An odd length (not UTF-16) comes before a short buffer.
+       Status =
+         (if Name'Length mod 2 /= 0 then SMB.Invalid_Length
+          elsif Output'Length < Rename_Request_Length (Name'Length)
+          then SMB.Resource_Limit
+          else SMB.Ok)
+       and then
+         Used =
+           (if Status = SMB.Ok then Rename_Request_Length (Name'Length)
+            else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = Rename_Request_Length (Name'Length)
+            SMB.Spec.SMB2.Is_Set_Info_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Set_Info
+                 (SMB.Spec.FSCC.File_Rename_Information,
+                  SMB.DWord (Rename_Information_Length (Name'Length)),
+                  File_Id),
+               Output (Output'First + 32 .. Output'First + (Used - 1)))
+            --  ReplaceIfExists FALSE and the name; the clauses below set the
+            --  Reserved bytes and the padding, which the standard leaves
+            --  open, to 0.
+            and then SMB.Spec.FSCC.Is_Rename_Information
+              (Output (Output'First + 32 .. Output'First + (Used - 1)),
+               False, Name)
+            and then Used = Rename_Request_Length (Name'Length)
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
             and then Output (Output'First + 2) = 1
             and then Output (Output'First + 3) = 10

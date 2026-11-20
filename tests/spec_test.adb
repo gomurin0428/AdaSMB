@@ -12,6 +12,7 @@ with Ada.Text_IO;
 with Interfaces;
 with SMB;
 with SMB.Spec.Encoding;
+with SMB.Spec.FSCC;
 with SMB.Spec.SMB2;
 
 procedure Spec_Test is
@@ -870,12 +871,237 @@ procedure Spec_Test is
          "structure sizes and constants");
       Passed;
    end Test_SMB2_Create;
+   --  MS-SMB2 2.2.37 and 2.2.39 (QUERY_INFO, SET_INFO) and the MS-FSCC 2.4
+   --  structures this client sends. The SET_INFO is MS-SMB2 4.6's, which
+   --  sets FileEndOfFileInformation and gives every field (EndOfFile
+   --  0x2F000 on FileId 0x19, 0xFFFFFFFF00000005); the others are built
+   --  from the layouts, every field a distinct multi-byte value, every byte
+   --  flipped in turn.
+   procedure Test_SMB2_Info is
+      package S renames SMB.Spec.SMB2;
+      package F renames SMB.Spec.FSCC;
+      use type SMB.Bytes;
+      use type S.Query_Info_Request;
+      use type S.Set_Info_Request;
+      End_Of_File_Body : constant SMB.Bytes :=
+        (16#21#, 16#00#, 16#01#, 16#14#, 16#08#, 16#00#, 16#00#, 16#00#,
+        16#60#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+        16#19#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+        16#05#, 16#00#, 16#00#, 16#00#, 16#FF#, 16#FF#, 16#FF#, 16#FF#,
+        16#00#, 16#F0#, 16#02#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#);
+      Id_461 : constant SMB.Bytes (0 .. 15) :=
+        (16#19#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+        16#05#, 16#00#, 16#00#, 16#00#, 16#FF#, 16#FF#, 16#FF#, 16#FF#);
+      File_Id : constant SMB.Bytes (0 .. 15) :=
+        (16#05#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
+        16#01#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#);
+      Full_Query : constant SMB.Bytes (500 .. 540) :=
+        (16#29#, 16#00#, 16#02#, 16#22#, 16#14#, 16#13#, 16#12#, 16#11#,
+        16#22#, 16#21#, 16#32#, 16#31#, 16#44#, 16#43#, 16#42#, 16#41#,
+        16#54#, 16#53#, 16#52#, 16#51#, 16#64#, 16#63#, 16#62#, 16#61#,
+        16#05#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
+        16#01#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
+        16#AA#);
+      --  BufferOffset 104: 8 bytes between the fields and the information.
+      Full_Set : constant SMB.Bytes :=
+        (16#21#, 16#00#, 16#02#, 16#0A#, 16#03#, 16#00#, 16#00#, 16#00#,
+        16#68#, 16#00#, 16#72#, 16#71#, 16#84#, 16#83#, 16#82#, 16#81#,
+        16#05#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#,
+        16#01#, 16#00#, 16#00#, 16#00#, 16#04#, 16#00#, 16#00#, 16#00#)
+        & (0, 0, 0, 0, 0, 0, 0, 0) & (16#41#, 16#42#, 16#43#);
+      Full_Query_Request : constant S.Query_Info_Request :=
+        (Info_Type => 2, File_Info_Class => 16#22#,
+         Output_Buffer_Length => 16#1112_1314#,
+         Input_Buffer_Offset => 16#2122#, Reserved => 16#3132#,
+         Input_Buffer_Length => 16#4142_4344#,
+         Additional_Information => 16#5152_5354#, Flags => 16#6162_6364#,
+         File_Id => File_Id)
+      with Ghost;
+      Full_Set_Request : constant S.Set_Info_Request :=
+        (Info_Type => 2, File_Info_Class => 16#0A#, Buffer_Length => 3,
+         Buffer_Offset => 104, Reserved => 16#7172#,
+         Additional_Information => 16#8182_8384#, File_Id => File_Id)
+      with Ghost;
+      --  FILE_RENAME_INFORMATION_TYPE_2 for the one-character name "b":
+      --  20 bytes, the name, 2 bytes of padding.
+      Rename_B : constant SMB.Bytes :=
+        (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+         16#02#, 0, 0, 0, 16#62#, 0, 0, 0);
+      Rename_Long : constant SMB.Bytes :=
+        (1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+         16#06#, 0, 0, 0, 16#61#, 0, 16#62#, 0, 16#63#, 0);
+      --  The same bytes at indices that do not start at 0, as the
+      --  predicates must read from Data'First.
+      End_Of_File_High : constant SMB.Bytes (300 .. 339) := End_Of_File_Body;
+      Rename_B_High : constant SMB.Bytes (700 .. 723) := Rename_B;
+   begin
+      pragma Assert
+        (S.Is_Set_Info_Request
+           (End_Of_File_Body,
+            S.Client_Set_Info (F.File_End_Of_File_Information, 8, Id_461),
+            End_Of_File_Body (32 .. 39))
+         and then F.Is_End_Of_File_Information
+           (End_Of_File_Body (32 .. 39), 16#2_F000#),
+         "MS-SMB2 4.6's SET_INFO FileEndOfFileInformation");
+      Passed;
+      pragma Assert
+        (S.Is_Set_Info_Request
+           (End_Of_File_High,
+            S.Client_Set_Info (F.File_End_Of_File_Information, 8, Id_461),
+            End_Of_File_High (332 .. 339))
+         and then F.Is_End_Of_File_Information
+           (End_Of_File_High (332 .. 339), 16#2_F000#)
+         and then F.Is_Rename_Information
+           (Rename_B_High, False, SMB.Bytes'(16#62#, 0)),
+         "SET_INFO and its information at high indices");
+      Passed;
+      pragma Assert
+        (S.Is_Query_Info_Request (Full_Query, Full_Query_Request)
+         and then S.Is_Set_Info_Request
+           (Full_Set, Full_Set_Request,
+            SMB.Bytes'(16#41#, 16#42#, 16#43#)),
+         "QUERY_INFO and SET_INFO with every field set");
+      Passed;
+      for Index in Full_Query'Range loop
+         declare
+            Changed : SMB.Bytes := Full_Query;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            --  The byte of Buffer is not part of the request's fields.
+            pragma Assert
+              (Index = Full_Query'Last
+               or else not S.Is_Query_Info_Request
+                 (Changed, Full_Query_Request),
+               "every QUERY_INFO byte");
+         end;
+      end loop;
+      Passed;
+      --  The byte of Buffer that StructureSize counts is not required.
+      pragma Assert
+        (S.Is_Query_Info_Request (Full_Query (500 .. 539), Full_Query_Request)
+         and then not S.Is_Query_Info_Request
+           (Full_Query (500 .. 538), Full_Query_Request),
+         "QUERY_INFO: 40 bytes of fields");
+      Passed;
+      for Index in Full_Set'Range loop
+         declare
+            Changed : SMB.Bytes := Full_Set;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            pragma Assert
+              (Index in Full_Set'First + 32 .. Full_Set'First + 39
+               or else not S.Is_Set_Info_Request
+                 (Changed, Full_Set_Request,
+                  SMB.Bytes'(16#41#, 16#42#, 16#43#)),
+               "every SET_INFO byte");
+         end;
+      end loop;
+      Passed;
+      --  BufferLength is the information's length, and BufferOffset never
+      --  points into the fields.
+      declare
+         Overlap : SMB.Bytes := Full_Set;
+      begin
+         Overlap (Overlap'First + 8) := 16#5C#;
+         pragma Assert
+           (not S.Is_Set_Info_Request
+              (Full_Set, Full_Set_Request, SMB.Bytes'(16#41#, 16#42#))
+            and then not S.Is_Set_Info_Request
+              (Overlap, (Full_Set_Request with delta Buffer_Offset => 92),
+               SMB.Bytes'(16#04#, 16#00#, 16#00#)),
+            "BufferLength, and an offset into the fields");
+      end;
+      Passed;
+      --  The information structures.
+      pragma Assert
+        (F.Is_Disposition_Information (SMB.Bytes'(0 => 1), True)
+         and then F.Is_Disposition_Information (SMB.Bytes'(0 => 0), False)
+         and then not F.Is_Disposition_Information (SMB.Bytes'(0 => 1), False)
+         and then not F.Is_Disposition_Information (SMB.Bytes'(0, 0), False),
+         "FileDispositionInformation");
+      Passed;
+      pragma Assert
+        (F.Is_End_Of_File_Information
+           (SMB.Bytes'(16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#,
+                       16#FF#, 16#7F#), 2 ** 63 - 1)
+         and then not F.Is_End_Of_File_Information
+           (SMB.Bytes'(0, 0, 0, 0, 0, 0, 0, 16#80#), 2 ** 63)
+         and then not F.Is_End_Of_File_Information
+           (SMB.Bytes'(0, 16#F0#, 2, 0, 0, 0, 0), 16#2_F000#)
+         and then not F.Is_End_Of_File_Information
+           (SMB.Bytes'(0, 16#F0#, 2, 0, 0, 0, 0, 0, 0), 16#2_F000#),
+         "FileEndOfFileInformation: signed, 8 bytes");
+      Passed;
+      pragma Assert
+        (F.Is_Rename_Information (Rename_B, False, SMB.Bytes'(16#62#, 0))
+         and then not F.Is_Rename_Information
+           (Rename_B (Rename_B'First .. Rename_B'Last - 2), False,
+            SMB.Bytes'(16#62#, 0))
+         and then F.Is_Rename_Information
+           (Rename_Long, True, SMB.Bytes'(16#61#, 0, 16#62#, 0, 16#63#, 0))
+         and then not F.Is_Rename_Information
+           (Rename_Long, False, SMB.Bytes'(16#61#, 0, 16#62#, 0, 16#63#, 0))
+         and then F.Rename_Information_Length (2) = 24
+         and then F.Rename_Information_Length (6) = 26,
+         "FILE_RENAME_INFORMATION_TYPE_2, padded to 24 bytes");
+      Passed;
+      --  No more padding than 24 bytes need (the standard's MUST; older
+      --  Windows clients sent up to 4 more, endnote <161>), and any nonzero
+      --  ReplaceIfExists is TRUE (MS-FSCC 2.1.8).
+      pragma Assert
+        (not F.Is_Rename_Information
+           (Rename_Long & SMB.Bytes'(0, 0), True,
+            SMB.Bytes'(16#61#, 0, 16#62#, 0, 16#63#, 0))
+         and then not F.Is_Rename_Information
+           (Rename_B & SMB.Bytes'(0, 0), False, SMB.Bytes'(16#62#, 0))
+         and then F.Is_Rename_Information
+           (SMB.Bytes'(0 => 2) & Rename_Long (Rename_Long'First + 1
+                                               .. Rename_Long'Last),
+            True, SMB.Bytes'(16#61#, 0, 16#62#, 0, 16#63#, 0)),
+         "FILE_RENAME_INFORMATION_TYPE_2: exact padding, a Boolean");
+      Passed;
+      for Index in Rename_Long'Range loop
+         declare
+            Changed : SMB.Bytes := Rename_Long;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            --  The Reserved bytes "can contain any value".
+            pragma Assert
+              (Index in Rename_Long'First + 1 .. Rename_Long'First + 7
+               or else not F.Is_Rename_Information
+                 (Changed, True, SMB.Bytes'(16#61#, 0, 16#62#, 0, 16#63#, 0)),
+               "every FILE_RENAME_INFORMATION byte");
+         end;
+      end loop;
+      Passed;
+      --  This client's requests and the classes.
+      pragma Assert
+        (S.Client_Query_Info (34, 56, File_Id)
+         = (Info_Type => 1, File_Info_Class => 34, Output_Buffer_Length => 56,
+            Input_Buffer_Offset => 0, Reserved => 0, Input_Buffer_Length => 0,
+            Additional_Information => 0, Flags => 0, File_Id => File_Id)
+         and then S.Client_Set_Info (13, 1, File_Id)
+           = (Info_Type => 1, File_Info_Class => 13, Buffer_Length => 1,
+              Buffer_Offset => 96, Reserved => 0, Additional_Information => 0,
+              File_Id => File_Id)
+         and then S.Info_File = 1
+         and then S.Query_Info_Request_Size = 41
+         and then S.Set_Info_Request_Size = 33
+         and then F.File_Disposition_Information = 13
+         and then F.File_End_Of_File_Information = 20
+         and then F.File_Rename_Information = 10
+         and then F.File_Network_Open_Information = 34
+         and then F.Network_Open_Information_Size = 56,
+         "this client's QUERY_INFO and SET_INFO, and the classes");
+      Passed;
+   end Test_SMB2_Info;
 begin
    Test_Encoding;
    Test_SMB2_Header;
    Test_SMB2_Transfer;
    Test_SMB2_Session;
    Test_SMB2_Create;
+   Test_SMB2_Info;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;

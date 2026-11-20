@@ -6918,6 +6918,18 @@ procedure Test_Suite is
       SMB.Core_Protocol.Build_Create
         (SMB.Bytes'(0 => 16#61#), 0, 1, False, Output, Used, Status);
       Expect_Failure (SMB.Invalid_Length, "odd CREATE name");
+      --  One byte short of the fields and the name: refused, and nothing
+      --  written.
+      declare
+         Short : SMB.Bytes (0 .. 56) := (others => 16#EE#);
+      begin
+         SMB.Core_Protocol.Build_Create
+           (Hex ("6100"), 16#8112_3489#, 1, False, Short, Used, Status);
+         Assert
+           (Status = SMB.Resource_Limit and then Used = 0
+            and then Short = (Short'Range => 0),
+            "CREATE one byte short");
+      end;
 
       SMB.Core_Protocol.Build_Read
         (File_Id, Offset, 65_536, Output, Used, Status);
@@ -7004,6 +7016,30 @@ procedure Test_Suite is
       SMB.Core_Protocol.Build_Rename
         (File_Id, SMB.Bytes'(0 => 16#62#), Output, Used, Status);
       Expect_Failure (SMB.Invalid_Length, "odd rename target");
+      --  An odd name is refused before a short buffer.
+      Output := (others => 16#EE#);
+      SMB.Core_Protocol.Build_Rename
+        (File_Id, SMB.Bytes'(0 => 16#62#), Output (0 .. 9), Used, Status);
+      Assert
+        (Status = SMB.Invalid_Length and then Used = 0
+         and then (for all Index in 0 .. 9 => Output (Index) = 0),
+         "odd rename target in a short buffer");
+      --  32 bytes of fields and 24 of information, one byte short.
+      Output := (others => 16#EE#);
+      SMB.Core_Protocol.Build_Rename
+        (File_Id, Hex ("62006300"), Output (0 .. 54), Used, Status);
+      Assert
+        (Status = SMB.Resource_Limit and then Used = 0
+         and then (for all Index in 0 .. 54 => Output (Index) = 0),
+         "SET_INFO rename request one byte short");
+      --  32 bytes of fields and 1 of information, one byte short.
+      Output := (others => 16#EE#);
+      SMB.Core_Protocol.Build_Disposition
+        (File_Id, True, Output (0 .. 31), Used, Status);
+      Assert
+        (Status = SMB.Resource_Limit and then Used = 0
+         and then (for all Index in 0 .. 31 => Output (Index) = 0),
+         "SET_INFO disposition request one byte short");
    end Test_Protocol_Builders;
 
    --  Response fields each parser must check, with the status it reports.
