@@ -73,7 +73,7 @@ of date.
 | after 0.4.0 | `Write_U64` without loop invariants, which ran over the whole packet in production | merged (#151) |
 | after 0.4.0 | Platinum phase 3, CLOSE, READ and WRITE: their requests in `SMB.Spec.SMB2`, `Build_Close`, `Build_Read`, `Build_Write` proved against them | merged (#152) |
 | after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | merged (#154) |
-| after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | #157 |
+| after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | #156 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -686,7 +686,7 @@ opens a received one. It is a stateless SPARK unit, like
   connection-level, unsigned and tampered-signature, interrupted READ and
   lost WRITE modes, `AsyncProxy` and the directory limits.
 
-## A mutant's proof gets 5 minutes (#157)
+## A mutant's proof gets 5 minutes (#156)
 
 * With AdaMutant 2c87491 the contracts in the bodies are mutated too, and
   a mutant of a contract in a large unit changes many of its goals: in
