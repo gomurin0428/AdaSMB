@@ -8,6 +8,7 @@ project Proof is
       "smb-spec-encoding.ads",
       "smb-spec-smb2.ads",
       "smb-spec-fscc.ads",
+      "smb-spec-smb2-negotiation.ads",
       "smb-crypto.ads",
       "smb-crypto.adb",
       "smb-aes.ads",

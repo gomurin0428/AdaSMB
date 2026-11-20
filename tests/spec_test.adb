@@ -14,6 +14,7 @@ with SMB;
 with SMB.Spec.Encoding;
 with SMB.Spec.FSCC;
 with SMB.Spec.SMB2;
+with SMB.Spec.SMB2.Negotiation;
 
 procedure Spec_Test is
    use type Interfaces.Unsigned_8;
@@ -1095,6 +1096,318 @@ procedure Spec_Test is
          "this client's QUERY_INFO and SET_INFO, and the classes");
       Passed;
    end Test_SMB2_Info;
+
+   --  The bytes a string of hexadecimal digits spells, from index 0.
+   function Hex (Text : String) return SMB.Bytes is
+      function Digit (Char : Character) return SMB.Byte is
+        (case Char is
+            when '0' .. '9' =>
+              SMB.Byte (Character'Pos (Char) - Character'Pos ('0')),
+            when 'A' .. 'F' =>
+              SMB.Byte (Character'Pos (Char) - Character'Pos ('A') + 10),
+            when others => raise Program_Error);
+      Result : SMB.Bytes (0 .. Text'Length / 2 - 1);
+   begin
+      for Index in Result'Range loop
+         Result (Index) :=
+           Digit (Text (Text'First + 2 * Index)) * 16
+           + Digit (Text (Text'First + 2 * Index + 1));
+      end loop;
+      return Result;
+   end Hex;
+
+   --  MS-SMB2 2.2.3 and 2.2.3.1: the NEGOTIATE request and its contexts.
+   procedure Test_SMB2_Negotiate is
+      package N renames SMB.Spec.SMB2.Negotiation;
+      use type SMB.Bytes;
+      use type N.Word_List;
+      use type N.Negotiate_Request;
+      --  The NEGOTIATE requests of the test client in "SMB 3.1.1
+      --  Pre-authentication integrity in Windows 10" (Microsoft Open
+      --  Specifications blog, 2015), appendices A.1 (with Windows 10's
+      --  contexts), A.2 and B, after the 64-byte header: five dialects,
+      --  SecurityMode 0, Capabilities 0x3F, the contexts at offset 0x70.
+      Windows_Fields : constant String :=
+        "24000500000000003F000000";
+      Body_A1 : constant SMB.Bytes :=
+        Hex (Windows_Fields & "ECD86F326276024F9F7752B89BB33F3A"
+             & "70000000" & "0200" & "0000" & "02021002000302031103" & "0000"
+             & "0100260000000000" & "010020000100"
+             & "FA49E6578F1F3A9F4CD3E9CC14A67AA8"
+             & "84B3D05844E0E5A118225C15887F32FF"
+             & "0000"
+             & "0200060000000000" & "020002000100");
+      Body_A2 : constant SMB.Bytes :=
+        Hex (Windows_Fields & "C318232F0EDFFB4D99991F725DA93B3E"
+             & "70000000" & "0200" & "0000" & "02021002000302031103" & "0000"
+             & "0100260000000000" & "010020000100"
+             & "BE43C3C288C4D3992CD82559E382F0AA"
+             & "CEB5A1D936A1BFF07AD1E0C18DB0CA86"
+             & "0000"
+             & "0200040000000000" & "01000100");
+      Body_B : constant SMB.Bytes :=
+        Hex (Windows_Fields & "4C3DB6FB51377A45AB915E5700F9D91B"
+             & "70000000" & "0100" & "0000" & "02021002000302031103" & "0000"
+             & "0100260000000000" & "010020000100"
+             & "E2D024DB75ED67B6323EDB6BD24FC4C9"
+             & "7ECD893481CE1BEFDBD1DE3D09DF9DB5");
+      Windows_Request : constant N.Negotiate_Request :=
+        (Dialect_Count => 5, Security_Mode => 0, Capabilities => 16#3F#,
+         Negotiate_Context_Offset => 16#70#, Negotiate_Context_Count => 2)
+      with Ghost;
+      Windows_Dialect_List : constant N.Word_List :=
+        (N.Dialect_0202, N.Dialect_0210, N.Dialect_0300, N.Dialect_0302,
+         N.Dialect_0311)
+      with Ghost;
+
+      --  This client's request, with a GUID and a salt whose bytes all
+      --  differ: 3.1.1 alone, then with 2.1.
+      Guid : constant SMB.Bytes := Hex ("101112131415161718191A1B1C1D1E1F");
+      Salt : constant SMB.Bytes :=
+        Hex ("202122232425262728292A2B2C2D2E2F"
+             & "303132333435363738393A3B3C3D3E3F");
+      function Client_Body (Allow_21 : Boolean) return SMB.Bytes is
+        (Hex ("2400" & (if Allow_21 then "0200" else "0100") & "0300"
+              & "0000" & "44000000")
+         & Guid
+         & Hex ("68000000" & "0300" & "0000" & "1103"
+                & (if Allow_21 then "1002" else "0000")
+                & "0100260000000000" & "010020000100")
+         & Salt
+         & Hex ("0000"
+                & "0200" & "0A00" & "00000000" & "0400" & "0200" & "0100"
+                & "0400" & "0300" & "000000000000"
+                & "0800" & "0600" & "00000000" & "0200" & "0200" & "0100"));
+      Client_Only_311 : constant SMB.Bytes := Client_Body (False);
+      Client_With_21 : constant SMB.Bytes := Client_Body (True);
+      Client_High : constant SMB.Bytes (1000 .. 1125) := Client_Only_311;
+   begin
+      pragma Assert
+        (Body_A1'Length = 110
+         and then N.Is_Negotiate_Request
+           (Body_A1, Windows_Request, Body_A1 (12 .. 27),
+            Windows_Dialect_List)
+         and then N.First_Context (5) = 48
+         and then Natural (Windows_Request.Negotiate_Context_Offset) =
+           SMB.Spec.SMB2.Header_Size + 48
+         and then N.Is_Zero (Body_A1, 46, 48)
+         and then N.Is_Negotiate_Context
+           (Body_A1, 48, N.Preauth_Integrity_Capabilities, 38)
+         and then N.Is_Preauth_Integrity_Capabilities
+           (N.Context_Data (Body_A1, 48, 38), (0 => N.SHA_512),
+            Body_A1 (62 .. 93))
+         and then N.Next_Context (48, 38) = 96
+         and then N.Is_Zero (Body_A1, 94, 96)
+         and then N.Is_Negotiate_Context
+           (Body_A1, 96, N.Encryption_Capabilities, 6)
+         and then N.Is_Encryption_Capabilities
+           (N.Context_Data (Body_A1, 96, 6),
+            (N.AES_128_GCM, N.AES_128_CCM))
+         and then Body_A1'Length = 96 + 8 + 6,
+         "the blog's NEGOTIATE, appendix A.1");
+      Passed;
+      pragma Assert
+        (Body_A2'Length = 108
+         and then N.Is_Negotiate_Request
+           (Body_A2, Windows_Request, Body_A2 (12 .. 27),
+            Windows_Dialect_List)
+         and then N.Is_Negotiate_Context
+           (Body_A2, 48, N.Preauth_Integrity_Capabilities, 38)
+         and then N.Is_Preauth_Integrity_Capabilities
+           (N.Context_Data (Body_A2, 48, 38), (0 => N.SHA_512),
+            Body_A2 (62 .. 93))
+         and then N.Is_Negotiate_Context
+           (Body_A2, 96, N.Encryption_Capabilities, 4)
+         and then N.Is_Encryption_Capabilities
+           (N.Context_Data (Body_A2, 96, 4), (0 => N.AES_128_CCM))
+         and then Body_A2'Length = 96 + 8 + 4
+         and then Body_B'Length = 94
+         and then N.Is_Negotiate_Request
+           (Body_B, (Windows_Request with delta Negotiate_Context_Count => 1),
+            Body_B (12 .. 27), Windows_Dialect_List)
+         and then N.Is_Negotiate_Context
+           (Body_B, 48, N.Preauth_Integrity_Capabilities, 38)
+         and then N.Is_Preauth_Integrity_Capabilities
+           (N.Context_Data (Body_B, 48, 38), (0 => N.SHA_512),
+            Body_B (62 .. 93))
+         and then Body_B'Length = 48 + 8 + 38,
+         "the blog's NEGOTIATE, appendices A.2 and B");
+      Passed;
+      for Index in Body_A1'Range loop
+         declare
+            Changed : SMB.Bytes := Body_A1;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            --  The padding bytes have no value in the standard.
+            pragma Assert
+              (Index in 46 .. 47 | 94 .. 95
+               or else not
+                 (N.Is_Negotiate_Request
+                    (Changed, Windows_Request, Body_A1 (12 .. 27),
+                     Windows_Dialect_List)
+                  and then N.Is_Negotiate_Context
+                    (Changed, 48, N.Preauth_Integrity_Capabilities, 38)
+                  and then N.Is_Preauth_Integrity_Capabilities
+                    (N.Context_Data (Changed, 48, 38), (0 => N.SHA_512),
+                     Body_A1 (62 .. 93))
+                  and then N.Is_Negotiate_Context
+                    (Changed, 96, N.Encryption_Capabilities, 6)
+                  and then N.Is_Encryption_Capabilities
+                    (N.Context_Data (Changed, 96, 6),
+                     (N.AES_128_GCM, N.AES_128_CCM))),
+               "every byte of the blog's NEGOTIATE");
+         end;
+      end loop;
+      Passed;
+      --  Without 3.1.1 the 8 bytes are ClientStartTime, which is 0; there
+      --  is at least one dialect; and a list of algorithms is never empty.
+      declare
+         Only_21 : constant SMB.Bytes :=
+           Hex ("2400" & "0200" & "0100" & "0000" & "00000000")
+           & Guid & Hex ("0000000000000000" & "0202" & "1002");
+         Started : SMB.Bytes := Only_21;
+         No_Dialect : SMB.Bytes := Only_21 (0 .. 35);
+         Unknown : SMB.Bytes := Only_21 (0 .. 37);
+         One_Known : SMB.Bytes := Only_21;
+         Unaligned : SMB.Bytes := Body_A1;
+      begin
+         Started (30) := 1;
+         No_Dialect (2) := 0;
+         --  One dialect, 0x0201, which 2.2.3 does not define.
+         Unknown (2) := 1;
+         Unknown (36) := 1;
+         One_Known (38) := 1;
+         Unaligned (28) := 16#71#;
+         pragma Assert
+           (N.Is_Negotiate_Request
+              (Only_21, (2, 1, 0, 0, 0), Guid,
+               (N.Dialect_0202, N.Dialect_0210))
+            and then not N.Offers_0311 ((N.Dialect_0202, N.Dialect_0210))
+            --  NegotiateContextOffset and NegotiateContextCount do not
+            --  exist without 3.1.1.
+            and then N.Is_Negotiate_Request
+              (Only_21, (2, 1, 0, 16#70#, 2), Guid,
+               (N.Dialect_0202, N.Dialect_0210))
+            and then not N.Is_Negotiate_Request
+              (Started, (2, 1, 0, 0, 0), Guid,
+               (N.Dialect_0202, N.Dialect_0210))
+            and then not N.Is_Negotiate_Request
+              (No_Dialect, (0, 1, 0, 0, 0), Guid, (1 .. 0 => 0))
+            --  DialectCount is the number of dialects, ClientGuid 16 bytes.
+            and then not N.Is_Negotiate_Request
+              (Only_21, (2, 1, 0, 0, 0), Guid, (0 => N.Dialect_0202))
+            and then not N.Is_Negotiate_Request
+              (Only_21, (2, 1, 0, 0, 0), Guid (Guid'First .. Guid'Last - 1),
+               (N.Dialect_0202, N.Dialect_0210))
+            --  At least one dialect 2.2.3 defines.
+            and then not N.Is_Negotiate_Request
+              (Unknown, (1, 1, 0, 0, 0), Guid, (0 => 16#0201#))
+            and then N.Is_Negotiate_Request
+              (One_Known, (2, 1, 0, 0, 0), Guid, (N.Dialect_0202, 16#0201#))
+            --  The first context is 8-byte aligned.
+            and then not N.Is_Negotiate_Request
+              (Unaligned,
+               (Windows_Request with delta Negotiate_Context_Offset => 16#71#),
+               Body_A1 (12 .. 27), Windows_Dialect_List)
+            and then not N.Is_Encryption_Capabilities
+              (Hex ("0000"), (1 .. 0 => 0))
+            and then not N.Is_Signing_Capabilities
+              (Hex ("0000"), (1 .. 0 => 0))
+            and then not N.Is_Preauth_Integrity_Capabilities
+              (Hex ("00000000"), (1 .. 0 => 0), Hex (""))
+            --  A context's data is exactly its fields.
+            and then N.Is_Encryption_Capabilities
+              (Hex ("01000100"), (0 => N.AES_128_CCM))
+            and then not N.Is_Encryption_Capabilities
+              (Hex ("0100010000"), (0 => N.AES_128_CCM))
+            and then N.Is_Signing_Capabilities
+              (Hex ("01000100"), (0 => N.AES_CMAC))
+            and then not N.Is_Signing_Capabilities
+              (Hex ("0100010000"), (0 => N.AES_CMAC))
+            and then N.Is_Preauth_Integrity_Capabilities
+              (Hex ("010001000100AB"), (0 => N.SHA_512), Hex ("AB"))
+            and then not N.Is_Preauth_Integrity_Capabilities
+              (Hex ("010001000100AB00"), (0 => N.SHA_512), Hex ("AB")),
+            "ClientStartTime, no empty lists, exact context data");
+      end;
+      Passed;
+      --  Every byte of ClientStartTime.
+      for Index in 28 .. 35 loop
+         declare
+            Only_21 : SMB.Bytes :=
+              Hex ("2400" & "0200" & "0100" & "0000" & "00000000")
+              & Guid & Hex ("0000000000000000" & "0202" & "1002");
+         begin
+            Only_21 (Index) := 1;
+            pragma Assert
+              (not N.Is_Negotiate_Request
+                 (Only_21, (2, 1, 0, 0, 0), Guid,
+                  (N.Dialect_0202, N.Dialect_0210)),
+               "every byte of ClientStartTime");
+         end;
+      end loop;
+      Passed;
+      --  Alignment: each context at the first multiple of 8 after the one
+      --  before; a context that ends aligned is followed at once.
+      pragma Assert
+        (N.First_Context (1) = 40 and then N.First_Context (2) = 40
+         and then N.First_Context (3) = 48
+         and then N.Next_Context (40, 38) = 88
+         and then N.Next_Context (88, 10) = 112
+         and then N.Next_Context (88, 8) = 104
+         and then N.Align_8 (0) = 0 and then N.Align_8 (1) = 8,
+         "negotiate context alignment");
+      Passed;
+      pragma Assert
+        (Client_Only_311'Length = 126
+         and then N.Is_Client_Negotiate_Request
+           (Client_Only_311, Guid, Salt, False)
+         and then N.Is_Client_Negotiate_Request
+           (Client_With_21, Guid, Salt, True)
+         and then N.Is_Client_Negotiate_Request
+           (Client_High, Guid, Salt, False)
+         and then not N.Is_Client_Negotiate_Request
+           (Client_Only_311, Guid, Salt, True)
+         and then not N.Is_Client_Negotiate_Request
+           (Client_With_21, Guid, Salt, False)
+         and then not N.Is_Client_Negotiate_Request
+           (Client_Only_311 & Hex ("00"), Guid, Salt, False)
+         and then not N.Is_Client_Negotiate_Request
+           (Client_Only_311, Guid, Guid & Guid, False),
+         "this client's NEGOTIATE");
+      Passed;
+      for Allow_21 in Boolean loop
+         for Index in Client_Only_311'Range loop
+            declare
+               Changed : SMB.Bytes := Client_Body (Allow_21);
+            begin
+               Changed (Index) := Changed (Index) xor 16#01#;
+               pragma Assert
+                 (not N.Is_Client_Negotiate_Request
+                    (Changed, Guid, Salt, Allow_21),
+                  "every byte of this client's NEGOTIATE");
+            end;
+         end loop;
+      end loop;
+      Passed;
+      pragma Assert
+        (N.Client_Negotiate (False)
+         = (Dialect_Count => 1, Security_Mode => 3, Capabilities => 16#44#,
+            Negotiate_Context_Offset => 104, Negotiate_Context_Count => 3)
+         and then N.Client_Negotiate (True).Dialect_Count = 2
+         and then N.Client_Negotiate (True).Negotiate_Context_Offset = 104
+         and then N.Client_Ciphers = (2, 1, 4, 3)
+         and then N.Client_Signing_Algorithms = (2, 1)
+         and then N.Client_Hash_Algorithms = (0 => 1)
+         and then N.Preauth_Integrity_Capabilities = 1
+         and then N.Encryption_Capabilities = 2
+         and then N.Signing_Capabilities = 8
+         and then N.Dialect_0311 = 16#0311#
+         and then N.Global_Cap_Encryption = 16#40#
+         and then N.Global_Cap_Large_MTU = 4,
+         "this client's NEGOTIATE fields, and the constants");
+      Passed;
+   end Test_SMB2_Negotiate;
 begin
    Test_Encoding;
    Test_SMB2_Header;
@@ -1102,6 +1415,7 @@ begin
    Test_SMB2_Session;
    Test_SMB2_Create;
    Test_SMB2_Info;
+   Test_SMB2_Negotiate;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;

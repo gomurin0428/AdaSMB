@@ -108,31 +108,6 @@ package SMB.Core_Protocol is
    with Ghost,
      Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
-   procedure Build_Negotiate
-     (Guid : SMB.Bytes;
-      Output : out SMB.Bytes;
-      Used : out Natural;
-      Status : out SMB.Core_Status)
-   with Pre => Guid'Length = 16
-     and then Output'Length <= SMB.Maximum_Frame_Size,
-     Post =>
-       Used <= Output'Length
-       and then
-         (if Status = SMB.Ok then
-            Used = 38
-            and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 36
-            and then SMB.Core_Wire.Encoded_U16 (Output, 2) = 1
-            and then SMB.Core_Wire.Encoded_U16 (Output, 4) = 3
-            and then SMB.Core_Wire.Encoded_U16 (Output, 6) = 0
-            and then SMB.Core_Wire.Encoded_U32 (Output, 8) = 0
-            and then SMB.Core_Wire.Encoded_U64 (Output, 28) = 0
-            and then SMB.Core_Wire.Encoded_U16
-              (Output, 36) = SMB.SMB2_Dialect_0210
-            and then
-              (for all Index in 0 .. 15 =>
-                 Output (Output'First + 12 + Index) =
-                   Guid (Guid'First + Index)));
-
    procedure Build_Session_Setup
      (Token : SMB.Bytes;
       Output : out SMB.Bytes;

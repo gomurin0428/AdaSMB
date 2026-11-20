@@ -33,8 +33,9 @@ or ambiguous, the choice is marked as ours.
   DialectRevision must be one of the offered dialects, or the connection is
   closed.
 * SecurityMode stays 3 (signing enabled and required), as today. Capabilities is
-  SMB2_GLOBAL_CAP_ENCRYPTION (`0x40`) and nothing else. A server encrypts its
-  responses only if the client set this bit (§3.3.4.1.4).
+  SMB2_GLOBAL_CAP_ENCRYPTION (`0x40`) and, since #137,
+  SMB2_GLOBAL_CAP_LARGE_MTU (`0x04`). A server encrypts its responses only if
+  the client set the encryption bit (§3.3.4.1.4).
 * Negotiate contexts start at the first 8-byte-aligned offset after the
   dialects (offsets count from the SMB2 header), and each context starts
   8-byte aligned:

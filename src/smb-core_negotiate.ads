@@ -3,6 +3,8 @@
 --  contexts, and the checks on the negotiate contexts of a response that
 --  selected 3.1.1. Packet offsets count from the start of the SMB2 header, as
 --  the protocol's offset fields do.
+with SMB.Spec.SMB2.Negotiation;
+
 package SMB.Core_Negotiate is
    pragma SPARK_Mode (On);
 
@@ -32,14 +34,14 @@ package SMB.Core_Negotiate is
 
    --  The body of a NEGOTIATE request that offers 3.1.1, and 2.1 too when
    --  Allow_21 is set. SecurityMode is 3 (signing enabled and required) and
-   --  Capabilities is SMB2_GLOBAL_CAP_ENCRYPTION. The preauth integrity
-   --  context offers SHA-512 with Salt, and the encryption context offers
-   --  AES-128-GCM, AES-128-CCM, AES-256-GCM and AES-256-CCM, in the order a
-   --  Windows client offers them by default. The signing context offers
-   --  AES-GMAC, then AES-CMAC. The server chooses from each. Its
-   --  completion in the private part gives callers' proofs every byte; the
-   --  postcondition repeats the fixed fields byte by byte, which provers
-   --  find far more easily.
+   --  Capabilities is SMB2_GLOBAL_CAP_ENCRYPTION and _LARGE_MTU. The
+   --  preauth integrity context offers SHA-512 with Salt, and the
+   --  encryption context offers AES-128-GCM, AES-128-CCM, AES-256-GCM and
+   --  AES-256-CCM, in the order a Windows client offers them by default.
+   --  The signing context offers AES-GMAC, then AES-CMAC. The server
+   --  chooses from each. The postcondition states it against the
+   --  specification (SMB.Spec.SMB2.Negotiation), and repeats the fixed
+   --  fields byte by byte for callers, which provers find far more easily.
    function Request
      (Guid : Guid_Bytes; Salt : Salt_Bytes; Allow_21 : Boolean)
       return Request_Bytes
@@ -62,7 +64,9 @@ package SMB.Core_Negotiate is
      and then Request'Result (33) = 0
      and then Request'Result (34) = 0 and then Request'Result (35) = 0
      --  The first dialect: 3.1.1.
-     and then Request'Result (36) = 16#11# and then Request'Result (37) = 3;
+     and then Request'Result (36) = 16#11# and then Request'Result (37) = 3
+     and then SMB.Spec.SMB2.Negotiation.Is_Client_Negotiate_Request
+       (Request'Result, Guid, Salt, Allow_21);
 
    --  Checks the negotiate contexts of a NEGOTIATE response Packet (header
    --  included) that selected 3.1.1, and returns the cipher and the signing
@@ -163,5 +167,11 @@ private
       & LE16 (2)
       & LE16 (GMAC_Id)
       & LE16 (CMAC_Id));
+   pragma Annotate
+     (GNATprove, Unhide_Info, "Expression_Function_Body",
+      SMB.Spec.SMB2.Negotiation.Is_Client_Negotiate_Request);
+   pragma Annotate
+     (GNATprove, Unhide_Info, "Expression_Function_Body",
+      SMB.Spec.SMB2.Negotiation.Is_Negotiate_Request);
 
 end SMB.Core_Negotiate;
