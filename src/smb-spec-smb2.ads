@@ -633,4 +633,124 @@ is
        File_Name_Offset => Header_Size + Query_Directory_Fields_Size,
        File_Name_Length => Every_Name'Length,
        Output_Buffer_Length => 65_536));
+
+   --  2.2.37 and 2.2.39: InfoType SMB2_0_INFO_FILE, for a file's
+   --  information (FILE_INFORMATION_CLASS, MS-FSCC 2.4).
+   Info_File : constant SMB.Byte := 16#01#;
+
+   --  2.2.37: the SMB2 QUERY_INFO Request, after the header: 40 bytes of
+   --  fields (StructureSize 41 counts a byte of Buffer), then the input
+   --  buffer at InputBufferOffset, which a file information query does not
+   --  have.
+   Query_Info_Request_Size : constant := 41;
+   Query_Info_Fields_Size : constant := 40;
+
+   type Query_Info_Request is record
+      Info_Type : SMB.Byte;
+      File_Info_Class : SMB.Byte;
+      Output_Buffer_Length : SMB.DWord;
+      Input_Buffer_Offset : SMB.Word;
+      Reserved : SMB.Word;
+      Input_Buffer_Length : SMB.DWord;
+      Additional_Information : SMB.DWord;
+      Flags : SMB.DWord;
+      File_Id : File_Id_Field;
+   end record;
+
+   --  The fields, and the byte of Buffer that StructureSize counts.
+   function Is_Query_Info_Request
+     (Data : SMB.Bytes; Request : Query_Info_Request) return Boolean is
+     (Data'Length >= Query_Info_Request_Size
+      and then SMB.Spec.Encoding.LE16 (Data, 0) = Query_Info_Request_Size
+      and then Data (Data'First + 2) = Request.Info_Type
+      and then Data (Data'First + 3) = Request.File_Info_Class
+      and then
+        SMB.Spec.Encoding.LE32 (Data, 4) = Request.Output_Buffer_Length
+      and then SMB.Spec.Encoding.LE16 (Data, 8) = Request.Input_Buffer_Offset
+      and then SMB.Spec.Encoding.LE16 (Data, 10) = Request.Reserved
+      and then
+        SMB.Spec.Encoding.LE32 (Data, 12) = Request.Input_Buffer_Length
+      and then
+        SMB.Spec.Encoding.LE32 (Data, 16) = Request.Additional_Information
+      and then SMB.Spec.Encoding.LE32 (Data, 20) = Request.Flags
+      and then Has_Bytes (Data, 24, Request.File_Id))
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   --  The QUERY_INFO this client sends (3.2.4.8), for a file's information
+   --  of Class, with no input buffer: InfoType SMB2_0_INFO_FILE,
+   --  InputBufferOffset and InputBufferLength 0 (SHOULD), Reserved 0
+   --  (MUST), AdditionalInformation and Flags 0 (MUST, for this kind of
+   --  query). The byte of Buffer has no value in the standard; Windows
+   --  clients send 0 (endnote <80>), as this one does.
+   function Client_Query_Info
+     (Class : SMB.Byte;
+      Output_Buffer_Length : SMB.DWord;
+      File_Id : File_Id_Field) return Query_Info_Request is
+     ((Info_Type => Info_File,
+       File_Info_Class => Class,
+       Output_Buffer_Length => Output_Buffer_Length,
+       Input_Buffer_Offset => 0,
+       Reserved => 0,
+       Input_Buffer_Length => 0,
+       Additional_Information => 0,
+       Flags => 0,
+       File_Id => File_Id));
+
+   --  2.2.39: the SMB2 SET_INFO Request, after the header: 32 bytes of
+   --  fields (StructureSize 33 counts a byte of Buffer), then the
+   --  information at BufferOffset.
+   Set_Info_Request_Size : constant := 33;
+   Set_Info_Fields_Size : constant := 32;
+
+   type Set_Info_Request is record
+      Info_Type : SMB.Byte;
+      File_Info_Class : SMB.Byte;
+      Buffer_Length : SMB.DWord;
+      Buffer_Offset : SMB.Word;
+      Reserved : SMB.Word;
+      Additional_Information : SMB.DWord;
+      File_Id : File_Id_Field;
+   end record;
+
+   --  The fields, then Info (BufferLength bytes) at BufferOffset.
+   function Is_Set_Info_Request
+     (Data : SMB.Bytes; Request : Set_Info_Request; Info : SMB.Bytes)
+      return Boolean is
+     (Data'Length >= Set_Info_Fields_Size
+      and then SMB.Spec.Encoding.LE16 (Data, 0) = Set_Info_Request_Size
+      and then Data (Data'First + 2) = Request.Info_Type
+      and then Data (Data'First + 3) = Request.File_Info_Class
+      and then SMB.Spec.Encoding.LE32 (Data, 4) = Request.Buffer_Length
+      and then SMB.Spec.Encoding.LE16 (Data, 8) = Request.Buffer_Offset
+      and then SMB.Spec.Encoding.LE16 (Data, 10) = Request.Reserved
+      and then
+        SMB.Spec.Encoding.LE32 (Data, 12) = Request.Additional_Information
+      and then Has_Bytes (Data, 16, Request.File_Id)
+      and then SMB.QWord (Request.Buffer_Length) = SMB.QWord (Info'Length)
+      and then
+        Has_Bytes_At_Offset
+          (Data, Set_Info_Fields_Size, Request.Buffer_Offset, Info))
+   with Pre =>
+     Data'Length <= SMB.Maximum_Frame_Size
+     and then Info'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   --  The SET_INFO this client sends (3.2.4.9), a file's information of
+   --  Class: InfoType SMB2_0_INFO_FILE, Reserved 0 (MUST),
+   --  AdditionalInformation 0 ("For all other set requests, this field
+   --  MUST be 0"), and the information right after the fields (BufferOffset
+   --  64 + 32 = 96, the client's choice; Windows servers refuse one below
+   --  0x60 or above 0xA0, endnote <82>).
+   function Client_Set_Info
+     (Class : SMB.Byte;
+      Buffer_Length : SMB.DWord;
+      File_Id : File_Id_Field) return Set_Info_Request is
+     ((Info_Type => Info_File,
+       File_Info_Class => Class,
+       Buffer_Length => Buffer_Length,
+       Buffer_Offset => Header_Size + Set_Info_Fields_Size,
+       Reserved => 0,
+       Additional_Information => 0,
+       File_Id => File_Id));
 end SMB.Spec.SMB2;

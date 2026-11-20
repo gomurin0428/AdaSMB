@@ -76,7 +76,8 @@ of date.
 | after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | merged (#156) |
 | after 0.4.0 | Rename: FILE_RENAME_INFORMATION padded to 24 bytes; Windows Server refused a one-character target | merged (#153) |
 | after 0.4.0 | Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT against the specification | merged (#155) |
-| after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | #157 |
+| after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | merged (#157) |
+| after 0.4.0 | Platinum phase 3, QUERY_INFO and SET_INFO (disposition, end of file, rename) against MS-SMB2 and MS-FSCC | #158 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -423,9 +424,8 @@ opens a received one. It is a stateless SPARK unit, like
   decisions the maintainer approved on 2026-11-18: phase 2 is merged
   (#149); phase 3 (the SMB2 messages) started with the header (#150) and
   CLOSE, READ and WRITE (#152), then SESSION_SETUP, TREE_CONNECT, LOGOFF
-  and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#157). Next
-  in phase 3: the SET_INFO and QUERY_INFO builders (after #153's rename
-  fix), the 3.1.1
+  and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#157),
+  then QUERY_INFO and SET_INFO (#158). Next in phase 3: the 3.1.1
   NEGOTIATE (and dropping the unused 2.1 `Build_Negotiate`), then the
   transform header and `Core_Query` and `Core_Resize`. After Platinum, the
   maintainer wants the remaining SMB features in this order: Kerberos,
@@ -447,6 +447,41 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, QUERY_INFO and SET_INFO (#158)
+
+* `SMB.Spec.FSCC` is a new specification package for the MS-FSCC file
+  information structures this client uses: FileDispositionInformation
+  (2.4.11), FileEndOfFileInformation (2.4.14, "MUST be greater than or
+  equal to 0"), FILE_RENAME_INFORMATION_TYPE_2 (2.4.42.2: RootDirectory
+  "MUST always be zero" for network operations, padding to at least 24
+  bytes; the Reserved bytes "can contain any value") and the size of
+  FileNetworkOpenInformation (2.4.34), with their classes.
+* `SMB.Spec.SMB2` adds QUERY_INFO (2.2.37) and SET_INFO (2.2.39), and
+  this client's (`Client_Query_Info`, `Client_Set_Info`, from 3.2.4.8 and
+  3.2.4.9): SMB2_0_INFO_FILE, Reserved, AdditionalInformation and Flags 0
+  (MUST), no input buffer (SHOULD), and the SET_INFO information right
+  after the fields (BufferOffset 96).
+* `Build_Query_Information`, `Build_Disposition`, `Build_End_Of_File` and
+  `Build_Rename` state their exact status, `Used`, the request and its
+  information against both specifications, and zero bytes after it. The
+  QUERY_INFO's one byte of Buffer, which the standard leaves open, is 0
+  (as Windows clients send it). `Core_Protocol.Rename_Information_Length`
+  equals the specification's.
+* From #153's audit: `Build_End_Of_File` requires the size to be at most
+  2**63 - 1 (C6; `Core_Resize` already refused a larger one), and
+  `Build_Rename` refuses an odd name before writing anything and lost its
+  unreachable `Name'Length > SMB.DWord'Last - 20` branch, which #155's
+  proof warnings listed.
+* `spec_test` (88 checks): MS-SMB2 4.6's SET_INFO FileEndOfFileInformation
+  (every field given there); QUERY_INFO and SET_INFO requests whose fields
+  all differ, every byte flipped in turn; a wrong BufferLength and an
+  offset into the fields; the three structures, the rename one for a
+  one-character name (padded) and a longer one with every byte flipped (but
+  the Reserved bytes); this client's requests and the classes.
+* `test_suite` also builds a CREATE one byte short of its fields and name,
+  the test #157's mutation run asked for (`Build_Create`'s early return
+  went unnoticed by the tests).
 
 ## Platinum phase 3, CREATE and QUERY_DIRECTORY (#157)
 
