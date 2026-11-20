@@ -289,25 +289,6 @@ package body SMB.Core_Protocol with SPARK_Mode is
       end if;
    end Finish;
 
-   procedure Build_Negotiate
-     (Guid : SMB.Bytes;
-      Output : out SMB.Bytes;
-      Used : out Natural;
-      Status : out SMB.Core_Status) is
-   begin
-      Begin_Build (Output, 38, Status);
-      Put_U16 (Output, 0, 36, Status);
-      Put_U16 (Output, 2, 1, Status);
-      Put_U16 (Output, 4, 3, Status);
-      Put_U32 (Output, 8, 0, Status);
-      if Status = SMB.Ok then
-         Copy (Output, 12, Guid, Status);
-      end if;
-      Put_U64 (Output, 28, 0, Status);
-      Put_U16 (Output, 36, SMB.SMB2_Dialect_0210, Status);
-      Finish (38, Output'Length, Used, Status);
-   end Build_Negotiate;
-
    procedure Build_Session_Setup
      (Token : SMB.Bytes;
       Output : out SMB.Bytes;

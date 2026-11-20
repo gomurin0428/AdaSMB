@@ -78,6 +78,7 @@ of date.
 | after 0.4.0 | Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT against the specification | merged (#155) |
 | after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | merged (#157) |
 | after 0.4.0 | Platinum phase 3, QUERY_INFO and SET_INFO (disposition, end of file, rename) against MS-SMB2 and MS-FSCC | #158 |
+| after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | #159 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -425,14 +426,14 @@ opens a received one. It is a stateless SPARK unit, like
   (#149); phase 3 (the SMB2 messages) started with the header (#150) and
   CLOSE, READ and WRITE (#152), then SESSION_SETUP, TREE_CONNECT, LOGOFF
   and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#157),
-  then QUERY_INFO and SET_INFO (#158). Next in phase 3: the 3.1.1
-  NEGOTIATE (and dropping the unused 2.1 `Build_Negotiate`), then the
-  transform header and `Core_Query` and `Core_Resize`. After Platinum, the
-  maintainer wants the remaining SMB features in this order: Kerberos,
-  several requests in flight, several shares per connection, DFS, share
-  listing (DCE/RPC), then the remaining file operations (times and
-  attributes, locks, leases, change notification, ACLs, streams, reparse
-  points, server-side copy) and durable handles.
+  then QUERY_INFO and SET_INFO (#158), then the 3.1.1 NEGOTIATE (#159).
+  Next in phase 3: the transform header, then `Core_Query` and
+  `Core_Resize`. After Platinum, the maintainer wants the remaining SMB
+  features in this order: Kerberos, several requests in flight, several
+  shares per connection, DFS, share listing (DCE/RPC), then the remaining
+  file operations (times and attributes, locks, leases, change
+  notification, ACLs, streams, reparse points, server-side copy) and
+  durable handles.
 * Submit a release to the Alire index only when the maintainer says so.
   * The index manifest is `alire.toml` at the release tag with an
     `[origin]` section added: `commit` is the tag's commit and `url` is
@@ -447,6 +448,47 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, the SMB 3.1.1 NEGOTIATE (#159)
+
+* `SMB.Spec.SMB2.Negotiation` is a new specification package (a child of
+  `SMB.Spec.SMB2`, whose `Negotiate` constant is the command code) for the
+  NEGOTIATE request: its fields and dialects (MS-SMB2 2.2.3:
+  StructureSize 36, DialectCount above 0, Reserved and Reserved2 0, and
+  ClientStartTime 0 when 0x0311 is not offered), the negotiate context
+  (2.2.3.1: ContextType, DataLength, Reserved 0), the alignment rules
+  (the first context at the first 8-byte boundary after the dialects,
+  each later one "at the first 8-byte-aligned offset following the
+  previous"), and the three contexts this client sends
+  (2.2.3.1.1, 2.2.3.1.2, 2.2.3.1.7, each count "MUST be greater than
+  zero").
+* This client's request comes from 3.2.4.2.2.2: the dialects are the
+  caller's (SpecifiedDialects: 3.1.1, then 2.1 when allowed), SecurityMode
+  3, Capabilities SMB2_GLOBAL_CAP_ENCRYPTION and _LARGE_MTU, the preauth
+  context first with SHA-512 and a 32-byte salt (as Windows, footnote
+  134), then the encryption and signing contexts, and zero padding (the
+  standard gives none). `Is_Client_Negotiate_Request` states all of it,
+  with nothing after the signing context.
+* `Core_Negotiate.Request` states its result against
+  `Is_Client_Negotiate_Request`. It is an expression function completed in
+  the private part, so the predicates are unhidden by a pragma right after
+  the completion: GNATprove accepts `Unhide_Info` "just after a subprogram
+  ... body or declaration", not elsewhere in a private part.
+* `Core_Protocol.Build_Negotiate`, the 2.1-only NEGOTIATE that had no
+  caller since 0.2.0, is gone.
+* `spec_test` (+8 checks): Windows 10's NEGOTIATE requests from the
+  Microsoft Open Specifications blog's "SMB 3.1.1 Pre-authentication
+  integrity in Windows 10" (appendices A.1, A.2 and B), A.1 with every
+  byte flipped but the padding; ClientStartTime without 3.1.1; no empty
+  dialect or algorithm list; exact context data; the alignment; this
+  client's request for both dialect sets, at high indices, with every
+  byte flipped, and the wrong length, dialects or salt; its fields and the
+  constants.
+* Proof notes: arrays of 16-bit values are indexed by a subtype bounded
+  like `SMB.Bytes`'s lengths, or every `'Length` needs a range check that
+  only times out; and `Has_Words` bounds the list with
+  `2 * Words'Length <= Data'Length - Offset`, not a division, which the
+  provers could not use.
 
 ## Platinum phase 3, QUERY_INFO and SET_INFO (#158)
 
@@ -680,7 +722,8 @@ opens a received one. It is a stateless SPARK unit, like
   * SHOULDs not followed: no NETNAME negotiate context (an open question
     already), no lease requested when the server offers leasing (no lease
     support), MaxTransactSize not read from the NEGOTIATE response.
-  * `Build_Negotiate`, the 2.1-only NEGOTIATE, has no caller.
+  * `Build_Negotiate`, the 2.1-only NEGOTIATE, has no caller (removed by
+    #159).
 
 ## Platinum phase 3, the SMB2 header (#150)
 
