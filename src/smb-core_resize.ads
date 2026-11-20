@@ -1,5 +1,7 @@
 with SMB.Core_Wire;
 with SMB.Engine;
+with SMB.Spec.FSCC;
+with SMB.Spec.SMB2;
 
 --  SET_INFO FileEndOfFileInformation on an open handle (MS-SMB2 2.2.39 and
 --  2.2.40, MS-FSCC FileEndOfFileInformation): one request that sets the
@@ -298,5 +300,31 @@ private
       and then
         (for all Index in 0 .. 15 =>
            Packet (Packet'First + 80 + Index) = Snapshot.File_Id (Index))
-      and then SMB.Core_Wire.Encoded_U64 (Packet, 96) = Snapshot.Size);
+      and then SMB.Core_Wire.Encoded_U64 (Packet, 96) = Snapshot.Size
+      --  The body, as the specifications give this client's SET_INFO with
+      --  FileEndOfFileInformation.
+      and then SMB.Spec.SMB2.Is_Set_Info_Request
+        (Packet (Packet'First + SMB.Core_Wire.Header_Size
+                 .. Packet'First + (Used - 1)),
+         SMB.Spec.SMB2.Client_Set_Info
+           (SMB.Spec.FSCC.File_End_Of_File_Information, 8,
+            Snapshot.File_Id),
+         Packet (Packet'First + 96 .. Packet'First + (Used - 1)))
+      and then SMB.Spec.FSCC.Is_End_Of_File_Information
+        (Packet (Packet'First + 96 .. Packet'First + (Used - 1)),
+         Snapshot.Size)
+      --  The header, as the specification gives this client's request:
+      --  every byte but the Signature, which signing fills in.
+      and then SMB.Spec.SMB2.Is_Sync_Header
+        (Packet,
+         (SMB.Spec.SMB2.Request_Header
+            (Command => SMB.Spec.SMB2.Set_Info,
+             Credit_Charge => Snapshot.Expected.Credit_Charge,
+             Credit_Request => Snapshot.Expected.Credit_Request,
+             Flags => SMB.Spec.SMB2.Flags_Signed,
+             Message_Id => Snapshot.Expected.Message_Id,
+             Tree_Id => Snapshot.Expected.Tree_Id,
+             Session_Id => Snapshot.Expected.Session_Id)
+          with delta Signature =>
+            Packet (Packet'First + 48 .. Packet'First + 63))));
 end SMB.Core_Resize;

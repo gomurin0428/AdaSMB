@@ -1,6 +1,8 @@
 with SMB.Core_Protocol;
 with SMB.Core_Wire;
 with SMB.Engine;
+with SMB.Spec.FSCC;
+with SMB.Spec.SMB2;
 
 --  QUERY_INFO on an open handle (MS-SMB2 2.2.37 and 2.2.38): one request for
 --  FileNetworkOpenInformation, whose response gives the file's times, sizes
@@ -318,5 +320,27 @@ private
       and then
         (for all Index in 0 .. 15 =>
            Packet (Packet'First + 88 + Index) = Snapshot.File_Id (Index))
-      and then Packet (Packet'First + 104) = 0);
+      and then Packet (Packet'First + 104) = 0
+      --  The body, as the specification gives this client's QUERY_INFO.
+      and then SMB.Spec.SMB2.Is_Query_Info_Request
+        (Packet (Packet'First + SMB.Core_Wire.Header_Size
+                 .. Packet'First + (Used - 1)),
+         SMB.Spec.SMB2.Client_Query_Info
+           (SMB.Spec.FSCC.File_Network_Open_Information,
+            SMB.Spec.FSCC.Network_Open_Information_Size,
+            Snapshot.File_Id))
+      --  The header, as the specification gives this client's request:
+      --  every byte but the Signature, which signing fills in.
+      and then SMB.Spec.SMB2.Is_Sync_Header
+        (Packet,
+         (SMB.Spec.SMB2.Request_Header
+            (Command => SMB.Spec.SMB2.Query_Info,
+             Credit_Charge => Snapshot.Expected.Credit_Charge,
+             Credit_Request => Snapshot.Expected.Credit_Request,
+             Flags => SMB.Spec.SMB2.Flags_Signed,
+             Message_Id => Snapshot.Expected.Message_Id,
+             Tree_Id => Snapshot.Expected.Tree_Id,
+             Session_Id => Snapshot.Expected.Session_Id)
+          with delta Signature =>
+            Packet (Packet'First + 48 .. Packet'First + 63))));
 end SMB.Core_Query;

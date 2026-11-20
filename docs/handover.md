@@ -79,7 +79,8 @@ of date.
 | after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | merged (#157) |
 | after 0.4.0 | Platinum phase 3, QUERY_INFO and SET_INFO (disposition, end of file, rename) against MS-SMB2 and MS-FSCC | merged (#158) |
 | after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | merged (#159) |
-| after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | #160 |
+| after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | merged (#160) |
+| after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | #161 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -428,8 +429,9 @@ opens a received one. It is a stateless SPARK unit, like
   CLOSE, READ and WRITE (#152), then SESSION_SETUP, TREE_CONNECT, LOGOFF
   and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#157),
   then QUERY_INFO and SET_INFO (#158), then the 3.1.1 NEGOTIATE (#159),
-  then the transform header (#160). Next in phase 3: `Core_Query` and
-  `Core_Resize`. After Platinum, the maintainer wants the remaining SMB
+  then the transform header (#160), then the requests of `Core_Query`
+  and `Core_Resize` (#161), which ends phase 3's builders. Next: phase 4
+  (text). After Platinum, the maintainer wants the remaining SMB
   features in this order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
   file operations (times and attributes, locks, leases, change
@@ -449,6 +451,30 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, the packets of Core_Query and Core_Resize (#161)
+
+* `Core_Query.Packet_Matches` and `Core_Resize.Packet_Matches`, which
+  their `Prepare` postconditions use, also state the request against the
+  specifications: the header (`Is_Sync_Header` of `Request_Header`, with
+  the expectation's credits, MessageId, TreeId and SessionId and Flags
+  signed; every byte but the Signature), and the body, the QUERY_INFO for
+  FileNetworkOpenInformation (`Client_Query_Info`) and the SET_INFO with
+  FileEndOfFileInformation (`Client_Set_Info`,
+  `Is_End_Of_File_Information`). The byte clauses stay, for callers.
+  `Core_Request.Prepare_Header` gave the whole header already, and
+  `Sign_Packet` changes only the Signature.
+* What the specification does not state yet: the Signature (HMAC-SHA256
+  or AES-CMAC/GMAC: phases 5 and 6); `Prepare`'s exact failure statuses
+  (a short Output, `Begin_Request`'s) and the bytes after `Used`, which
+  are the coordinators' (phase 9).
+* This ends phase 3's builders: every request is stated against
+  `SMB.Spec.SMB2` (and `SMB.Spec.FSCC`) but its Signature. The packet
+  matchers of `Core_Client` and `Core_Connection`, which still restate
+  bytes, go with the coordinators in phase 9.
+* From the review: `docs/assurance.md` lists the users of each
+  specification, and no longer counts "the other builders" of
+  `Core_Protocol` among the gaps (all twelve are stated).
 
 ## Platinum phase 3, the transform header (#160)
 
