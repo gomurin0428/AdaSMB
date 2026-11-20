@@ -229,9 +229,9 @@ remove them from GNATprove: their initialization and preservation are proved,
 as specified by [AdaCore's assertion-policy documentation](https://docs.adacore.com/spark2014-docs/html/ug/en/source/assertion_pragmas.html).
 Compiler run-time checks remain enabled in the project builds, and no proof
 assumption or check-suppression pragma is introduced. The library build checks
-the core's preconditions at run time but not its postconditions and other
-assertions, which GNATprove proves ([`contracts.adc`](../contracts.adc), from
-0.5.0 on); the test programs compile the same sources with every contract
+the core's preconditions and the assertions in its code at run time, but not
+its postconditions, which GNATprove proves ([`contracts.adc`](../contracts.adc),
+from 0.5.0 on); the test programs compile the same sources with every contract
 checked, but for the whole-input postconditions of `Core_Text`'s two
 converters, which recurse over the input and are proved and never run
 (`test_suite` checks them on every short input instead).
@@ -278,12 +278,10 @@ are unchanged. Wrapper ordering, complete Unicode semantics and secure erasure
 of credential scratch storage remain outside the proof.
 
 UTF conversion checks capacity for each decoded scalar rather than requiring a
-worst-case-size buffer before decoding. The contracts bound `Used` by both the
-output capacity and twice the input length, including on failure; UTF-16 output
-is always word-aligned. Successful conversion is empty exactly when its input
-is empty, and successful UTF-16 input is even-length. Scalar-atomic short-buffer
-behavior and exact encoding bytes are tested, not a complete Unicode semantic
-proof. Callers must discard partial output on error. The public text adapters
+worst-case-size buffer before decoding. Both converters are proved against
+`SMB.Spec.Unicode` (The Unicode Standard 16.0, section 3.9): the exact status
+(the first failure of a scan from the front), and on success every output
+byte; on failure they leave nothing (`Used` 0, the output zero). The public text adapters
 check the 1-MiB input bound before allocating worst-case-sized result buffers;
 these adapter guards are reviewed/tested rather than GNATprove-verified.
 

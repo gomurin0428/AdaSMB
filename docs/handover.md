@@ -471,7 +471,7 @@ opens a received one. It is a stateless SPARK unit, like
   Its declaration moved under the same ignored-postcondition pragma, and
   `test_suite` checks it at run time on every input of up to three
   units from an alphabet of D91's edges, odd lengths too, at every
-  capacity (34,866 calls). Its old partial outputs were expected by six
+  capacity (34,866 calls). Its old partial outputs were expected by seven
   test cases, which now expect nothing.
 * The proof follows #162's: lemmas over the hidden runs
   (`Lemma_Run16_Step`, `Lemma_Run16_Stop`, `Lemma_Extend8`, the inductive
@@ -479,10 +479,13 @@ opens a received one. It is a stateless SPARK unit, like
   assertions in the decoder's branches that tie each unit to
   `Code_Unit` (constant cost, so they stay checked). Its invariants sit at
   the end of the loop body, so the exit was not a problem here.
-* `spec_test` (+4 checks, 115): the standard's example read back from
+* `spec_test` (+4 checks, 116): the standard's example read back from
   UTF-16 and its run in UTF-8, every unit alone, every scalar's UTF-16
   read back and its UTF-8 against GNAT's encoder, ill-formed surrogates,
-  and runs.
+  and runs; from the review, every byte of the example flipped against
+  both `Is_UTF8_Run` and #162's `Is_UTF16_Run` (a predicate that skipped
+  a scalar's first byte survived the one-byte change before), and
+  `UTF8_Run_Byte` past a surrogate pair.
 
 ## Core_Negotiate.Request proved a part at a time (#166)
 

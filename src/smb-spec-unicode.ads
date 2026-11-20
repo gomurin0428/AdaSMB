@@ -318,8 +318,7 @@ is
      Subprogram_Variant => (Decreases => Data'Length / 2 - Position);
 
    --  The length in bytes of that run in UTF-8: at most three bytes for a
-   --  unit, so at most twice the run's bytes in UTF-16 (a bound that takes
-   --  no recursion to check).
+   --  unit (a bound that takes no recursion to check).
    function UTF8_Run_Size (Data : SMB.Bytes; Position : Natural) return Natural
    is
      (if not Valid_UTF16_At (Data, Position) then 0

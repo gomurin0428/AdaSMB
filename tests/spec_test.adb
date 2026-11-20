@@ -1826,6 +1826,39 @@ procedure Spec_Test is
          and then U.Code_Unit (Hex ("3412"), 0) = 16#1234#,
          "UTF-16 read back, and its run in UTF-8");
       Passed;
+      --  The output predicates catch a change in any byte, and the UTF-8
+      --  run's bytes go on past a surrogate pair.
+      for Index in Example_8'Range loop
+         declare
+            Changed_8 : String := Example_8;
+         begin
+            --  The byte's low bit flipped.
+            Changed_8 (Index) :=
+              Character'Val
+                (if Character'Pos (Changed_8 (Index)) mod 2 = 0
+                 then Character'Pos (Changed_8 (Index)) + 1
+                 else Character'Pos (Changed_8 (Index)) - 1);
+            pragma Assert
+              (not U.Is_UTF8_Run (Example_16, 0, Changed_8, 0),
+               "every byte of Is_UTF8_Run");
+         end;
+      end loop;
+      for Index in Example_16'Range loop
+         declare
+            Changed_16 : SMB.Bytes := Example_16;
+         begin
+            Changed_16 (Index) := Changed_16 (Index) xor 16#01#;
+            pragma Assert
+              (not U.Is_UTF16_Run (Example_8, 0, Changed_16, 0),
+               "every byte of Is_UTF16_Run");
+         end;
+      end loop;
+      pragma Assert
+        ((for all J in 0 .. 4 =>
+            U.UTF8_Run_Byte (Hex ("00D802DF4D00"), 0, J) =
+              Character'Pos (Text ("F0908C824D") (J + 1))),
+         "UTF8_Run_Byte past a surrogate pair");
+      Passed;
       for Unit in 0 .. 16#FFFF# loop
          declare
             Alone : constant SMB.Bytes :=

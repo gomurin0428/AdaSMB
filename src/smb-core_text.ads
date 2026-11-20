@@ -181,7 +181,6 @@ package SMB.Core_Text is
                0)
           else Used = 0);
 
-
    procedure UTF16_To_UTF8
      (Input : SMB.Bytes;
       Output : out String;
