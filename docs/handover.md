@@ -87,6 +87,7 @@ of date.
 | after 0.4.0 | Platinum phase 4, UTF-16 to UTF-8: `Core_Text.UTF16_To_UTF8` against `SMB.Spec.Unicode` | merged (#163) |
 | after 0.4.0 | Proofs with a margin on CI: four goals near the provers' limits, split up | merged (#167) |
 | after 0.4.0 | Platinum phase 5, SHA-256: `SMB.Spec.SHA2` (FIPS 180-4) and `Crypto`'s compression function against it | #168 |
+| after 0.4.0 | Platinum phase 4, `Core_Text.Validate_UTF16` against `SMB.Spec.Unicode` | #164 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -437,6 +438,10 @@ opens a received one. It is a stateless SPARK unit, like
   then QUERY_INFO and SET_INFO (#158), then the 3.1.1 NEGOTIATE (#159),
   then the transform header (#160), then the requests of `Core_Query`
   and `Core_Resize` (#161), which ends phase 3's builders. Phase 4
+  (text) did UTF-8 to UTF-16 (#162), UTF-16 to UTF-8 (#163) and
+  `Validate_UTF16` (#164). Next: phase 5 (hashes and HMAC). After
+  Platinum, the maintainer wants the remaining SMB features in this
+
   (text) did UTF-8 to UTF-16 (#162) and UTF-16 to UTF-8 (#163); left of
   it, `Validate_UTF16` against the specification (it is complete against
   `Core_Text`'s own `Valid_UTF16_Text`). Phase 5 (hashes and HMAC)
@@ -461,6 +466,20 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 4, Validate_UTF16 (#164)
+
+* `Validate_UTF16`'s verdict is also stated against the specification:
+  an odd length, else `Is_Client_UTF16`. Its old clause, against
+  `Core_Text`'s own `Valid_UTF16_Text`, stays for its callers
+  (`Core_Auth.Process_Target_Info`, `Authenticate_Challenge`,
+  `Core_Protocol.Parse_Directory_Entry`), which prove unchanged.
+* As the converters: the declaration moved under the
+  ignored-postcondition pragma, the loop's exit after the invariants, the
+  same lemmas over the hidden run, assertions tying each unit to
+  `Code_Unit`, and `Lemma_Invalid_UTF16_Unit` in each refusing branch
+  (without it the old clause timed out in the larger context).
+  `test_suite`'s UTF-16 probe checks the verdict on every short input.
 
 ## Platinum phase 5, SHA-256's compression function (#168)
 

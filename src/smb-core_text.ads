@@ -36,15 +36,6 @@ package SMB.Core_Text is
               Valid_UTF16_Unit (Input, Index))))
    with Ghost, Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size;
 
-   procedure Validate_UTF16
-     (Input : SMB.Bytes;
-      Status : out SMB.Core_Status)
-   with Pre => Input'Length <= 65_534,
-     Post => Status =
-       (if Input'Length mod 2 /= 0 then SMB.Invalid_Length
-        elsif Valid_UTF16_Text (Input) then SMB.Ok
-        else SMB.Invalid_Encoding);
-
    function ASCII_Only (Input : String) return Boolean is
      (for all C of Input => Character'Pos (C) <= 16#7F#)
    with Ghost;
@@ -136,7 +127,8 @@ package SMB.Core_Text is
      Post => Status =
        (if Lexically_Valid_Share (Input) then SMB.Ok else SMB.Invalid_Value);
    --  The converters' postconditions state the whole output against
-   --  SMB.Spec.Unicode, whose functions recurse once per scalar: checked
+   --  SMB.Spec.Unicode, and Validate_UTF16's its verdict, whose functions
+   --  recurse once per scalar: checked
    --  at run time on inputs up to 1 MiB they would overflow the stack.
    --  They are proved and not checked at run time, even where every other
    --  contract is (assertion levels, which could mark just those clauses,
@@ -218,5 +210,19 @@ package SMB.Core_Text is
               (Input, 0, Output (Output'First .. Output'First + (Used - 1)),
                0)
           else Used = 0);
+
+   procedure Validate_UTF16
+     (Input : SMB.Bytes;
+      Status : out SMB.Core_Status)
+   with Pre => Input'Length <= 65_534,
+     Post => Status =
+       (if Input'Length mod 2 /= 0 then SMB.Invalid_Length
+        elsif Valid_UTF16_Text (Input) then SMB.Ok
+        else SMB.Invalid_Encoding)
+       --  Against SMB.Spec.Unicode.
+       and then Status =
+         (if Input'Length mod 2 /= 0 then SMB.Invalid_Length
+          elsif SMB.Spec.Unicode.Is_Client_UTF16 (Input) then SMB.Ok
+          else SMB.Invalid_Encoding);
 
 end SMB.Core_Text;
