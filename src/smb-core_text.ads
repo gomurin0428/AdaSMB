@@ -1,3 +1,5 @@
+with SMB.Spec.Unicode;
+
 package SMB.Core_Text is
    pragma SPARK_Mode (On);
    use type SMB.Byte;
@@ -33,27 +35,6 @@ package SMB.Core_Text is
            (for all Index in 0 .. Input'Length / 2 - 1 =>
               Valid_UTF16_Unit (Input, Index))))
    with Ghost, Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size;
-
-   procedure UTF8_To_UTF16
-     (Input : String;
-      Output : out SMB.Bytes;
-      Used : out Natural;
-      Status : out SMB.Core_Status)
-   with Pre =>
-     Input'Length <= SMB.Maximum_Frame_Size
-     and Output'Length <= 2 * SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length and then Used <= 2 * Input'Length
-       and then Used mod 2 = 0
-       and then
-         (if Used > 0 then
-            Valid_UTF16_Text
-              (Output (Output'First .. Output'First + (Used - 1))))
-       and then (if Status = SMB.Ok then (Used = 0) = (Input'Length = 0))
-       and then (if Input'Length = 0 then Status = SMB.Ok)
-       and then (if Output'Length >= 2 * Input'Length then
-          Status in SMB.Ok | SMB.Invalid_Encoding)
-       and then (for all Index in Output'Range =>
-          (if Index - Output'First >= Used then Output (Index) = 0));
 
    procedure UTF16_To_UTF8
      (Input : SMB.Bytes;
@@ -175,4 +156,49 @@ package SMB.Core_Text is
    with Pre => Input'Length <= 255,
      Post => Status =
        (if Lexically_Valid_Share (Input) then SMB.Ok else SMB.Invalid_Value);
+   --  The converters' postconditions state the whole output against
+   --  SMB.Spec.Unicode, whose functions recurse once per scalar: checked
+   --  at run time on inputs up to 1 MiB they would overflow the stack.
+   --  They are proved and not checked at run time, even where every other
+   --  contract is (assertion levels, which could mark just those clauses,
+   --  need GNAT 16). This pragma applies to the end of the package.
+   pragma Assertion_Policy (Post => Ignore);
+
+   procedure UTF8_To_UTF16
+     (Input : String;
+      Output : out SMB.Bytes;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with Pre =>
+     Input'Length <= SMB.Maximum_Frame_Size
+     and Output'Length <= 2 * SMB.Maximum_Frame_Size,
+     Post => Used <= Output'Length and then Used <= 2 * Input'Length
+       and then Used mod 2 = 0
+       and then
+         (if Used > 0 then
+            Valid_UTF16_Text
+              (Output (Output'First .. Output'First + (Used - 1))))
+       and then (if Status = SMB.Ok then (Used = 0) = (Input'Length = 0))
+       and then (if Input'Length = 0 then Status = SMB.Ok)
+       and then (if Output'Length >= 2 * Input'Length then
+          Status in SMB.Ok | SMB.Invalid_Encoding)
+       and then (for all Index in Output'Range =>
+          (if Index - Output'First >= Used then Output (Index) = 0))
+       --  Against SMB.Spec.Unicode: the first failure of a scan from the
+       --  front, a sequence that does not fit before one that is refused;
+       --  on success Input in UTF-16, on failure nothing.
+       and then Status =
+         (if SMB.Spec.Unicode.UTF16_Run_Size (Input, 0) > Output'Length
+          then SMB.Invalid_Length
+          elsif not SMB.Spec.Unicode.Is_Client_UTF8 (Input)
+          then SMB.Invalid_Encoding
+          else SMB.Ok)
+       and then
+         (if Status = SMB.Ok then
+            Used = SMB.Spec.Unicode.UTF16_Run_Size (Input, 0)
+            and then SMB.Spec.Unicode.Is_UTF16_Run
+              (Input, 0, Output (Output'First .. Output'First + (Used - 1)),
+               0)
+          else Used = 0);
+
 end SMB.Core_Text;

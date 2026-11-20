@@ -8,6 +8,7 @@
 --  policy Check), followed by Passed, which counts it.
 pragma Assertion_Policy (Assert => Check, Ghost => Check);
 
+with Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
 with Ada.Text_IO;
 with Interfaces;
 with SMB;
@@ -16,6 +17,7 @@ with SMB.Spec.FSCC;
 with SMB.Spec.SMB2;
 with SMB.Spec.SMB2.Negotiation;
 with SMB.Spec.SMB2.Transform;
+with SMB.Spec.Unicode;
 
 procedure Spec_Test is
    use type Interfaces.Unsigned_8;
@@ -1582,6 +1584,184 @@ procedure Spec_Test is
          "the transform header's constants and this client's header");
       Passed;
    end Test_SMB2_Transform;
+
+   --  The Unicode Standard 16.0, section 3.9: UTF-8 and UTF-16.
+   procedure Test_Unicode is
+      package U renames SMB.Spec.Unicode;
+      package W renames Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
+
+      --  A String of the bytes a string of hexadecimal digits spells.
+      function Text (Digits_Text : String) return String is
+         Bytes : constant SMB.Bytes := Hex (Digits_Text);
+         Result : String (1 .. Bytes'Length);
+      begin
+         for Index in Bytes'Range loop
+            Result (Result'First + Index) := Character'Val (Bytes (Index));
+         end loop;
+         return Result;
+      end Text;
+
+      --  D90 to D92's example, <004D, 0430, 4E8C, 10302>: in UTF-8
+      --  <4D D0 B0 E4 BA 8C F0 90 8C 82>, in UTF-16 <004D 0430 4E8C D800
+      --  DF02>.
+      Example_8 : constant String := Text ("4DD0B0E4BA8CF0908C82");
+      Example_16 : constant SMB.Bytes := Hex ("4D0030048C4E00D802DF");
+      Example_Scalars : constant array (0 .. 3) of Natural :=
+        (16#4D#, 16#430#, 16#4E8C#, 16#10302#);
+      Example_Starts : constant array (0 .. 3) of Natural := (0, 1, 3, 6);
+
+      --  A row of Table 3-7: its first and last sequences decode to its
+      --  first and last scalars.
+      procedure Check_Row
+        (First_Hex, Last_Hex : String; First, Last : Natural) is
+         First_Text : constant String := Text (First_Hex);
+         Last_Text : constant String := Text (Last_Hex);
+      begin
+         pragma Assert
+           (U.UTF8_Length (First_Text, 0) = First_Text'Length
+            and then U.UTF8_Scalar (First_Text, 0) = First
+            and then U.UTF8_Length (Last_Text, 0) = Last_Text'Length
+            and then U.UTF8_Scalar (Last_Text, 0) = Last,
+            "Table 3-7, " & First_Hex & " .. " & Last_Hex);
+      end Check_Row;
+
+      --  Not a well-formed sequence at the start.
+      function Ill_Formed (Hex_Text : String) return Boolean is
+        (U.UTF8_Length (Text (Hex_Text), 0) = 0)
+      with Ghost;
+   begin
+      pragma Assert
+        (U.Is_Client_UTF8 (Example_8)
+         and then (for all K in Example_Starts'Range =>
+                     U.Valid_UTF8_At (Example_8, Example_Starts (K))
+                     and then U.UTF8_Scalar (Example_8, Example_Starts (K))
+                       = Example_Scalars (K))
+         and then U.UTF16_Run_Size (Example_8, 0) = Example_16'Length
+         and then (for all K in Example_16'Range =>
+                     U.UTF16_Run_Byte (Example_8, 0, K) = Example_16 (K)),
+         "D90 to D92's example in UTF-8 and UTF-16");
+      Passed;
+      Check_Row ("00", "7F", 16#0#, 16#7F#);
+      Check_Row ("C280", "DFBF", 16#80#, 16#7FF#);
+      Check_Row ("E0A080", "E0BFBF", 16#800#, 16#FFF#);
+      Check_Row ("E18080", "ECBFBF", 16#1000#, 16#CFFF#);
+      Check_Row ("ED8080", "ED9FBF", 16#D000#, 16#D7FF#);
+      Check_Row ("EE8080", "EFBFBF", 16#E000#, 16#FFFF#);
+      Check_Row ("F0908080", "F0BFBFBF", 16#10000#, 16#3FFFF#);
+      Check_Row ("F1808080", "F3BFBFBF", 16#40000#, 16#FFFFF#);
+      Check_Row ("F4808080", "F48FBFBF", 16#100000#, 16#10FFFF#);
+      Passed;
+      --  Section 3.9's ill-formed examples, <C0 AF> and <E0 9F 80>; a
+      --  surrogate <ED A0 80> (Table 3-9's discussion); C1, F5 to FF,
+      --  overlong four bytes, past 10FFFF, a lone continuation byte, and
+      --  sequences cut short or broken.
+      pragma Assert
+        (Ill_Formed ("C0AF") and then Ill_Formed ("E09F80")
+         and then Ill_Formed ("EDA080") and then Ill_Formed ("C1BF")
+         and then Ill_Formed ("F5808080") and then Ill_Formed ("FF")
+         and then Ill_Formed ("F08FBFBF") and then Ill_Formed ("F4908080")
+         and then Ill_Formed ("80") and then Ill_Formed ("C2")
+         and then Ill_Formed ("E4BA") and then Ill_Formed ("F0908C")
+         and then Ill_Formed ("C241") and then Ill_Formed ("E4BA41")
+         and then Ill_Formed ("F0908C41"),
+         "ill-formed UTF-8");
+      Passed;
+      --  Every scalar as GNAT's encoder writes it: its UTF-8 bytes decode
+      --  to it, and its UTF-16 units are the specification's.
+      --  GNAT's encoder refuses the noncharacters U+FFFE and U+FFFF, which
+      --  are scalars all the same (D76): they are checked by hand.
+      pragma Assert
+        (U.Is_Scalar (16#FFFE#) and then U.Is_Scalar (16#FFFF#)
+         and then U.UTF8_Scalar (Text ("EFBFBE"), 0) = 16#FFFE#
+         and then U.UTF8_Scalar (Text ("EFBFBF"), 0) = 16#FFFF#
+         and then U.UTF16_Units (16#FFFE#) = 1
+         and then U.UTF16_Unit (16#FFFF#, 0) = 16#FFFF#,
+         "U+FFFE and U+FFFF");
+      for Scalar in 0 .. 16#10FFFF# loop
+         if Scalar in 16#D800# .. 16#DFFF# then
+            pragma Assert (not U.Is_Scalar (Scalar), "surrogate code points");
+         elsif Scalar in 16#FFFE# .. 16#FFFF# then
+            null;
+         else
+            declare
+               Item : constant Wide_Wide_String :=
+                 (1 => Wide_Wide_Character'Val (Scalar));
+               In_8 : constant String := W.Encode (Item);
+               In_16 : constant Wide_String := W.Encode (Item);
+            begin
+               pragma Assert
+                 (U.Is_Scalar (Scalar)
+                  and then U.UTF8_Length (In_8, 0) = In_8'Length
+                  and then U.UTF8_Scalar (In_8, 0) = Scalar
+                  and then U.UTF16_Units (Scalar) = In_16'Length
+                  and then
+                    (for all K in 0 .. In_16'Length - 1 =>
+                       U.UTF16_Unit (Scalar, K) =
+                         Wide_Character'Pos (In_16 (In_16'First + K))),
+                  "every scalar in UTF-8 and UTF-16");
+            end;
+         end if;
+      end loop;
+      Passed;
+      --  Every sequence of two and three bytes, and of four with each later
+      --  byte at the edges of 80..BF: what the specification accepts at its
+      --  start is the encoding of the scalar it decodes to (the loop above
+      --  shows it accepts every encoding).
+      declare
+         Edges : constant array (1 .. 4) of Natural :=
+           (16#7F#, 16#80#, 16#BF#, 16#C0#);
+         procedure Check (Sequence : String) is
+         begin
+            pragma Assert
+              (U.UTF8_Length (Sequence, 0) = 0
+               or else U.UTF8_Scalar (Sequence, 0) in 16#FFFE# .. 16#FFFF#
+               or else
+                 W.Encode
+                   ((1 => Wide_Wide_Character'Val
+                      (U.UTF8_Scalar (Sequence, 0))))
+                 = Sequence
+                     (Sequence'First
+                      .. Sequence'First + U.UTF8_Length (Sequence, 0) - 1),
+               "UTF-8 sequence " & Natural'Image (Sequence'Length));
+         end Check;
+      begin
+         for B1 in 16#80# .. 16#FF# loop
+            for B2 in 0 .. 16#FF# loop
+               Check ((Character'Val (B1), Character'Val (B2)));
+               for B3 in 0 .. 16#FF# loop
+                  Check
+                    ((Character'Val (B1), Character'Val (B2),
+                      Character'Val (B3)));
+               end loop;
+               if B1 >= 16#F0# then
+                  for B3 of Edges loop
+                     for B4 of Edges loop
+                        Check
+                          ((Character'Val (B1), Character'Val (B2),
+                            Character'Val (B3), Character'Val (B4)));
+                     end loop;
+                  end loop;
+               end if;
+            end loop;
+         end loop;
+      end;
+      Passed;
+      --  U+0000 is well-formed but not a scalar this client converts; a run
+      --  stops before the first sequence it refuses.
+      pragma Assert
+        (U.UTF8_Length (Text ("00"), 0) = 1
+         and then not U.Valid_UTF8_At (Text ("00"), 0)
+         and then not U.Is_Client_UTF8 (Text ("410042"))
+         and then U.Valid_UTF8_Run (Text ("41C0AF42"), 0) = 1
+         and then U.UTF16_Run_Size (Text ("41C0AF42"), 0) = 2
+         and then U.Valid_UTF8_Run (Text ("41E4BA"), 0) = 1
+         and then U.Is_Client_UTF8 ("")
+         and then U.UTF16_Run_Size ("", 0) = 0
+         and then U.Valid_UTF8_Run (Example_8 & Text ("C0"), 0) =
+           Example_8'Length,
+         "runs of valid sequences");
+      Passed;
+   end Test_Unicode;
 begin
    Test_Encoding;
    Test_SMB2_Header;
@@ -1591,6 +1771,7 @@ begin
    Test_SMB2_Info;
    Test_SMB2_Negotiate;
    Test_SMB2_Transform;
+   Test_Unicode;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;
