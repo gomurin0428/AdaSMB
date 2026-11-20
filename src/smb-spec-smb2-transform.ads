@@ -72,8 +72,9 @@ is
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
 
-   --  The header a sender builds for Message_Size bytes of SMB2 message in
-   --  the session (3.1.4.3, "Encrypting the Message"):
+   --  The header this client builds for Message_Size bytes of SMB2 message
+   --  in the session (3.1.4.3, "Encrypting the Message", and the client's
+   --  rules of 2.2.41):
    --  * "OriginalMessageSize is set to the size of the SMB2 message being
    --    sent";
    --  * "SessionId is set to Session.SessionId";
@@ -82,8 +83,10 @@ is
    --  * Nonce: the cipher's Nonce_Size bytes of Nonce, a value "not used
    --    for any other encrypted message within the session" (keeping it so
    --    is the engine's part), then the Reserved bytes, which "The sender
-   --    MUST set ... to 0" with GCM and "SHOULD" with CCM (footnote 83);
-   --    this client sets them to 0 with either.
+   --    MUST set ... to 0" with GCM and "SHOULD" with CCM; this client sets
+   --    them to 0 with either. Footnote 83: Windows 8 and Windows Server
+   --    2012 and later "set this field to an arbitrary value", so a
+   --    receiver must not require the CCM Reserved bytes zero.
    function Client_Transform
      (Cipher : SMB.Word;
       Nonce : Nonce_Field;

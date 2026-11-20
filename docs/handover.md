@@ -470,9 +470,15 @@ opens a received one. It is a stateless SPARK unit, like
 * `spec_test` (+5 checks): the eight transform headers of Microsoft's
   "SMB 3.1.1 Encryption in Windows 10" blog (A.2 with AES-128-CCM, A.1
   with AES-128-GCM: a WRITE and a READ, each request and response), each
-  as its sender built it by 3.1.4.3; a header whose fields all differ, at
-  high indices, with every byte flipped but the Signature; the nonce's
-  length for each cipher; the constants.
+  as this client would build it (the responses' Windows server happened
+  to send zeros where only the client must); a header whose fields all
+  differ, at high indices and followed by message bytes, with every byte
+  flipped but the Signature; the nonce's length for each cipher, AES-256
+  too; the constants. `test_suite` pins `Cipher_Code`'s four IDs.
+* From the review: footnote 83 says Windows 8 and Windows Server 2012
+  and later fill the CCM nonce's Reserved bytes with "an arbitrary
+  value", so a receiver must not require them zero; `Unwrap` does not,
+  and phase 7 (now naming `Unwrap` in the plan) must keep it so.
 
 ## Platinum phase 3, the SMB 3.1.1 NEGOTIATE (#159)
 

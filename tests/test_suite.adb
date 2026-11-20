@@ -2470,6 +2470,16 @@ procedure Test_Suite is
       end Reject;
    begin
       Assert (Transform_Vectors = 8, "published transformed messages");
+      --  MS-SMB2 2.2.3.1.2's cipher IDs.
+      Assert (SMB.Core_Transform.Cipher_Code
+                (SMB.Core_Negotiate.AES_128_CCM) = 1
+              and then SMB.Core_Transform.Cipher_Code
+                (SMB.Core_Negotiate.AES_128_GCM) = 2
+              and then SMB.Core_Transform.Cipher_Code
+                (SMB.Core_Negotiate.AES_256_CCM) = 3
+              and then SMB.Core_Transform.Cipher_Code
+                (SMB.Core_Negotiate.AES_256_GCM) = 4,
+              "cipher IDs");
       Assert (SMB.Core_Transform.Nonce_Length
                 (SMB.Core_Negotiate.AES_128_CCM) = 11
               and then SMB.Core_Transform.Nonce_Length

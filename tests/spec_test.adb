@@ -1471,17 +1471,21 @@ procedure Spec_Test is
                   "E16831DD2E8EB7B40000000000000000", "67000000",
                   "2500000000100000"), 16#67#, GCM_Session));
 
-      --  The header each vector's sender built, by the rules of 3.1.4.3.
+      --  Each vector's header as this client would build it (3.1.4.3 and
+      --  2.2.41). The responses are a Windows server's, which the client's
+      --  rules do not bind, but it happened to send zeros in the Reserved
+      --  fields too.
       function Built (V : Vector) return T.Transform_Header is
         (T.Client_Transform
            (V.Cipher, V.Header (20 .. 35), V.Message_Size, V.Session_Id))
       with Ghost;
 
-      --  A header whose fields all differ, at indices from 300.
-      Full : constant SMB.Bytes (300 .. 351) :=
+      --  A header whose fields all differ, at indices from 300, followed by
+      --  8 bytes of message.
+      Full : constant SMB.Bytes (300 .. 359) :=
         Hex ("FD534D42" & "000102030405060708090A0B0C0D0E0F"
              & "101112131415161718191A1B1C1D1E1F" & "20212223" & "2425"
-             & "2627" & "28292A2B2C2D2E2F");
+             & "2627" & "28292A2B2C2D2E2F" & "3031323334353637");
       Full_Header : constant T.Transform_Header :=
         (Nonce => Hex ("101112131415161718191A1B1C1D1E1F"),
          Original_Message_Size => 16#2322_2120#, Reserved => 16#2524#,
@@ -1505,10 +1509,12 @@ procedure Spec_Test is
             Changed : SMB.Bytes := Full;
          begin
             Changed (Index) := Changed (Index) xor 16#01#;
-            --  The Signature is the cipher's (phase 6).
+            --  The Signature is the cipher's (phase 6), and the message is
+            --  not the header's.
             pragma Assert
-              (Index in Full'First + 4 .. Full'First + 19
-               or else not T.Is_Transform_Header (Changed, Full_Header),
+              ((Index in Full'First + 4 .. Full'First + 19
+                or else Index >= Full'First + 52)
+               = T.Is_Transform_Header (Changed, Full_Header),
                "every transform header byte");
          end;
       end loop;
@@ -1541,9 +1547,20 @@ procedure Spec_Test is
                T.Client_Transform
                  (N.AES_128_GCM, GCM_Thirteen (20 .. 35), 16#87#,
                   GCM_Session))
-            and then T.Client_Transform
-              (N.AES_256_CCM, Vectors (1).Header (20 .. 35), 1, 2).Nonce =
-                Vectors (1).Header (20 .. 35)
+            --  The same with the AES-256 ciphers.
+            and then not T.Is_Transform_Header
+              (CCM_Twelve,
+               T.Client_Transform
+                 (N.AES_256_CCM, CCM_Twelve (20 .. 35), 16#87#, CCM_Session))
+            and then T.Is_Transform_Header
+              (GCM_Twelve,
+               T.Client_Transform
+                 (N.AES_256_GCM, GCM_Twelve (20 .. 35), 16#87#, GCM_Session))
+            and then not T.Is_Transform_Header
+              (GCM_Thirteen,
+               T.Client_Transform
+                 (N.AES_256_GCM, GCM_Thirteen (20 .. 35), 16#87#,
+                  GCM_Session))
             and then not T.Is_Cipher (0)
             and then not T.Is_Cipher (5),
             "the nonce's length for each cipher");
