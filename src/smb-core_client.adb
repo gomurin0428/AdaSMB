@@ -1023,7 +1023,8 @@ is
                (Metadata_Snapshot_Of (Value), State, Token)'Old
              or else Output'Length <
                Header_Length +
-                 (if Kind = Disposition_Metadata then 33 else 52 + Name'Length)
+                 (if Kind = Disposition_Metadata then 33
+                  else SMB.Core_Protocol.Rename_Request_Length (Name'Length))
              or else (Kind = Rename_Metadata
                       and then (Name'Length = 0 or else Name'Length mod 2 /= 0))
           then Status /= SMB.Ok
@@ -1147,7 +1148,8 @@ is
       Body_Used : Natural;
       Need : constant Natural :=
         (if Kind = Disposition_Metadata then Header_Length + 33
-         else Header_Length + 52 + Name'Length);
+         else Header_Length
+           + SMB.Core_Protocol.Rename_Request_Length (Name'Length));
       Message : SMB.QWord := 0;
       Expected : SMB.Engine.Request_Expectation;
       Before_Begin : constant SMB.Engine.Engine_State := State with Ghost;
@@ -1210,11 +1212,14 @@ is
                  (for all Index in 10 .. 15 => Body_Buffer (Index) = 0);
                pragma Assert
                  (Body_Buffer (32 .. 47) = SMB.Bytes'(32 .. 47 => 0));
-               pragma Assert (Body_Buffer'Length = 52 + Name'Length);
+               pragma Assert
+                 (Body_Buffer'Length =
+                    SMB.Core_Protocol.Rename_Request_Length (Name'Length));
                pragma Assert
                  (for all Index in 0 .. Name'Length - 1 =>
                     Body_Buffer (52 + Index) = Name (Name'First + Index));
-               pragma Assert (Body_Buffer (52 .. Body_Buffer'Last) = Name);
+               pragma Assert
+                 (Body_Buffer (52 .. 51 + Name'Length) = Name);
             end if;
          end if;
          if B /= SMB.Ok then
@@ -1284,7 +1289,8 @@ is
          and then Output'Length <= SMB.Maximum_Frame_Size
          and then Need =
            (if Kind = Disposition_Metadata then Header_Length + 33
-            else Header_Length + 52 + Name'Length)
+            else Header_Length
+              + SMB.Core_Protocol.Rename_Request_Length (Name'Length))
          and then Need <= Output'Length
          and then Old_Metadata.Stage = Metadata_Idle
          and then Metadata_Preparation_Context_Matches
@@ -1333,7 +1339,10 @@ is
             else
               Output (Output'First + Header_Length + 3) = 10
               and then SMB.Core_Wire.Encoded_U32
-                (Output, Header_Length + 4) = SMB.DWord (20 + Name'Length)
+                (Output, Header_Length + 4) =
+                  SMB.DWord
+                    (SMB.Core_Protocol.Rename_Information_Length
+                       (Name'Length))
               and then
                 (for all Index in 32 .. 47 =>
                    Output (Output'First + Header_Length + Index) = 0)
@@ -1385,7 +1394,8 @@ is
          and then Used =
            (if Value.Kind = Disposition_Metadata
             then SMB.Core_Wire.Header_Size + 33
-            else SMB.Core_Wire.Header_Size + 52 + Value.Name_Length));
+            else SMB.Core_Wire.Header_Size
+              + SMB.Core_Protocol.Rename_Request_Length (Value.Name_Length)));
       pragma Assert
         (SMB.Core_Wire.Encoded_U16 (Output, 4) =
            SMB.Word (SMB.Core_Wire.Header_Size)
@@ -1417,7 +1427,9 @@ is
            Output (Output'First + SMB.Core_Wire.Header_Size + 3) = 10
            and then SMB.Core_Wire.Encoded_U32
              (Output, SMB.Core_Wire.Header_Size + 4) =
-               SMB.DWord (20 + Value.Name_Length)
+               SMB.DWord
+                 (SMB.Core_Protocol.Rename_Information_Length
+                    (Value.Name_Length))
            and then
              (for all Index in 32 .. 47 =>
                 Output (Output'First + SMB.Core_Wire.Header_Size + Index) = 0)
@@ -1435,11 +1447,13 @@ is
            (Before_Begin, State, Token, Metadata_Snapshot_Of (Value).File_Id,
             Metadata_Snapshot_Of (Value).Access_Mode,
             Metadata_Snapshot_Of (Value).Directory));
-      Lemma_Slice_Equals (Output, Name, Header_Length + 52, Need - 1);
+      --  The name; any padding after it, up to Need, is zero (Build_Rename).
+      Lemma_Slice_Equals
+        (Output, Name, Header_Length + 52, Header_Length + 51 + Name'Length);
       pragma Assert
         (if Kind = Rename_Metadata then
            Output (Output'First + Header_Length + 52 ..
-                   Output'First + (Need - 1)) = Name);
+                   Output'First + Header_Length + 51 + Name'Length) = Name);
       pragma Assert
         (if Kind = Rename_Metadata then
            (for all Index in 0 .. Name'Length - 1 =>

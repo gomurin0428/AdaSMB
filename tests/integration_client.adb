@@ -689,7 +689,10 @@ begin
          SMB.Client.Remove_File (Client, "adasmb-large.bin");
       end;
       SMB.Client.Rename (Client, Unicode_Name, Renamed_Name);
-      SMB.Client.Remove_File (Client, Renamed_Name);
+      --  A one-character target: FILE_RENAME_INFORMATION is then padded to
+      --  24 bytes (MS-FSCC 2.4.42.2), which a server must otherwise refuse.
+      SMB.Client.Rename (Client, Renamed_Name, "r");
+      SMB.Client.Remove_File (Client, "r");
       SMB.Client.Make_Directory (Client, "adasmb-empty-directory");
       SMB.Client.Remove_Directory (Client, "adasmb-empty-directory");
       SMB.Client.Make_Directory (Client, "adasmb-nonempty-directory");

@@ -27,6 +27,20 @@ package SMB.Core_Protocol is
    function Credit_Charge (Amount : Natural) return Positive is
      (if Amount = 0 then 1 else (Amount - 1) / Maximum_IO_Chunk + 1);
    Maximum_Name_Bytes : constant := 65_534;
+
+   --  FILE_RENAME_INFORMATION_TYPE_2 (MS-FSCC 2.4.42.2) for a name of
+   --  Name_Length bytes: 20 bytes of fields, the name, then Padding, whose
+   --  "Length ... MUST be the number of bytes required to make the size of
+   --  this structure at least 24"; a server "MUST fail the request with
+   --  STATUS_INFO_LENGTH_MISMATCH" when it is shorter (MS-SMB2 3.3.5.21.1).
+   function Rename_Information_Length (Name_Length : Natural) return Natural is
+     (Natural'Max (24, 20 + Name_Length))
+   with Pre => Name_Length <= Maximum_Name_Bytes;
+
+   --  The SET_INFO body that carries it: 32 bytes of fields, then it.
+   function Rename_Request_Length (Name_Length : Natural) return Natural is
+     (32 + Rename_Information_Length (Name_Length))
+   with Pre => Name_Length <= Maximum_Name_Bytes;
    Maximum_Directory_Entries : constant := 100_000;
    Maximum_Directory_Pages : constant := 4_096;
 
@@ -469,12 +483,12 @@ package SMB.Core_Protocol is
        Used <= Output'Length
        and then
          (if Status = SMB.Ok then
-            Used = 52 + Name'Length
+            Used = Rename_Request_Length (Name'Length)
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
             and then Output (Output'First + 2) = 1
             and then Output (Output'First + 3) = 10
             and then SMB.Core_Wire.Encoded_U32 (Output, 4) =
-              SMB.DWord (20 + Name'Length)
+              SMB.DWord (Rename_Information_Length (Name'Length))
             and then SMB.Core_Wire.Encoded_U16 (Output, 8) = 96
             and then
               (for all Index in 10 .. 15 =>
@@ -494,14 +508,18 @@ package SMB.Core_Protocol is
               SMB.DWord (Name'Length)
             and then
               (if Name'Length > 0 then
-                 Output (Output'First + 52 .. Output'First + (Used - 1)) =
+                 Output
+                   (Output'First + 52 .. Output'First + 51 + Name'Length) =
                    Name)
             and then
               (Name'Length = 0
                or else
                  (for all Index in 0 .. Name'Length - 1 =>
                     Output (Output'First + 52 + Index) =
-                      Name (Name'First + Index))));
+                      Name (Name'First + Index)))
+            and then
+              (for all Index in 52 + Name'Length .. Used - 1 =>
+                 Output (Output'First + Index) = 0));
 
    procedure Build_Simple
      (Output : out SMB.Bytes;

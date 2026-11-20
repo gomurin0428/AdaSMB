@@ -714,7 +714,8 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
-      Required : constant Natural := 52 + Name'Length;
+      --  The padding after a short name stays as Begin_Build cleared it.
+      Required : constant Natural := Rename_Request_Length (Name'Length);
    begin
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 33, Status);
@@ -727,7 +728,9 @@ package body SMB.Core_Protocol with SPARK_Mode is
       elsif Name'Length > SMB.DWord'Last - 20 then
          Status := SMB.Resource_Limit;
       else
-         Put_U32 (Output, 4, SMB.DWord (20 + Name'Length), Status);
+         Put_U32
+           (Output, 4,
+            SMB.DWord (Rename_Information_Length (Name'Length)), Status);
       end if;
       Put_U16 (Output, 8, 96, Status);
       if Status = SMB.Ok then
@@ -739,12 +742,11 @@ package body SMB.Core_Protocol with SPARK_Mode is
       end if;
       Finish (Required, Output'Length, Used, Status);
       --  Copy states the name's slice with its upper bound counted from
-      --  Output'Last; the postcondition counts it from Used.
+      --  Output'Last; the postcondition counts it from Output'First.
       pragma Assert
         (if Status = SMB.Ok and then Name'Length > 0 then
-           Used = 52 + Name'Length
-           and then Output'Last - (Output'Length - 52 - Name'Length) =
-             Output'First + (Used - 1));
+           Output'Last - (Output'Length - 52 - Name'Length) =
+             Output'First + 51 + Name'Length);
    end Build_Rename;
 
    procedure Build_Simple

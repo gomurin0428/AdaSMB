@@ -73,7 +73,8 @@ of date.
 | after 0.4.0 | `Write_U64` without loop invariants, which ran over the whole packet in production | merged (#151) |
 | after 0.4.0 | Platinum phase 3, CLOSE, READ and WRITE: their requests in `SMB.Spec.SMB2`, `Build_Close`, `Build_Read`, `Build_Write` proved against them | merged (#152) |
 | after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | merged (#154) |
-| after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | #156 |
+| after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | merged (#156) |
+| after 0.4.0 | Rename: FILE_RENAME_INFORMATION padded to 24 bytes; Windows Server refused a one-character target | #153 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -508,6 +509,39 @@ opens a received one. It is a stateless SPARK unit, like
   (`--limit-subp`) took 2 to 10 minutes each; after a failed attempt,
   delete `build/proof-obj` first (see #150): stale failures came back for
   `Build_Write` until it was.
+## Rename padding (#153)
+
+* MS-FSCC 2.4.42.2: FILE_RENAME_INFORMATION_TYPE_2 ends with Padding whose
+  "Length ... MUST be the number of bytes required to make the size of
+  this structure at least 24", and MS-SMB2 3.3.5.21.1: a server "MUST fail
+  the request with STATUS_INFO_LENGTH_MISMATCH" when the buffer is shorter.
+  The structure is 20 bytes and the name, so a one-character target (2
+  bytes in UTF-16) made 22. `Build_Rename` now pads with zeros to 24
+  (`Core_Protocol.Rename_Information_Length`); BufferLength and the request
+  (`Rename_Request_Length`, 32 bytes before it) follow, in `Core_Client`'s
+  contracts and the facade's buffer too.
+* Found by an audit of the builders against MS-SMB2 and MS-FSCC for the
+  next Platinum phase. Windows Server refused it: a CI run of the
+  integration test with a rename to `r` and without the fix failed on
+  Windows with NTSTATUS 0xC0000004 (STATUS_INFO_LENGTH_MISMATCH); Samba
+  accepted it. The integration client now renames to a one-character name.
+* The same audit's other findings, for the Platinum phases that cover
+  them:
+  * TREE_DISCONNECT goes out while files are still open; MS-SMB2 3.2.4.22
+    says the client "MUST" close them first. `SMB.Client.Disconnect`
+    should close the open handles (or the engine should refuse) first.
+    LOGOFF likewise follows a failed TREE_DISCONNECT (3.2.4.23).
+  * Names are not checked against all of MS-FSCC 2.1.5 (`.` components,
+    `" * ? < > |` and control characters, components over 255
+    characters, paths over 32,760) nor share names against 2.2.9 and
+    MS-FSCC 2.1.6 (80 characters, more forbidden characters): phase 4.
+  * Core-level gaps a precondition should close: `Build_Create` accepts a
+    directory with an overwrite disposition; `Build_End_Of_File` accepts a
+    size over 2**63 - 1 (`Core_Resize` checks it).
+  * SHOULDs not followed: no NETNAME negotiate context (an open question
+    already), no lease requested when the server offers leasing (no lease
+    support), MaxTransactSize not read from the NEGOTIATE response.
+  * `Build_Negotiate`, the 2.1-only NEGOTIATE, has no caller.
 
 ## Platinum phase 3, the SMB2 header (#150)
 
