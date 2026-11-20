@@ -80,7 +80,7 @@ of date.
 | after 0.4.0 | Platinum phase 3, QUERY_INFO and SET_INFO (disposition, end of file, rename) against MS-SMB2 and MS-FSCC | merged (#158) |
 | after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | merged (#159) |
 | after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | merged (#160) |
-| after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | #161 |
+| after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | merged (#161) |
 | after 0.4.0 | Platinum phase 4, UTF-8 to UTF-16: `SMB.Spec.Unicode` and `Core_Text.UTF8_To_UTF16` against it | #162 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
