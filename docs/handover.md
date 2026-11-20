@@ -78,7 +78,7 @@ of date.
 | after 0.4.0 | Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT against the specification | merged (#155) |
 | after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | merged (#157) |
 | after 0.4.0 | Platinum phase 3, QUERY_INFO and SET_INFO (disposition, end of file, rename) against MS-SMB2 and MS-FSCC | merged (#158) |
-| after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | #159 |
+| after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | merged (#159) |
 | after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | #160 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
