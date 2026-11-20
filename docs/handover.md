@@ -74,7 +74,8 @@ of date.
 | after 0.4.0 | Platinum phase 3, CLOSE, READ and WRITE: their requests in `SMB.Spec.SMB2`, `Build_Close`, `Build_Read`, `Build_Write` proved against them | merged (#152) |
 | after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | merged (#154) |
 | after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | merged (#156) |
-| after 0.4.0 | Rename: FILE_RENAME_INFORMATION padded to 24 bytes; Windows Server refused a one-character target | #153 |
+| after 0.4.0 | Rename: FILE_RENAME_INFORMATION padded to 24 bytes; Windows Server refused a one-character target | merged (#153) |
+| after 0.4.0 | Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT against the specification | #155 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -420,11 +421,11 @@ opens a received one. It is a stateless SPARK unit, like
 * SPARK Platinum ([platinum-design.md](platinum-design.md)), whose
   decisions the maintainer approved on 2026-11-18: phase 2 is merged
   (#149); phase 3 (the SMB2 messages) started with the header (#150) and
-  CLOSE, READ and WRITE (#152). Next in phase 3: the other
-  `Core_Protocol` builders (NEGOTIATE, SESSION_SETUP, TREE_CONNECT, CREATE,
-  QUERY_DIRECTORY, the SET_INFO and QUERY_INFO ones, LOGOFF and
-  TREE_DISCONNECT), then the transform header and `Core_Query` and
-  `Core_Resize`. After Platinum, the
+  CLOSE, READ and WRITE (#152), then SESSION_SETUP, TREE_CONNECT, LOGOFF
+  and TREE_DISCONNECT (#155). Next in phase 3: CREATE and QUERY_DIRECTORY,
+  the SET_INFO and QUERY_INFO builders (after #153's rename fix), the 3.1.1
+  NEGOTIATE (and dropping the unused 2.1 `Build_Negotiate`), then the
+  transform header and `Core_Query` and `Core_Resize`. After Platinum, the
   maintainer wants the remaining SMB features in this order: Kerberos,
   several requests in flight, several shares per connection, DFS, share
   listing (DCE/RPC), then the remaining file operations (times and
@@ -444,6 +445,42 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT (#155)
+
+* `SMB.Spec.SMB2` adds SESSION_SETUP (2.2.5), TREE_CONNECT (2.2.9), LOGOFF
+  (2.2.7) and TREE_DISCONNECT (2.2.11), and `Has_Bytes_At_Offset` for a
+  variable part placed by an offset counted from the header
+  (SecurityBufferOffset, PathOffset), after the fields. Read from both
+  the layouts and the client sections (3.2.4.2.3, 3.2.4.2.4), as #152
+  learned: `Client_Session_Setup` has Flags 0 (MUST), SecurityMode
+  SIGNING_REQUIRED (MUST, since the client requires signing) with
+  SIGNING_ENABLED (the server ignores it), Capabilities 0 (no DFS),
+  Channel 0 and PreviousSessionId 0 (MUST), the token at 88;
+  `Client_Tree_Connect` has Flags 0 and the path at 72 (the offsets are
+  this client's choice; the standard asks only that they describe where
+  the token and the path are). The builders' bytes deviate from neither
+  section. Two deviations around them, which #153's audit recorded, stay
+  for later phases: the share path is not checked against 2.2.9's MUSTs
+  (a server component under 256 characters, a share under 81 without
+  MS-FSCC 2.1.6's characters), and `Disconnect` sends TREE_DISCONNECT
+  without first closing the open files (3.2.4.22).
+* `Build_Session_Setup`, `Build_Tree_Connect` and `Build_Simple` state
+  their exact status, `Used`, the request against the specification and
+  zero bytes past it, as the transfer builders do. `Build_Tree_Connect`
+  refuses an odd path length (`Invalid_Length`, before a short buffer's
+  `Resource_Limit`) before writing anything, so that a failure leaves the
+  buffer zero; before, it had written StructureSize and PathOffset.
+  `Build_Session_Setup` no longer writes the Flags byte's zero, nor checks
+  a token length that its precondition already bounds.
+* `spec_test` (70 checks) checks the first SESSION_SETUP request of the
+  encryption blog's A.1, MS-SMB2 4.1's TREE_CONNECT to `\\smb2server\IPC$`
+  (the standard gives it field by field), 4.7's LOGOFF, and constructed
+  requests whose fields all differ, every byte flipped in turn (the bytes
+  between the fields and an offset-placed part excepted).
+* The callers (`Core_Client`'s two SESSION_SETUP preparations,
+  `Core_Connection`'s TREE_CONNECT, TREE_DISCONNECT and LOGOFF) prove alone
+  with the new contracts, the predicates' bodies hidden as before.
 
 ## Platinum phase 3, CLOSE, READ and WRITE (#152)
 

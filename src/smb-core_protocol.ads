@@ -137,10 +137,17 @@ package SMB.Core_Protocol is
    with Pre => Token'Length <= 65_535
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       Status =
+         (if Output'Length >= 24 + Token'Length then SMB.Ok
+          else SMB.Resource_Limit)
+       and then Used = (if Status = SMB.Ok then 24 + Token'Length else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 24 + Token'Length
+            SMB.Spec.SMB2.Is_Session_Setup_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Session_Setup (SMB.Word (Token'Length)),
+               Token)
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 25
             and then Output (Output'First + 2) = 0
             and then Output (Output'First + 3) = 3
@@ -163,10 +170,19 @@ package SMB.Core_Protocol is
    with Pre => Name'Length <= Maximum_Name_Bytes
      and then Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       --  An odd length (not UTF-16) comes before a short buffer.
+       Status =
+         (if Name'Length mod 2 /= 0 then SMB.Invalid_Length
+          elsif Output'Length < 8 + Name'Length then SMB.Resource_Limit
+          else SMB.Ok)
+       and then Used = (if Status = SMB.Ok then 8 + Name'Length else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 8 + Name'Length
+            SMB.Spec.SMB2.Is_Tree_Connect_Request
+              (Output,
+               SMB.Spec.SMB2.Client_Tree_Connect (SMB.Word (Name'Length)),
+               Name)
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 9
             and then SMB.Core_Wire.Encoded_U16 (Output, 2) = 0
             and then SMB.Core_Wire.Encoded_U16 (Output, 4) = 72
@@ -527,10 +543,13 @@ package SMB.Core_Protocol is
       Status : out SMB.Core_Status)
    with Pre => Output'Length <= SMB.Maximum_Frame_Size,
      Post =>
-       Used <= Output'Length
+       Status = (if Output'Length >= 4 then SMB.Ok else SMB.Resource_Limit)
+       and then Used = (if Status = SMB.Ok then 4 else 0)
+       and then Zero_After (Output, Used)
        and then
          (if Status = SMB.Ok then
-            Used = 4
+            SMB.Spec.SMB2.Is_Logoff_Request (Output)
+            and then SMB.Spec.SMB2.Is_Tree_Disconnect_Request (Output)
             and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 4
             and then SMB.Core_Wire.Encoded_U16 (Output, 2) = 0);
 

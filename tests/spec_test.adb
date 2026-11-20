@@ -525,10 +525,181 @@ procedure Spec_Test is
          "structure sizes");
       Passed;
    end Test_SMB2_Transfer;
+   --  MS-SMB2 2.2.5, 2.2.9, 2.2.7 and 2.2.11: SESSION_SETUP, TREE_CONNECT,
+   --  LOGOFF and TREE_DISCONNECT. The SESSION_SETUP is the first request of
+   --  the blog's A.1 (test_suite's A1_Setup_Request_1); the TREE_CONNECT is
+   --  MS-SMB2 4.1's, to \\smb2server\IPC$, which the standard gives field by
+   --  field; LOGOFF is 4.7's. Requests whose fields all hold distinct
+   --  multi-byte values, every byte flipped in turn, fix every byte.
+   procedure Test_SMB2_Session is
+      package S renames SMB.Spec.SMB2;
+      use type SMB.Bytes;
+      use type S.Session_Setup_Request;
+      Token : constant SMB.Bytes :=
+        (16#60#, 16#48#, 16#06#, 16#06#, 16#2B#, 16#06#, 16#01#, 16#05#,
+        16#05#, 16#02#, 16#A0#, 16#3E#, 16#30#, 16#3C#, 16#A0#, 16#0E#,
+        16#30#, 16#0C#, 16#06#, 16#0A#, 16#2B#, 16#06#, 16#01#, 16#04#,
+        16#01#, 16#82#, 16#37#, 16#02#, 16#02#, 16#0A#, 16#A2#, 16#2A#,
+        16#04#, 16#28#, 16#4E#, 16#54#, 16#4C#, 16#4D#, 16#53#, 16#53#,
+        16#50#, 16#00#, 16#01#, 16#00#, 16#00#, 16#00#, 16#97#, 16#82#,
+        16#08#, 16#E2#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+        16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#,
+        16#00#, 16#00#, 16#06#, 16#03#, 16#80#, 16#25#, 16#00#, 16#00#,
+        16#00#, 16#0F#);
+      Setup_Body : constant SMB.Bytes :=
+        (16#19#, 16#00#, 16#00#, 16#01#, 16#01#, 16#00#, 16#00#, 16#00#,
+        16#00#, 16#00#, 16#00#, 16#00#, 16#58#, 16#00#, 16#4A#, 16#00#,
+        16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#)
+        & Token;
+      Path : constant SMB.Bytes :=
+        (16#5C#, 16#00#, 16#5C#, 16#00#, 16#73#, 16#00#, 16#6D#, 16#00#,
+        16#62#, 16#00#, 16#32#, 16#00#, 16#73#, 16#00#, 16#65#, 16#00#,
+        16#72#, 16#00#, 16#76#, 16#00#, 16#65#, 16#00#, 16#72#, 16#00#,
+        16#5C#, 16#00#, 16#49#, 16#00#, 16#50#, 16#00#, 16#43#, 16#00#,
+        16#24#, 16#00#);
+      Tree_Body : constant SMB.Bytes (200 .. 207) :=
+        (16#09#, 16#00#, 16#00#, 16#00#, 16#48#, 16#00#, 16#22#, 16#00#);
+      Logoff_Body : constant SMB.Bytes := (16#04#, 16#00#, 16#00#, 16#00#);
+      --  SecurityBufferOffset 92 leaves 4 bytes between the fields and the
+      --  token; PathOffset 76 leaves 4 before the path.
+      Full_Setup : constant SMB.Bytes (300 .. 330) :=
+        (16#19#, 16#00#, 16#81#, 16#42#, 16#14#, 16#13#, 16#12#, 16#11#,
+        16#24#, 16#23#, 16#22#, 16#21#, 16#5C#, 16#00#, 16#03#, 16#00#,
+        16#38#, 16#37#, 16#36#, 16#35#, 16#34#, 16#33#, 16#32#, 16#31#)
+        & (16#00#, 16#00#, 16#00#, 16#00#)
+        & (16#AA#, 16#BB#, 16#CC#);
+      Full_Token : constant SMB.Bytes := (16#AA#, 16#BB#, 16#CC#);
+      Full_Tree : constant SMB.Bytes :=
+        (16#09#, 16#00#, 16#52#, 16#51#, 16#4C#, 16#00#, 16#04#, 16#00#)
+        & (16#00#, 16#00#, 16#00#, 16#00#)
+        & (16#41#, 16#00#, 16#42#, 16#00#);
+      Full_Path : constant SMB.Bytes := (16#41#, 16#00#, 16#42#, 16#00#);
+      Blog_Setup : constant S.Session_Setup_Request :=
+        (Flags => 0, Security_Mode => S.Negotiate_Signing_Enabled,
+         Capabilities => 1, Channel => 0, Security_Buffer_Offset => 88,
+         Security_Buffer_Length => 16#4A#, Previous_Session_Id => 0)
+      with Ghost;
+      Full_Setup_Request : constant S.Session_Setup_Request :=
+        (Flags => 16#81#, Security_Mode => 16#42#,
+         Capabilities => 16#1112_1314#, Channel => 16#2122_2324#,
+         Security_Buffer_Offset => 92, Security_Buffer_Length => 3,
+         Previous_Session_Id => 16#3132_3334_3536_3738#)
+      with Ghost;
+      Full_Tree_Request : constant S.Tree_Connect_Request :=
+        (Flags => 16#5152#, Path_Offset => 76, Path_Length => 4)
+      with Ghost;
+   begin
+      pragma Assert
+        (S.Is_Session_Setup_Request (Setup_Body, Blog_Setup, Token)
+         and then not S.Is_Session_Setup_Request
+           (Setup_Body, S.Client_Session_Setup (16#4A#), Token),
+         "the blog's SESSION_SETUP request");
+      Passed;
+      --  This client: signing required and enabled, no DFS, the token at 88.
+      pragma Assert
+        (S.Client_Session_Setup (16#4A#)
+         = (Blog_Setup with delta
+              Security_Mode =>
+                S.Negotiate_Signing_Enabled + S.Negotiate_Signing_Required,
+              Capabilities => 0),
+         "this client's SESSION_SETUP");
+      Passed;
+      pragma Assert
+        (S.Is_Tree_Connect_Request
+           (Tree_Body & Path, S.Client_Tree_Connect (34), Path)
+         and then not S.Is_Tree_Connect_Request
+           (Tree_Body & Path, S.Client_Tree_Connect (34),
+            Path (Path'First .. Path'Last - 2)),
+         "MS-SMB2 4.1's TREE_CONNECT request");
+      Passed;
+      pragma Assert
+        (S.Is_Logoff_Request (Logoff_Body)
+         and then S.Is_Tree_Disconnect_Request (Logoff_Body)
+         and then not S.Is_Logoff_Request
+           (Logoff_Body (Logoff_Body'First .. Logoff_Body'Last - 1)),
+         "MS-SMB2 4.7's LOGOFF request");
+      Passed;
+      pragma Assert
+        (S.Is_Session_Setup_Request (Full_Setup, Full_Setup_Request, Full_Token)
+         and then S.Is_Tree_Connect_Request
+           (Full_Tree, Full_Tree_Request, Full_Path),
+         "requests with every field set");
+      Passed;
+      --  SecurityBufferLength is the token's length, and an offset never
+      --  points into the fields.
+      declare
+         Overlap : SMB.Bytes := Full_Setup;
+         Tree_Overlap : SMB.Bytes := Full_Tree;
+      begin
+         Overlap (Overlap'First + 12) := 16#50#;
+         Tree_Overlap (Tree_Overlap'First + 4) := 16#42#;
+         pragma Assert
+           (not S.Is_Session_Setup_Request
+              (Setup_Body, Blog_Setup, Token (Token'First .. Token'Last - 1))
+            and then not S.Is_Session_Setup_Request
+              (Overlap,
+               (Full_Setup_Request with delta Security_Buffer_Offset => 80),
+               SMB.Bytes'(16#38#, 16#37#, 16#36#))
+            and then not S.Is_Tree_Connect_Request
+              (Tree_Overlap,
+               (Full_Tree_Request with delta Path_Offset => 66),
+               SMB.Bytes'(16#52#, 16#51#, 16#42#, 16#00#)),
+            "SecurityBufferLength, and offsets into the fields");
+      end;
+      Passed;
+      for Index in Full_Setup'Range loop
+         declare
+            Changed : SMB.Bytes := Full_Setup;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            --  The 4 bytes before the token are not part of the request.
+            pragma Assert
+              (Index in Full_Setup'First + 24 .. Full_Setup'First + 27
+               or else not S.Is_Session_Setup_Request
+                 (Changed, Full_Setup_Request, Full_Token),
+               "every SESSION_SETUP byte");
+         end;
+      end loop;
+      Passed;
+      for Index in Full_Tree'Range loop
+         declare
+            Changed : SMB.Bytes := Full_Tree;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            pragma Assert
+              (Index in Full_Tree'First + 8 .. Full_Tree'First + 11
+               or else not S.Is_Tree_Connect_Request
+                 (Changed, Full_Tree_Request, Full_Path),
+               "every TREE_CONNECT byte");
+         end;
+      end loop;
+      Passed;
+      for Index in Logoff_Body'Range loop
+         declare
+            Changed : SMB.Bytes := Logoff_Body;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            pragma Assert
+              (not S.Is_Logoff_Request (Changed)
+               and then not S.Is_Tree_Disconnect_Request (Changed),
+               "every LOGOFF byte");
+         end;
+      end loop;
+      Passed;
+      pragma Assert
+        (S.Session_Setup_Request_Size = 25 and then S.Tree_Connect_Request_Size = 9
+         and then S.Logoff_Request_Size = 4
+         and then S.Tree_Disconnect_Request_Size = 4
+         and then S.Negotiate_Signing_Enabled = 1
+         and then S.Negotiate_Signing_Required = 2,
+         "structure sizes and security modes");
+      Passed;
+   end Test_SMB2_Session;
 begin
    Test_Encoding;
    Test_SMB2_Header;
    Test_SMB2_Transfer;
+   Test_SMB2_Session;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;

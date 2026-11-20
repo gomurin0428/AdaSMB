@@ -313,22 +313,24 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Session_Setup_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
       Required : constant Natural := 24 + Token'Length;
    begin
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 25, Status);
-      if Status = SMB.Ok then
-         Put_Byte (Output, 2, 0, Status);
-         Put_Byte (Output, 3, 3, Status);
-      end if;
+      --  Flags 0, then SecurityMode SMB2_NEGOTIATE_SIGNING_ENABLED |
+      --  SMB2_NEGOTIATE_SIGNING_REQUIRED (MS-SMB2 3.2.4.2.3).
+      Put_Byte (Output, 3, 3, Status);
+      --  Capabilities, Channel and PreviousSessionId stay zero.
       Put_U16 (Output, 12, 88, Status);
-      if Token'Length > SMB.Word'Last then
-         Status := SMB.Resource_Limit;
-      else
-         Put_U16 (Output, 14, SMB.Word (Token'Length), Status);
-         if Status = SMB.Ok then
-            Copy (Output, 24, Token, Status);
-         end if;
+      --  The precondition keeps the token's length a Word.
+      Put_U16 (Output, 14, SMB.Word (Token'Length), Status);
+      if Status = SMB.Ok then
+         Copy (Output, 24, Token, Status);
       end if;
       Finish (Required, Output'Length, Used, Status);
    end Build_Session_Setup;
@@ -338,20 +340,29 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Tree_Connect_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
       Required : constant Natural := 8 + Name'Length;
    begin
+      --  A path that is not UTF-16 is refused before anything is written,
+      --  so that a failure leaves the whole buffer zero.
+      if Name'Length mod 2 /= 0 then
+         Clear (Output);
+         Used := 0;
+         Status := SMB.Invalid_Length;
+         return;
+      end if;
       Begin_Build (Output, Required, Status);
       Put_U16 (Output, 0, 9, Status);
+      --  Flags stay zero.
       Put_U16 (Output, 4, 72, Status);
-      if Name'Length mod 2 /= 0 then
-         Status := SMB.Invalid_Length;
-      elsif Name'Length > SMB.Word'Last then
-         Status := SMB.Resource_Limit;
-      else
-         Put_U16 (Output, 6, SMB.Word (Name'Length), Status);
-         if Status = SMB.Ok then
-            Copy (Output, 8, Name, Status);
-         end if;
+      --  Maximum_Name_Bytes keeps the length a Word.
+      Put_U16 (Output, 6, SMB.Word (Name'Length), Status);
+      if Status = SMB.Ok then
+         Copy (Output, 8, Name, Status);
       end if;
       Finish (Required, Output'Length, Used, Status);
    end Build_Tree_Connect;
@@ -753,9 +764,18 @@ package body SMB.Core_Protocol with SPARK_Mode is
      (Output : out SMB.Bytes;
       Used : out Natural;
       Status : out SMB.Core_Status) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Logoff_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Tree_Disconnect_Request);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Zero_After);
    begin
       Begin_Build (Output, 4, Status);
       Put_U16 (Output, 0, 4, Status);
+      --  Reserved stays zero.
       Finish (4, Output'Length, Used, Status);
    end Build_Simple;
 
