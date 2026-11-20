@@ -76,7 +76,7 @@ of date.
 | after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | merged (#156) |
 | after 0.4.0 | Rename: FILE_RENAME_INFORMATION padded to 24 bytes; Windows Server refused a one-character target | merged (#153) |
 | after 0.4.0 | Platinum phase 3, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT against the specification | #155 |
-| after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | #156 |
+| after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | #157 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -423,7 +423,7 @@ opens a received one. It is a stateless SPARK unit, like
   decisions the maintainer approved on 2026-11-18: phase 2 is merged
   (#149); phase 3 (the SMB2 messages) started with the header (#150) and
   CLOSE, READ and WRITE (#152), then SESSION_SETUP, TREE_CONNECT, LOGOFF
-  and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#156). Next
+  and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#157). Next
   in phase 3: the SET_INFO and QUERY_INFO builders (after #153's rename
   fix), the 3.1.1
   NEGOTIATE (and dropping the unused 2.1 `Build_Negotiate`), then the
@@ -448,7 +448,7 @@ opens a received one. It is a stateless SPARK unit, like
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
 
-## Platinum phase 3, CREATE and QUERY_DIRECTORY (#156)
+## Platinum phase 3, CREATE and QUERY_DIRECTORY (#157)
 
 * `SMB.Spec.SMB2` adds CREATE (2.2.13) and QUERY_DIRECTORY (2.2.33), with
   `Client_Create` and `Client_Query_Directory` from the client sections
