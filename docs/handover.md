@@ -480,6 +480,9 @@ opens a received one. It is a stateless SPARK unit, like
   `Code_Unit`, and `Lemma_Invalid_UTF16_Unit` in each refusing branch
   (without it the old clause timed out in the larger context).
   `test_suite`'s UTF-16 probe checks the verdict on every short input.
+  The move stops the old, non-recursive clause from running in the test
+  build too (the price of a pragma that covers whole declarations, as
+  for #163); the probe and the assertions in the body make up for it.
 
 ## Platinum phase 5, SHA-256's compression function (#168)
 
