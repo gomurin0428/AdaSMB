@@ -130,7 +130,8 @@ specification tests passing.
 6. **AES, then CMAC, CCM, GCM and GMAC**; then SMB 3.1.1 signing and the
    transform's tag and plaintext.
 7. **Response acceptance.** Exact acceptance and failure statuses for
-   `Parse_Response`, directory entries and negotiate contexts.
+   `Parse_Response`, directory entries, negotiate contexts and a received
+   transform header (`Core_Transform.Unwrap`).
 8. **NTLM and SPNEGO.**
 9. **Engine model, then the coordinators** (`Core_Connection`,
    `Core_Client`, `Core_Query`, `Core_Resize`) in terms of it.

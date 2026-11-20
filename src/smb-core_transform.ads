@@ -1,6 +1,7 @@
 with Interfaces;
 with SMB.Core_Negotiate;
 with SMB.Core_Wire;
+with SMB.Spec.SMB2.Transform;
 
 --  The SMB 3.x TRANSFORM_HEADER that carries an encrypted message (MS-SMB2
 --  2.2.41, 3.1.4.3, 3.2.4.1.8 and 3.2.5.1.1.1):
@@ -39,6 +40,14 @@ package SMB.Core_Transform is
 
    --  The contents of the Nonce field.
    subtype Nonce_Field is SMB.Bytes (0 .. 15);
+
+   --  The cipher's ID on the wire (MS-SMB2 2.2.3.1.2).
+   function Cipher_Code (Cipher : AEAD_Cipher) return SMB.Word is
+     (case Cipher is
+        when SMB.Core_Negotiate.AES_128_CCM => 16#0001#,
+        when SMB.Core_Negotiate.AES_128_GCM => 16#0002#,
+        when SMB.Core_Negotiate.AES_256_CCM => 16#0003#,
+        when SMB.Core_Negotiate.AES_256_GCM => 16#0004#);
 
    --  How many bytes of the Nonce field the cipher uses.
    function Nonce_Length (Cipher : AEAD_Cipher) return Positive is
@@ -84,7 +93,8 @@ package SMB.Core_Transform is
       and then Packet (Packet'First + 3) = 16#42#);
 
    --  Writes Message, encrypted with Cipher and Key, after its transform
-   --  header into Output, and zeros after them. The Nonce field holds the
+   --  header into Output, and zeros after them. The header is the one
+   --  SMB.Spec.SMB2.Transform gives this client: the Nonce field holds the
    --  bytes of Nonce the cipher uses, then zeros. Output too short for the
    --  result fails with Invalid_Length and is all zero. Message and Output
    --  must not overlap: Output is cleared before Message is read. SPARK
@@ -110,6 +120,11 @@ package SMB.Core_Transform is
             and then (for all Value of Output => Value = 0)
           else Status = SMB.Ok
             and then Used = Header_Size + Message'Length
+            and then SMB.Spec.SMB2.Transform.Is_Transform_Header
+              (Output,
+               SMB.Spec.SMB2.Transform.Client_Transform
+                 (Cipher_Code (Cipher), Nonce, SMB.DWord (Message'Length),
+                  Session_Id))
             and then Is_Transformed (Output)
             and then
               (for all Index in Nonce_Field'Range =>
