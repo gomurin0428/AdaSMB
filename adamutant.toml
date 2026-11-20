@@ -25,10 +25,15 @@ equivalence_build = "gprbuild -q -p -c -P smb_tests.gpr test_suite.adb -cargs -O
 # mutant, times 1.5, plus timeout_ms: a test that a mutant makes loop
 # forever is stopped a minute after that.
 timeout_ms = 60000
-# The proof of a mutant gets 20 minutes. The baseline proof is one small
+# The proof of a mutant gets 5 minutes. The baseline proof is one small
 # unit and takes seconds (the whole project is proved into the cache
 # first), so a limit taken from it would be far too short for a large unit.
-prove_timeout_ms = 1200000
+# A mutant of a contract in a large unit (Core_Client) can take 25 minutes
+# or more, since it changes many goals; with 20 minutes a pull request that
+# touched 80 such places ran past the job's 6 hours (#153). A proof that
+# does not finish counts the mutant as undetected, "(the proof timed out)",
+# for the pull request to judge.
+prove_timeout_ms = 300000
 # A mutant of a length or a loop bound can allocate without limit. The largest
 # test process, the signing comparison, peaks at about 350 MB.
 test_memory_limit_mb = 2048

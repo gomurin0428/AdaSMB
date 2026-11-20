@@ -72,7 +72,8 @@ of date.
 | after 0.4.0 | Platinum phase 3, the header: `SMB.Spec.SMB2`, `Initialize_Header` and `Prepare_Header` proved against it | merged (#150) |
 | after 0.4.0 | `Write_U64` without loop invariants, which ran over the whole packet in production | merged (#151) |
 | after 0.4.0 | Platinum phase 3, CLOSE, READ and WRITE: their requests in `SMB.Spec.SMB2`, `Build_Close`, `Build_Read`, `Build_Write` proved against them | merged (#152) |
-| after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | #154 |
+| after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | merged (#154) |
+| after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | #157 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -684,6 +685,24 @@ opens a received one. It is a stateless SPARK unit, like
   directory, SET_INFO, CREATE, reserved-field, security-buffer,
   connection-level, unsigned and tampered-signature, interrupted READ and
   lost WRITE modes, `AsyncProxy` and the directory limits.
+
+## A mutant's proof gets 5 minutes (#157)
+
+* With AdaMutant 2c87491 the contracts in the bodies are mutated too, and
+  a mutant of a contract in a large unit changes many of its goals: in
+  #153, which touched `Core_Client`'s local contracts, 79 changed-line
+  mutants (3 before) took about 27 minutes each to prove, and the run was
+  cut off at the job's 6 hours after 35 of them.
+* The maintainer chose to cap each mutant's proof: `prove_timeout_ms` is 5
+  minutes (it was 20), so such a mutant counts as undetected "(the proof
+  timed out)" for the pull request to judge. The mutation steps of both
+  workflows have a time limit of their own and `continue-on-error`, so a
+  run that still does not finish leaves the job green, and
+  `mutation_survivors.py` then says how far it got (from
+  `.adamutant/console.txt`) instead of failing on the missing report.
+* A run cut short has no report: read the job log for the mutants it
+  finished. Raise the cap again only together with sharding the
+  changed-line run.
 
 ## AdaMutant 2c87491 (#154)
 

@@ -120,7 +120,11 @@ jobs:
           path: proof-cache
           key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
           fail-on-cache-miss: true
+      # As in ci.yml: a shard that does not finish reports what it has
+      # rather than failing.
       - name: Mutate the files of this shard
+        timeout-minutes: 300
+        continue-on-error: true
         env:
           PROOF_CACHE: ${{ github.workspace }}/proof-cache
           FILES: ${{ inputs.files }}

@@ -143,6 +143,23 @@ def main() -> int:
     parser.add_argument("--fail", action="store_true", help="exit 1 if any mutant went undetected")
     args = parser.parse_args()
     console = CONSOLE.read_text(encoding="utf-8") if CONSOLE.is_file() else None
+    if not REPORT.is_file():
+        # The run stopped before AdaMutant wrote its report (out of time):
+        # say how far it got, from the console.
+        done = re.findall(r"^\[(\d+)/(\d+)\] (\w+)", console or "", re.MULTILINE)
+        text = "## Mutation testing\n\nThe run did not finish, so there is no report"
+        if done:
+            counts = Counter(status for _, _, status in done)
+            text += (f": {len(done)} of {done[-1][1]} mutants ran ("
+                     + ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
+                     + "); see the job log")
+        text += ".\n"
+        sys.stdout.write(text)
+        step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if step_summary:
+            with open(step_summary, "a", encoding="utf-8") as out:
+                out.write(text)
+        return 1 if args.fail else 0
     text, undetected = summary(json.loads(REPORT.read_text(encoding="utf-8")), console)
     sys.stdout.write(text)
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
