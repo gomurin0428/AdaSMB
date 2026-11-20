@@ -18,6 +18,7 @@ with SMB.Core_Transform;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
+with SMB.Spec.Unicode;
 with SMB.Core_Transport;
 with SMB.Core_Wire;
 with SMB.AES;
@@ -11591,6 +11592,84 @@ procedure Test_Suite is
       end;
    end Test_Engine_Malformed_Close;
 
+   --  UTF8_To_UTF16's postcondition is proved but not run (it recurses over
+   --  the input; see SMB.Core_Text). This checks it at run time on every
+   --  input of up to four bytes from an alphabet of Table 3-7's edges and
+   --  others, at every output capacity up to two units more than it needs,
+   --  and on a few longer mixed inputs.
+   procedure Test_UTF8_To_UTF16_Specification is
+      pragma Assertion_Policy (Assert => Check, Ghost => Check);
+      package U renames SMB.Spec.Unicode;
+      Alphabet : constant array (Positive range <>) of Natural :=
+        (16#00#, 16#01#, 16#41#, 16#7F#, 16#80#, 16#8F#, 16#90#, 16#9F#,
+         16#A0#, 16#BF#, 16#C0#, 16#C1#, 16#C2#, 16#DF#, 16#E0#, 16#E1#,
+         16#ED#, 16#EE#, 16#EF#, 16#F0#, 16#F1#, 16#F4#, 16#F5#, 16#FF#);
+      Calls : Natural := 0;
+
+      procedure Check (Input : String) is
+      begin
+         for Capacity in 0 .. 2 * Input'Length + 2 loop
+            declare
+               Output : SMB.Bytes (5 .. 4 + Capacity) := (others => 16#A5#);
+               Used : Natural;
+               Status : SMB.Core_Status;
+            begin
+               SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
+               Calls := Calls + 1;
+               pragma Assert
+                 (Status =
+                    (if U.UTF16_Run_Size (Input, 0) > Output'Length
+                     then SMB.Invalid_Length
+                     elsif not U.Is_Client_UTF8 (Input)
+                     then SMB.Invalid_Encoding
+                     else SMB.Ok),
+                  "UTF8_To_UTF16 status against the specification");
+               pragma Assert
+                 ((if Status = SMB.Ok then
+                     Used = U.UTF16_Run_Size (Input, 0)
+                     and then U.Is_UTF16_Run
+                       (Input, 0,
+                        Output (Output'First .. Output'First + (Used - 1)), 0)
+                   else Used = 0)
+                  and then
+                    (for all I in Output'Range =>
+                       (if I - Output'First >= Used then Output (I) = 0)),
+                  "UTF8_To_UTF16 output against the specification");
+            end;
+         end loop;
+      end Check;
+
+      Pair : constant String :=
+        (Character'Val (16#F0#), Character'Val (16#9F#),
+         Character'Val (16#98#), Character'Val (16#80#));
+      Euro : constant String :=
+        (Character'Val (16#E2#), Character'Val (16#82#),
+         Character'Val (16#AC#));
+   begin
+      Check ("");
+      for A of Alphabet loop
+         Check ((1 => Character'Val (A)));
+         for B of Alphabet loop
+            Check ((Character'Val (A), Character'Val (B)));
+            for C of Alphabet loop
+               Check ((Character'Val (A), Character'Val (B),
+                       Character'Val (C)));
+               for D of Alphabet loop
+                  Check ((Character'Val (A), Character'Val (B),
+                          Character'Val (C), Character'Val (D)));
+               end loop;
+            end loop;
+         end loop;
+      end loop;
+      Check (Pair & "A" & Euro & Pair & Character'Val (16#C3#)
+             & Character'Val (16#A9#));
+      Check (Pair & Pair & Character'Val (16#C0#) & Pair);
+      Check (Euro & Pair & Character'Val (0));
+      Ada.Text_IO.Put_Line
+        ("UTF8_To_UTF16 against SMB.Spec.Unicode:" & Natural'Image (Calls)
+         & " calls passed");
+   end Test_UTF8_To_UTF16_Specification;
+
    procedure Test_Text_And_Wire is
       UTF8 : constant String :=
         Character'Val (16#E6#) & Character'Val (16#97#)
@@ -11981,6 +12060,7 @@ begin
    Credit_Tests.Run;
    SMB.Heap_Owner_Tests.Run;
    Test_Text_And_Wire;
+   Test_UTF8_To_UTF16_Specification;
    Test_Wire_Facade;
    Ada.Text_IO.Put_Line ("AdaSMB unit tests passed");
 end Test_Suite;

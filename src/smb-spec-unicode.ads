@@ -2,8 +2,10 @@
 --  Standard, Version 16.0, section 3.9 "Unicode Encoding Forms"): UTF-8,
 --  the form of the caller's strings, whose Characters are its bytes, and
 --  UTF-16, the form of the protocol's (MS-SMB2 2.2: "all textual strings
---  MUST be in Unicode ... using the 16-bit Unicode Transformation Format
---  (UTF-16)"), little-endian as every SMB2 field (SMB.Spec.Encoding).
+--  MUST be in Unicode version 5.0 format ... using the 16-bit Unicode
+--  Transformation Format (UTF-16)"; the encoding forms of section 3.9 are
+--  the same in 5.0 and 16.0), little-endian as every SMB2 field
+--  (SMB.Spec.Encoding).
 --
 --  A whole string is specified from the front: what a sequence at Position
 --  is, then the rest from the position after it. Positions count from the
@@ -88,8 +90,8 @@ is
 
    --  Table 3-6 (UTF-8 Bit Distribution): the scalar a well-formed sequence
    --  encodes. The first byte is 0xxxxxxx, 110yyyyy, 1110zzzz or
-   --  11110uuu, and each later one 10xxxxxx; the scalar is their bits
-   --  together.
+   --  11110uuu, and each later one 10 followed by six bits of the scalar
+   --  (10uuzzzz, 10yyyyyy, 10xxxxxx); the scalar is their bits together.
    function UTF8_Scalar (Text : String; Position : Natural) return Natural is
      (case UTF8_Length (Text, Position) is
          when 1 => Byte_At (Text, Position),
@@ -122,8 +124,8 @@ is
 
    --  D91 and Table 3-5 (UTF-16 Bit Distribution): a scalar up to FFFF is
    --  one 16-bit unit, itself; a larger one is two, 110110wwwwxxxxxx
-   --  110111xxxxxxxxxx with wwww = uuuuu - 1, that is D800 plus the top ten
-   --  bits of the scalar minus 10000, then DC00 plus its low ten bits.
+   --  110111xxxxxxxxxx with wwww = uuuuu - 1: D800 plus the top ten bits of
+   --  (scalar - 10000), then DC00 plus its low ten bits.
    function UTF16_Units (Scalar : Natural) return Positive is
      (if Scalar <= 16#FFFF# then 1 else 2)
    with Pre => Is_Scalar (Scalar);

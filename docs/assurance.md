@@ -232,7 +232,9 @@ assumption or check-suppression pragma is introduced. The library build checks
 the core's preconditions at run time but not its postconditions and other
 assertions, which GNATprove proves ([`contracts.adc`](../contracts.adc), from
 0.5.0 on); the test programs compile the same sources with every contract
-checked.
+checked, but for the whole-input postcondition of `Core_Text.UTF8_To_UTF16`,
+which recurses over the input and is proved and never run (`test_suite`
+checks it on every short input instead).
 
 `Validate_Path` now binds status to the executable `Lexically_Valid_Path`
 predicate: empty input is allowed only on request; NUL, colon, leading/trailing

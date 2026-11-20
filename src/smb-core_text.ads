@@ -156,12 +156,13 @@ package SMB.Core_Text is
    with Pre => Input'Length <= 255,
      Post => Status =
        (if Lexically_Valid_Share (Input) then SMB.Ok else SMB.Invalid_Value);
-   --  The converters' postconditions state the whole output against
+   --  UTF8_To_UTF16's postcondition states the whole output against
    --  SMB.Spec.Unicode, whose functions recurse once per scalar: checked
    --  at run time on inputs up to 1 MiB they would overflow the stack.
-   --  They are proved and not checked at run time, even where every other
+   --  It is proved and not checked at run time, even where every other
    --  contract is (assertion levels, which could mark just those clauses,
-   --  need GNAT 16). This pragma applies to the end of the package.
+   --  need GNAT 16); test_suite checks it on every short input instead.
+   --  This pragma applies to the end of the package.
    pragma Assertion_Policy (Post => Ignore);
 
    procedure UTF8_To_UTF16

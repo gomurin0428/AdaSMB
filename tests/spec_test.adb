@@ -1589,6 +1589,7 @@ procedure Spec_Test is
    procedure Test_Unicode is
       package U renames SMB.Spec.Unicode;
       package W renames Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
+      use type SMB.Bytes;
 
       --  A String of the bytes a string of hexadecimal digits spells.
       function Text (Digits_Text : String) return String is
@@ -1641,6 +1642,32 @@ procedure Spec_Test is
                      U.UTF16_Run_Byte (Example_8, 0, K) = Example_16 (K)),
          "D90 to D92's example in UTF-8 and UTF-16");
       Passed;
+      --  Is_UTF16_Run, the converter's claim about its bytes: the example's
+      --  bytes and no others; a run whose surrogate pair is not the last
+      --  scalar.
+      declare
+         Changed : SMB.Bytes := Example_16;
+         Pair_First : constant String := Text ("F0908C824D");
+         Pair_First_16 : constant SMB.Bytes := Hex ("00D802DF4D00");
+      begin
+         Changed (4) := Changed (4) xor 16#01#;
+         pragma Assert
+           (U.Is_UTF16_Run (Example_8, 0, Example_16, 0)
+            and then not U.Is_UTF16_Run (Example_8, 0, Changed, 0)
+            and then not U.Is_UTF16_Run
+              (Example_8, 0, Example_16 & SMB.Bytes'(0 => 0), 0)
+            and then not U.Is_UTF16_Run
+              (Example_8, 0, Example_16 (0 .. Example_16'Last - 1), 0)
+            and then U.Is_UTF16_Run (Example_8, 1, Example_16 (2 .. 9), 0)
+            and then U.Is_UTF16_Run (Pair_First, 0, Pair_First_16, 0)
+            and then U.UTF16_Run_Size (Pair_First, 0) = 6
+            and then (for all K in Pair_First_16'Range =>
+                        U.UTF16_Run_Byte (Pair_First, 0, K) =
+                          Pair_First_16 (K))
+            and then not U.Is_Client_UTF8 (Example_8 & Text ("C0")),
+            "Is_UTF16_Run");
+      end;
+      Passed;
       Check_Row ("00", "7F", 16#0#, 16#7F#);
       Check_Row ("C280", "DFBF", 16#80#, 16#7FF#);
       Check_Row ("E0A080", "E0BFBF", 16#800#, 16#FFF#);
@@ -1675,6 +1702,8 @@ procedure Spec_Test is
          and then U.UTF8_Scalar (Text ("EFBFBE"), 0) = 16#FFFE#
          and then U.UTF8_Scalar (Text ("EFBFBF"), 0) = 16#FFFF#
          and then U.UTF16_Units (16#FFFE#) = 1
+         and then U.UTF16_Units (16#FFFF#) = 1
+         and then U.UTF16_Units (16#10000#) = 2
          and then U.UTF16_Unit (16#FFFF#, 0) = 16#FFFF#,
          "U+FFFE and U+FFFF");
       for Scalar in 0 .. 16#10FFFF# loop
@@ -1691,6 +1720,7 @@ procedure Spec_Test is
             begin
                pragma Assert
                  (U.Is_Scalar (Scalar)
+                  and then U.Valid_UTF8_At (In_8, 0) = (Scalar /= 0)
                   and then U.UTF8_Length (In_8, 0) = In_8'Length
                   and then U.UTF8_Scalar (In_8, 0) = Scalar
                   and then U.UTF16_Units (Scalar) = In_16'Length

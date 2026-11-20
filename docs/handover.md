@@ -468,7 +468,7 @@ opens a received one. It is a stateless SPARK unit, like
   on success its whole output against the specification. On failure it
   now leaves nothing (`Used` 0, the output zero), as the builders do; it
   used to leave the units converted so far, which no caller used, and
-  four tests that expected them now expect nothing.
+  the six test expectations of them now expect nothing.
 * The proof: the loop's invariants say the input up to `Position` is part
   of the run and the output holds the run's first `Used` bytes; ghost
   lemmas unfold the recursive functions a step at a time (their bodies
