@@ -15,6 +15,7 @@ with SMB.Spec.Encoding;
 with SMB.Spec.FSCC;
 with SMB.Spec.SMB2;
 with SMB.Spec.SMB2.Negotiation;
+with SMB.Spec.SMB2.Transform;
 
 procedure Spec_Test is
    use type Interfaces.Unsigned_8;
@@ -1408,6 +1409,162 @@ procedure Spec_Test is
          "this client's NEGOTIATE fields, and the constants");
       Passed;
    end Test_SMB2_Negotiate;
+
+   --  MS-SMB2 2.2.41: the TRANSFORM_HEADER.
+   procedure Test_SMB2_Transform is
+      package T renames SMB.Spec.SMB2.Transform;
+      package N renames SMB.Spec.SMB2.Negotiation;
+      use type SMB.Bytes;
+      use type T.Transform_Header;
+      --  The transform headers of "SMB 3.1.1 Encryption in Windows 10"
+      --  (Microsoft Open Specifications blog), appendices A.2 (AES-128-CCM)
+      --  and A.1 (AES-128-GCM): a WRITE request and response and a READ
+      --  request and response with each cipher. A Signature, Nonce,
+      --  OriginalMessageSize, Reserved, Flags and SessionId each.
+      type Vector is record
+         Cipher : SMB.Word;
+         Header : SMB.Bytes (0 .. 51);
+         Message_Size : SMB.DWord;
+         Session_Id : SMB.QWord;
+      end record;
+      --  AES-128-CCM and AES-128-GCM (2.2.3.1.2), as numbers: the
+      --  specification's constants are ghost.
+      CCM : constant SMB.Word := 16#0001#;
+      GCM : constant SMB.Word := 16#0002#;
+      CCM_Session : constant SMB.QWord := 16#0000_1000_0000_0021#;
+      GCM_Session : constant SMB.QWord := 16#0000_1000_0000_0025#;
+      function Header (Signature, Nonce, Size, Session : String)
+        return SMB.Bytes is
+        (Hex ("FD534D42" & Signature & Nonce & Size & "0000" & "0100"
+              & Session));
+      Vectors : constant array (1 .. 8) of Vector :=
+        ((CCM,
+          Header ("E89551D666DAB8993488F5A97103116C",
+                  "9F6F1EAAD7E9F24AACD38F0000000000", "87000000",
+                  "2100000000100000"), 16#87#, CCM_Session),
+         (CCM,
+          Header ("DD33EC41A927DD51476FE887C2D3C136",
+                  "D96831DD2E8EB7B40000000000000000", "50000000",
+                  "2100000000100000"), 16#50#, CCM_Session),
+         (CCM,
+          Header ("35BF9600C841F0CDA9BD1BC3727B7E36",
+                  "A0F92E964EDC3049B86E190000000000", "71000000",
+                  "2100000000100000"), 16#71#, CCM_Session),
+         (CCM,
+          Header ("E241A13C7E1EE42ECF1FD69F3B8668C6",
+                  "DA6831DD2E8EB7B40000000000000000", "67000000",
+                  "2100000000100000"), 16#67#, CCM_Session),
+         (GCM,
+          Header ("BD73D97D2BC9001BCAFAC0FDFF5FEEBC",
+                  "C7D6822D269CAF48904C664C00000000", "87000000",
+                  "2500000000100000"), 16#87#, GCM_Session),
+         (GCM,
+          Header ("ACBE1CB7ED343ADF1725EF144D90D4B0",
+                  "E06831DD2E8EB7B40000000000000000", "50000000",
+                  "2500000000100000"), 16#50#, GCM_Session),
+         (GCM,
+          Header ("6DAC0B6FD85A3ED42BB917DA38FE0386",
+                  "D7AA8C6D36859243B715E0A600000000", "71000000",
+                  "2500000000100000"), 16#71#, GCM_Session),
+         (GCM,
+          Header ("7F714B3B9D8FA1198584E71C2BAA1CB6",
+                  "E16831DD2E8EB7B40000000000000000", "67000000",
+                  "2500000000100000"), 16#67#, GCM_Session));
+
+      --  The header each vector's sender built, by the rules of 3.1.4.3.
+      function Built (V : Vector) return T.Transform_Header is
+        (T.Client_Transform
+           (V.Cipher, V.Header (20 .. 35), V.Message_Size, V.Session_Id))
+      with Ghost;
+
+      --  A header whose fields all differ, at indices from 300.
+      Full : constant SMB.Bytes (300 .. 351) :=
+        Hex ("FD534D42" & "000102030405060708090A0B0C0D0E0F"
+             & "101112131415161718191A1B1C1D1E1F" & "20212223" & "2425"
+             & "2627" & "28292A2B2C2D2E2F");
+      Full_Header : constant T.Transform_Header :=
+        (Nonce => Hex ("101112131415161718191A1B1C1D1E1F"),
+         Original_Message_Size => 16#2322_2120#, Reserved => 16#2524#,
+         Flags => 16#2726#, Session_Id => 16#2F2E_2D2C_2B2A_2928#)
+      with Ghost;
+   begin
+      for V of Vectors loop
+         pragma Assert
+           (T.Is_Transform_Header (V.Header, Built (V))
+            and then Built (V).Flags = T.Flags_Encrypted
+            and then Built (V).Reserved = 0
+            and then not T.Is_Transform_Header (V.Header (0 .. 50), Built (V)),
+            "the blog's transform headers");
+      end loop;
+      Passed;
+      pragma Assert (T.Is_Transform_Header (Full, Full_Header),
+                     "a transform header whose fields all differ");
+      Passed;
+      for Index in Full'Range loop
+         declare
+            Changed : SMB.Bytes := Full;
+         begin
+            Changed (Index) := Changed (Index) xor 16#01#;
+            --  The Signature is the cipher's (phase 6).
+            pragma Assert
+              (Index in Full'First + 4 .. Full'First + 19
+               or else not T.Is_Transform_Header (Changed, Full_Header),
+               "every transform header byte");
+         end;
+      end loop;
+      Passed;
+      --  The nonce: 11 bytes with CCM, 12 with GCM, and the Reserved bytes
+      --  after it zero in the header this client builds.
+      declare
+         CCM_Twelve : SMB.Bytes := Vectors (1).Header;
+         GCM_Twelve : SMB.Bytes := Vectors (5).Header;
+         GCM_Thirteen : SMB.Bytes := Vectors (5).Header;
+      begin
+         CCM_Twelve (20 + 11) := 1;
+         GCM_Twelve (20 + 11) := 1;
+         GCM_Thirteen (20 + 12) := 1;
+         pragma Assert
+           (T.Nonce_Size (N.AES_128_CCM) = 11
+            and then T.Nonce_Size (N.AES_256_CCM) = 11
+            and then T.Nonce_Size (N.AES_128_GCM) = 12
+            and then T.Nonce_Size (N.AES_256_GCM) = 12
+            and then not T.Is_Transform_Header
+              (CCM_Twelve,
+               T.Client_Transform
+                 (N.AES_128_CCM, CCM_Twelve (20 .. 35), 16#87#, CCM_Session))
+            and then T.Is_Transform_Header
+              (GCM_Twelve,
+               T.Client_Transform
+                 (N.AES_128_GCM, GCM_Twelve (20 .. 35), 16#87#, GCM_Session))
+            and then not T.Is_Transform_Header
+              (GCM_Thirteen,
+               T.Client_Transform
+                 (N.AES_128_GCM, GCM_Thirteen (20 .. 35), 16#87#,
+                  GCM_Session))
+            and then T.Client_Transform
+              (N.AES_256_CCM, Vectors (1).Header (20 .. 35), 1, 2).Nonce =
+                Vectors (1).Header (20 .. 35)
+            and then not T.Is_Cipher (0)
+            and then not T.Is_Cipher (5),
+            "the nonce's length for each cipher");
+      end;
+      Passed;
+      pragma Assert
+        (T.Transform_Header_Size = 52
+         and then CCM = N.AES_128_CCM and then GCM = N.AES_128_GCM
+         and then T.Flags_Encrypted = 1
+         and then T.Transform_Protocol_Id_Byte (0) = 16#FD#
+         and then T.Transform_Protocol_Id_Byte (1) = 16#53#
+         and then T.Transform_Protocol_Id_Byte (2) = 16#4D#
+         and then T.Transform_Protocol_Id_Byte (3) = 16#42#
+         and then T.Client_Transform
+           (N.AES_128_GCM, Full_Header.Nonce, 7, 9)
+         = (Nonce => Hex ("101112131415161718191A1B00000000"),
+            Original_Message_Size => 7, Reserved => 0, Flags => 1,
+            Session_Id => 9),
+         "the transform header's constants and this client's header");
+      Passed;
+   end Test_SMB2_Transform;
 begin
    Test_Encoding;
    Test_SMB2_Header;
@@ -1416,6 +1573,7 @@ begin
    Test_SMB2_Create;
    Test_SMB2_Info;
    Test_SMB2_Negotiate;
+   Test_SMB2_Transform;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;

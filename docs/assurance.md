@@ -32,7 +32,7 @@ specifications" below), proved free of run-time errors like the rest.
 | `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
 | `SMB.Core_Negotiate` | The SMB 3.1.1 NEGOTIATE request body with its preauth integrity, encryption and signing contexts, and the checks on a 3.1.1 response's negotiate contexts; the request every byte against `SMB.Spec.SMB2.Negotiation`, and for the checks run-time safety and a cipher of `No_Cipher` and AES-CMAC signing on failure |
 | `SMB.Core_Preauth` | The SMB 3.1.1 preauth integrity hash step, SHA-512 of the previous value and a message; run-time safety |
-| `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-CCM or AES-GCM under a 16-byte (AES-128) or 32-byte (AES-256) key of the cipher's length, and checking and opening a received one; the header fields, nonce field and trailing zeros written, the header and inner SMB2 header checks that hold on success (the tag itself is tested, not stated), and no message bytes left after any failure |
+| `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-CCM or AES-GCM under a 16-byte (AES-128) or 32-byte (AES-256) key of the cipher's length, and checking and opening a received one; the header fields, nonce field and trailing zeros written (against `SMB.Spec.SMB2.Transform`), the header and inner SMB2 header checks that hold on success (the tag itself is tested, not stated), and no message bytes left after any failure |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
 | `SMB.Core_Query` | QUERY_INFO lifecycle for FileNetworkOpenInformation on an open handle: request construction/signing for a live handle only, send acknowledgement, response acceptance, a 56-byte information structure read from inside the packet on success, an error NTSTATUS returned with the connection kept; otherwise `Complete` either changes nothing (`Invalid_State_Status`) or fails the operation and invalidates the connection, as an abort does |
@@ -305,6 +305,7 @@ implementation.
 | `SMB.Spec.Encoding` | MS-SMB2 1.3, MS-DTYP 2.2: little-endian 16-, 32- and 64-bit integers, as sums of bytes times powers of 256 | `Core_Wire`'s integer reads (`Encoded_U16`, `Encoded_U32`, `Encoded_U64` and so `Read_U*` and `Write_U*`), `Header_Nt_Status` |
 | `SMB.Spec.SMB2` | MS-SMB2 2.2.1: the SYNC header as a record of its fields, `Is_Sync_Header` (bytes that encode one) and `Request_Header` (a client's own request, 3.2.4.1); 2.2.15, 2.2.19, 2.2.21: the CLOSE, READ and WRITE requests (`Is_Close_Request`, `Is_Read_Request`, `Is_Write_Request`) and this client's READ and WRITE (`Client_Read`, `Client_Write`); 2.2.5, 2.2.9, 2.2.7, 2.2.11: SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT, and this client's (`Client_Session_Setup`, `Client_Tree_Connect`); 2.2.13, 2.2.33: CREATE and QUERY_DIRECTORY (`Is_Create_Fields`, `Is_Create_Request`, `Is_Query_Directory_Request`), and this client's (`Client_Create`, `Client_Query_Directory`); 2.2.37, 2.2.39: QUERY_INFO and SET_INFO (`Is_Query_Info_Request`, `Is_Set_Info_Request`, `Client_Query_Info`, `Client_Set_Info`) | `Core_Wire.Initialize_Header`, `Core_Request.Prepare_Header`; `Core_Protocol.Build_Close`, `Build_Read`, `Build_Write`, `Build_Session_Setup`, `Build_Tree_Connect`, `Build_Simple`, `Build_Create`, `Build_Query_Directory`, `Build_Query_Information`, `Build_Disposition`, `Build_End_Of_File`, `Build_Rename` |
 | `SMB.Spec.SMB2.Negotiation` | MS-SMB2 2.2.3, 2.2.3.1, 2.2.3.1.1, 2.2.3.1.2, 2.2.3.1.7: the NEGOTIATE request's fields and dialects (`Is_Negotiate_Request`), negotiate contexts and their alignment (`Is_Negotiate_Context`, `Context_Data`, `First_Context`, `Next_Context`), the preauth integrity, encryption and signing contexts; 3.2.4.2.2.2: this client's request (`Client_Negotiate`, `Client_Dialects`, `Is_Client_Negotiate_Request`) | `Core_Negotiate.Request` |
+| `SMB.Spec.SMB2.Transform` | MS-SMB2 2.2.41: the TRANSFORM_HEADER's fields but the Signature (`Is_Transform_Header`), the nonce's length for each cipher (`Nonce_Size`); 3.1.4.3: the header a sender builds (`Client_Transform`) | `Core_Transform.Seal` |
 | `SMB.Spec.FSCC` | MS-FSCC 2.4.11, 2.4.14, 2.4.42.2, 2.4.34: FileDispositionInformation, FileEndOfFileInformation, FILE_RENAME_INFORMATION_TYPE_2 and FileNetworkOpenInformation's size, with their classes | `Core_Protocol.Build_Disposition`, `Build_End_Of_File`, `Build_Rename`, `Build_Query_Information`, `Rename_Information_Length` |
 
 Where each unit stands, from the survey at 0.4.0 and the phases since:
@@ -324,12 +325,14 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   gives, and every byte after it zero, the bytes the standards leave open
   stated as this client's; on failure the whole buffer zero); the 3.1.1
   NEGOTIATE request, `Core_Negotiate.Request` (every byte, against
-  `SMB.Spec.SMB2.Negotiation`).
+  `SMB.Spec.SMB2.Negotiation`); the transform header `Core_Transform.Seal`
+  writes (every byte but the Signature, against `SMB.Spec.SMB2.Transform`;
+  the Signature and the encrypted message are phase 6's).
 * **Fields stated, gaps left:** `Core_Wire.Validate_Header` (phase 7), the
   header copies in `Core_Client` and `Core_Connection` (phase 9), the other
-  builders and `Parse_Response` of `Core_Protocol`, the header of
-  `Core_Transform`, `Core_Negotiate`'s response checks, `Core_Query`,
-  `Core_Resize`.
+  builders and `Parse_Response` of `Core_Protocol`, the header checks of
+  `Core_Transform.Unwrap`, `Core_Negotiate`'s response checks,
+  `Core_Query`, `Core_Resize`.
 * **Outputs not stated:** every digest, MAC, cipher and derived key (`Crypto`,
   `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
   `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,

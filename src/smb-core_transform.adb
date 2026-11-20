@@ -67,6 +67,9 @@ package body SMB.Core_Transform is
       Used : out Natural;
       Status : out SMB.Core_Status)
    is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Transform.Is_Transform_Header);
       Header : Header_Bytes := (others => 0);
       Used_Nonce : Nonce_Field := (others => 0);
       Tag : Tag_Bytes;
@@ -87,6 +90,10 @@ package body SMB.Core_Transform is
               Used_Nonce (Earlier) =
                 (if Earlier <= Index then Nonce (Earlier) else 0));
       end loop;
+      --  The specification's nonce length for the cipher's ID is ours.
+      pragma Assert
+        (SMB.Spec.SMB2.Transform.Nonce_Size (Cipher_Code (Cipher)) =
+           Nonce_Length (Cipher));
       Header (0 .. 3) := (16#FD#, 16#53#, 16#4D#, 16#42#);
       Header (20 .. 35) := Used_Nonce;
       SMB.Core_Wire.Write_U32

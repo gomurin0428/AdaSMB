@@ -79,6 +79,7 @@ of date.
 | after 0.4.0 | Platinum phase 3, CREATE and QUERY_DIRECTORY against the specification; a directory is only opened or created | merged (#157) |
 | after 0.4.0 | Platinum phase 3, QUERY_INFO and SET_INFO (disposition, end of file, rename) against MS-SMB2 and MS-FSCC | merged (#158) |
 | after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | #159 |
+| after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | #160 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -426,8 +427,8 @@ opens a received one. It is a stateless SPARK unit, like
   (#149); phase 3 (the SMB2 messages) started with the header (#150) and
   CLOSE, READ and WRITE (#152), then SESSION_SETUP, TREE_CONNECT, LOGOFF
   and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#157),
-  then QUERY_INFO and SET_INFO (#158), then the 3.1.1 NEGOTIATE (#159).
-  Next in phase 3: the transform header, then `Core_Query` and
+  then QUERY_INFO and SET_INFO (#158), then the 3.1.1 NEGOTIATE (#159),
+  then the transform header (#160). Next in phase 3: `Core_Query` and
   `Core_Resize`. After Platinum, the maintainer wants the remaining SMB
   features in this order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
@@ -448,6 +449,30 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 3, the transform header (#160)
+
+* `SMB.Spec.SMB2.Transform` is a new specification package for the
+  TRANSFORM_HEADER (MS-SMB2 2.2.41): ProtocolId, the Nonce (11 bytes and
+  5 Reserved with CCM, 12 and 4 with GCM), OriginalMessageSize, Reserved,
+  Flags (Encrypted, 0x0001, in 3.1.1) and SessionId. The Signature and
+  the encrypted message are the cipher's, for phase 6.
+* `Client_Transform` is the header a sender builds by 3.1.4.3: the
+  message's size, the session's ID, Flags 0x0001, Reserved 0 (the client
+  MUST), and the cipher's nonce bytes, then zeros (MUST with GCM, SHOULD
+  with CCM, footnote 83). That the nonce is never reused in a session is
+  the engine's part (phase 9).
+* `Core_Transform.Seal` states its header against the specification;
+  `Core_Transform.Cipher_Code` maps `Cipher_Id` to the wire's cipher IDs
+  (a case expression: from `'Pos` the provers could not see the nonce
+  length). `Unwrap`, which checks a received header, is phase 7's
+  (response acceptance).
+* `spec_test` (+5 checks): the eight transform headers of Microsoft's
+  "SMB 3.1.1 Encryption in Windows 10" blog (A.2 with AES-128-CCM, A.1
+  with AES-128-GCM: a WRITE and a READ, each request and response), each
+  as its sender built it by 3.1.4.3; a header whose fields all differ, at
+  high indices, with every byte flipped but the Signature; the nonce's
+  length for each cipher; the constants.
 
 ## Platinum phase 3, the SMB 3.1.1 NEGOTIATE (#159)
 
