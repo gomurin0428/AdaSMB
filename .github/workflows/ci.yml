@@ -125,7 +125,15 @@ jobs:
       # ADASMB_MUTATION_UNITS: the proved units to mutate, which the proof
       # that looks for where the proof proves anything covers
       # (tests/mutant_prove.py).
+      # The steps before can take over two hours (building AdaMutant, the
+      # whole proof), so the mutants get 200 minutes, inside the job's 360.
+      # A run stopped there reports what it has instead of failing the job;
+      # an AdaMutant error still fails it, in the listing step
+      # (tests/mutation_survivors.py). Each mutant's proof stops after
+      # adamutant.toml's 5 minutes.
       - name: Mutate the lines this pull request changes
+        timeout-minutes: 200
+        continue-on-error: true
         env:
           PROOF_CACHE: ${{ github.workspace }}/proof-cache
         run: |
@@ -135,6 +143,7 @@ jobs:
       # Undetected mutants, and those that only the proof detects, are for
       # the pull request to judge; they do not fail the job.
       - name: List the mutants to judge
+        if: always()
         run: python3 tests/mutation_survivors.py
       # AdaMutant names the baseline logs but does not print them.
       - name: Show the baseline logs
@@ -147,7 +156,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mutation-report
-          path: .adamutant/reports/
+          path: |
+            .adamutant/reports/
+            .adamutant/console.txt
           if-no-files-found: ignore
 
   windows:

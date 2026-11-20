@@ -72,7 +72,8 @@ of date.
 | after 0.4.0 | Platinum phase 3, the header: `SMB.Spec.SMB2`, `Initialize_Header` and `Prepare_Header` proved against it | merged (#150) |
 | after 0.4.0 | `Write_U64` without loop invariants, which ran over the whole packet in production | merged (#151) |
 | after 0.4.0 | Platinum phase 3, CLOSE, READ and WRITE: their requests in `SMB.Spec.SMB2`, `Build_Close`, `Build_Read`, `Build_Write` proved against them | merged (#152) |
-| after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | #154 |
+| after 0.4.0 | AdaMutant 2c87491: built with Libadalang, contract mutants, where the proof proves anything | merged (#154) |
+| after 0.4.0 | A mutant's proof gets 5 minutes; an unfinished mutation run reports instead of failing | #156 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -684,6 +685,32 @@ opens a received one. It is a stateless SPARK unit, like
   directory, SET_INFO, CREATE, reserved-field, security-buffer,
   connection-level, unsigned and tampered-signature, interrupted READ and
   lost WRITE modes, `AsyncProxy` and the directory limits.
+
+## A mutant's proof gets 5 minutes (#156)
+
+* With AdaMutant 2c87491 the contracts in the bodies are mutated too, and
+  a mutant of a contract in a large unit changes many of its goals. #153
+  touched about 11 lines of `Core_Client`'s local contracts: 79
+  changed-line mutants (3 with d1d049e), whose proofs, once AdaMutant
+  started mutating 98 minutes into the step (the baseline and the proof
+  with proof warnings run without a limit), ran to the 20-minute limit one
+  after another; the job was cut off at 6 hours after 35 of them.
+* The maintainer chose to cap each mutant's proof: `prove_timeout_ms` is 5
+  minutes (it was 20), for pull requests, the weekly run and `make
+  mutation` alike (AdaMutant has no switch for it). Such a mutant counts
+  as undetected "(the proof timed out)" for the pull request to judge. In
+  the #154 trial on `Core_Request` and `Core_Resize`, 5 of the 53
+  mutants that only the proof detected took longer than 5 minutes: those
+  now time out as well.
+* The mutation steps have a time limit of their own (200 minutes in
+  `ci.yml`, after up to two hours of building AdaMutant and proving; 300
+  in each weekly shard) and `continue-on-error`. A run stopped there
+  leaves the job green, and `mutation_survivors.py` says how far it got
+  from `.adamutant/console.txt`, which the artifact now keeps, with the
+  ids of the mutants it finished. An AdaMutant error (a failing baseline, a
+  configuration mistake) still fails the job: `adamutant_run.sh` writes
+  AdaMutant's exit status to `.adamutant/status` when it exits, and the
+  listing step fails on a non-zero one, so the baseline logs show again.
 
 ## AdaMutant 2c87491 (#154)
 

@@ -120,7 +120,11 @@ jobs:
           path: proof-cache
           key: proof-cache-${{ runner.os }}-gnatprove16.1.0-${{ github.sha }}-${{ github.run_id }}
           fail-on-cache-miss: true
+      # As in ci.yml: a shard stopped by the time limit reports what it has
+      # rather than failing; an AdaMutant error fails it in the Report step.
       - name: Mutate the files of this shard
+        timeout-minutes: 300
+        continue-on-error: true
         env:
           PROOF_CACHE: ${{ github.workspace }}/proof-cache
           FILES: ${{ inputs.files }}
@@ -143,5 +147,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mutation-report-${{ matrix.shard }}
-          path: .adamutant/reports/
+          path: |
+            .adamutant/reports/
+            .adamutant/console.txt
           if-no-files-found: ignore
