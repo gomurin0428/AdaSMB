@@ -303,7 +303,7 @@ implementation.
 | Specification | Standard | Used by |
 | --- | --- | --- |
 | `SMB.Spec.Encoding` | MS-SMB2 1.3, MS-DTYP 2.2: little-endian 16-, 32- and 64-bit integers, as sums of bytes times powers of 256 | `Core_Wire`'s integer reads (`Encoded_U16`, `Encoded_U32`, `Encoded_U64` and so `Read_U*` and `Write_U*`), `Header_Nt_Status` |
-| `SMB.Spec.SMB2` | MS-SMB2 2.2.1: the SYNC header as a record of its fields, `Is_Sync_Header` (bytes that encode one) and `Request_Header` (a client's own request, 3.2.4.1); 2.2.15, 2.2.19, 2.2.21: the CLOSE, READ and WRITE requests (`Is_Close_Request`, `Is_Read_Request`, `Is_Write_Request`) and this client's READ and WRITE (`Client_Read`, `Client_Write`); 2.2.5, 2.2.9, 2.2.7, 2.2.11: SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT, and this client's (`Client_Session_Setup`, `Client_Tree_Connect`) | `Core_Wire.Initialize_Header`, `Core_Request.Prepare_Header`; `Core_Protocol.Build_Close`, `Build_Read`, `Build_Write`, `Build_Session_Setup`, `Build_Tree_Connect`, `Build_Simple` |
+| `SMB.Spec.SMB2` | MS-SMB2 2.2.1: the SYNC header as a record of its fields, `Is_Sync_Header` (bytes that encode one) and `Request_Header` (a client's own request, 3.2.4.1); 2.2.15, 2.2.19, 2.2.21: the CLOSE, READ and WRITE requests (`Is_Close_Request`, `Is_Read_Request`, `Is_Write_Request`) and this client's READ and WRITE (`Client_Read`, `Client_Write`); 2.2.5, 2.2.9, 2.2.7, 2.2.11: SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT, and this client's (`Client_Session_Setup`, `Client_Tree_Connect`); 2.2.13, 2.2.33: CREATE and QUERY_DIRECTORY (`Is_Create_Fields`, `Is_Create_Request`, `Is_Query_Directory_Request`), and this client's (`Client_Create`, `Client_Query_Directory`) | `Core_Wire.Initialize_Header`, `Core_Request.Prepare_Header`; `Core_Protocol.Build_Close`, `Build_Read`, `Build_Write`, `Build_Session_Setup`, `Build_Tree_Connect`, `Build_Simple`, `Build_Create`, `Build_Query_Directory` |
 
 Where each unit stands, from the survey at 0.4.0 and the phases since:
 
@@ -314,7 +314,8 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   `Core_Wire.Initialize_Header` and `Core_Request.Prepare_Header` (exact
   status; on success the 64 bytes are the header `SMB.Spec.SMB2` gives, the
   rest of the packet unchanged; on failure nothing changed); the CLOSE, READ,
-  WRITE, SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT builders of
+  WRITE, SESSION_SETUP, TREE_CONNECT, LOGOFF, TREE_DISCONNECT, CREATE and
+  QUERY_DIRECTORY builders of
   `Core_Protocol` (exact status and `Used`; on success the request
   `SMB.Spec.SMB2` gives, and every byte after it zero; on failure the whole
   buffer zero).

@@ -2058,9 +2058,13 @@ is
          Status := SMB.Invalid_State_Status;
          return;
       end if;
+      --  A directory is only opened or created (MS-SMB2 2.2.13: with
+      --  FILE_DIRECTORY_FILE the disposition "MUST" be FILE_CREATE,
+      --  FILE_OPEN_IF or FILE_OPEN).
       if Name'Length mod 2 /= 0
         or else Disposition < 1
         or else Disposition > 5
+        or else (Directory and then Disposition > 3)
       then
          Value.Stage := Failed;
          Status := SMB.Invalid_Value;

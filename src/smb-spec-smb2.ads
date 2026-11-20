@@ -450,4 +450,187 @@ is
       and then SMB.Spec.Encoding.LE16 (Data, 2) = 0)
    with Pre => Data'Length <= SMB.Maximum_Frame_Size,
      Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   --  2.2.13: the SMB2 CREATE Request, after the header: 56 bytes of
+   --  fields (StructureSize 57 counts a byte of Buffer), then Buffer, "at
+   --  least one byte in length", with the name at NameOffset.
+   Create_Request_Size : constant := 57;
+   Create_Fields_Size : constant := 56;
+   Oplock_Level_None : constant SMB.Byte := 16#00#;
+   Impersonation : constant SMB.DWord := 16#0000_0002#;
+   File_Attribute_Directory : constant SMB.DWord := 16#0000_0010#;
+   File_Share_Read_Write_Delete : constant SMB.DWord := 16#0000_0007#;
+   File_Open : constant SMB.DWord := 1;
+   File_Create : constant SMB.DWord := 2;
+   File_Open_If : constant SMB.DWord := 3;
+   File_Directory_File : constant SMB.DWord := 16#0000_0001#;
+   File_Non_Directory_File : constant SMB.DWord := 16#0000_0040#;
+
+   type Create_Request is record
+      Security_Flags : SMB.Byte;
+      Requested_Oplock_Level : SMB.Byte;
+      Impersonation_Level : SMB.DWord;
+      Smb_Create_Flags : SMB.QWord;
+      Reserved : SMB.QWord;
+      Desired_Access : SMB.DWord;
+      File_Attributes : SMB.DWord;
+      Share_Access : SMB.DWord;
+      Create_Disposition : SMB.DWord;
+      Create_Options : SMB.DWord;
+      Name_Offset : SMB.Word;
+      Name_Length : SMB.Word;
+      Create_Contexts_Offset : SMB.DWord;
+      Create_Contexts_Length : SMB.DWord;
+   end record;
+
+   --  The 56 bytes of fields.
+   function Is_Create_Fields
+     (Data : SMB.Bytes; Request : Create_Request) return Boolean is
+     (Data'Length >= Create_Fields_Size
+      and then SMB.Spec.Encoding.LE16 (Data, 0) = Create_Request_Size
+      and then Data (Data'First + 2) = Request.Security_Flags
+      and then Data (Data'First + 3) = Request.Requested_Oplock_Level
+      and then SMB.Spec.Encoding.LE32 (Data, 4) = Request.Impersonation_Level
+      and then SMB.Spec.Encoding.LE64 (Data, 8) = Request.Smb_Create_Flags
+      and then SMB.Spec.Encoding.LE64 (Data, 16) = Request.Reserved
+      and then SMB.Spec.Encoding.LE32 (Data, 24) = Request.Desired_Access
+      and then SMB.Spec.Encoding.LE32 (Data, 28) = Request.File_Attributes
+      and then SMB.Spec.Encoding.LE32 (Data, 32) = Request.Share_Access
+      and then SMB.Spec.Encoding.LE32 (Data, 36) = Request.Create_Disposition
+      and then SMB.Spec.Encoding.LE32 (Data, 40) = Request.Create_Options
+      and then SMB.Spec.Encoding.LE16 (Data, 44) = Request.Name_Offset
+      and then SMB.Spec.Encoding.LE16 (Data, 46) = Request.Name_Length
+      and then
+        SMB.Spec.Encoding.LE32 (Data, 48) = Request.Create_Contexts_Offset
+      and then
+        SMB.Spec.Encoding.LE32 (Data, 52) = Request.Create_Contexts_Length)
+   with Pre => Data'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   --  The fields, a Buffer of at least one byte, and the name at
+   --  NameOffset, "the 8-byte aligned file name".
+   function Is_Create_Request
+     (Data : SMB.Bytes; Request : Create_Request; Name : SMB.Bytes)
+      return Boolean is
+     (Is_Create_Fields (Data, Request)
+      and then Data'Length >= Create_Request_Size
+      and then Request.Name_Offset mod 8 = 0
+      and then Natural (Request.Name_Length) = Name'Length
+      and then
+        Has_Bytes_At_Offset
+          (Data, Create_Fields_Size, Request.Name_Offset, Name))
+   with Pre =>
+     Data'Length <= SMB.Maximum_Frame_Size
+     and then Name'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   --  The CREATE this client sends (3.2.4.3), with no create contexts and
+   --  no oplock or lease: SecurityFlags 0 (2.2.13: "The client MUST set
+   --  this to 0"); RequestedOplockLevel SMB2_OPLOCK_LEVEL_NONE (the client
+   --  requests no oplock; when the server supports leasing, 3.2.4.3 says
+   --  it "SHOULD" ask for a lease, which this client does not support);
+   --  ImpersonationLevel Impersonation (the application gives none);
+   --  SmbCreateFlags 0 (SHOULD) and Reserved 0 ("any value"); the
+   --  application's DesiredAccess and CreateDisposition (a directory is
+   --  opened or created: FILE_DIRECTORY_FILE "MUST" go with FILE_CREATE,
+   --  FILE_OPEN_IF or FILE_OPEN); FileAttributes FILE_ATTRIBUTE_DIRECTORY
+   --  for a directory, else 0; ShareAccess read, write and delete;
+   --  CreateOptions FILE_DIRECTORY_FILE or FILE_NON_DIRECTORY_FILE; the
+   --  name at the start of Buffer (NameOffset 64 + 56 = 120, as 2.2.13
+   --  says it "SHOULD" be); and CreateContextsOffset and
+   --  CreateContextsLength 0 (MUST, with no create contexts). The
+   --  disposition is one of the six of 2.2.13 (MUST), and for a directory
+   --  one of FILE_OPEN, FILE_CREATE and FILE_OPEN_IF. The form of the name
+   --  (MS-FSCC 2.1.5, which 3.2.4.3 says the path MUST conform to) and the
+   --  bits of DesiredAccess (2.2.13.1) are not part of this specification.
+   function Client_Create
+     (Desired_Access : SMB.DWord;
+      Disposition : SMB.DWord;
+      Directory : Boolean;
+      Name_Length : SMB.Word) return Create_Request is
+     ((Security_Flags => 0,
+       Requested_Oplock_Level => Oplock_Level_None,
+       Impersonation_Level => Impersonation,
+       Smb_Create_Flags => 0,
+       Reserved => 0,
+       Desired_Access => Desired_Access,
+       File_Attributes =>
+         (if Directory then File_Attribute_Directory else 0),
+       Share_Access => File_Share_Read_Write_Delete,
+       Create_Disposition => Disposition,
+       Create_Options =>
+         (if Directory then File_Directory_File else File_Non_Directory_File),
+       Name_Offset => Header_Size + Create_Fields_Size,
+       Name_Length => Name_Length,
+       Create_Contexts_Offset => 0,
+       Create_Contexts_Length => 0))
+   with Pre =>
+     Disposition <= 5
+     and then (if Directory then Disposition in File_Open .. File_Open_If);
+
+   --  2.2.33: the SMB2 QUERY_DIRECTORY Request, after the header: 32 bytes
+   --  of fields (StructureSize 33 counts a byte of Buffer), then the search
+   --  pattern at FileNameOffset.
+   Query_Directory_Request_Size : constant := 33;
+   Query_Directory_Fields_Size : constant := 32;
+   File_Id_Both_Directory_Information : constant SMB.Byte := 16#25#;
+   Restart_Scans : constant SMB.Byte := 16#01#;
+
+   type Query_Directory_Request is record
+      File_Information_Class : SMB.Byte;
+      Flags : SMB.Byte;
+      File_Index : SMB.DWord;
+      File_Id : File_Id_Field;
+      File_Name_Offset : SMB.Word;
+      File_Name_Length : SMB.Word;
+      Output_Buffer_Length : SMB.DWord;
+   end record;
+
+   function Is_Query_Directory_Request
+     (Data : SMB.Bytes; Request : Query_Directory_Request;
+      Pattern : SMB.Bytes) return Boolean is
+     (Data'Length >= Query_Directory_Fields_Size
+      and then
+        SMB.Spec.Encoding.LE16 (Data, 0) = Query_Directory_Request_Size
+      and then Data (Data'First + 2) = Request.File_Information_Class
+      and then Data (Data'First + 3) = Request.Flags
+      and then SMB.Spec.Encoding.LE32 (Data, 4) = Request.File_Index
+      and then Has_Bytes (Data, 8, Request.File_Id)
+      and then SMB.Spec.Encoding.LE16 (Data, 24) = Request.File_Name_Offset
+      and then SMB.Spec.Encoding.LE16 (Data, 26) = Request.File_Name_Length
+      and then
+        SMB.Spec.Encoding.LE32 (Data, 28) = Request.Output_Buffer_Length
+      and then Natural (Request.File_Name_Length) = Pattern'Length
+      --  FileNameOffset and FileNameLength "MUST be 0 if no search pattern
+      --  is provided".
+      and then
+        (if Pattern'Length = 0 then Request.File_Name_Offset = 0
+         else
+           Has_Bytes_At_Offset
+             (Data, Query_Directory_Fields_Size, Request.File_Name_Offset,
+              Pattern)))
+   with Pre =>
+     Data'Length <= SMB.Maximum_Frame_Size
+     and then Pattern'Length <= SMB.Maximum_Frame_Size,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   --  "*" in UTF-16: every entry of the directory.
+   Every_Name : constant SMB.Bytes (0 .. 1) := (16#2A#, 16#00#);
+
+   --  The QUERY_DIRECTORY this client sends (3.2.4.17), a page of the whole
+   --  directory: FileIdBothDirectoryInformation, SMB2_RESTART_SCANS on the
+   --  first page, FileIndex 0 (2.2.33: without SMB2_INDEX_SPECIFIED it
+   --  "MUST be set to zero"), the pattern "*" right after the fields
+   --  (64 + 32 = 96), and OutputBufferLength 65536 (one credit's worth;
+   --  the CreditCharge "MUST" then be 1).
+   function Client_Query_Directory
+     (File_Id : File_Id_Field; Restart : Boolean)
+      return Query_Directory_Request is
+     ((File_Information_Class => File_Id_Both_Directory_Information,
+       Flags => (if Restart then Restart_Scans else 0),
+       File_Index => 0,
+       File_Id => File_Id,
+       File_Name_Offset => Header_Size + Query_Directory_Fields_Size,
+       File_Name_Length => Every_Name'Length,
+       Output_Buffer_Length => 65_536));
 end SMB.Spec.SMB2;

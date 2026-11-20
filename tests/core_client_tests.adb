@@ -620,6 +620,7 @@ package body Core_Client_Tests is
       --  Arguments and output size.
       declare
          Zero, Six, Odd, Short, Short_Close, No_Handle : Client.Operation;
+         Overwrite_Directory : Client.Operation;
       begin
          Client.Prepare_Create
            (Zero, State, Name, SMB.Engine.Read_Only, False, 0, False,
@@ -633,6 +634,27 @@ package body Core_Client_Tests is
            (Odd, State, Name (1 .. 3), SMB.Engine.Read_Only, False, 1, False,
             Output, Used, Status);
          Expect (Odd, SMB.Invalid_Value, Client.Failed, "odd name length");
+         --  A directory is only opened or created (MS-SMB2 2.2.13).
+         Client.Prepare_Create
+           (Overwrite_Directory, State, Name, SMB.Engine.Read_Only, False, 4,
+            True, Output, Used, Status);
+         Expect (Overwrite_Directory, SMB.Invalid_Value, Client.Failed,
+                 "directory with FILE_OVERWRITE");
+         --  FILE_OPEN_IF, the largest a directory may take, is accepted (on
+         --  an engine of its own, so that the request it prepares leaves
+         --  this one free).
+         declare
+            Directory_State : Engine;
+            Directory_Token : Handle;
+            Open_If_Directory : Client.Operation;
+         begin
+            Share (Directory_State, Directory_Token);
+            Client.Prepare_Create
+              (Open_If_Directory, Directory_State, Name, SMB.Engine.Read_Only,
+               False, 3, True, Output, Used, Status);
+            Expect (Open_If_Directory, SMB.Ok, Client.Prepared,
+                    "directory with FILE_OPEN_IF");
+         end;
          Output := (others => 16#EE#);
          Client.Prepare_Create
            (Short, State, Name, SMB.Engine.Read_Only, False, 1, False,
