@@ -34,12 +34,16 @@ is
       and then SMB.Spec.Encoding.LE64 (Info, 0) = End_Of_File)
    with Pre => Info'Length <= SMB.Maximum_Frame_Size;
 
-   --  2.4.42.2: FILE_RENAME_INFORMATION_TYPE_2: ReplaceIfExists (1 byte),
-   --  Reserved (7 bytes, "can contain any value and MUST be ignored"),
-   --  RootDirectory (8 bytes, "For network operations, this value MUST
-   --  always be zero"), FileNameLength (4 bytes), FileName, then Padding,
-   --  whose length "MUST be the number of bytes required to make the size
-   --  of this structure at least 24" and which "MAY be set to 0".
+   --  2.4.42.2: FILE_RENAME_INFORMATION_TYPE_2: ReplaceIfExists (1 byte,
+   --  a Boolean, 2.1.8: "A sender MUST use any nonzero value to denote a
+   --  TRUE", and "a zero value to denote a FALSE"), Reserved (7 bytes, "can
+   --  contain any value and MUST be ignored"), RootDirectory (8 bytes, "For
+   --  network operations, this value MUST always be zero"), FileNameLength
+   --  (4 bytes), FileName, then Padding, whose length "MUST be the number of
+   --  bytes required to make the size of this structure at least 24" and
+   --  which "MAY be set to 0". The name's form (UTF-16, and the full path
+   --  from the share's root that MS-SMB2 3.3.5.21.1 requires) is not stated
+   --  here: the caller prepares the name as it does CREATE's.
    File_Rename_Information : constant SMB.Byte := 10;
    Rename_Fields_Size : constant := 20;
    Rename_Minimum_Size : constant := 24;
@@ -52,7 +56,7 @@ is
      (Info : SMB.Bytes; Replace_If_Exists : Boolean; Name : SMB.Bytes)
       return Boolean is
      (Info'Length = Rename_Information_Length (Name'Length)
-      and then Info (Info'First) = (if Replace_If_Exists then 1 else 0)
+      and then (Info (Info'First) /= 0) = Replace_If_Exists
       and then SMB.Spec.Encoding.LE64 (Info, 8) = 0
       and then SMB.Spec.Encoding.LE32 (Info, 16) = SMB.DWord (Name'Length)
       and then

@@ -469,19 +469,39 @@ opens a received one. It is a stateless SPARK unit, like
   (as Windows clients send it). `Core_Protocol.Rename_Information_Length`
   equals the specification's.
 * From #153's audit: `Build_End_Of_File` requires the size to be at most
-  2**63 - 1 (C6; `Core_Resize` already refused a larger one), and
+  2**63 - 1 (`Core_Resize` already refused a larger one), and
   `Build_Rename` refuses an odd name before writing anything and lost its
   unreachable `Name'Length > SMB.DWord'Last - 20` branch, which #155's
   proof warnings listed.
-* `spec_test` (88 checks): MS-SMB2 4.6's SET_INFO FileEndOfFileInformation
-  (every field given there); QUERY_INFO and SET_INFO requests whose fields
-  all differ, every byte flipped in turn; a wrong BufferLength and an
-  offset into the fields; the three structures, the rename one for a
-  one-character name (padded) and a longer one with every byte flipped (but
-  the Reserved bytes); this client's requests and the classes.
+* `spec_test` (91 checks): MS-SMB2 4.6's SET_INFO FileEndOfFileInformation
+  (every field given there), also at indices that do not start at 0;
+  QUERY_INFO and SET_INFO requests whose fields all differ, every byte
+  flipped in turn; a wrong BufferLength and an offset into the fields; the
+  three structures, the rename one for a one-character name (padded) and a
+  longer one with every byte flipped (but the Reserved bytes), with no
+  more padding than needed; this client's requests and the classes.
 * `test_suite` also builds a CREATE one byte short of its fields and name,
   the test #157's mutation run asked for (`Build_Create`'s early return
-  went unnoticed by the tests).
+  went unnoticed by the tests), a SET_INFO disposition and rename one byte
+  short, and an odd rename target in a short buffer (refused for the
+  name).
+* From the review:
+  * A QUERY_INFO request needs only its 40 bytes of fields: StructureSize
+    counts a byte of Buffer, but the standard does not require one. The
+    builder still sends it, as Windows clients do (endnote <80>).
+  * ReplaceIfExists is an MS-FSCC 2.1.8 Boolean, TRUE for any nonzero
+    value; the client sends FALSE (0).
+  * BufferOffset 96 is the standard's (3.2.4.9 puts the information in
+    Buffer[], right after the fields), not the client's choice.
+  * 2.2.37 and 2.2.39 say FileInfoClass "MUST contain one of" the classes
+    they list. The builders' postconditions name the classes this client
+    uses; a precondition on `Client_Query_Info` and `Client_Set_Info`
+    restricting the class cost `Build_Rename`'s proof, so the comments
+    say it instead.
+  * Not stated: the rename target's form (UTF-16, and the full path from
+    the share's root that 3.3.5.21.1 requires), which `Core_Client`
+    prepares as it does CREATE's; `Build_Rename` accepts an empty name,
+    which `Core_Client` refuses.
 
 ## Platinum phase 3, CREATE and QUERY_DIRECTORY (#157)
 
@@ -654,8 +674,9 @@ opens a received one. It is a stateless SPARK unit, like
     characters, paths over 32,760) nor share names against 2.2.9 and
     MS-FSCC 2.1.6 (80 characters, more forbidden characters): phase 4.
   * Core-level gaps a precondition should close: `Build_Create` accepts a
-    directory with an overwrite disposition; `Build_End_Of_File` accepts a
-    size over 2**63 - 1 (`Core_Resize` checks it).
+    directory with an overwrite disposition (closed by #157);
+    `Build_End_Of_File` accepts a size over 2**63 - 1 (`Core_Resize`
+    checks it; closed by #158).
   * SHOULDs not followed: no NETNAME negotiate context (an open question
     already), no lease requested when the server offers leasing (no lease
     support), MaxTransactSize not read from the NEGOTIATE response.

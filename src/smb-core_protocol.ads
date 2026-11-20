@@ -582,7 +582,9 @@ package SMB.Core_Protocol is
                   SMB.DWord (Rename_Information_Length (Name'Length)),
                   File_Id),
                Output (Output'First + 32 .. Output'First + (Used - 1)))
-            --  ReplaceIfExists FALSE, the Reserved bytes and the padding 0.
+            --  ReplaceIfExists FALSE and the name; the clauses below set the
+            --  Reserved bytes and the padding, which the standard leaves
+            --  open, to 0.
             and then SMB.Spec.FSCC.Is_Rename_Information
               (Output (Output'First + 32 .. Output'First + (Used - 1)),
                False, Name)

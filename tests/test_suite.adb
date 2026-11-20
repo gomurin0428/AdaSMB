@@ -7016,6 +7016,30 @@ procedure Test_Suite is
       SMB.Core_Protocol.Build_Rename
         (File_Id, SMB.Bytes'(0 => 16#62#), Output, Used, Status);
       Expect_Failure (SMB.Invalid_Length, "odd rename target");
+      --  An odd name is refused before a short buffer.
+      Output := (others => 16#EE#);
+      SMB.Core_Protocol.Build_Rename
+        (File_Id, SMB.Bytes'(0 => 16#62#), Output (0 .. 9), Used, Status);
+      Assert
+        (Status = SMB.Invalid_Length and then Used = 0
+         and then (for all Index in 0 .. 9 => Output (Index) = 0),
+         "odd rename target in a short buffer");
+      --  32 bytes of fields and 24 of information, one byte short.
+      Output := (others => 16#EE#);
+      SMB.Core_Protocol.Build_Rename
+        (File_Id, Hex ("62006300"), Output (0 .. 54), Used, Status);
+      Assert
+        (Status = SMB.Resource_Limit and then Used = 0
+         and then (for all Index in 0 .. 54 => Output (Index) = 0),
+         "SET_INFO rename request one byte short");
+      --  32 bytes of fields and 1 of information, one byte short.
+      Output := (others => 16#EE#);
+      SMB.Core_Protocol.Build_Disposition
+        (File_Id, True, Output (0 .. 31), Used, Status);
+      Assert
+        (Status = SMB.Resource_Limit and then Used = 0
+         and then (for all Index in 0 .. 31 => Output (Index) = 0),
+         "SET_INFO disposition request one byte short");
    end Test_Protocol_Builders;
 
    --  Response fields each parser must check, with the status it reports.

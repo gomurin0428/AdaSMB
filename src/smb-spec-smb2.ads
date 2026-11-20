@@ -640,8 +640,7 @@ is
 
    --  2.2.37: the SMB2 QUERY_INFO Request, after the header: 40 bytes of
    --  fields (StructureSize 41 counts a byte of Buffer), then the input
-   --  buffer at InputBufferOffset, which a file information query does not
-   --  have.
+   --  buffer at InputBufferOffset, which this client's queries do not have.
    Query_Info_Request_Size : constant := 41;
    Query_Info_Fields_Size : constant := 40;
 
@@ -657,10 +656,11 @@ is
       File_Id : File_Id_Field;
    end record;
 
-   --  The fields, and the byte of Buffer that StructureSize counts.
+   --  The fields. A request with no input buffer needs no byte after them:
+   --  StructureSize counts one, but the standard does not require it.
    function Is_Query_Info_Request
      (Data : SMB.Bytes; Request : Query_Info_Request) return Boolean is
-     (Data'Length >= Query_Info_Request_Size
+     (Data'Length >= Query_Info_Fields_Size
       and then SMB.Spec.Encoding.LE16 (Data, 0) = Query_Info_Request_Size
       and then Data (Data'First + 2) = Request.Info_Type
       and then Data (Data'First + 3) = Request.File_Info_Class
@@ -681,8 +681,11 @@ is
    --  of Class, with no input buffer: InfoType SMB2_0_INFO_FILE,
    --  InputBufferOffset and InputBufferLength 0 (SHOULD), Reserved 0
    --  (MUST), AdditionalInformation and Flags 0 (MUST, for this kind of
-   --  query). The byte of Buffer has no value in the standard; Windows
-   --  clients send 0 (endnote <80>), as this one does.
+   --  query). Windows clients send "a 1-byte buffer of 0 when
+   --  InputBufferLength is set to 0" (endnote <80>), and so does this one.
+   --  FileInfoClass "MUST contain one of" the classes 2.2.37 lists; this
+   --  client asks only for FileNetworkOpenInformation, which
+   --  Build_Query_Information's postcondition names.
    function Client_Query_Info
      (Class : SMB.Byte;
       Output_Buffer_Length : SMB.DWord;
@@ -739,9 +742,15 @@ is
    --  The SET_INFO this client sends (3.2.4.9), a file's information of
    --  Class: InfoType SMB2_0_INFO_FILE, Reserved 0 (MUST),
    --  AdditionalInformation 0 ("For all other set requests, this field
-   --  MUST be 0"), and the information right after the fields (BufferOffset
-   --  64 + 32 = 96, the client's choice; Windows servers refuse one below
-   --  0x60 or above 0xA0, endnote <82>).
+   --  MUST be 0"), and the information right after the fields: "The
+   --  buffer provided by the client is copied into Buffer[]. The
+   --  BufferOffset field is set to the offset ... to Buffer[]", which
+   --  follows the 32 bytes of fields, so 64 + 32 = 96 (Windows servers
+   --  refuse one below 0x60 or above 0xA0, endnote <82>). FileInfoClass
+   --  "MUST contain one of" the classes 2.2.39 lists; this client sets only
+   --  FileDispositionInformation, FileEndOfFileInformation and
+   --  FileRenameInformation, which the builders' postconditions name. (A
+   --  precondition saying so cost Build_Rename's proof.)
    function Client_Set_Info
      (Class : SMB.Byte;
       Buffer_Length : SMB.DWord;

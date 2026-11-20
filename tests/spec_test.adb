@@ -930,6 +930,10 @@ procedure Spec_Test is
       Rename_Long : constant SMB.Bytes :=
         (1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
          16#06#, 0, 0, 0, 16#61#, 0, 16#62#, 0, 16#63#, 0);
+      --  The same bytes at indices that do not start at 0, as the
+      --  predicates must read from Data'First.
+      End_Of_File_High : constant SMB.Bytes (300 .. 339) := End_Of_File_Body;
+      Rename_B_High : constant SMB.Bytes (700 .. 723) := Rename_B;
    begin
       pragma Assert
         (S.Is_Set_Info_Request
@@ -939,6 +943,17 @@ procedure Spec_Test is
          and then F.Is_End_Of_File_Information
            (End_Of_File_Body (32 .. 39), 16#2_F000#),
          "MS-SMB2 4.6's SET_INFO FileEndOfFileInformation");
+      Passed;
+      pragma Assert
+        (S.Is_Set_Info_Request
+           (End_Of_File_High,
+            S.Client_Set_Info (F.File_End_Of_File_Information, 8, Id_461),
+            End_Of_File_High (332 .. 339))
+         and then F.Is_End_Of_File_Information
+           (End_Of_File_High (332 .. 339), 16#2_F000#)
+         and then F.Is_Rename_Information
+           (Rename_B_High, False, SMB.Bytes'(16#62#, 0)),
+         "SET_INFO and its information at high indices");
       Passed;
       pragma Assert
         (S.Is_Query_Info_Request (Full_Query, Full_Query_Request)
@@ -960,6 +975,13 @@ procedure Spec_Test is
                "every QUERY_INFO byte");
          end;
       end loop;
+      Passed;
+      --  The byte of Buffer that StructureSize counts is not required.
+      pragma Assert
+        (S.Is_Query_Info_Request (Full_Query (500 .. 539), Full_Query_Request)
+         and then not S.Is_Query_Info_Request
+           (Full_Query (500 .. 538), Full_Query_Request),
+         "QUERY_INFO: 40 bytes of fields");
       Passed;
       for Index in Full_Set'Range loop
          declare
@@ -1005,7 +1027,9 @@ procedure Spec_Test is
          and then not F.Is_End_Of_File_Information
            (SMB.Bytes'(0, 0, 0, 0, 0, 0, 0, 16#80#), 2 ** 63)
          and then not F.Is_End_Of_File_Information
-           (SMB.Bytes'(0, 16#F0#, 2, 0, 0, 0, 0), 16#2_F000#),
+           (SMB.Bytes'(0, 16#F0#, 2, 0, 0, 0, 0), 16#2_F000#)
+         and then not F.Is_End_Of_File_Information
+           (SMB.Bytes'(0, 16#F0#, 2, 0, 0, 0, 0, 0, 0), 16#2_F000#),
          "FileEndOfFileInformation: signed, 8 bytes");
       Passed;
       pragma Assert
@@ -1020,6 +1044,21 @@ procedure Spec_Test is
          and then F.Rename_Information_Length (2) = 24
          and then F.Rename_Information_Length (6) = 26,
          "FILE_RENAME_INFORMATION_TYPE_2, padded to 24 bytes");
+      Passed;
+      --  No more padding than 24 bytes need (the standard's MUST; older
+      --  Windows clients sent up to 4 more, endnote <161>), and any nonzero
+      --  ReplaceIfExists is TRUE (MS-FSCC 2.1.8).
+      pragma Assert
+        (not F.Is_Rename_Information
+           (Rename_Long & SMB.Bytes'(0, 0), True,
+            SMB.Bytes'(16#61#, 0, 16#62#, 0, 16#63#, 0))
+         and then not F.Is_Rename_Information
+           (Rename_B & SMB.Bytes'(0, 0), False, SMB.Bytes'(16#62#, 0))
+         and then F.Is_Rename_Information
+           (SMB.Bytes'(0 => 2) & Rename_Long (Rename_Long'First + 1
+                                               .. Rename_Long'Last),
+            True, SMB.Bytes'(16#61#, 0, 16#62#, 0, 16#63#, 0)),
+         "FILE_RENAME_INFORMATION_TYPE_2: exact padding, a Boolean");
       Passed;
       for Index in Rename_Long'Range loop
          declare

@@ -319,8 +319,9 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   QUERY_DIRECTORY, QUERY_INFO and SET_INFO (disposition, end of file,
   rename) builders of
   `Core_Protocol` (exact status and `Used`; on success the request
-  `SMB.Spec.SMB2` gives, and every byte after it zero; on failure the whole
-  buffer zero).
+  `SMB.Spec.SMB2` gives, with the SET_INFO information `SMB.Spec.FSCC`
+  gives, and every byte after it zero, the bytes the standards leave open
+  stated as this client's; on failure the whole buffer zero).
 * **Fields stated, gaps left:** `Core_Wire.Validate_Header` (phase 7), the
   header copies in `Core_Client` and `Core_Connection` (phase 9), the other
   builders and `Parse_Response` of `Core_Protocol`, the header of
