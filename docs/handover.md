@@ -437,8 +437,9 @@ opens a received one. It is a stateless SPARK unit, like
   and `Core_Resize` (#161), which ends phase 3's builders. Phase 4
   (text) did UTF-8 to UTF-16 (#162) and UTF-16 to UTF-8 (#163); left of
   it, `Validate_UTF16` against the specification (it is complete against
-  `Core_Text`'s own `Valid_UTF16_Text`), then phase 5 (hashes and HMAC). After Platinum, the maintainer wants the remaining SMB
-  features in this order: Kerberos, several requests in flight, several
+  `Core_Text`'s own `Valid_UTF16_Text`), then phase 5 (hashes and HMAC).
+  After Platinum, the maintainer wants the remaining SMB features in this
+  order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
   file operations (times and attributes, locks, leases, change
   notification, ACLs, streams, reparse points, server-side copy) and
