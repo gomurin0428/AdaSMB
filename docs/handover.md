@@ -479,17 +479,21 @@ opens a received one. It is a stateless SPARK unit, like
   it (`Pad_Block_256`, `Length_Block_256`, `Before_Length_256`,
   `Finish_256`). `SHA256`'s digest is now `Digest_Of_256` of the last
   hash value.
-* `SMB.Spec.SHA2.Lemmas` (ignored ghost code, compiled by no build)
-  proves what ties the model to the standard: finishing what absorbed a
-  message from the start gives its `SHA256` (`Lemma_Finish`, through
-  `Lemma_Absorb_Holds`: after N bytes the hash value is that of their
-  whole blocks), and two pieces absorbed in turn are the two joined
-  (`Lemma_Absorb_Join`), which HMAC and the preauth hash will need.
+* `SMB.Spec.SHA2.Lemmas` (ignored ghost code: no build generates code
+  for it) proves what ties the model to the standard: finishing what
+  absorbed a message from the start gives its `SHA256` (`Lemma_Finish`,
+  for any message and bounds, through `Lemma_Absorb_Holds`: after N bytes
+  the hash value is that of their whole blocks), and two pieces absorbed
+  in turn are the two joined (`Lemma_Absorb_Join`, for a first piece
+  that starts below 2**30), which HMAC-SHA256 will need; the preauth
+  hash will need SHA-512's.
 * The context's subprograms state their results in the model:
   `SHA256_Start` gives `Start_256`, `SHA256_Update` absorbs the message,
   `SHA256_Finish` gives `Finish_256`; and `Crypto.SHA256`'s
   postcondition is `SHA256'Result = SMB.Spec.SHA2.SHA256 (Message)`,
   under the spec's pragma that ignores postconditions at run time.
+  `SHA256_Update`'s invariant that `Total` stays, which ran in every
+  build, is now ignored with the rest (it is proved).
   `test_suite` checks it on 604 messages: every length up to 300 bytes
   with two contents, each from an index other than 0, and 8,192 and
   70,000 bytes.
@@ -514,6 +518,11 @@ opens a received one. It is a stateless SPARK unit, like
     byte, each a constant shift, did.
   * A recursive function's unfolding at a loop's step is a lemma call,
     as in #168.
+  * Proof-only source still compiles in every build, so it must suit
+    every GNAT the crate supports (`gnat >= 14`): GNAT 14 rejects an
+    expression function whose body is a bare delta aggregate, which 16
+    accepts (`((B with delta P => X))`). CI builds with 16 only; the
+    review built with 14.2.
 * Next: SHA-512 the same way (its context is public, for
   `Core_Preauth`), then MD5 and MD4, then HMAC over the models.
 

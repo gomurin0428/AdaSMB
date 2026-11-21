@@ -1,5 +1,6 @@
---  Proof only: no build compiles these lemmas, and only ignored code calls
---  them.
+--  Proof only: no build generates code for these lemmas (smb.gpr compiles
+--  the unit to an empty object), and only ignored code calls them. Like
+--  every source, it must still compile with each GNAT the crate supports.
 pragma Assertion_Policy (Ghost => Ignore);
 
 --  Lemmas about SMB.Spec.SHA2, for the proofs of the code that hashes:

@@ -263,7 +263,7 @@ is
      (Block : Block_256; Position : Block_Position_256; Byte : SMB.Byte)
       return Block_256
    is
-     (Block with delta Position => Byte);
+     ((Block with delta Position => Byte));
 
    --  The block, once complete, goes through the hash computation.
    function Absorb_Byte_256 (S : State_256; Byte : SMB.Byte) return State_256

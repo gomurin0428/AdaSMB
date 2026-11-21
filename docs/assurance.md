@@ -235,9 +235,10 @@ from 0.5.0 on); the test programs compile the same sources with every contract
 checked, but for the postconditions whose specifications recurse, which
 are proved and never run: the whole-input postconditions of `Core_Text`'s
 two converters (`test_suite` checks them on every short input instead),
-and those of the `Crypto` body from `SHA256_Compress` on, whose
-specifications recurse over a block's schedule and rounds (the stack check
-rejects recursion reachable from `SMB.Client` in every build).
+and those of the `Crypto` body from `SHA256_Compress` on and of
+`Crypto.SHA256`, whose specifications recurse over a block's schedule and
+rounds and over the message (the stack check rejects recursion reachable
+from `SMB.Client` in every build).
 
 `Validate_Path` now binds status to the executable `Lexically_Valid_Path`
 predicate: empty input is allowed only on request; NUL, colon, leading/trailing
