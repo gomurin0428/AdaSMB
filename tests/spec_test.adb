@@ -1920,6 +1920,7 @@ procedure Spec_Test is
       package S renames SMB.Spec.SHA2;
       use type SMB.Bytes;
       use type S.Working_32;
+      use type S.State_256;
 
       function Text (Value : String) return SMB.Bytes is
          Result : SMB.Bytes (0 .. Value'Length - 1);
@@ -2075,6 +2076,34 @@ procedure Spec_Test is
                    (Index + 1))));
          begin
             pragma Assert (S.SHA256 (Message) = Expected);
+         end;
+      end loop;
+      Passed;
+
+      --  The model of a message hashed in pieces: finishing what absorbed
+      --  it gives its digest, wherever it is split in two, and absorbing
+      --  the two pieces in turn is absorbing them joined.
+      for Length in 0 .. 130 loop
+         declare
+            Message : constant SMB.Bytes (10 .. 9 + Length) :=
+              (for Index in 10 .. 9 + Length =>
+                 SMB.Byte ((Index * 11 + 3) mod 256));
+         begin
+            for Split in 10 .. 10 + Length loop
+               pragma Assert
+                 (S.Finish_256
+                    (S.Absorb_256
+                       (S.Absorb_256
+                          (S.Start_256, Message (Message'First .. Split - 1)),
+                        Message (Split .. Message'Last)),
+                     Length) = S.SHA256 (Message));
+               pragma Assert
+                 (S.Absorb_256
+                    (S.Absorb_256
+                       (S.Start_256, Message (Message'First .. Split - 1)),
+                     Message (Split .. Message'Last)) =
+                  S.Absorb_256 (S.Start_256, Message));
+            end loop;
          end;
       end loop;
       Passed;

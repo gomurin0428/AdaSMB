@@ -88,6 +88,7 @@ of date.
 | after 0.4.0 | Proofs with a margin on CI: four goals near the provers' limits, split up | merged (#167) |
 | after 0.4.0 | Platinum phase 5, SHA-256: `SMB.Spec.SHA2` (FIPS 180-4) and `Crypto`'s compression function against it | merged (#168) |
 | after 0.4.0 | Platinum phase 4, `Core_Text.Validate_UTF16` against `SMB.Spec.Unicode` | #164 |
+| after 0.4.0 | Platinum phase 5, SHA-256 whole: a model of a message hashed in pieces, `SHA256`'s context and digest against the specification | #169 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -445,7 +446,8 @@ opens a received one. It is a stateless SPARK unit, like
   (text) did UTF-8 to UTF-16 (#162) and UTF-16 to UTF-8 (#163); left of
   it, `Validate_UTF16` against the specification (it is complete against
   `Core_Text`'s own `Valid_UTF16_Text`). Phase 5 (hashes and HMAC)
-  started with SHA-256's compression function (#168).
+  started with SHA-256's compression function (#168) and its context and
+  digest (#169).
   After Platinum, the maintainer wants the remaining SMB features in this
   order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
@@ -466,6 +468,54 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 5, SHA-256's context and digest (#169)
+
+* `SMB.Spec.SHA2` adds a model of a message hashed as it arrives, which
+  the standard does not state: a state (`State_256`: the hash value after
+  the whole blocks so far, the next block's bytes, how many), a byte
+  absorbed (`Absorb_Byte_256`, through `Put_256`), a message absorbed
+  (`Absorb_Prefix_256`, `Absorb_256`), and the padding and digest after
+  it (`Pad_Block_256`, `Length_Block_256`, `Before_Length_256`,
+  `Finish_256`). `SHA256`'s digest is now `Digest_Of_256` of the last
+  hash value.
+* `SMB.Spec.SHA2.Lemmas` (ignored ghost code, compiled by no build)
+  proves what ties the model to the standard: finishing what absorbed a
+  message from the start gives its `SHA256` (`Lemma_Finish`, through
+  `Lemma_Absorb_Holds`: after N bytes the hash value is that of their
+  whole blocks), and two pieces absorbed in turn are the two joined
+  (`Lemma_Absorb_Join`), which HMAC and the preauth hash will need.
+* The context's subprograms state their results in the model:
+  `SHA256_Start` gives `Start_256`, `SHA256_Update` absorbs the message,
+  `SHA256_Finish` gives `Finish_256`; and `Crypto.SHA256`'s
+  postcondition is `SHA256'Result = SMB.Spec.SHA2.SHA256 (Message)`,
+  under the spec's pragma that ignores postconditions at run time.
+  `test_suite` checks it on 604 messages: every length up to 300 bytes
+  with two contents, each from an index other than 0, and 8,192 and
+  70,000 bytes.
+* `spec_test` (+1 check, 138): the model on every message up to 130
+  bytes, split in two at every point: finishing gives the digest, and the
+  two pieces absorbed in turn are the message absorbed.
+* Lessons:
+  * Ada's `=` on arrays (and on records that hold them) compares
+    elements, and the provers know nothing of a function's result on
+    another array with the same elements: `Compress_256 (H, X)` and
+    `Compress_256 (H, Y)` with `X = Y` could not be shown equal even
+    alone. Congruence lemmas prove it by induction over the schedule and
+    the rounds (`Lemma_Compress_Equal`), then over the model
+    (`Lemma_Absorb_Byte_Equal`, `Lemma_Absorb_Equal`,
+    `Lemma_Finish_Equal`).
+  * Every aggregate is a term of its own: `(B with delta 63 => X)` in a
+    lemma is not the same term as the same text inside a specification
+    function. Writing the store as a function (`Put_256`) gives both the
+    same term.
+  * A shift by a variable amount against the specification's quotient
+    by a variable power of two did not prove; a lemma with one case per
+    byte, each a constant shift, did.
+  * A recursive function's unfolding at a loop's step is a lemma call,
+    as in #168.
+* Next: SHA-512 the same way (its context is public, for
+  `Core_Preauth`), then MD5 and MD4, then HMAC over the models.
 
 ## Platinum phase 4, Validate_UTF16 (#164)
 
@@ -541,9 +591,8 @@ opens a received one. It is a stateless SPARK unit, like
     and the invariant was stated element by element.
   * Comparing the code's table of 64 constants with the specification's
     is cheap.
-* Next: the incremental contexts (`SHA256_Update`, `SHA256_Finish`)
-  against a model of the absorbed message, and `SHA256`'s postcondition;
-  then SHA-512, MD5 and MD4 the same way, then HMAC.
+* Next (done in #169): the incremental contexts against a model of the
+  absorbed message, and `SHA256`'s postcondition.
 
 ## Proofs with a margin on CI (#167)
 
