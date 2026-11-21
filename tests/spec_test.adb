@@ -1908,10 +1908,14 @@ procedure Spec_Test is
       Passed;
    end Test_Unicode;
    --  FIPS 180-4: SHA-256 on NIST's examples (csrc.nist.gov, "Examples with
-   --  Intermediate Values": SHA256.pdf for "abc", with its schedule and
-   --  working variables, and SHA2_Additional.pdf), the padding at its
-   --  boundaries, and GNAT.SHA256, an implementation independent of ours,
-   --  on every length up to 300 bytes.
+   --  Intermediate Values"): SHA256.pdf's "abc", with its padded block,
+   --  schedule and working variables, and its two-block message;
+   --  SHA2_Additional.pdf's SHA-256 messages #1 to #9, which include the
+   --  padding's boundaries. Then the empty message and FIPS's 896-bit
+   --  example for SHA-384 and SHA-512, with digests from Python's hashlib;
+   --  the padded length on its own; and GNAT.SHA256, an implementation
+   --  independent of ours, on every length up to 300 bytes and on lengths
+   --  whose 64-bit length field has more bytes set.
    procedure Test_SHA256 is
       package S renames SMB.Spec.SHA2;
       use type SMB.Bytes;
@@ -1926,11 +1930,20 @@ procedure Spec_Test is
          return Result;
       end Text;
 
+      function Fill (Length : Natural; Value : SMB.Byte) return SMB.Bytes
+      is (SMB.Bytes'(0 .. Length - 1 => Value));
+
       Abc : constant SMB.Bytes := Text ("abc");
       Block : constant S.Block_256 := S.Padded_Block_256 (Abc, 0)
       with Ghost;
       W : constant S.Schedule_256 := S.Message_Schedule_256 (Block)
       with Ghost;
+      Lengths : constant array (Natural range <>) of Natural :=
+        [for Index in 0 .. 303 =>
+           (if Index <= 300 then Index
+            elsif Index = 301 then 8_191
+            elsif Index = 302 then 8_192
+            else 70_000)];
    begin
       --  5.1.1's example: "abc" is followed by the bit 1, 423 zero bits
       --  and the length 24 as 64 bits.
@@ -1972,6 +1985,52 @@ procedure Spec_Test is
            = Hex ("248D6A61D20638B8E5C026930C3E6039"
                   & "A33CE45964FF2167F6ECEDD419DB06C1"));
       Passed;
+      --  SHA2_Additional.pdf, SHA-256 #1 to #9.
+      pragma Assert
+        (S.SHA256 (Hex ("BD")) =
+           Hex ("68325720AABD7C82F30F554B313D0570"
+                & "C95ACCBB7DC4B5AAE11204C08FFE732B"));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Hex ("C98C8E55")) =
+           Hex ("7ABC22C0AE5AF26CE93DBB94433A0E0B"
+                & "2E119D014F8E7F65BD56C61CCCCD9504"));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Fill (55, 0)) =
+           Hex ("02779466CDEC163811D078815C633F21"
+                & "901413081449002F24AA3E80F0B88EF7"));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Fill (56, 0)) =
+           Hex ("D4817AA5497628E7C77E6B606107042B"
+                & "BBA3130888C5F47A375E6179BE789FBB"));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Fill (57, 0)) =
+           Hex ("65A16CB7861335D5ACE3C60718B5052E"
+                & "44660726DA4CD13BB745381B235A1785"));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Fill (64, 0)) =
+           Hex ("F5A5FD42D16A20302798EF6ED309979B"
+                & "43003D2320D9F0E8EA9831A92759FB4B"));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Fill (1_000, 0)) =
+           Hex ("541B3E9DAA09B20BF85FA273E5CBD3E8"
+                & "0185AA4EC298E765DB87742B70138A53"));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Fill (1_000, 16#41#)) =
+           Hex ("C2E686823489CED2017F6059B8B23931"
+                & "8B6364F6DCD835D0A519105A1EADD6E4"));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Fill (1_005, 16#55#)) =
+           Hex ("F4D62DDEC0F3DD90EA1380FA16A5FF8D"
+                & "C4C54B21740650F24AFC4120903552B0"));
+      Passed;
       pragma Assert
         (S.SHA256
            (Text ("abcdefghbcdefghicdefghijdefghijkefghijklfghijklm"
@@ -1996,7 +2055,10 @@ procedure Spec_Test is
             and then S.Padded_Length_256 (Length) - 64 < Length + 9);
       end loop;
       Passed;
-      for Length in 0 .. 300 loop
+      --  8,192 bytes are the shortest message that sets the length field's
+      --  byte 5 (counting from the most significant, 0), the highest any
+      --  input of the core sets; 70,000 bytes set bytes 5 to 7 together.
+      for Length of Lengths loop
          declare
             Message : constant SMB.Bytes (0 .. Length - 1) :=
               (for Index in 0 .. Length - 1 =>

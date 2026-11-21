@@ -232,9 +232,12 @@ assumption or check-suppression pragma is introduced. The library build checks
 the core's preconditions and the assertions in its code at run time, but not
 its postconditions, which GNATprove proves ([`contracts.adc`](../contracts.adc),
 from 0.5.0 on); the test programs compile the same sources with every contract
-checked, but for the whole-input postconditions of `Core_Text`'s two
-converters, which recurse over the input and are proved and never run
-(`test_suite` checks them on every short input instead).
+checked, but for the postconditions whose specifications recurse, which
+are proved and never run: the whole-input postconditions of `Core_Text`'s
+two converters (`test_suite` checks them on every short input instead),
+and those of the `Crypto` body from `SHA256_Compress` on, whose
+specifications recurse over a block's schedule and rounds (the stack check
+rejects recursion reachable from `SMB.Client` in every build).
 
 `Validate_Path` now binds status to the executable `Lexically_Valid_Path`
 predicate: empty input is allowed only on request; NUL, colon, leading/trailing
@@ -346,8 +349,8 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   `Core_Query` and `Core_Resize` (phases 7 and 9).
 * **Complete against a specification, inside a unit:** `Crypto`'s SHA-256
   compression function (`SHA256_Compress`, one block against
-  `SMB.Spec.SHA2.Compress_256`); the incremental contexts and the digests
-  that use it are next.
+  `SMB.Spec.SHA2.Compress_256`; proved and not run); the incremental
+  contexts and the digests that use it are next.
 * **Outputs not stated:** every digest, MAC, cipher and derived key (`Crypto`,
   `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
   `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,
