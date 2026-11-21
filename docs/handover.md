@@ -463,11 +463,16 @@ opens a received one. It is a stateless SPARK unit, like
   that took 58 s and 550,049 steps on the Mac, ran into the provers' time
   limit on the runner ("provers reached time limit"). `proof.yml` on main
   had passed, replaying the cached result.
-* `Request` is now a function with a body: it builds the request from
+* `Request` is now a function with a body (no longer an expression
+  function completed in the private part): it builds the request from
   its four parts (the fields and dialects, the preauth, encryption and
-  signing contexts), asserts each part against the specification, where
-  each part lies in the request, and the specification of the request
-  a piece at a time. The slowest goal now takes 16 s and 58k steps. The
+  signing contexts), asserts each context part against the
+  specification, where each part lies in the request, and the
+  specification of the request a piece at a time (the fields directly on
+  the request, which the provers find faster).
+* AdaMutant now mutates `Request` (a body), assertions included: deleting
+  one of these proof aids changes nothing a test can see, so such
+  mutants go to the proof, and some may survive where the rest suffices. The slowest goal now takes 16 s and 58k steps. The
   declaration and its postcondition are unchanged; callers see only the
   postcondition (`Core_Connection.Prepare_Negotiate` proves unchanged).
   The assertions run once a connection.
@@ -599,10 +604,11 @@ opens a received one. It is a stateless SPARK unit, like
   standard gives none). `Is_Client_Negotiate_Request` states all of it,
   with nothing after the signing context.
 * `Core_Negotiate.Request` states its result against
-  `Is_Client_Negotiate_Request`. It is an expression function completed in
-  the private part, so the predicates are unhidden by a pragma right after
-  the completion: GNATprove accepts `Unhide_Info` "just after a subprogram
-  ... body or declaration", not elsewhere in a private part.
+  `Is_Client_Negotiate_Request`. It was an expression function completed
+  in the private part, so the predicates were unhidden by a pragma right
+  after the completion: GNATprove accepts `Unhide_Info` "just after a
+  subprogram ... body or declaration", not elsewhere in a private part.
+  Since #166 it has a body, and the pragmas start its declarative part.
 * `Core_Protocol.Build_Negotiate`, the 2.1-only NEGOTIATE that had no
   caller since 0.2.0, is gone.
 * `spec_test` (+9 checks): the NEGOTIATE requests of the test client in

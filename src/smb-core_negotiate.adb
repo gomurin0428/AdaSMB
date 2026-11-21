@@ -5,8 +5,8 @@ package body SMB.Core_Negotiate is
 
    package N renames SMB.Spec.SMB2.Negotiation with Ghost;
 
-   --  The request is built from its four parts, each stated against the
-   --  specification on its own, then the whole: as one goal, the
+   --  The request is built from its four parts, each context part stated
+   --  against the specification on its own, then the whole: as one goal, the
    --  postcondition took the provers about a minute, near their time limit
    --  on GitHub's runners, and assertions on one long concatenation did not
    --  prove. The assertions run once a connection.
