@@ -18,7 +18,7 @@ concurrency:
 env:
   ADA_TOOLCHAIN: gnat_native=16.1.0 gprbuild=26.0.1
   TOOLCHAIN_KEY: alr2.1.1-gnat16.1.0-gprbuild26.0.1-v1
-  ADAMUTANT_COMMIT: 2c874914d9f4428c24ca0ba94f9d705549186723
+  ADAMUTANT_COMMIT: 4489d69bbcae5553470cb6d5ecdf9a3d4f27ebb9
 
 jobs:
   linux:

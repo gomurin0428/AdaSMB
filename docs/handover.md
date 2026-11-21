@@ -82,6 +82,7 @@ of date.
 | after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | merged (#160) |
 | after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | merged (#161) |
 | after 0.4.0 | Platinum phase 4, UTF-8 to UTF-16: `SMB.Spec.Unicode` and `Core_Text.UTF8_To_UTF16` against it | #162 |
+| after 0.4.0 | AdaMutant 4489d69 (the latest, at the maintainer's request) | #165 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -1037,6 +1038,28 @@ opens a received one. It is a stateless SPARK unit, like
   configuration mistake) still fails the job: `adamutant_run.sh` writes
   AdaMutant's exit status to `.adamutant/status` when it exits, and the
   listing step fails on a non-zero one, so the baseline logs show again.
+
+## AdaMutant 4489d69 (#165)
+
+* At the maintainer's request (2026-11-20), CI uses the latest AdaMutant,
+  4489d69 (its PR #56), from now on; `ADAMUTANT_COMMIT` in `ci.yml` and
+  `mutation.yml`.
+* What changed since 2c87491 (30 commits):
+  * LogicalOperator makes the "sufficient set" on Booleans (each operand
+    left out, `(A) = (B)` or `/=` outside contracts, the constant) instead
+    of `and`/`or` swaps; ConjunctDeletion in contracts on any type.
+  * No `abs X` -> `X` where `X` is never negative; comparison
+    replacements that a range proof shows equivalent are skipped and now
+    counted in the summary.
+  * A warning on a mutant's line no longer makes it a CompileError
+    (unless warnings are errors and no line has an error).
+  * Opt-in only, and not set here: a bounded search for an input that
+    tells a survivor from the original (`search_project`) and verified
+    test suggestions from proof counterexamples (`suggestion_project`).
+    Both handle only package functions over integer scalars (and Booleans
+    or enumerations for the search), which the core has few of.
+* `adamutant.toml` keeps its keys; `tests/mutation_survivors.py` reads
+  only the report's stable fields and the progress lines.
 
 ## AdaMutant 2c87491 (#154)
 
