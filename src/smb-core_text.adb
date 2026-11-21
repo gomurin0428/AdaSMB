@@ -227,10 +227,13 @@ package body SMB.Core_Text is
    --  The first Used bytes of Output are the run's in UTF-16, and the run's
    --  bytes from Used on are those of the run from Position: the two
    --  invariants of UTF8_To_UTF16's loop about the run. Their bodies are
-   --  hidden from that loop, where their quantifiers over Output slowed the
-   --  proof of its other invariants past the provers' limit on GitHub's
-   --  runners; Lemma_Extend unfolds them. Only ignored code (the loop's
-   --  invariants, the lemmas) refers to them, so they never run.
+   --  hidden from that loop, where their quantifiers slowed the proof of its
+   --  other invariants past the provers' limit on GitHub's runners; the
+   --  lemmas (Lemma_Extend, Lemma_Run_Begins, Lemma_Holds_Whole_Run) and
+   --  Store_Unit unfold them. GNAT does not allow a hidden expression
+   --  function under Ghost => Ignore, so they are compiled; only ignored
+   --  code (loop invariants, Store_Unit's postcondition, the lemmas) refers
+   --  to them, so they never run.
    function Holds_Run
      (Input : String; Output : SMB.Bytes; Used : Natural) return Boolean is
      (for all K in 0 .. Used - 1 =>
