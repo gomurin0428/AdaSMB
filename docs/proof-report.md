@@ -4613,7 +4613,8 @@ the rules of `docs/smb3-design.md`). `Check_Response_Contexts`'s
 postcondition names the four statuses it returns and gives `No_Cipher`
 whenever the status is not `Ok`. `Request` is completed in the private
 part of the spec, so callers' proofs see every byte. Nothing in the library
-calls the package yet.
+calls the package yet. (Since #166 `Request` has a body and its
+postcondition states the request; see the handover.)
 
 ```sh
 gnatprove -P proof.gpr -u smb-core_negotiate.adb --mode=all --level=2 --proof=progressive --report=fail --checks-as-errors=on --prover=cvc5,z3,altergo -j4
@@ -4640,7 +4641,8 @@ errors.
 
 An AdaMutant run on `smb-core_negotiate.adb` detected all 132 mutants (one
 more did not compile) and marks none. AdaMutant mutates bodies only, so
-`Request`, in the spec, is covered by the byte-for-byte test instead. The
+`Request`, in the spec, is covered by the byte-for-byte test instead (it
+has been in the body since #166). The
 first run, with `Request` still in the body, left twenty: the upper
 bytes of a four-byte encoder whose values are all below 2**16, a length
 check that only a 128-byte packet tells apart, and a bound the loop

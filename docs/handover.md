@@ -82,7 +82,8 @@ of date.
 | after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | merged (#160) |
 | after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | merged (#161) |
 | after 0.4.0 | Platinum phase 4, UTF-8 to UTF-16: `SMB.Spec.Unicode` and `Core_Text.UTF8_To_UTF16` against it | merged (#162) |
-| after 0.4.0 | AdaMutant 4489d69 (the latest, at the maintainer's request) | #165 |
+| after 0.4.0 | AdaMutant 4489d69 (the latest, at the maintainer's request) | merged (#165) |
+| after 0.4.0 | `Core_Negotiate.Request` proved a part at a time: its one postcondition goal timed out on a runner | #166 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -455,6 +456,30 @@ opens a received one. It is a stateless SPARK unit, like
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
 
+## Core_Negotiate.Request proved a part at a time (#166)
+
+* #163's mutation job failed in its first step, the proof of the whole
+  project: `Core_Negotiate.Request`'s postcondition (from #159), one goal
+  that took 58 s and 550,049 steps on the Mac, ran into the provers' time
+  limit on the runner ("provers reached time limit"). `proof.yml` on main
+  had passed, replaying the cached result.
+* `Request` is now a function with a body (no longer an expression
+  function completed in the private part): it builds the request from
+  its four parts (the fields and dialects, the preauth, encryption and
+  signing contexts), asserts each context part against the
+  specification, where each part lies in the request, and the
+  specification of the request a piece at a time (the fields directly on
+  the request, which the provers find faster).
+* AdaMutant now mutates `Request` (a body), assertions included: deleting
+  one of these proof aids changes nothing a test can see, so such
+  mutants go to the proof, and some may survive where the rest suffices. The slowest goal now takes 16 s and 58k steps. The
+  declaration and its postcondition are unchanged; callers see only the
+  postcondition (`Core_Connection.Prepare_Negotiate` proves unchanged).
+  The assertions run once a connection.
+* Lesson: a goal near the time limit passes and fails by runner; main's
+  cached proof hides it until a run proves it afresh. Look at the
+  slowest goals (`--report=statistics`) when a specification grows.
+
 ## Platinum phase 4, UTF-8 to UTF-16 (#162)
 
 * `SMB.Spec.Unicode` transcribes The Unicode Standard 16.0, section 3.9:
@@ -579,10 +604,11 @@ opens a received one. It is a stateless SPARK unit, like
   standard gives none). `Is_Client_Negotiate_Request` states all of it,
   with nothing after the signing context.
 * `Core_Negotiate.Request` states its result against
-  `Is_Client_Negotiate_Request`. It is an expression function completed in
-  the private part, so the predicates are unhidden by a pragma right after
-  the completion: GNATprove accepts `Unhide_Info` "just after a subprogram
-  ... body or declaration", not elsewhere in a private part.
+  `Is_Client_Negotiate_Request`. It was an expression function completed
+  in the private part, so the predicates were unhidden by a pragma right
+  after the completion: GNATprove accepts `Unhide_Info` "just after a
+  subprogram ... body or declaration", not elsewhere in a private part.
+  Since #166 it has a body, and the pragmas start its declarative part.
 * `Core_Protocol.Build_Negotiate`, the 2.1-only NEGOTIATE that had no
   caller since 0.2.0, is gone.
 * `spec_test` (+9 checks): the NEGOTIATE requests of the test client in
