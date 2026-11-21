@@ -1727,8 +1727,30 @@ procedure Spec_Test is
                   and then
                     (for all K in 0 .. In_16'Length - 1 =>
                        U.UTF16_Unit (Scalar, K) =
-                         Wide_Character'Pos (In_16 (In_16'First + K))),
+                         Wide_Character'Pos (In_16 (In_16'First + K)))
+                  --  The other way: the UTF-16 decodes to it, and its UTF-8
+                  --  is the specification's.
+                  and then U.UTF8_Size (Scalar) = In_8'Length
+                  and then
+                    (for all J in 0 .. In_8'Length - 1 =>
+                       U.UTF8_Byte (Scalar, J) =
+                         Character'Pos (In_8 (In_8'First + J))),
                   "every scalar in UTF-8 and UTF-16");
+               declare
+                  Units : SMB.Bytes (0 .. 2 * In_16'Length - 1);
+               begin
+                  for K in 0 .. In_16'Length - 1 loop
+                     Units (2 * K) := SMB.Byte
+                       (Wide_Character'Pos (In_16 (In_16'First + K)) mod 256);
+                     Units (2 * K + 1) := SMB.Byte
+                       (Wide_Character'Pos (In_16 (In_16'First + K)) / 256);
+                  end loop;
+                  pragma Assert
+                    (U.UTF16_Length (Units, 0) = In_16'Length
+                     and then U.UTF16_Scalar (Units, 0) = Scalar
+                     and then U.Valid_UTF16_At (Units, 0) = (Scalar /= 0),
+                     "every scalar read back from UTF-16");
+               end;
             end;
          end if;
       end loop;
@@ -1775,6 +1797,96 @@ procedure Spec_Test is
             end loop;
          end loop;
       end;
+      Passed;
+      --  UTF-16 read back (D91): the example; every unit alone, which is a
+      --  scalar unless it is a surrogate; a high surrogate needs a low one
+      --  right after it.
+      pragma Assert
+        (U.Is_Client_UTF16 (Example_16)
+         and then (for all K in 0 .. 3 =>
+                     U.Valid_UTF16_At (Example_16, (if K < 3 then K else 3))
+                     and then U.UTF16_Scalar
+                       (Example_16, (if K < 3 then K else 3))
+                       = Example_Scalars (K))
+         and then U.UTF16_Length (Example_16, 3) = 2
+         and then U.UTF8_Run_Size (Example_16, 0) = Example_8'Length
+         and then (for all J in 0 .. Example_8'Length - 1 =>
+                     U.UTF8_Run_Byte (Example_16, 0, J) =
+                       Character'Pos (Example_8 (Example_8'First + J)))
+         and then U.Is_UTF8_Run (Example_16, 0, Example_8, 0)
+         and then not U.Is_UTF8_Run
+           (Example_16, 0, Example_8 & Text ("00"), 0)
+         and then not U.Is_UTF8_Run
+           (Example_16, 0,
+            Example_8 (Example_8'First .. Example_8'Last - 1), 0)
+         and then not U.Is_UTF8_Run
+           (Example_16, 0, Text ("4DD0B0E4BA8CF0908C83"), 0)
+         and then U.Is_UTF8_Run
+           (Hex ("00D802DF4D00"), 0, Text ("F0908C824D"), 0)
+         and then U.Code_Unit (Hex ("3412"), 0) = 16#1234#,
+         "UTF-16 read back, and its run in UTF-8");
+      Passed;
+      --  The output predicates catch a change in any byte, and the UTF-8
+      --  run's bytes go on past a surrogate pair.
+      for Index in Example_8'Range loop
+         declare
+            Changed_8 : String := Example_8;
+         begin
+            --  The byte's low bit flipped.
+            Changed_8 (Index) :=
+              Character'Val
+                (if Character'Pos (Changed_8 (Index)) mod 2 = 0
+                 then Character'Pos (Changed_8 (Index)) + 1
+                 else Character'Pos (Changed_8 (Index)) - 1);
+            pragma Assert
+              (not U.Is_UTF8_Run (Example_16, 0, Changed_8, 0),
+               "every byte of Is_UTF8_Run");
+         end;
+      end loop;
+      for Index in Example_16'Range loop
+         declare
+            Changed_16 : SMB.Bytes := Example_16;
+         begin
+            Changed_16 (Index) := Changed_16 (Index) xor 16#01#;
+            pragma Assert
+              (not U.Is_UTF16_Run (Example_8, 0, Changed_16, 0),
+               "every byte of Is_UTF16_Run");
+         end;
+      end loop;
+      pragma Assert
+        ((for all J in 0 .. 4 =>
+            U.UTF8_Run_Byte (Hex ("00D802DF4D00"), 0, J) =
+              Character'Pos (Text ("F0908C824D") (J + 1))),
+         "UTF8_Run_Byte past a surrogate pair");
+      Passed;
+      for Unit in 0 .. 16#FFFF# loop
+         declare
+            Alone : constant SMB.Bytes :=
+              (SMB.Byte (Unit mod 256), SMB.Byte (Unit / 256));
+         begin
+            pragma Assert
+              (U.UTF16_Length (Alone, 0) =
+                 (if Unit in 16#D800# .. 16#DFFF# then 0 else 1),
+               "every unit alone");
+         end;
+      end loop;
+      Passed;
+      pragma Assert
+        (U.UTF16_Length (Hex ("00D8"), 0) = 0
+         and then U.UTF16_Length (Hex ("00D84100"), 0) = 0
+         and then U.UTF16_Length (Hex ("00DC00D8"), 0) = 0
+         and then U.UTF16_Length (Hex ("FFDBFFDF"), 0) = 2
+         and then U.UTF16_Scalar (Hex ("FFDBFFDF"), 0) = 16#10FFFF#
+         and then U.UTF16_Scalar (Hex ("00D800DC"), 0) = 16#10000#
+         and then U.UTF16_Length (Hex ("00D800E0"), 0) = 0
+         and then U.UTF16_Length (Hex ("00D8FFDB"), 0) = 0
+         and then not U.Valid_UTF16_At (Hex ("0000"), 0)
+         and then not U.Is_Client_UTF16 (Hex ("410000D8"))
+         and then U.Valid_UTF16_Run (Hex ("410000D84200"), 0) = 1
+         and then U.UTF8_Run_Size (Hex ("410000D84200"), 0) = 1
+         and then not U.Is_Client_UTF16 (Hex ("4100FF"))
+         and then U.Is_Client_UTF16 (SMB.Bytes'(1 .. 0 => 0)),
+         "ill-formed UTF-16, and runs");
       Passed;
       --  U+0000 is well-formed but not a scalar this client converts; a run
       --  stops before the first sequence it refuses.

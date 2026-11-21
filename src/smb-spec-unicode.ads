@@ -220,4 +220,161 @@ is
    function Is_Client_UTF8 (Text : String) return Boolean is
      (Valid_UTF8_Run (Text, 0) = Text'Length)
    with Pre => Text'Length <= SMB.Maximum_Frame_Size;
+
+   --  The other way: UTF-16, little-endian, to UTF-8.
+
+   --  The 16-bit code unit at unit Position of Data (2 bytes each).
+   function Code_Unit (Data : SMB.Bytes; Position : Natural) return Natural is
+     (Natural (Data (Data'First + 2 * Position))
+      + 256 * Natural (Data (Data'First + 2 * Position + 1)))
+   with Pre =>
+     Data'Length <= 2 * SMB.Maximum_Frame_Size
+     and then Position < Data'Length / 2,
+     Post => Code_Unit'Result <= 16#FFFF#;
+
+   --  D91: in UTF-16 a scalar up to FFFF is its own unit, and a larger one
+   --  a high surrogate (D800..DBFF) then a low one (DC00..DFFF); any other
+   --  surrogate is ill-formed. The length in units of the well-formed
+   --  sequence at unit Position, or 0.
+   function UTF16_Length (Data : SMB.Bytes; Position : Natural) return Natural
+   is
+     (if Code_Unit (Data, Position) not in 16#D800# .. 16#DFFF# then 1
+      elsif Code_Unit (Data, Position) <= 16#DBFF#
+        and then Position + 1 < Data'Length / 2
+        and then Code_Unit (Data, Position + 1) in 16#DC00# .. 16#DFFF#
+      then 2
+      else 0)
+   with Pre =>
+     Data'Length <= 2 * SMB.Maximum_Frame_Size
+     and then Position < Data'Length / 2,
+     Post =>
+       UTF16_Length'Result <= 2
+       and then UTF16_Length'Result <= Data'Length / 2 - Position;
+
+   --  Table 3-5 read back: the scalar the sequence encodes.
+   function UTF16_Scalar (Data : SMB.Bytes; Position : Natural) return Natural
+   is
+     (if UTF16_Length (Data, Position) = 1 then Code_Unit (Data, Position)
+      else 16#10000#
+        + (Code_Unit (Data, Position) - 16#D800#) * 1_024
+        + (Code_Unit (Data, Position + 1) - 16#DC00#))
+   with Pre =>
+     Data'Length <= 2 * SMB.Maximum_Frame_Size
+     and then Position < Data'Length / 2
+     and then UTF16_Length (Data, Position) > 0,
+     Post => Is_Scalar (UTF16_Scalar'Result);
+
+   --  Whether a sequence of a scalar this client converts starts at unit
+   --  Position.
+   function Valid_UTF16_At
+     (Data : SMB.Bytes; Position : Natural) return Boolean
+   is
+     (Position < Data'Length / 2
+      and then UTF16_Length (Data, Position) > 0
+      and then Is_Client_Scalar (UTF16_Scalar (Data, Position)))
+   with Pre => Data'Length <= 2 * SMB.Maximum_Frame_Size;
+
+   --  Table 3-6: the length of a scalar in UTF-8, and its bytes: the first
+   --  0xxxxxxx, 110yyyyy, 1110zzzz or 11110uuu, each later one 10 and six
+   --  bits.
+   function UTF8_Size (Scalar : Natural) return Positive is
+     (if Scalar <= 16#7F# then 1
+      elsif Scalar <= 16#7FF# then 2
+      elsif Scalar <= 16#FFFF# then 3
+      else 4)
+   with Pre => Is_Scalar (Scalar);
+
+   function UTF8_Byte (Scalar : Natural; Index : Natural) return Natural is
+     (case UTF8_Size (Scalar) is
+         when 1 => Scalar,
+         when 2 =>
+           (if Index = 0 then 16#C0# + Scalar / 64
+            else 16#80# + Scalar mod 64),
+         when 3 =>
+           (if Index = 0 then 16#E0# + Scalar / 4_096
+            elsif Index = 1 then 16#80# + (Scalar / 64) mod 64
+            else 16#80# + Scalar mod 64),
+         when others =>
+           (if Index = 0 then 16#F0# + Scalar / 262_144
+            elsif Index = 1 then 16#80# + (Scalar / 4_096) mod 64
+            elsif Index = 2 then 16#80# + (Scalar / 64) mod 64
+            else 16#80# + Scalar mod 64))
+   with Pre => Is_Scalar (Scalar) and then Index < UTF8_Size (Scalar),
+     Post => UTF8_Byte'Result <= 16#FF#;
+
+   --  The units, from unit Position on, of the longest run of sequences
+   --  Valid_UTF16_At accepts.
+   function Valid_UTF16_Run
+     (Data : SMB.Bytes; Position : Natural) return Natural
+   is
+     (if not Valid_UTF16_At (Data, Position) then 0
+      else UTF16_Length (Data, Position)
+        + Valid_UTF16_Run (Data, Position + UTF16_Length (Data, Position)))
+   with Pre =>
+     Data'Length <= 2 * SMB.Maximum_Frame_Size
+     and then Position <= Data'Length / 2,
+     Post => Valid_UTF16_Run'Result <= Data'Length / 2 - Position,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body"),
+     Subprogram_Variant => (Decreases => Data'Length / 2 - Position);
+
+   --  The length in bytes of that run in UTF-8: at most three bytes for a
+   --  unit (a bound that takes no recursion to check).
+   function UTF8_Run_Size (Data : SMB.Bytes; Position : Natural) return Natural
+   is
+     (if not Valid_UTF16_At (Data, Position) then 0
+      else UTF8_Size (UTF16_Scalar (Data, Position))
+        + UTF8_Run_Size (Data, Position + UTF16_Length (Data, Position)))
+   with Pre =>
+     Data'Length <= 2 * SMB.Maximum_Frame_Size
+     and then Position <= Data'Length / 2,
+     Post => UTF8_Run_Size'Result <= 3 * (Data'Length / 2 - Position),
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body"),
+     Subprogram_Variant => (Decreases => Data'Length / 2 - Position);
+
+   --  Byte Index of that run in UTF-8.
+   function UTF8_Run_Byte
+     (Data : SMB.Bytes; Position : Natural; Index : Natural) return Natural is
+     (if Index < UTF8_Size (UTF16_Scalar (Data, Position))
+      then UTF8_Byte (UTF16_Scalar (Data, Position), Index)
+      else UTF8_Run_Byte
+        (Data, Position + UTF16_Length (Data, Position),
+         Index - UTF8_Size (UTF16_Scalar (Data, Position))))
+   with Pre =>
+     Data'Length <= 2 * SMB.Maximum_Frame_Size
+     and then Position <= Data'Length / 2
+     and then Index < UTF8_Run_Size (Data, Position),
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body"),
+     Subprogram_Variant => (Decreases => Data'Length / 2 - Position);
+   pragma Annotate
+     (GNATprove, Unhide_Info, "Expression_Function_Body", UTF8_Run_Size);
+
+   --  Whether Text, from Offset to its end, is that run in UTF-8, scalar by
+   --  scalar, in a form linear to check.
+   function Is_UTF8_Run
+     (Data : SMB.Bytes; Position : Natural; Text : String; Offset : Natural)
+      return Boolean
+   is
+     (if not Valid_UTF16_At (Data, Position) then Offset = Text'Length
+      else
+        Text'Length - Offset >= UTF8_Size (UTF16_Scalar (Data, Position))
+        and then
+          (for all J in 0 .. UTF8_Size (UTF16_Scalar (Data, Position)) - 1 =>
+             Character'Pos (Text (Text'First + Offset + J)) =
+               UTF8_Byte (UTF16_Scalar (Data, Position), J))
+        and then Is_UTF8_Run
+          (Data, Position + UTF16_Length (Data, Position), Text,
+           Offset + UTF8_Size (UTF16_Scalar (Data, Position))))
+   with Pre =>
+     Data'Length <= 2 * SMB.Maximum_Frame_Size
+     and then Position <= Data'Length / 2
+     and then Text'Length <= 2 * SMB.Maximum_Frame_Size
+     and then Offset <= Text'Length,
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body"),
+     Subprogram_Variant => (Decreases => Data'Length / 2 - Position);
+
+   --  Whether Data is well-formed UTF-16 of scalars this client converts.
+   function Is_Client_UTF16 (Data : SMB.Bytes) return Boolean is
+     (Data'Length mod 2 = 0
+      and then Valid_UTF16_Run (Data, 0) = Data'Length / 2)
+   with Pre => Data'Length <= 2 * SMB.Maximum_Frame_Size;
 end SMB.Spec.Unicode;
