@@ -1,4 +1,5 @@
 with SMB.Core_Text;
+with SMB.Spec.Encoding;
 
 package body SMB.Core_Protocol with SPARK_Mode is
    Negotiate_Command : constant SMB.Core_Wire.Command_Code := 0;
@@ -619,6 +620,44 @@ package body SMB.Core_Protocol with SPARK_Mode is
       --  Bytes 44 to 47 (Flags) stay zero, as Begin_Build cleared them.
    end Build_Write_Fixed;
 
+   --  Build_Write's request: its fields, then the data right after them,
+   --  is the specification's WRITE. Proved here, apart from Build_Write's
+   --  context, where it took 464,000 steps; a proof aid only, never run (an
+   --  assertion would read up to 960 KiB of data on every WRITE).
+   pragma Assertion_Policy (Ghost => Ignore);
+   procedure Lemma_Write_Request
+     (Output : SMB.Bytes;
+      Request : SMB.Spec.SMB2.Write_Request;
+      Data : SMB.Bytes)
+     with Ghost,
+       Pre => Output'Length <= SMB.Maximum_Frame_Size
+         and then Data'Length <= Maximum_Write_Chunk
+         and then SMB.Spec.SMB2.Write_Fields_Size + Data'Length <=
+           Output'Length
+         and then Natural (Request.Data_Offset) =
+           SMB.Spec.SMB2.Header_Size + SMB.Spec.SMB2.Write_Fields_Size
+         and then SMB.QWord (Request.Length) = SMB.QWord (Data'Length)
+         and then SMB.Spec.SMB2.Is_Write_Fields (Output, Request)
+         and then
+           (for all Index in 0 .. Data'Length - 1 =>
+              Output (Output'First + 48 + Index) = Data (Data'First + Index)),
+       Post => SMB.Spec.SMB2.Is_Write_Request (Output, Request, Data);
+
+   procedure Lemma_Write_Request
+     (Output : SMB.Bytes;
+      Request : SMB.Spec.SMB2.Write_Request;
+      Data : SMB.Bytes)
+   is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Write_Request);
+   begin
+      pragma Assert (SMB.Spec.SMB2.Has_Bytes (Output, 48, Data));
+      pragma Assert
+        (SMB.Spec.SMB2.Is_Write_Request (Output, Request, Data));
+   end Lemma_Write_Request;
+   pragma Assertion_Policy (Ghost => Check);
+
    procedure Build_Write
      (File_Id : SMB.Bytes;
       Offset : SMB.QWord;
@@ -663,7 +702,32 @@ package body SMB.Core_Protocol with SPARK_Mode is
            Data;
       end if;
       pragma Assert (SMB.Spec.SMB2.Is_Write_Fields (Output, Request));
+      --  The bytes at fixed places, as the postcondition states them
+      --  (constant cost; the data's own clause follows from the copy).
+      pragma Assert
+        (Output (Output'First + 4) =
+           SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 0)
+         and then Output (Output'First + 5) =
+           SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 1)
+         and then Output (Output'First + 6) =
+           SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 2)
+         and then Output (Output'First + 7) =
+           SMB.Core_Wire.U32_Byte (SMB.DWord (Data'Length), 3));
+      pragma Assert
+        ((for all Byte_Index in 0 .. 7 =>
+            Output (Output'First + 8 + Byte_Index) =
+              SMB.Core_Wire.U64_Byte (Offset, Byte_Index))
+         and then SMB.Core_Wire.Encoded_U64 (Output, 8) = Offset);
+      pragma Assert
+        (for all Byte_Index in 0 .. 15 =>
+           Output (Output'First + 16 + Byte_Index) =
+             File_Id (File_Id'First + Byte_Index));
       Used := Required;
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_Write_Request (Output, Request, Data);
+      end;
    end Build_Write;
 
    procedure Build_Close
@@ -805,6 +869,150 @@ package body SMB.Core_Protocol with SPARK_Mode is
       Finish (40, Output'Length, Used, Status);
    end Build_End_Of_File;
 
+   --  The 52 bytes before the name: SET_INFO's fields and the rename
+   --  structure's header. Written on their own slice, as Build_Write_Fixed
+   --  does, so that the proof does not carry each byte through every write
+   --  to the whole buffer (that took Build_Rename's proof past the provers'
+   --  limit on GitHub's runners).
+   procedure Build_Rename_Fields
+     (File_Id : SMB.Bytes;
+      Name_Length : Natural;
+      Output : out SMB.Bytes;
+      Status : out SMB.Core_Status)
+   with Pre => File_Id'Length = 16
+     and then Name_Length <= Maximum_Name_Bytes
+     and then Output'Length = 52,
+     Post =>
+       Status = SMB.Ok
+       and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
+       and then Output (Output'First + 2) = 1
+       and then Output (Output'First + 3) = 10
+       and then SMB.Core_Wire.Encoded_U32 (Output, 4) =
+         SMB.DWord (Rename_Information_Length (Name_Length))
+       and then SMB.Core_Wire.Encoded_U16 (Output, 8) = 96
+       and then
+         (for all Index in 10 .. 15 => Output (Output'First + Index) = 0)
+       and then
+         (for all Index in 0 .. 15 =>
+            Output (Output'First + 16 + Index) =
+              File_Id (File_Id'First + Index))
+       and then
+         (for all Index in 32 .. 47 => Output (Output'First + Index) = 0)
+       and then SMB.Core_Wire.Encoded_U32 (Output, 48) =
+         SMB.DWord (Name_Length)
+   is
+   begin
+      Begin_Build (Output, 52, Status);
+      Put_U16 (Output, 0, 33, Status);
+      Put_Byte (Output, 2, 1, Status);
+      Put_Byte (Output, 3, 10, Status);
+      --  Maximum_Name_Bytes keeps the length a DWord.
+      Put_U32
+        (Output, 4, SMB.DWord (Rename_Information_Length (Name_Length)),
+         Status);
+      Put_U16 (Output, 8, 96, Status);
+      Copy (Output, 16, File_Id, Status);
+      Put_U32 (Output, 48, SMB.DWord (Name_Length), Status);
+      --  Bytes 10 to 15 and 32 to 47 stay zero, as Begin_Build cleared
+      --  them.
+   end Build_Rename_Fields;
+
+   --  Build_Rename's request, from its bytes to the specifications, a step at
+   --  a time and apart from Build_Rename's large context: as part of its
+   --  postcondition this took 860,000 of the provers' 1,000,000 steps on
+   --  the Mac and more than that on GitHub's runners. A proof aid only,
+   --  never run.
+   pragma Assertion_Policy (Ghost => Ignore);
+   procedure Lemma_Rename_Request
+     (Output : SMB.Bytes;
+      Used : Natural;
+      File_Id : SMB.Bytes;
+      Name : SMB.Bytes)
+     with Ghost,
+       Pre => File_Id'Length = 16
+         and then Name'Length <= Maximum_Name_Bytes
+         and then Name'Length mod 2 = 0
+         and then Output'Length <= SMB.Maximum_Frame_Size
+         and then Used = Rename_Request_Length (Name'Length)
+         and then Used <= Output'Length
+         and then SMB.Core_Wire.Encoded_U16 (Output, 0) = 33
+         and then Output (Output'First + 2) = 1
+         and then Output (Output'First + 3) = 10
+         and then SMB.Core_Wire.Encoded_U32 (Output, 4) =
+           SMB.DWord (Rename_Information_Length (Name'Length))
+         and then SMB.Core_Wire.Encoded_U16 (Output, 8) = 96
+         and then
+           (for all Index in 10 .. 15 => Output (Output'First + Index) = 0)
+         and then
+           (for all Index in 0 .. 15 =>
+              Output (Output'First + 16 + Index) =
+                File_Id (File_Id'First + Index))
+         and then
+           (for all Index in 32 .. 47 => Output (Output'First + Index) = 0)
+         and then SMB.Core_Wire.Encoded_U32 (Output, 48) =
+           SMB.DWord (Name'Length)
+         and then
+           (for all Index in 0 .. Name'Length - 1 =>
+              Output (Output'First + 52 + Index) = Name (Name'First + Index))
+         and then
+           (for all Index in 52 + Name'Length .. Used - 1 =>
+              Output (Output'First + Index) = 0),
+       Post =>
+         SMB.Spec.SMB2.Is_Set_Info_Request
+           (Output,
+            SMB.Spec.SMB2.Client_Set_Info
+              (SMB.Spec.FSCC.File_Rename_Information,
+               SMB.DWord (Rename_Information_Length (Name'Length)),
+               File_Id),
+            Output (Output'First + 32 .. Output'First + (Used - 1)))
+         and then SMB.Spec.FSCC.Is_Rename_Information
+           (Output (Output'First + 32 .. Output'First + (Used - 1)),
+            False, Name);
+
+   procedure Lemma_Rename_Request
+     (Output : SMB.Bytes;
+      Used : Natural;
+      File_Id : SMB.Bytes;
+      Name : SMB.Bytes)
+   is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         SMB.Spec.SMB2.Is_Set_Info_Request);
+      Info : constant SMB.Bytes :=
+        Output (Output'First + 32 .. Output'First + (Used - 1));
+      Request : constant SMB.Spec.SMB2.Set_Info_Request :=
+        SMB.Spec.SMB2.Client_Set_Info
+          (SMB.Spec.FSCC.File_Rename_Information,
+           SMB.DWord (Rename_Information_Length (Name'Length)), File_Id);
+   begin
+      pragma Assert (SMB.Spec.Encoding.LE16 (Output, 0) = 33);
+      pragma Assert
+        (SMB.Spec.Encoding.LE32 (Output, 4) = Request.Buffer_Length);
+      pragma Assert (SMB.Spec.Encoding.LE16 (Output, 8) = 96);
+      pragma Assert (SMB.Spec.Encoding.LE16 (Output, 10) = 0);
+      pragma Assert (SMB.Spec.Encoding.LE32 (Output, 12) = 0);
+      pragma Assert (SMB.Spec.SMB2.Has_Bytes (Output, 16, Request.File_Id));
+      pragma Assert
+        (for all Index in 0 .. Info'Length - 1 =>
+           Output (Output'First + 32 + Index) = Info (Info'First + Index));
+      pragma Assert (SMB.Spec.SMB2.Has_Bytes (Output, 32, Info));
+      pragma Assert
+        (SMB.Spec.SMB2.Has_Bytes_At_Offset (Output, 32, 96, Info));
+      pragma Assert
+        (SMB.Spec.SMB2.Is_Set_Info_Request (Output, Request, Info));
+      pragma Assert
+        (Info'Length = SMB.Spec.FSCC.Rename_Information_Length (Name'Length));
+      pragma Assert (Info (Info'First) = 0);
+      pragma Assert (SMB.Spec.Encoding.LE64 (Info, 8) = 0);
+      pragma Assert
+        (SMB.Spec.Encoding.LE32 (Info, 16) = SMB.DWord (Name'Length));
+      pragma Assert
+        (for all Index in 0 .. Name'Length - 1 =>
+           Info (Info'First + 20 + Index) = Name (Name'First + Index));
+      pragma Assert (SMB.Spec.FSCC.Is_Rename_Information (Info, False, Name));
+   end Lemma_Rename_Request;
+   pragma Assertion_Policy (Ghost => Check);
+
    procedure Build_Rename
      (File_Id : SMB.Bytes;
       Name : SMB.Bytes;
@@ -828,28 +1036,42 @@ package body SMB.Core_Protocol with SPARK_Mode is
          return;
       end if;
       Begin_Build (Output, Required, Status);
-      Put_U16 (Output, 0, 33, Status);
-      Put_Byte (Output, 2, 1, Status);
-      Put_Byte (Output, 3, 10, Status);
-      --  Maximum_Name_Bytes keeps the length a DWord.
-      Put_U32
-        (Output, 4,
-         SMB.DWord (Rename_Information_Length (Name'Length)), Status);
-      Put_U16 (Output, 8, 96, Status);
-      if Status = SMB.Ok then
-         Copy (Output, 16, File_Id, Status);
+      if Status /= SMB.Ok then
+         Used := 0;
+         return;
       end if;
-      Put_U32 (Output, 48, SMB.DWord (Name'Length), Status);
-      if Status = SMB.Ok then
-         Copy (Output, 52, Name, Status);
-      end if;
-      Finish (Required, Output'Length, Used, Status);
-      --  Copy states the name's slice with its upper bound counted from
-      --  Output'Last; the postcondition counts it from Output'First.
+      Build_Rename_Fields
+        (File_Id, Name'Length, Output (Output'First .. Output'First + 51),
+         Status);
       pragma Assert
-        (if Status = SMB.Ok and then Name'Length > 0 then
-           Output'Last - (Output'Length - 52 - Name'Length) =
-             Output'First + 51 + Name'Length);
+        (for all Index in 0 .. 15 =>
+           Output (Output'First + 16 + Index) =
+             File_Id (File_Id'First + Index));
+      if Name'Length > 0 then
+         Output (Output'First + 52 .. Output'First + 51 + Name'Length) :=
+           Name;
+      end if;
+      pragma Assert
+        (for all Index in 0 .. 15 =>
+           Output (Output'First + 16 + Index) =
+             File_Id (File_Id'First + Index));
+      pragma Assert
+        ((for all Index in 10 .. 15 => Output (Output'First + Index) = 0)
+         and then
+           (for all Index in 32 .. 47 => Output (Output'First + Index) = 0));
+      pragma Assert
+        (Output (Output'First + 10 .. Output'First + 15) =
+           SMB.Bytes'(10 .. 15 => 0)
+         and then Output (Output'First + 32 .. Output'First + 47) =
+           SMB.Bytes'(32 .. 47 => 0));
+      Used := Required;
+      if Status = SMB.Ok then
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Rename_Request (Output, Used, File_Id, Name);
+         end;
+      end if;
    end Build_Rename;
 
    procedure Build_Simple

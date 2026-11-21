@@ -85,6 +85,7 @@ of date.
 | after 0.4.0 | AdaMutant 4489d69 (the latest, at the maintainer's request) | merged (#165) |
 | after 0.4.0 | `Core_Negotiate.Request` proved a part at a time: its one postcondition goal timed out on a runner | merged (#166) |
 | after 0.4.0 | Platinum phase 4, UTF-16 to UTF-8: `Core_Text.UTF16_To_UTF8` against `SMB.Spec.Unicode` | #163 |
+| after 0.4.0 | Proofs with a margin on CI: four goals near the provers' limits, split up | #167 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -487,6 +488,43 @@ opens a received one. It is a stateless SPARK unit, like
   both `Is_UTF8_Run` and #162's `Is_UTF16_Run` (a predicate that skipped
   a scalar's first byte survived the one-byte change before), and
   `UTF8_Run_Byte` past a surrogate pair.
+
+## Proofs with a margin on CI (#167)
+
+* #164's mutation job failed in its fresh proof of the project on two
+  goals of merged code, and its statistics showed two more near the
+  limits. Measured alone on the Mac, before and after:
+
+  | Goal | Before | After |
+  | --- | --- | --- |
+  | `Core_Protocol.Build_Rename`'s postcondition (#158) | 860k steps (failed on CI) | 37k |
+  | `Core_Text.UTF8_To_UTF16`'s validity invariant (#162) | 527k (over 1M on CI) | 108k (an assertion) |
+  | `Core_Protocol.Build_Write`'s postcondition (#152) | 464k, 119 s on CI | 25k |
+  | `UTF8_To_UTF16`'s invariant on the output's bytes (#162) | 241k (317k on CI) | 23k |
+
+* How:
+  * `Build_Rename` writes its 52 fixed bytes on their own slice
+    (`Build_Rename_Fields`, as `Build_Write_Fixed` does), copies the name,
+    and asserts the bytes at fixed places (constant cost); a ghost lemma,
+    `Lemma_Rename_Request`, takes the bytes to the specifications.
+  * `Build_Write` asserts the bytes at fixed places after copying the
+    data, and `Lemma_Write_Request` takes the fields and the data to
+    `Is_Write_Request` (an assertion of it would read up to 960 KiB a
+    WRITE).
+  * `UTF8_To_UTF16`'s two invariants on the run are hidden ghost
+    predicates (`Holds_Run`, `Shifted_Run`) that `Lemma_Extend` unfolds;
+    `Store_Unit` states that it keeps `Holds_Run` before where it writes,
+    and `Lemma_Run_Begins` starts the loop. The validity of the units is
+    asserted in each branch right after its writes, in steps, under
+    `Assert => Ignore` (proved, never run: over the whole output it would
+    cost a pass a character).
+  * The lemmas are ghost code under `Ghost => Ignore`; nothing new runs in
+    production but the constant-cost assertions.
+* Lesson, as with #166: `proof.yml` replays main's cached proof, so a goal
+  near the limits shows only when a run proves it afresh, on a runner
+  whose provers may take more steps than the Mac's. After a change, look
+  at the heaviest goals of the units it touches (`--report=statistics`)
+  and split any above a few hundred thousand steps.
 
 ## Core_Negotiate.Request proved a part at a time (#166)
 
