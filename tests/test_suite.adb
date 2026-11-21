@@ -18,6 +18,7 @@ with SMB.Core_Transform;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
+with SMB.Spec.Unicode;
 with SMB.Core_Transport;
 with SMB.Core_Wire;
 with SMB.AES;
@@ -193,8 +194,7 @@ procedure Test_Suite is
 
    procedure Test_UTF_Capacity is
       procedure Check_Vector
-        (UTF8 : String; UTF16 : SMB.Bytes;
-         UTF8_Prefix : Natural := 0; UTF16_Prefix : Natural := 0) is
+        (UTF8 : String; UTF16 : SMB.Bytes; UTF8_Prefix : Natural := 0) is
          Input_8 : constant String (11 .. 10 + UTF8'Length) := UTF8;
          Input_16 : constant SMB.Bytes (17 .. 16 + UTF16'Length) := UTF16;
          Output_8 : String (31 .. 30 + UTF8'Length);
@@ -213,16 +213,11 @@ procedure Test_Suite is
                Short_8 : String (31 .. 29 + UTF8'Length);
                Short_16 : SMB.Bytes (23 .. 21 + UTF16'Length);
             begin
+               --  A failure leaves nothing (the specification's form).
                SMB.Core_Text.UTF8_To_UTF16 (Input_8, Short_16, Used, Status);
-               Assert (Status = SMB.Invalid_Length and then Used = UTF16_Prefix
-                       and then Used mod 2 = 0,
-                       "UTF-16 short buffer stops before a partial scalar");
-               for Offset in 0 .. Short_16'Length - 1 loop
-                  Assert
-                    (Short_16 (Short_16'First + Offset) =
-                       (if Offset < Used then UTF16 (UTF16'First + Offset)
-                        else 0), "UTF-16 short buffer prefix and untouched tail");
-               end loop;
+               Assert (Status = SMB.Invalid_Length and then Used = 0
+                       and then (for all B of Short_16 => B = 0),
+                       "UTF-16 short buffer leaves nothing");
                SMB.Core_Text.UTF16_To_UTF8 (Input_16, Short_8, Used, Status);
                Assert (Status = SMB.Invalid_Length and then Used = UTF8_Prefix,
                        "UTF-8 short buffer stops before a partial scalar");
@@ -311,22 +306,22 @@ procedure Test_Suite is
       Check_Zero_Tail
         (Smile, 7, SMB.Ok, SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#));
       Check_Zero_Tail
-        ("AB", 3, SMB.Invalid_Length, SMB.Bytes'(16#41#, 0));
+        ("AB", 3, SMB.Invalid_Length, SMB.Bytes'(1 .. 0 => 0));
       Check_Zero_Tail
         (Smile, 3, SMB.Invalid_Length, SMB.Bytes'(1 .. 0 => 0));
       Check_Zero_Tail
         ("A" & Character'Val (16#FF#), 5, SMB.Invalid_Encoding,
-         SMB.Bytes'(16#41#, 0));
+         SMB.Bytes'(1 .. 0 => 0));
       Check_Vector ("", SMB.Bytes'(1 .. 0 => 0));
       Check_Vector ("A", SMB.Bytes'(16#41#, 0));
       Check_Vector (E_Acute, SMB.Bytes'(16#E9#, 0));
       Check_Vector (Euro, SMB.Bytes'(16#AC#, 16#20#));
       Check_Vector (Smile, SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#));
-      Check_Vector ("A" & Euro, SMB.Bytes'(16#41#, 0, 16#AC#, 16#20#), 1, 2);
+      Check_Vector ("A" & Euro, SMB.Bytes'(16#41#, 0, 16#AC#, 16#20#), 1);
       Check_Vector
-        ("A" & Smile, SMB.Bytes'(16#41#, 0, 16#3D#, 16#D8#, 0, 16#DE#), 1, 2);
+        ("A" & Smile, SMB.Bytes'(16#41#, 0, 16#3D#, 16#D8#, 0, 16#DE#), 1);
       Check_Vector
-        (Smile & "A", SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#, 16#41#, 0), 4, 4);
+        (Smile & "A", SMB.Bytes'(16#3D#, 16#D8#, 0, 16#DE#, 16#41#, 0), 4);
       declare
          Output : SMB.Bytes (11 .. 16) := (others => 16#FF#);
          Used : Natural;
@@ -347,13 +342,13 @@ procedure Test_Suite is
          SMB.Core_Text.UTF8_To_UTF16
            (Input, Output (23 .. 24), Used, Status);
          Assert
-           (Status = SMB.Invalid_Length and then Used = 2
-            and then Output (23 .. 24) = SMB.Bytes'(16#41#, 0),
+           (Status = SMB.Invalid_Length and then Used = 0
+            and then Output (23 .. 24) = SMB.Bytes'(0, 0),
             "UTF-8 capacity failure can precede a later encoding failure");
          SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
          Assert
-           (Status = SMB.Invalid_Encoding and then Used = 4
-            and then Output = SMB.Bytes'(16#41#, 0, 16#42#, 0, 0, 0),
+           (Status = SMB.Invalid_Encoding and then Used = 0
+            and then Output = SMB.Bytes'(0, 0, 0, 0, 0, 0),
             "ample UTF-16 capacity exposes the invalid UTF-8 suffix");
       end;
       declare
@@ -392,10 +387,9 @@ procedure Test_Suite is
       begin
          SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
          Assert
-           (Status = SMB.Invalid_Encoding and then Used = 6
-            and then Output =
-              SMB.Bytes'(16#41#, 0, 16#3D#, 16#D8#, 0, 16#DE#, 0, 0),
-            "invalid UTF-8 suffix preserves a complete surrogate pair");
+           (Status = SMB.Invalid_Encoding and then Used = 0
+            and then (for all B of Output => B = 0),
+            "invalid UTF-8 suffix leaves nothing, not even a complete pair");
       end;
       declare
          Input : constant SMB.Bytes (Natural'Last - 3 .. Natural'Last) :=
@@ -11598,6 +11592,84 @@ procedure Test_Suite is
       end;
    end Test_Engine_Malformed_Close;
 
+   --  UTF8_To_UTF16's postcondition is proved but not run (it recurses over
+   --  the input; see SMB.Core_Text). This checks it at run time on every
+   --  input of up to four bytes from an alphabet of Table 3-7's edges and
+   --  others, at every output capacity up to two units more than it needs,
+   --  and on a few longer mixed inputs.
+   procedure Test_UTF8_To_UTF16_Specification is
+      pragma Assertion_Policy (Assert => Check, Ghost => Check);
+      package U renames SMB.Spec.Unicode;
+      Alphabet : constant array (Positive range <>) of Natural :=
+        (16#00#, 16#01#, 16#41#, 16#7F#, 16#80#, 16#8F#, 16#90#, 16#9F#,
+         16#A0#, 16#BF#, 16#C0#, 16#C1#, 16#C2#, 16#DF#, 16#E0#, 16#E1#,
+         16#ED#, 16#EE#, 16#EF#, 16#F0#, 16#F1#, 16#F4#, 16#F5#, 16#FF#);
+      Calls : Natural := 0;
+
+      procedure Check (Input : String) is
+      begin
+         for Capacity in 0 .. 2 * Input'Length + 2 loop
+            declare
+               Output : SMB.Bytes (5 .. 4 + Capacity) := (others => 16#A5#);
+               Used : Natural;
+               Status : SMB.Core_Status;
+            begin
+               SMB.Core_Text.UTF8_To_UTF16 (Input, Output, Used, Status);
+               Calls := Calls + 1;
+               pragma Assert
+                 (Status =
+                    (if U.UTF16_Run_Size (Input, 0) > Output'Length
+                     then SMB.Invalid_Length
+                     elsif not U.Is_Client_UTF8 (Input)
+                     then SMB.Invalid_Encoding
+                     else SMB.Ok),
+                  "UTF8_To_UTF16 status against the specification");
+               pragma Assert
+                 ((if Status = SMB.Ok then
+                     Used = U.UTF16_Run_Size (Input, 0)
+                     and then U.Is_UTF16_Run
+                       (Input, 0,
+                        Output (Output'First .. Output'First + (Used - 1)), 0)
+                   else Used = 0)
+                  and then
+                    (for all I in Output'Range =>
+                       (if I - Output'First >= Used then Output (I) = 0)),
+                  "UTF8_To_UTF16 output against the specification");
+            end;
+         end loop;
+      end Check;
+
+      Pair : constant String :=
+        (Character'Val (16#F0#), Character'Val (16#9F#),
+         Character'Val (16#98#), Character'Val (16#80#));
+      Euro : constant String :=
+        (Character'Val (16#E2#), Character'Val (16#82#),
+         Character'Val (16#AC#));
+   begin
+      Check ("");
+      for A of Alphabet loop
+         Check ((1 => Character'Val (A)));
+         for B of Alphabet loop
+            Check ((Character'Val (A), Character'Val (B)));
+            for C of Alphabet loop
+               Check ((Character'Val (A), Character'Val (B),
+                       Character'Val (C)));
+               for D of Alphabet loop
+                  Check ((Character'Val (A), Character'Val (B),
+                          Character'Val (C), Character'Val (D)));
+               end loop;
+            end loop;
+         end loop;
+      end loop;
+      Check (Pair & "A" & Euro & Pair & Character'Val (16#C3#)
+             & Character'Val (16#A9#));
+      Check (Pair & Pair & Character'Val (16#C0#) & Pair);
+      Check (Euro & Pair & Character'Val (0));
+      Ada.Text_IO.Put_Line
+        ("UTF8_To_UTF16 against SMB.Spec.Unicode:" & Natural'Image (Calls)
+         & " calls passed");
+   end Test_UTF8_To_UTF16_Specification;
+
    procedure Test_Text_And_Wire is
       UTF8 : constant String :=
         Character'Val (16#E6#) & Character'Val (16#97#)
@@ -11988,6 +12060,7 @@ begin
    Credit_Tests.Run;
    SMB.Heap_Owner_Tests.Run;
    Test_Text_And_Wire;
+   Test_UTF8_To_UTF16_Specification;
    Test_Wire_Facade;
    Ada.Text_IO.Put_Line ("AdaSMB unit tests passed");
 end Test_Suite;

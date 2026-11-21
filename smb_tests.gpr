@@ -1,6 +1,7 @@
 --  The library's sources are compiled here, not through smb.gpr, so that the
 --  tests run with every contract checked (smb.gpr's library build checks only
---  the preconditions; see contracts.adc).
+--  the preconditions; see contracts.adc), but those the source marks as
+--  never run.
 project SMB_Tests is
    type Platform_Kind is ("Unix", "Windows_NT");
    Platform : Platform_Kind := external ("ADASMB_OS", external ("OS", "Unix"));

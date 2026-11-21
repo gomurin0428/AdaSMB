@@ -15,7 +15,8 @@ library project SMB is
 
    --  "proved", the default, checks at run time only the preconditions of the
    --  SPARK core, whose other contracts GNATprove proves (contracts.adc);
-   --  "all" checks every contract, as the test build does.
+   --  "all" checks every contract, as the test build does, but those the
+   --  source marks as never run (see contracts.adc).
    type Contract_Checks_Kind is ("proved", "all");
    Contract_Checks : Contract_Checks_Kind :=
      external ("ADASMB_CONTRACT_CHECKS", "proved");

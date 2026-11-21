@@ -232,7 +232,9 @@ assumption or check-suppression pragma is introduced. The library build checks
 the core's preconditions at run time but not its postconditions and other
 assertions, which GNATprove proves ([`contracts.adc`](../contracts.adc), from
 0.5.0 on); the test programs compile the same sources with every contract
-checked.
+checked, but for the whole-input postcondition of `Core_Text.UTF8_To_UTF16`,
+which recurses over the input and is proved and never run (`test_suite`
+checks it on every short input instead).
 
 `Validate_Path` now binds status to the executable `Lexically_Valid_Path`
 predicate: empty input is allowed only on request; NUL, colon, leading/trailing
@@ -306,6 +308,7 @@ implementation.
 | `SMB.Spec.SMB2` | MS-SMB2 2.2.1: the SYNC header as a record of its fields, `Is_Sync_Header` (bytes that encode one) and `Request_Header` (a client's own request, 3.2.4.1); 2.2.15, 2.2.19, 2.2.21: the CLOSE, READ and WRITE requests (`Is_Close_Request`, `Is_Read_Request`, `Is_Write_Request`) and this client's READ and WRITE (`Client_Read`, `Client_Write`); 2.2.5, 2.2.9, 2.2.7, 2.2.11: SESSION_SETUP, TREE_CONNECT, LOGOFF and TREE_DISCONNECT, and this client's (`Client_Session_Setup`, `Client_Tree_Connect`); 2.2.13, 2.2.33: CREATE and QUERY_DIRECTORY (`Is_Create_Fields`, `Is_Create_Request`, `Is_Query_Directory_Request`), and this client's (`Client_Create`, `Client_Query_Directory`); 2.2.37, 2.2.39: QUERY_INFO and SET_INFO (`Is_Query_Info_Request`, `Is_Set_Info_Request`, `Client_Query_Info`, `Client_Set_Info`) | `Core_Wire.Initialize_Header`, `Core_Request.Prepare_Header`; `Core_Protocol.Build_Close`, `Build_Read`, `Build_Write`, `Build_Session_Setup`, `Build_Tree_Connect`, `Build_Simple`, `Build_Create`, `Build_Query_Directory`, `Build_Query_Information`, `Build_Disposition`, `Build_End_Of_File`, `Build_Rename`; `Core_Query.Prepare`, `Core_Resize.Prepare` |
 | `SMB.Spec.SMB2.Negotiation` | MS-SMB2 2.2.3, 2.2.3.1, 2.2.3.1.1, 2.2.3.1.2, 2.2.3.1.7: the NEGOTIATE request's fields and dialects (`Is_Negotiate_Request`), negotiate contexts and their alignment (`Is_Negotiate_Context`, `Context_Data`, `First_Context`, `Next_Context`), the preauth integrity, encryption and signing contexts; 3.2.4.2.2.2: this client's request (`Client_Negotiate`, `Client_Dialects`, `Is_Client_Negotiate_Request`) | `Core_Negotiate.Request` |
 | `SMB.Spec.SMB2.Transform` | MS-SMB2 2.2.41: the TRANSFORM_HEADER's fields but the Signature (`Is_Transform_Header`), the nonce's length for each cipher (`Nonce_Size`); 3.1.4.3: the header a sender builds (`Client_Transform`) | `Core_Transform.Seal` |
+| `SMB.Spec.Unicode` | The Unicode Standard 16.0, section 3.9: scalar values (D76), UTF-8 (D92, Tables 3-6 and 3-7), UTF-16 (D91, Table 3-5); a string's run of valid UTF-8 sequences and its UTF-16 (`Valid_UTF8_Run`, `UTF16_Run_Size`, `UTF16_Run_Byte`, `Is_UTF16_Run`) | `Core_Text.UTF8_To_UTF16` |
 | `SMB.Spec.FSCC` | MS-FSCC 2.4.11, 2.4.14, 2.4.42.2, 2.4.34: FileDispositionInformation, FileEndOfFileInformation, FILE_RENAME_INFORMATION_TYPE_2 and FileNetworkOpenInformation's size, with their classes | `Core_Protocol.Build_Disposition`, `Build_End_Of_File`, `Build_Rename`, `Build_Query_Information`, `Rename_Information_Length`; `Core_Query.Prepare`, `Core_Resize.Prepare` |
 
 Where each unit stands, from the survey at 0.4.0 and the phases since:
@@ -313,7 +316,11 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
 * **Complete already:** `Core_Framing`, `Core_Transport`, `Core_Clock`; the
   path, share and UTF-16 validators of `Core_Text`; the integer readers and
   writers of `Core_Wire`; the transfer arithmetic of `Core_Protocol`.
-* **Complete against a specification:** the header writers,
+* **Complete against a specification:** `Core_Text.UTF8_To_UTF16`
+  (exact status, the first failure of a scan from the front; on success
+  the whole output against `SMB.Spec.Unicode`, on failure nothing; its
+  postcondition is proved and not run, see phase 4 in the handover); the
+  header writers,
   `Core_Wire.Initialize_Header` and `Core_Request.Prepare_Header` (exact
   status; on success the 64 bytes are the header `SMB.Spec.SMB2` gives, the
   rest of the packet unchanged; on failure nothing changed); the CLOSE, READ,

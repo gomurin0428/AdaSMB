@@ -80,7 +80,8 @@ of date.
 | after 0.4.0 | Platinum phase 3, QUERY_INFO and SET_INFO (disposition, end of file, rename) against MS-SMB2 and MS-FSCC | merged (#158) |
 | after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | merged (#159) |
 | after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | merged (#160) |
-| after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | #161 |
+| after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | merged (#161) |
+| after 0.4.0 | Platinum phase 4, UTF-8 to UTF-16: `SMB.Spec.Unicode` and `Core_Text.UTF8_To_UTF16` against it | #162 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -430,8 +431,9 @@ opens a received one. It is a stateless SPARK unit, like
   and TREE_DISCONNECT (#155), then CREATE and QUERY_DIRECTORY (#157),
   then QUERY_INFO and SET_INFO (#158), then the 3.1.1 NEGOTIATE (#159),
   then the transform header (#160), then the requests of `Core_Query`
-  and `Core_Resize` (#161), which ends phase 3's builders. Next: phase 4
-  (text). After Platinum, the maintainer wants the remaining SMB
+  and `Core_Resize` (#161), which ends phase 3's builders. Phase 4
+  (text) started with UTF-8 to UTF-16 (#162); next, UTF-16 to UTF-8 and
+  `Validate_UTF16`. After Platinum, the maintainer wants the remaining SMB
   features in this order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
   file operations (times and attributes, locks, leases, change
@@ -451,6 +453,54 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 4, UTF-8 to UTF-16 (#162)
+
+* `SMB.Spec.Unicode` transcribes The Unicode Standard 16.0, section 3.9:
+  scalar values (D76), UTF-8 (D92: Table 3-7's well-formed sequences and
+  Table 3-6's bits) and UTF-16 (D91, Table 3-5), and a whole string from
+  the front: the run of valid sequences from a position
+  (`Valid_UTF8_Run`), its UTF-16 size and bytes (`UTF16_Run_Size`,
+  `UTF16_Run_Byte`), and `Is_UTF16_Run`, the same bytes scalar by scalar.
+  U+0000 is refused (ours: no name or credential holds it).
+* `UTF8_To_UTF16` states its exact status, the first failure of a scan
+  from the front (a sequence that does not fit before a refused one), and
+  on success its whole output against the specification. On failure it
+  now leaves nothing (`Used` 0, the output zero), as the builders do; it
+  used to leave the units converted so far, which no caller used, and
+  the six test expectations of them now expect nothing.
+* The proof: the loop's invariants say the input up to `Position` is part
+  of the run and the output holds the run's first `Used` bytes; ghost
+  lemmas unfold the recursive functions a step at a time (their bodies
+  are hidden elsewhere), `Lemma_Extend` takes a scalar's step out of the
+  loop, and an inductive `Lemma_Run_Bytes` turns the byte-by-byte form
+  into `Is_UTF16_Run`. The loop's exit moved after the invariants, so
+  that at the exit the provers know them and not the whole last
+  iteration (with `while`, one obligation there timed out).
+* Run-time checking. The specification's functions recurse once per
+  scalar: run on a megabyte (a test does) they overflow the stack, and a
+  byte-indexed post was cubic. So:
+  * the converter's postcondition and the lemmas are proved and never run,
+    even in the test build (`Assertion_Policy (Post => Ignore)` for the
+    end of `Core_Text`'s spec, `Ghost => Ignore` for the lemmas; the loop
+    invariants already were); the tests check the outputs directly, and
+    `spec_test` runs the specification;
+  * `Is_UTF16_Run` checks in linear time, and `UTF16_Run_Size`'s bound
+    needs no recursion, for wherever they do run;
+  * `make stack-check` keeps rejecting any recursion in the library
+    build, which is what caught an `Assert_And_Cut` that would have run
+    the recursion in production.
+  GNAT 16's assertion levels could mark just the whole-input clauses as
+  proof-only (`Ghost => Static`, `Post => (Static => ...)`: GNATprove
+  proves them, `-gnata` never runs them; tried on a small example), but
+  GNAT 14 and 15, which the crate supports (`gnat = ">=14"`), reject the
+  syntax. Whether to require GNAT 16 is the maintainer's call.
+* `spec_test` (+6 checks, 111): D90 to D92's example in UTF-8 and UTF-16,
+  every row of Table 3-7 at both ends, section 3.9's ill-formed examples
+  and others, every scalar against GNAT's own encoder
+  (`Ada.Strings.UTF_Encoding`; it refuses U+FFFE and U+FFFF, which are
+  checked by hand), every two- and three-byte sequence and four-byte ones
+  at the continuation edges, and runs.
 
 ## Platinum phase 3, the packets of Core_Query and Core_Resize (#161)
 
