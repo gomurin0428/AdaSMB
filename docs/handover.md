@@ -81,7 +81,7 @@ of date.
 | after 0.4.0 | Platinum phase 3, the SMB 3.1.1 NEGOTIATE against the specification; the unused 2.1 builder removed | merged (#159) |
 | after 0.4.0 | Platinum phase 3, the transform header that `Core_Transform.Seal` writes against MS-SMB2 2.2.41 and 3.1.4.3 | merged (#160) |
 | after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | merged (#161) |
-| after 0.4.0 | Platinum phase 4, UTF-8 to UTF-16: `SMB.Spec.Unicode` and `Core_Text.UTF8_To_UTF16` against it | #162 |
+| after 0.4.0 | Platinum phase 4, UTF-8 to UTF-16: `SMB.Spec.Unicode` and `Core_Text.UTF8_To_UTF16` against it | merged (#162) |
 | after 0.4.0 | AdaMutant 4489d69 (the latest, at the maintainer's request) | #165 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
@@ -1044,13 +1044,24 @@ opens a received one. It is a stateless SPARK unit, like
 * At the maintainer's request (2026-11-20), CI uses the latest AdaMutant,
   4489d69 (its PR #56), from now on; `ADAMUTANT_COMMIT` in `ci.yml` and
   `mutation.yml`.
-* What changed since 2c87491 (30 commits):
+* What changed since 2c87491 (29 commits, 6 of them merges):
   * LogicalOperator makes the "sufficient set" on Booleans (each operand
-    left out, `(A) = (B)` or `/=` outside contracts, the constant) instead
-    of `and`/`or` swaps; ConjunctDeletion in contracts on any type.
-  * No `abs X` -> `X` where `X` is never negative; comparison
-    replacements that a range proof shows equivalent are skipped and now
-    counted in the summary.
+    left out, `(A) = (B)` or `/=` for two operands outside contracts, the
+    constant) instead of `and`/`or` swaps; ConjunctDeletion in contracts
+    on any type.
+  * EqualityOperator: a relation that is an operand of `and`/`or` no
+    longer gets the constants True/False (LogicalOperator's deletions and
+    chain constant make those mutants), and `X > 0`/`0 < X` keep `/=`
+    unless a range proof rules it out (before, only where `X` was known
+    to be possibly negative). Measured with `adamutant list` on the tree
+    (28 files): 16,454 mutants become 15,526; EqualityOperator 3,558
+    become 2,631, its constants 1,148 become 174, its `/=` 1,068 become
+    1,115.
+  * No `abs X` -> `X` where `X` is never negative (no effect here);
+    comparison replacements that a range proof shows equivalent are
+    counted, in AdaMutant's console summary, the JSON report
+    (`provenEquivalentComparisonSkips`) and the HTML report, not in
+    `tests/mutation_survivors.py`'s step summary.
   * A warning on a mutant's line no longer makes it a CompileError
     (unless warnings are errors and no line has an error).
   * Opt-in only, and not set here: a bounded search for an input that
@@ -1060,6 +1071,10 @@ opens a received one. It is a stateless SPARK unit, like
     or enumerations for the search), which the core has few of.
 * `adamutant.toml` keeps its keys; `tests/mutation_survivors.py` reads
   only the report's stable fields and the progress lines.
+* The cache of the AdaMutant build is keyed by the commit, and a PR can
+  only read main's cache: after merging, run `mutation.yml` by hand on
+  main with a small `files`, as after #154, so that later PRs do not
+  build AdaMutant and Libadalang again (about 17 minutes).
 
 ## AdaMutant 2c87491 (#154)
 
