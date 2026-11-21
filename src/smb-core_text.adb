@@ -1088,13 +1088,15 @@ package body SMB.Core_Text is
       Offset : Natural := 0;
       First : Natural;
       Second : Natural;
+      Unit_Start : Natural with Ghost;
    begin
       Status := SMB.Ok;
       if Input'Length mod 2 /= 0 then
          Status := SMB.Invalid_Length;
          return;
       end if;
-      while Offset < Input'Length loop
+      --  The exit comes after the invariants (see UTF8_To_UTF16).
+      loop
          pragma Loop_Invariant (Offset <= Input'Length);
          pragma Loop_Invariant (Offset mod 2 = 0);
          pragma Loop_Invariant
@@ -1103,30 +1105,85 @@ package body SMB.Core_Text is
                  Valid_UTF16_Unit (Input, Index))
               and then UTF16_Unit (Input, Offset / 2 - 1)
                 not in 16#D800# .. 16#DBFF#);
+         pragma Loop_Invariant
+           (U.Valid_UTF16_Run (Input, 0) =
+              Offset / 2 + U.Valid_UTF16_Run (Input, Offset / 2));
          pragma Loop_Variant (Increases => Offset);
+         exit when Offset >= Input'Length;
+         Unit_Start := Offset / 2;
+         pragma Assert (2 * Unit_Start = Offset);
          First := Natural (Input (Input'First + Offset))
            + Natural (Input (Input'First + Offset + 1)) * 256;
+         pragma Assert (First = U.Code_Unit (Input, Unit_Start));
          Offset := Offset + 2;
          if First = 0 then
+            pragma Assert (not Valid_UTF16_Unit (Input, Unit_Start));
+            Lemma_Invalid_UTF16_Unit (Input, Unit_Start);
+            pragma Assert (not U.Valid_UTF16_At (Input, Unit_Start));
+            declare
+               pragma Assertion_Policy (Ghost => Ignore);
+            begin
+               Lemma_Run16_Stop (Input, Unit_Start);
+            end;
             Status := SMB.Invalid_Encoding;
             return;
          elsif First in 16#D800# .. 16#DBFF# then
             if Input'Length - Offset < 2 then
+               pragma Assert (not Valid_UTF16_Unit (Input, Unit_Start));
+               Lemma_Invalid_UTF16_Unit (Input, Unit_Start);
+               pragma Assert (not U.Valid_UTF16_At (Input, Unit_Start));
+               declare
+                  pragma Assertion_Policy (Ghost => Ignore);
+               begin
+                  Lemma_Run16_Stop (Input, Unit_Start);
+               end;
                Status := SMB.Invalid_Encoding;
                return;
             end if;
             Second := Natural (Input (Input'First + Offset))
               + Natural (Input (Input'First + Offset + 1)) * 256;
+            pragma Assert (Second = U.Code_Unit (Input, Unit_Start + 1));
             if Second not in 16#DC00# .. 16#DFFF# then
+               pragma Assert (not Valid_UTF16_Unit (Input, Unit_Start));
+               Lemma_Invalid_UTF16_Unit (Input, Unit_Start);
+               pragma Assert (not U.Valid_UTF16_At (Input, Unit_Start));
+               declare
+                  pragma Assertion_Policy (Ghost => Ignore);
+               begin
+                  Lemma_Run16_Stop (Input, Unit_Start);
+               end;
                Status := SMB.Invalid_Encoding;
                return;
             end if;
             Offset := Offset + 2;
          elsif First in 16#DC00# .. 16#DFFF# then
+            pragma Assert (not Valid_UTF16_Unit (Input, Unit_Start));
+            Lemma_Invalid_UTF16_Unit (Input, Unit_Start);
+            pragma Assert (not U.Valid_UTF16_At (Input, Unit_Start));
+            declare
+               pragma Assertion_Policy (Ghost => Ignore);
+            begin
+               Lemma_Run16_Stop (Input, Unit_Start);
+            end;
             Status := SMB.Invalid_Encoding;
             return;
          end if;
+         pragma Assert
+           (U.Valid_UTF16_At (Input, Unit_Start)
+            and then Offset =
+              2 * (Unit_Start + U.UTF16_Length (Input, Unit_Start)));
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Run16_Step (Input, Unit_Start);
+         end;
       end loop;
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_Run16_Stop (Input, Offset / 2);
+      end;
+      pragma Assert (Valid_UTF16_Text (Input));
    end Validate_UTF16;
 
    procedure Uppercase_NTLM_User
