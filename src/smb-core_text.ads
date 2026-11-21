@@ -36,27 +36,6 @@ package SMB.Core_Text is
               Valid_UTF16_Unit (Input, Index))))
    with Ghost, Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size;
 
-   procedure UTF16_To_UTF8
-     (Input : SMB.Bytes;
-      Output : out String;
-      Used : out Natural;
-      Status : out SMB.Core_Status)
-   with Pre =>
-     Input'Length <= SMB.Maximum_Frame_Size
-     and Output'Length <= 2 * SMB.Maximum_Frame_Size,
-     Post => Used <= Output'Length and then Used <= 2 * Input'Length
-       and then (if Status = SMB.Ok then Input'Length mod 2 = 0
-         and then Valid_UTF16_Text (Input)
-         and then (Used = 0) = (Input'Length = 0))
-       and then
-         (if Input'Length mod 2 /= 0 then Status = SMB.Invalid_Length
-          elsif Output'Length >= 2 * Input'Length then
-             Status =
-               (if Valid_UTF16_Text (Input) then SMB.Ok
-                else SMB.Invalid_Encoding))
-       and then (for all Index in Output'Range =>
-          (if Index - Output'First >= Used then Output (Index) = Character'Val (0)));
-
    procedure Validate_UTF16
      (Input : SMB.Bytes;
       Status : out SMB.Core_Status)
@@ -156,12 +135,12 @@ package SMB.Core_Text is
    with Pre => Input'Length <= 255,
      Post => Status =
        (if Lexically_Valid_Share (Input) then SMB.Ok else SMB.Invalid_Value);
-   --  UTF8_To_UTF16's postcondition states the whole output against
+   --  The converters' postconditions state the whole output against
    --  SMB.Spec.Unicode, whose functions recurse once per scalar: checked
    --  at run time on inputs up to 1 MiB they would overflow the stack.
-   --  It is proved and not checked at run time, even where every other
+   --  They are proved and not checked at run time, even where every other
    --  contract is (assertion levels, which could mark just those clauses,
-   --  need GNAT 16); test_suite checks it on every short input instead.
+   --  need GNAT 16); test_suite checks them on every short input instead.
    --  This pragma applies to the end of the package.
    pragma Assertion_Policy (Post => Ignore);
 
@@ -198,6 +177,44 @@ package SMB.Core_Text is
          (if Status = SMB.Ok then
             Used = SMB.Spec.Unicode.UTF16_Run_Size (Input, 0)
             and then SMB.Spec.Unicode.Is_UTF16_Run
+              (Input, 0, Output (Output'First .. Output'First + (Used - 1)),
+               0)
+          else Used = 0);
+
+   procedure UTF16_To_UTF8
+     (Input : SMB.Bytes;
+      Output : out String;
+      Used : out Natural;
+      Status : out SMB.Core_Status)
+   with Pre =>
+     Input'Length <= SMB.Maximum_Frame_Size
+     and Output'Length <= 2 * SMB.Maximum_Frame_Size,
+     Post => Used <= Output'Length and then Used <= 2 * Input'Length
+       and then (if Status = SMB.Ok then Input'Length mod 2 = 0
+         and then Valid_UTF16_Text (Input)
+         and then (Used = 0) = (Input'Length = 0))
+       and then
+         (if Input'Length mod 2 /= 0 then Status = SMB.Invalid_Length
+          elsif Output'Length >= 2 * Input'Length then
+             Status =
+               (if Valid_UTF16_Text (Input) then SMB.Ok
+                else SMB.Invalid_Encoding))
+       and then (for all Index in Output'Range =>
+          (if Index - Output'First >= Used then Output (Index) = Character'Val (0)))
+       --  Against SMB.Spec.Unicode, as UTF8_To_UTF16: an odd length first,
+       --  then the first failure of a scan from the front; on success Input
+       --  in UTF-8, on failure nothing.
+       and then Status =
+         (if Input'Length mod 2 /= 0 then SMB.Invalid_Length
+          elsif SMB.Spec.Unicode.UTF8_Run_Size (Input, 0) > Output'Length
+          then SMB.Invalid_Length
+          elsif not SMB.Spec.Unicode.Is_Client_UTF16 (Input)
+          then SMB.Invalid_Encoding
+          else SMB.Ok)
+       and then
+         (if Status = SMB.Ok then
+            Used = SMB.Spec.Unicode.UTF8_Run_Size (Input, 0)
+            and then SMB.Spec.Unicode.Is_UTF8_Run
               (Input, 0, Output (Output'First .. Output'First + (Used - 1)),
                0)
           else Used = 0);

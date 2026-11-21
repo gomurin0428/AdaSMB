@@ -422,6 +422,193 @@ package body SMB.Core_Text is
            Output (Output'First + K) = U.UTF16_Run_Byte (Input, 0, K));
    end Lemma_Extend;
 
+   --  The same for UTF16_To_UTF8: Position counts 16-bit units.
+   procedure Lemma_Run16_Step (Input : SMB.Bytes; Position : Natural)
+     with Ghost,
+       Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Position < Input'Length / 2
+         and then U.Valid_UTF16_At (Input, Position),
+       Post =>
+         U.Valid_UTF16_Run (Input, Position) =
+           U.UTF16_Length (Input, Position)
+           + U.Valid_UTF16_Run
+               (Input, Position + U.UTF16_Length (Input, Position))
+         and then U.UTF8_Run_Size (Input, Position) =
+           U.UTF8_Size (U.UTF16_Scalar (Input, Position))
+           + U.UTF8_Run_Size
+               (Input, Position + U.UTF16_Length (Input, Position))
+         and then
+           (for all K in 0 .. U.UTF8_Run_Size (Input, Position) - 1 =>
+              U.UTF8_Run_Byte (Input, Position, K) =
+                (if K < U.UTF8_Size (U.UTF16_Scalar (Input, Position))
+                 then U.UTF8_Byte (U.UTF16_Scalar (Input, Position), K)
+                 else U.UTF8_Run_Byte
+                   (Input, Position + U.UTF16_Length (Input, Position),
+                    K - U.UTF8_Size (U.UTF16_Scalar (Input, Position)))));
+
+   procedure Lemma_Run16_Step (Input : SMB.Bytes; Position : Natural) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.Valid_UTF16_Run);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.UTF8_Run_Size);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.UTF8_Run_Byte);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.Is_UTF8_Run);
+   begin
+      null;
+   end Lemma_Run16_Step;
+
+   procedure Lemma_Run16_Stop (Input : SMB.Bytes; Position : Natural)
+     with Ghost,
+       Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Position <= Input'Length / 2
+         and then not U.Valid_UTF16_At (Input, Position),
+       Post =>
+         U.Valid_UTF16_Run (Input, Position) = 0
+         and then U.UTF8_Run_Size (Input, Position) = 0;
+
+   procedure Lemma_Run16_Stop (Input : SMB.Bytes; Position : Natural) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.Valid_UTF16_Run);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.UTF8_Run_Size);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.UTF8_Run_Byte);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.Is_UTF8_Run);
+   begin
+      null;
+   end Lemma_Run16_Stop;
+
+   procedure Lemma_Run8_Bytes
+     (Input : SMB.Bytes; Position : Natural; Text : String; Offset : Natural)
+     with Ghost,
+       Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Position <= Input'Length / 2
+         and then Text'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Offset <= Text'Length
+         and then Text'Length - Offset = U.UTF8_Run_Size (Input, Position)
+         and then
+           (for all K in 0 .. U.UTF8_Run_Size (Input, Position) - 1 =>
+              Character'Pos (Text (Text'First + Offset + K)) =
+                U.UTF8_Run_Byte (Input, Position, K)),
+       Post => U.Is_UTF8_Run (Input, Position, Text, Offset),
+       Subprogram_Variant => (Decreases => Input'Length / 2 - Position);
+
+   procedure Lemma_Run8_Bytes
+     (Input : SMB.Bytes; Position : Natural; Text : String; Offset : Natural)
+   is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body",
+         U.Is_UTF8_Run);
+   begin
+      if U.Valid_UTF16_At (Input, Position) then
+         Lemma_Run16_Step (Input, Position);
+         declare
+            Next : constant Natural :=
+              Position + U.UTF16_Length (Input, Position);
+            Width : constant Natural :=
+              U.UTF8_Size (U.UTF16_Scalar (Input, Position));
+         begin
+            pragma Assert
+              (for all J in 0 .. Width - 1 =>
+                 Character'Pos (Text (Text'First + Offset + J)) =
+                   U.UTF8_Byte (U.UTF16_Scalar (Input, Position), J));
+            pragma Assert
+              (for all K in 0 .. U.UTF8_Run_Size (Input, Next) - 1 =>
+                 U.UTF8_Run_Byte (Input, Position, Width + K) =
+                   U.UTF8_Run_Byte (Input, Next, K));
+            pragma Assert
+              (for all K in 0 .. U.UTF8_Run_Size (Input, Next) - 1 =>
+                 Character'Pos (Text (Text'First + (Offset + Width) + K)) =
+                   U.UTF8_Run_Byte (Input, Next, K));
+            Lemma_Run8_Bytes (Input, Next, Text, Offset + Width);
+         end;
+      else
+         Lemma_Run16_Stop (Input, Position);
+      end if;
+   end Lemma_Run8_Bytes;
+
+   procedure Lemma_Extend8
+     (Input : SMB.Bytes; Start : Natural; Output : String; Before : Natural)
+     with Ghost,
+       Pre => Input'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Start < Input'Length / 2
+         and then U.Valid_UTF16_At (Input, Start)
+         and then Output'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Before <= Output'Length
+         and then Output'Length - Before >=
+           U.UTF8_Size (U.UTF16_Scalar (Input, Start))
+         and then U.Valid_UTF16_Run (Input, 0) =
+           Start + U.Valid_UTF16_Run (Input, Start)
+         and then U.UTF8_Run_Size (Input, 0) =
+           Before + U.UTF8_Run_Size (Input, Start)
+         and then
+           (for all K in 0 .. Before - 1 =>
+              Character'Pos (Output (Output'First + K)) =
+                U.UTF8_Run_Byte (Input, 0, K))
+         and then
+           (for all K in 0 .. U.UTF8_Run_Size (Input, Start) - 1 =>
+              U.UTF8_Run_Byte (Input, 0, Before + K) =
+                U.UTF8_Run_Byte (Input, Start, K))
+         and then
+           (for all J in 0 .. U.UTF8_Size (U.UTF16_Scalar (Input, Start)) - 1
+            => Character'Pos (Output (Output'First + Before + J)) =
+                 U.UTF8_Byte (U.UTF16_Scalar (Input, Start), J)),
+       Post =>
+         U.Valid_UTF16_Run (Input, 0) =
+           (Start + U.UTF16_Length (Input, Start))
+           + U.Valid_UTF16_Run (Input, Start + U.UTF16_Length (Input, Start))
+         and then U.UTF8_Run_Size (Input, 0) =
+           (Before + U.UTF8_Size (U.UTF16_Scalar (Input, Start)))
+           + U.UTF8_Run_Size (Input, Start + U.UTF16_Length (Input, Start))
+         and then
+           (for all K in
+              0 .. Before + U.UTF8_Size (U.UTF16_Scalar (Input, Start)) - 1 =>
+              Character'Pos (Output (Output'First + K)) =
+                U.UTF8_Run_Byte (Input, 0, K))
+         and then
+           (for all K in
+              0 .. U.UTF8_Run_Size
+                     (Input, Start + U.UTF16_Length (Input, Start)) - 1 =>
+              U.UTF8_Run_Byte
+                (Input, 0,
+                 Before + U.UTF8_Size (U.UTF16_Scalar (Input, Start)) + K) =
+                U.UTF8_Run_Byte
+                  (Input, Start + U.UTF16_Length (Input, Start), K));
+
+   procedure Lemma_Extend8
+     (Input : SMB.Bytes; Start : Natural; Output : String; Before : Natural)
+   is
+      Scalar : constant Natural := U.UTF16_Scalar (Input, Start);
+      Width : constant Natural := U.UTF8_Size (Scalar);
+   begin
+      Lemma_Run16_Step (Input, Start);
+      pragma Assert
+        (for all J in 0 .. Width - 1 =>
+           U.UTF8_Run_Byte (Input, Start, J) = U.UTF8_Byte (Scalar, J));
+      pragma Assert
+        (for all J in 0 .. Width - 1 =>
+           U.UTF8_Run_Byte (Input, 0, Before + J) = U.UTF8_Byte (Scalar, J));
+      pragma Assert
+        (for all J in 0 .. Width - 1 =>
+           Character'Pos (Output (Output'First + Before + J)) =
+             U.UTF8_Run_Byte (Input, 0, Before + J));
+      pragma Assert
+        (for all K in 0 .. Before + Width - 1 =>
+           Character'Pos (Output (Output'First + K)) =
+             U.UTF8_Run_Byte (Input, 0, K));
+   end Lemma_Extend8;
+
    pragma Assertion_Policy (Ghost => Check);
 
    --  The units of a slice that starts at an even offset are the units of
@@ -688,6 +875,7 @@ package body SMB.Core_Text is
       pragma Assertion_Policy (Loop_Invariant => Ignore);
       Offset : Natural := 0;
       Scalar_Start : Natural with Ghost;
+      Scalar_Output_Start : Natural with Ghost;
       Scalar : Natural;
       First : Natural;
       Second : Natural;
@@ -698,7 +886,12 @@ package body SMB.Core_Text is
         with Pre => Value in 1 .. 16#10FFFF#
           and then Value not in 16#D800# .. 16#DFFF#
           and then Target'Length = Encoded_Size (Value),
-          Post => UTF8_Scalar_At (Target, 0) = Value;
+          Post => UTF8_Scalar_At (Target, 0) = Value
+            and then Target'Length = U.UTF8_Size (Value)
+            and then
+              (for all J in 0 .. Target'Length - 1 =>
+                 Character'Pos (Target (Target'First + J)) =
+                   U.UTF8_Byte (Value, J));
       procedure Emit_Scalar (Value : Natural; Target : out String) is
          Written : Natural := 0;
          procedure Emit_Byte (Byte_Value : Natural) is
@@ -741,23 +934,51 @@ package body SMB.Core_Text is
          First := Natural (Input (Input'First + Offset))
            + Natural (Input (Input'First + Offset + 1)) * 256;
          Offset := Offset + 2;
+         pragma Assert (2 * (Scalar_Start / 2) = Scalar_Start);
+         pragma Assert (First = U.Code_Unit (Input, Scalar_Start / 2));
          if First = 0 then
             pragma Assert (not Valid_UTF16_Unit (Input, Scalar_Start / 2));
             Lemma_Invalid_UTF16_Unit (Input, Scalar_Start / 2);
+            pragma Assert (not U.Valid_UTF16_At (Input, Scalar_Start / 2));
+            declare
+               pragma Assertion_Policy (Ghost => Ignore);
+            begin
+               Lemma_Run16_Stop (Input, Scalar_Start / 2);
+            end;
+            Output := (others => Character'Val (0));
+            Used := 0;
             Status := SMB.Invalid_Encoding;
             return;
          elsif First in 16#D800# .. 16#DBFF# then
             if Input'Length - Offset < 2 then
                pragma Assert (not Valid_UTF16_Unit (Input, Scalar_Start / 2));
                Lemma_Invalid_UTF16_Unit (Input, Scalar_Start / 2);
+               pragma Assert (not U.Valid_UTF16_At (Input, Scalar_Start / 2));
+               declare
+                  pragma Assertion_Policy (Ghost => Ignore);
+               begin
+                  Lemma_Run16_Stop (Input, Scalar_Start / 2);
+               end;
+               Output := (others => Character'Val (0));
+               Used := 0;
                Status := SMB.Invalid_Encoding;
                return;
             end if;
             Second := Natural (Input (Input'First + Offset))
               + Natural (Input (Input'First + Offset + 1)) * 256;
+            pragma Assert
+              (Second = U.Code_Unit (Input, Scalar_Start / 2 + 1));
             if Second not in 16#DC00# .. 16#DFFF# then
                pragma Assert (not Valid_UTF16_Unit (Input, Scalar_Start / 2));
                Lemma_Invalid_UTF16_Unit (Input, Scalar_Start / 2);
+               pragma Assert (not U.Valid_UTF16_At (Input, Scalar_Start / 2));
+               declare
+                  pragma Assertion_Policy (Ghost => Ignore);
+               begin
+                  Lemma_Run16_Stop (Input, Scalar_Start / 2);
+               end;
+               Output := (others => Character'Val (0));
+               Used := 0;
                Status := SMB.Invalid_Encoding;
                return;
             end if;
@@ -767,6 +988,14 @@ package body SMB.Core_Text is
          elsif First in 16#DC00# .. 16#DFFF# then
             pragma Assert (not Valid_UTF16_Unit (Input, Scalar_Start / 2));
             Lemma_Invalid_UTF16_Unit (Input, Scalar_Start / 2);
+            pragma Assert (not U.Valid_UTF16_At (Input, Scalar_Start / 2));
+            declare
+               pragma Assertion_Policy (Ghost => Ignore);
+            begin
+               Lemma_Run16_Stop (Input, Scalar_Start / 2);
+            end;
+            Output := (others => Character'Val (0));
+            Used := 0;
             Status := SMB.Invalid_Encoding;
             return;
          else
@@ -780,15 +1009,35 @@ package body SMB.Core_Text is
             and then
               (if Scalar > 16#FFFF# then
                  Valid_UTF16_Unit (Input, Scalar_Start / 2 + 1)));
+         --  In the specification's terms.
+         pragma Assert
+           (U.Valid_UTF16_At (Input, Scalar_Start / 2)
+            and then U.UTF16_Scalar (Input, Scalar_Start / 2) = Scalar
+            and then Offset =
+              Scalar_Start + 2 * U.UTF16_Length (Input, Scalar_Start / 2)
+            and then Encoded_Size (Scalar) = U.UTF8_Size (Scalar));
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Run16_Step (Input, Scalar_Start / 2);
+         end;
          if Encoded_Size (Scalar) > Output'Length - Used then
             pragma Assert (Output'Length < 2 * Input'Length);
+            Output := (others => Character'Val (0));
+            Used := 0;
             Status := SMB.Invalid_Length;
             return;
          end if;
+         Scalar_Output_Start := Used;
          Emit_Scalar
            (Scalar, Output (Output'First + Used
                             .. Output'First + (Used + Encoded_Size (Scalar) - 1)));
          Used := Used + Encoded_Size (Scalar);
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Extend8 (Input, Scalar_Start / 2, Output, Scalar_Output_Start);
+         end;
          pragma Loop_Invariant (Offset <= Input'Length);
          pragma Loop_Invariant (Offset mod 2 = 0);
          pragma Loop_Invariant (Used <= Output'Length);
@@ -804,9 +1053,31 @@ package body SMB.Core_Text is
                  Valid_UTF16_Unit (Input, Index))
               and then UTF16_Unit (Input, Offset / 2 - 1)
                 not in 16#D800# .. 16#DBFF#);
+         --  The specification's run, as in UTF8_To_UTF16.
+         pragma Loop_Invariant
+           (U.Valid_UTF16_Run (Input, 0) =
+              Offset / 2 + U.Valid_UTF16_Run (Input, Offset / 2));
+         pragma Loop_Invariant
+           (U.UTF8_Run_Size (Input, 0) =
+              Used + U.UTF8_Run_Size (Input, Offset / 2));
+         pragma Loop_Invariant
+           (for all K in 0 .. Used - 1 =>
+              Character'Pos (Output (Output'First + K)) =
+                U.UTF8_Run_Byte (Input, 0, K));
+         pragma Loop_Invariant
+           (for all K in 0 .. U.UTF8_Run_Size (Input, Offset / 2) - 1 =>
+              U.UTF8_Run_Byte (Input, 0, Used + K) =
+                U.UTF8_Run_Byte (Input, Offset / 2, K));
          pragma Loop_Variant (Increases => Offset);
       end loop;
       pragma Assert (Valid_UTF16_Text (Input));
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_Run16_Stop (Input, Offset / 2);
+         Lemma_Run8_Bytes
+           (Input, 0, Output (Output'First .. Output'First + (Used - 1)), 0);
+      end;
       Status := SMB.Ok;
    end UTF16_To_UTF8;
 
