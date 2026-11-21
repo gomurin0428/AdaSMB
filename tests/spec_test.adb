@@ -9,13 +9,16 @@
 pragma Assertion_Policy (Assert => Check, Ghost => Check);
 
 with Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
+with Ada.Streams;
 with Ada.Text_IO;
+with GNAT.SHA256;
 with Interfaces;
 with SMB;
 with SMB.Spec.Encoding;
 with SMB.Spec.FSCC;
 with SMB.Spec.SMB2;
 with SMB.Spec.SMB2.Negotiation;
+with SMB.Spec.SHA2;
 with SMB.Spec.SMB2.Transform;
 with SMB.Spec.Unicode;
 
@@ -1904,6 +1907,117 @@ procedure Spec_Test is
          "runs of valid sequences");
       Passed;
    end Test_Unicode;
+   --  FIPS 180-4: SHA-256 on NIST's examples (csrc.nist.gov, "Examples with
+   --  Intermediate Values": SHA256.pdf for "abc", with its schedule and
+   --  working variables, and SHA2_Additional.pdf), the padding at its
+   --  boundaries, and GNAT.SHA256, an implementation independent of ours,
+   --  on every length up to 300 bytes.
+   procedure Test_SHA256 is
+      package S renames SMB.Spec.SHA2;
+      use type SMB.Bytes;
+      use type S.Working_32;
+
+      function Text (Value : String) return SMB.Bytes is
+         Result : SMB.Bytes (0 .. Value'Length - 1);
+      begin
+         for Index in Result'Range loop
+            Result (Index) := Character'Pos (Value (Value'First + Index));
+         end loop;
+         return Result;
+      end Text;
+
+      Abc : constant SMB.Bytes := Text ("abc");
+      Block : constant S.Block_256 := S.Padded_Block_256 (Abc, 0)
+      with Ghost;
+      W : constant S.Schedule_256 := S.Message_Schedule_256 (Block)
+      with Ghost;
+   begin
+      --  5.1.1's example: "abc" is followed by the bit 1, 423 zero bits
+      --  and the length 24 as 64 bits.
+      pragma Assert (S.Padded_Length_256 (3) = 64);
+      Passed;
+      pragma Assert
+        (SMB.Bytes (Block) =
+           Hex ("61626380" & (1 .. 2 * 52 => '0') & "0000000000000018"));
+      Passed;
+      pragma Assert
+        (W (0) = 16#6162_6380# and then W (15) = 16#18#
+         and then W (16) = 16#6162_6380# and then W (63) = 16#12B1_EDEB#);
+      Passed;
+      pragma Assert
+        (S.Rounds_256 (S.H0_256, W, 1) =
+           (16#5D6AEBCD#, 16#6A09E667#, 16#BB67AE85#, 16#3C6EF372#,
+            16#FA2A4622#, 16#510E527F#, 16#9B05688C#, 16#1F83D9AB#));
+      Passed;
+      pragma Assert
+        (S.Rounds_256 (S.H0_256, W, 64) =
+           (16#506E3058#, 16#D39A2165#, 16#04D24D6C#, 16#B85E2CE9#,
+            16#5EF50F24#, 16#FB121210#, 16#948D25B6#, 16#961F4894#));
+      Passed;
+      pragma Assert
+        (S.SHA256 (Abc) =
+           Hex ("BA7816BF8F01CFEA414140DE5DAE2223"
+                & "B00361A396177A9CB410FF61F20015AD"));
+      Passed;
+      pragma Assert
+        (S.SHA256 ((1 .. 0 => 0)) =
+           Hex ("E3B0C44298FC1C149AFBF4C8996FB924"
+                & "27AE41E4649B934CA495991B7852B855"));
+      Passed;
+      --  Two blocks: 448 bits leave no room for the length in the first.
+      pragma Assert
+        (S.Padded_Length_256 (56) = 128
+         and then S.SHA256
+           (Text ("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))
+           = Hex ("248D6A61D20638B8E5C026930C3E6039"
+                  & "A33CE45964FF2167F6ECEDD419DB06C1"));
+      Passed;
+      pragma Assert
+        (S.SHA256
+           (Text ("abcdefghbcdefghicdefghijdefghijkefghijklfghijklm"
+                  & "ghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrs"
+                  & "mnopqrstnopqrstu"))
+           = Hex ("CF5B16A778AF8380036CE59E7B049237"
+                  & "0B249B11E8F07A51AFAC45037AFEE9D1"));
+      Passed;
+      --  The padding: the smallest multiple of 64 bytes that holds the
+      --  message, the byte 16#80# and the 8-byte length.
+      pragma Assert
+        (S.Padded_Length_256 (0) = 64 and then S.Padded_Length_256 (55) = 64
+         and then S.Padded_Length_256 (63) = 128
+         and then S.Padded_Length_256 (64) = 128
+         and then S.Padded_Length_256 (119) = 128
+         and then S.Padded_Length_256 (120) = 192);
+      Passed;
+      for Length in 0 .. 1_000 loop
+         pragma Assert
+           (S.Padded_Length_256 (Length) mod 64 = 0
+            and then S.Padded_Length_256 (Length) >= Length + 9
+            and then S.Padded_Length_256 (Length) - 64 < Length + 9);
+      end loop;
+      Passed;
+      for Length in 0 .. 300 loop
+         declare
+            Message : constant SMB.Bytes (0 .. Length - 1) :=
+              (for Index in 0 .. Length - 1 =>
+                 SMB.Byte ((Index * 7 + Length * 13) mod 256));
+            Stream : constant Ada.Streams.Stream_Element_Array :=
+              (for Index in 1 .. Ada.Streams.Stream_Element_Offset (Length) =>
+                 Ada.Streams.Stream_Element
+                   (Message (Natural (Index) - 1)));
+            Reference : constant GNAT.SHA256.Binary_Message_Digest :=
+              GNAT.SHA256.Digest (Stream);
+            Expected : constant SMB.Bytes (0 .. 31) :=
+              (for Index in 0 .. 31 =>
+                 SMB.Byte (Reference (Ada.Streams.Stream_Element_Offset
+                   (Index + 1))));
+         begin
+            pragma Assert (S.SHA256 (Message) = Expected);
+         end;
+      end loop;
+      Passed;
+   end Test_SHA256;
+
 begin
    Test_Encoding;
    Test_SMB2_Header;
@@ -1914,6 +2028,7 @@ begin
    Test_SMB2_Negotiate;
    Test_SMB2_Transform;
    Test_Unicode;
+   Test_SHA256;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;
