@@ -83,7 +83,7 @@ of date.
 | after 0.4.0 | Platinum phase 3, the QUERY_INFO and SET_INFO requests of `Core_Query` and `Core_Resize` (every byte but the Signature) against the specifications | merged (#161) |
 | after 0.4.0 | Platinum phase 4, UTF-8 to UTF-16: `SMB.Spec.Unicode` and `Core_Text.UTF8_To_UTF16` against it | merged (#162) |
 | after 0.4.0 | AdaMutant 4489d69 (the latest, at the maintainer's request) | merged (#165) |
-| after 0.4.0 | `Core_Negotiate.Request` proved a part at a time: its one postcondition goal timed out on a runner | #166 |
+| after 0.4.0 | `Core_Negotiate.Request` proved a part at a time: its one postcondition goal timed out on a runner | merged (#166) |
 | after 0.4.0 | Platinum phase 4, UTF-16 to UTF-8: `Core_Text.UTF16_To_UTF8` against `SMB.Spec.Unicode` | #163 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
@@ -553,6 +553,13 @@ opens a received one. It is a stateless SPARK unit, like
   proves them, `-gnata` never runs them; tried on a small example), but
   GNAT 14 and 15, which the crate supports (`gnat = ">=14"`), reject the
   syntax. Whether to require GNAT 16 is the maintainer's call.
+* Mutation testing could not judge `Core_Text`'s contract mutants: the
+  lemma contracts never run and `Decode_UTF8`'s new clauses restate its
+  old ones, so only the proof can detect their mutants, and a mutant's
+  proof covers the whole unit, which takes longer than the 5-minute cap
+  (#156). The run was cut off at the step limit with 106 such survivors;
+  one plainly false lemma mutant, proved locally, fails the proof (4 min
+  for that lemma alone). Not tuned further (the maintainer's guidance).
 * `spec_test` (+6 checks, 111): D90 to D92's example in UTF-8 and UTF-16,
   every row of Table 3-7 at both ends, section 3.9's ill-formed examples
   and others, every scalar against GNAT's own encoder
