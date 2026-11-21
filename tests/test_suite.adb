@@ -11772,6 +11772,68 @@ procedure Test_Suite is
          & " calls passed");
    end Test_SHA256_Specification;
 
+   --  The SHA-512 postconditions, proved and never run: Crypto.SHA512's
+   --  digest, the context fed in two pieces at every split, and
+   --  Core_Preauth.Update's step, each against SMB.Spec.SHA2.
+   procedure Test_SHA512_Specification is
+      pragma Assertion_Policy (Assert => Check, Ghost => Check);
+      package S renames SMB.Spec.SHA2;
+      Calls : Natural := 0;
+
+      function Pattern (Length : Natural) return SMB.Bytes is
+        (SMB.Bytes'
+           (for Index in 5 .. 4 + Length =>
+              SMB.Byte ((Index * 7 + Length) mod 256)));
+   begin
+      for Length in 0 .. 300 loop
+         pragma Assert
+           (SMB.Crypto.SHA512 (Pattern (Length)) =
+              S.SHA512 (Pattern (Length)),
+            "SHA512 against the specification");
+         Calls := Calls + 1;
+      end loop;
+      for Length in 0 .. 260 loop
+         declare
+            Message : constant SMB.Bytes := Pattern (Length);
+         begin
+            for Split in Message'First .. Message'Last + 1 loop
+               declare
+                  Context : SMB.Crypto.SHA512_Context;
+                  Digest : SMB.Crypto.Digest_512;
+               begin
+                  SMB.Crypto.SHA512_Start (Context);
+                  SMB.Crypto.SHA512_Update
+                    (Context, Message (Message'First .. Split - 1));
+                  SMB.Crypto.SHA512_Update
+                    (Context, Message (Split .. Message'Last));
+                  SMB.Crypto.SHA512_Finish (Context, Digest);
+                  pragma Assert
+                    (Digest = S.SHA512 (Message),
+                     "SHA512 in two pieces against the specification");
+                  Calls := Calls + 1;
+               end;
+            end loop;
+         end;
+      end loop;
+      for Length in 0 .. 300 loop
+         declare
+            Value : SMB.Core_Preauth.Hash_Value :=
+              (for Index in SMB.Core_Preauth.Hash_Value'Range =>
+                 SMB.Byte ((Index * 3 + Length) mod 256));
+            Previous : constant SMB.Core_Preauth.Hash_Value := Value;
+         begin
+            SMB.Core_Preauth.Update (Value, Pattern (Length));
+            pragma Assert
+              (Value = S.SHA512 (Previous & Pattern (Length)),
+               "Core_Preauth.Update against the specification");
+            Calls := Calls + 1;
+         end;
+      end loop;
+      Ada.Text_IO.Put_Line
+        ("SHA-512 against SMB.Spec.SHA2:" & Natural'Image (Calls)
+         & " calls passed");
+   end Test_SHA512_Specification;
+
    procedure Test_Text_And_Wire is
       UTF8 : constant String :=
         Character'Val (16#E6#) & Character'Val (16#97#)
@@ -12165,6 +12227,7 @@ begin
    Test_UTF8_To_UTF16_Specification;
    Test_UTF16_To_UTF8_Specification;
    Test_SHA256_Specification;
+   Test_SHA512_Specification;
    Test_Wire_Facade;
    Ada.Text_IO.Put_Line ("AdaSMB unit tests passed");
 end Test_Suite;

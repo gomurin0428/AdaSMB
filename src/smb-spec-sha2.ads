@@ -1,7 +1,8 @@
 with Interfaces;
 
 --  The Secure Hash Standard (FIPS PUB 180-4, August 2015): SHA-256, which
---  SMB 2.x signing (HMAC-SHA256) and the SMB 3.1.1 key derivation use.
+--  SMB 2.x signing (HMAC-SHA256) and the SMB 3.1.1 key derivation use, and
+--  SHA-512, which the SMB 3.1.1 preauth integrity hash uses.
 --  Section numbers are the standard's. Every message here is a whole number
 --  of bytes, and a word's bytes are big-endian (section 3.1: "the most
 --  significant bit is stored in the left-most bit position"), so the
@@ -319,5 +320,295 @@ is
    function Finish_256 (S : State_256; Length : Natural) return Digest_256 is
      (Digest_Of_256
         (Compress_256 (Before_Length_256 (S), Length_Block_256 (S, Length))))
+   with Pre => Length <= Maximum_Length;
+   --  SHA-512, for the SMB 3.1.1 preauth integrity hash: the same steps on
+   --  64-bit words, 128-byte blocks and 80 rounds.
+
+   --  2.1: a word of w = 64 bits.
+   subtype Word_64 is Interfaces.Unsigned_64;
+
+   --  2.2.2 and 3.2, for w = 64.
+   function SHR (X : Word_64; N : Natural) return Word_64 is
+     (Interfaces.Shift_Right (X, N))
+   with Pre => N < 64;
+
+   function ROTR (X : Word_64; N : Natural) return Word_64 is
+     (Interfaces.Shift_Right (X, N) or Interfaces.Shift_Left (X, 64 - N))
+   with Pre => N < 64;
+
+   --  4.1.3: the SHA-512 functions.
+   function Ch (X, Y, Z : Word_64) return Word_64 is
+     ((X and Y) xor ((not X) and Z));
+
+   function Maj (X, Y, Z : Word_64) return Word_64 is
+     ((X and Y) xor (X and Z) xor (Y and Z));
+
+   function Big_Sigma_0 (X : Word_64) return Word_64 is
+     (ROTR (X, 28) xor ROTR (X, 34) xor ROTR (X, 39));
+
+   function Big_Sigma_1 (X : Word_64) return Word_64 is
+     (ROTR (X, 14) xor ROTR (X, 18) xor ROTR (X, 41));
+
+   function Small_Sigma_0 (X : Word_64) return Word_64 is
+     (ROTR (X, 1) xor ROTR (X, 8) xor SHR (X, 7));
+
+   function Small_Sigma_1 (X : Word_64) return Word_64 is
+     (ROTR (X, 19) xor ROTR (X, 61) xor SHR (X, 6));
+
+   type Words_64 is array (Natural range <>) of Word_64;
+
+   --  4.2.3: the eighty SHA-512 constants K{512}_0 .. K{512}_79.
+   K_512 : constant Words_64 (0 .. 79) :=
+     (16#428A2F98D728AE22#, 16#7137449123EF65CD#, 16#B5C0FBCFEC4D3B2F#,
+      16#E9B5DBA58189DBBC#, 16#3956C25BF348B538#, 16#59F111F1B605D019#,
+      16#923F82A4AF194F9B#, 16#AB1C5ED5DA6D8118#, 16#D807AA98A3030242#,
+      16#12835B0145706FBE#, 16#243185BE4EE4B28C#, 16#550C7DC3D5FFB4E2#,
+      16#72BE5D74F27B896F#, 16#80DEB1FE3B1696B1#, 16#9BDC06A725C71235#,
+      16#C19BF174CF692694#, 16#E49B69C19EF14AD2#, 16#EFBE4786384F25E3#,
+      16#0FC19DC68B8CD5B5#, 16#240CA1CC77AC9C65#, 16#2DE92C6F592B0275#,
+      16#4A7484AA6EA6E483#, 16#5CB0A9DCBD41FBD4#, 16#76F988DA831153B5#,
+      16#983E5152EE66DFAB#, 16#A831C66D2DB43210#, 16#B00327C898FB213F#,
+      16#BF597FC7BEEF0EE4#, 16#C6E00BF33DA88FC2#, 16#D5A79147930AA725#,
+      16#06CA6351E003826F#, 16#142929670A0E6E70#, 16#27B70A8546D22FFC#,
+      16#2E1B21385C26C926#, 16#4D2C6DFC5AC42AED#, 16#53380D139D95B3DF#,
+      16#650A73548BAF63DE#, 16#766A0ABB3C77B2A8#, 16#81C2C92E47EDAEE6#,
+      16#92722C851482353B#, 16#A2BFE8A14CF10364#, 16#A81A664BBC423001#,
+      16#C24B8B70D0F89791#, 16#C76C51A30654BE30#, 16#D192E819D6EF5218#,
+      16#D69906245565A910#, 16#F40E35855771202A#, 16#106AA07032BBD1B8#,
+      16#19A4C116B8D2D0C8#, 16#1E376C085141AB53#, 16#2748774CDF8EEB99#,
+      16#34B0BCB5E19B48A8#, 16#391C0CB3C5C95A63#, 16#4ED8AA4AE3418ACB#,
+      16#5B9CCA4F7763E373#, 16#682E6FF3D6B2B8A3#, 16#748F82EE5DEFB2FC#,
+      16#78A5636F43172F60#, 16#84C87814A1F0AB72#, 16#8CC702081A6439EC#,
+      16#90BEFFFA23631E28#, 16#A4506CEBDE82BDE9#, 16#BEF9A3F7B2C67915#,
+      16#C67178F2E372532B#, 16#CA273ECEEA26619C#, 16#D186B8C721C0C207#,
+      16#EADA7DD6CDE0EB1E#, 16#F57D4F7FEE6ED178#, 16#06F067AA72176FBA#,
+      16#0A637DC5A2C898A6#, 16#113F9804BEF90DAE#, 16#1B710B35131C471B#,
+      16#28DB77F523047D84#, 16#32CAAB7B40C72493#, 16#3C9EBE0A15C9BEBC#,
+      16#431D67C49C100D4C#, 16#4CC5D4BECB3E42B6#, 16#597F299CFC657E2A#,
+      16#5FCB6FAB3AD6FAEC#, 16#6C44198C4A475817#);
+
+   subtype Hash_Value_512 is Words_64 (0 .. 7);
+
+   --  5.3.5: the initial hash value H(0).
+   H0_512 : constant Hash_Value_512 :=
+     (16#6A09E667F3BCC908#, 16#BB67AE8584CAA73B#, 16#3C6EF372FE94F82B#,
+      16#A54FF53A5F1D36F1#, 16#510E527FADE682D1#, 16#9B05688C2B3E6C1F#,
+      16#1F83D9ABFB41BD6B#, 16#5BE0CD19137E2179#);
+
+   --  5.1.2: l = 8 * Length bits, the bit 1, k zero bits, "where k is the
+   --  smallest non-negative solution to the equation l + 1 + k = 896 mod
+   --  1024", and l as a 128-bit block. In bytes, after 16#80#:
+   function Zero_Bytes_512 (Length : Natural) return Natural is
+     ((111 - Length) mod 128)
+   with Pre => Length <= Maximum_Length;
+
+   --  The padded message's length in bytes, a multiple of 128.
+   function Padded_Length_512 (Length : Natural) return Natural is
+     (Length + 1 + Zero_Bytes_512 (Length) + 16)
+   with Pre => Length <= Maximum_Length;
+
+   --  Byte Index (0 for the most significant) of l as a 128-bit block,
+   --  whose first eight bytes are zero for every message here.
+   function Length_Byte_128 (Length : Natural; Index : Natural) return SMB.Byte
+   is
+     (if Index < 8 then 0 else Length_Byte (Length, Index - 8))
+   with Pre => Length <= Maximum_Length and then Index < 16;
+
+   --  Byte Index of the padded message.
+   function Padded_Byte_512
+     (Message : SMB.Bytes; Index : Natural) return SMB.Byte
+   is
+     (if Index < Message'Length then Message (Message'First + Index)
+      elsif Index = Message'Length then 16#80#
+      elsif Index < Message'Length + 1 + Zero_Bytes_512 (Message'Length)
+      then 0
+      else
+        Length_Byte_128
+          (Message'Length,
+           Index - (Message'Length + 1 + Zero_Bytes_512 (Message'Length))))
+   with Pre =>
+     Message'Length <= Maximum_Length
+     and then Index < Padded_Length_512 (Message'Length);
+
+   subtype Block_512 is SMB.Bytes (0 .. 127);
+
+   --  5.2.2: block M(N + 1) of the padded message, as its 128 bytes.
+   function Padded_Block_512
+     (Message : SMB.Bytes; N : Natural) return Block_512
+   is
+     (for Index in Block_512'Range =>
+        Padded_Byte_512 (Message, 128 * N + Index))
+   with Pre =>
+     Message'Length <= Maximum_Length
+     and then N < Padded_Length_512 (Message'Length) / 128;
+
+   --  5.2.2: word M(i)_J of a block, from its bytes 8J .. 8J + 7.
+   function Block_Word_64 (Block : Block_512; J : Natural) return Word_64 is
+     (Word_64 (Block (8 * J)) * 2 ** 56
+      + Word_64 (Block (8 * J + 1)) * 2 ** 48
+      + Word_64 (Block (8 * J + 2)) * 2 ** 40
+      + Word_64 (Block (8 * J + 3)) * 2 ** 32
+      + Word_64 (Block (8 * J + 4)) * 2 ** 24
+      + Word_64 (Block (8 * J + 5)) * 2 ** 16
+      + Word_64 (Block (8 * J + 6)) * 2 ** 8
+      + Word_64 (Block (8 * J + 7)))
+   with Pre => J < 16;
+
+   --  6.4.2 step 1, the message schedule W_0 .. W_79:
+   --    W_t = M(i)_t                                            0 <= t <= 15
+   --    W_t = s1 (W_t-2) + W_t-7 + s0 (W_t-15) + W_t-16        16 <= t <= 79
+   subtype Schedule_512 is Words_64 (0 .. 79);
+
+   function Schedule_Prefix_512
+     (Block : Block_512; T : Natural) return Schedule_512
+   is
+     (if T = 16
+      then (for J in Schedule_512'Range =>
+              (if J < 16 then Block_Word_64 (Block, J) else 0))
+      else
+        (declare
+            W : constant Schedule_512 := Schedule_Prefix_512 (Block, T - 1);
+         begin
+            (W with delta T - 1 =>
+               Small_Sigma_1 (W (T - 3)) + W (T - 8)
+               + Small_Sigma_0 (W (T - 16)) + W (T - 17))))
+   with Pre => T in 16 .. 80,
+     Subprogram_Variant => (Decreases => T);
+
+   function Message_Schedule_512 (Block : Block_512) return Schedule_512 is
+     (Schedule_Prefix_512 (Block, 80));
+
+   type Working_64 is record
+      A, B, C, D, E, F, G, H : Word_64;
+   end record;
+
+   --  6.4.2 step 3, for one t, as 6.2.2's.
+   function Round_512 (V : Working_64; K, W : Word_64) return Working_64 is
+     (declare
+         T1 : constant Word_64 :=
+           V.H + Big_Sigma_1 (V.E) + Ch (V.E, V.F, V.G) + K + W;
+         T2 : constant Word_64 := Big_Sigma_0 (V.A) + Maj (V.A, V.B, V.C);
+      begin
+         (A => T1 + T2, B => V.A, C => V.B, D => V.C,
+          E => V.D + T1, F => V.E, G => V.F, H => V.G));
+
+   function Rounds_512
+     (H : Hash_Value_512; W : Schedule_512; T : Natural) return Working_64
+   is
+     (if T = 0
+      then (A => H (0), B => H (1), C => H (2), D => H (3),
+            E => H (4), F => H (5), G => H (6), H => H (7))
+      else Round_512 (Rounds_512 (H, W, T - 1), K_512 (T - 1), W (T - 1)))
+   with Pre => T <= 80,
+     Subprogram_Variant => (Decreases => T);
+
+   --  6.4.2, the steps for one block.
+   function Compress_512
+     (H : Hash_Value_512; Block : Block_512) return Hash_Value_512
+   is
+     (declare
+         V : constant Working_64 :=
+           Rounds_512 (H, Message_Schedule_512 (Block), 80);
+      begin
+         (V.A + H (0), V.B + H (1), V.C + H (2), V.D + H (3),
+          V.E + H (4), V.F + H (5), V.G + H (6), V.H + H (7)));
+
+   --  6.4.2: H(N) after the first N blocks of the padded message.
+   function Hash_Blocks_512
+     (Message : SMB.Bytes; N : Natural) return Hash_Value_512
+   is
+     (if N = 0 then H0_512
+      else Compress_512
+             (Hash_Blocks_512 (Message, N - 1),
+              Padded_Block_512 (Message, N - 1)))
+   with Pre =>
+     Message'Length <= Maximum_Length
+     and then N <= Padded_Length_512 (Message'Length) / 128,
+     Subprogram_Variant => (Decreases => N);
+
+   --  Byte Index (0 for the most significant) of a 64-bit word.
+   function Word_Byte (X : Word_64; Index : Natural) return SMB.Byte is
+     (SMB.Byte ((X / 2 ** (8 * (7 - Index))) mod 256))
+   with Pre => Index < 8;
+
+   subtype Digest_512 is SMB.Bytes (0 .. 63);
+
+   --  6.4.2: the message digest H(N)_0 || H(N)_1 || ... || H(N)_7.
+   function Digest_Of_512 (H : Hash_Value_512) return Digest_512 is
+     (for Index in Digest_512'Range => Word_Byte (H (Index / 8), Index mod 8));
+
+   function SHA512 (Message : SMB.Bytes) return Digest_512 is
+     (Digest_Of_512
+        (Hash_Blocks_512
+           (Message, Padded_Length_512 (Message'Length) / 128)))
+   with Pre => Message'Length <= Maximum_Length;
+
+   --  SHA-512's message hashed as it arrives, as SHA-256's.
+
+   subtype Block_Position_512 is Natural range 0 .. 127;
+
+   type State_512 is record
+      H : Hash_Value_512;
+      Block : Block_512;
+      Used : Block_Position_512;
+   end record;
+
+   Start_512 : constant State_512 :=
+     (H => H0_512, Block => (others => 0), Used => 0);
+
+   function Put_512
+     (Block : Block_512; Position : Block_Position_512; Byte : SMB.Byte)
+      return Block_512
+   is
+     ((Block with delta Position => Byte));
+
+   function Absorb_Byte_512 (S : State_512; Byte : SMB.Byte) return State_512
+   is
+     (if S.Used = 127
+      then (H => Compress_512 (S.H, Put_512 (S.Block, S.Used, Byte)),
+            Block => Put_512 (S.Block, S.Used, Byte),
+            Used => 0)
+      else (H => S.H,
+            Block => Put_512 (S.Block, S.Used, Byte),
+            Used => S.Used + 1));
+
+   function Absorb_Prefix_512
+     (S : State_512; Message : SMB.Bytes; N : Natural) return State_512
+   is
+     (if N = 0 then S
+      else Absorb_Byte_512
+             (Absorb_Prefix_512 (S, Message, N - 1),
+              Message (Message'First + (N - 1))))
+   with Pre => N <= Message'Length,
+     Subprogram_Variant => (Decreases => N);
+
+   function Absorb_512 (S : State_512; Message : SMB.Bytes) return State_512
+   is
+     (Absorb_Prefix_512 (S, Message, Message'Length));
+
+   --  5.1.2's padding after Length bytes: 16#80#, zeros, and the length in
+   --  the last sixteen bytes, in a second block when fewer than seventeen
+   --  are left.
+   function Pad_Block_512 (S : State_512) return Block_512 is
+     (for J in Block_512'Range =>
+        (if J < S.Used then S.Block (J)
+         elsif J = S.Used then 16#80#
+         else 0));
+
+   function Length_Block_512
+     (S : State_512; Length : Natural) return Block_512
+   is
+     (for J in Block_512'Range =>
+        (if J >= 112 then Length_Byte_128 (Length, J - 112)
+         elsif S.Used < 112 then Pad_Block_512 (S) (J)
+         else 0))
+   with Pre => Length <= Maximum_Length;
+
+   function Before_Length_512 (S : State_512) return Hash_Value_512 is
+     (if S.Used < 112 then S.H else Compress_512 (S.H, Pad_Block_512 (S)));
+
+   function Finish_512 (S : State_512; Length : Natural) return Digest_512 is
+     (Digest_Of_512
+        (Compress_512 (Before_Length_512 (S), Length_Block_512 (S, Length))))
    with Pre => Length <= Maximum_Length;
 end SMB.Spec.SHA2;

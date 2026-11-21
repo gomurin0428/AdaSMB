@@ -89,6 +89,7 @@ of date.
 | after 0.4.0 | Platinum phase 5, SHA-256: `SMB.Spec.SHA2` (FIPS 180-4) and `Crypto`'s compression function against it | merged (#168) |
 | after 0.4.0 | Platinum phase 4, `Core_Text.Validate_UTF16` against `SMB.Spec.Unicode` | merged (#164) |
 | after 0.4.0 | Platinum phase 5, SHA-256 whole: a model of a message hashed in pieces, `SHA256`'s context and digest against the specification | #169 |
+| after 0.4.0 | Platinum phase 5, SHA-512 and the preauth integrity hash (`Core_Preauth.Update`) against the specification | #170 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -447,7 +448,7 @@ opens a received one. It is a stateless SPARK unit, like
   it, `Validate_UTF16` against the specification (it is complete against
   `Core_Text`'s own `Valid_UTF16_Text`). Phase 5 (hashes and HMAC)
   started with SHA-256's compression function (#168) and its context and
-  digest (#169).
+  digest (#169), then SHA-512 and the preauth hash (#170).
   After Platinum, the maintainer wants the remaining SMB features in this
   order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
@@ -468,6 +469,52 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 5, SHA-512 and the preauth hash (#170)
+
+* `SMB.Spec.SHA2` adds SHA-512 as it has SHA-256: the functions on
+  64-bit words (4.1.3), the constants (4.2.3, 5.3.5; computed again from
+  the primes' cube and square roots), the padding with its 128-bit
+  length (5.1.2), the blocks (5.2.2), the hash computation (6.4.2:
+  `Schedule_Prefix_512`, `Rounds_512`, `Compress_512`), the digest
+  (`SHA512`) and the model of a message hashed in pieces (`State_512`,
+  `Absorb_512`, `Finish_512`). `SMB.Spec.SHA2.Lemmas` repeats #169's
+  lemmas for it (`_512`), the join included.
+* `Crypto`: `SHA512_Compress` against `Compress_512` with #168's ghost
+  steps (its words are loaded by a loop over eight bytes, which GNATprove
+  unrolls); the context's public contract adds `SHA512_State`, a ghost
+  function giving the model, and states `SHA512_Start`, `SHA512_Update`
+  and `SHA512_Finish` in it; `SHA512` is the specification's digest.
+  These declarations moved below the spec's pragma that ignores
+  postconditions at run time.
+* `Core_Preauth.Update`: `Value = SMB.Spec.SHA2.SHA512 (Value'Old &
+  Message)`, MS-SMB2 3.2.5.2's step, proved from the context's contract,
+  the join and `Lemma_Finish_512`, and not run.
+* `spec_test` (+11 checks, 149): FIPS's "abc" and 896-bit messages,
+  the empty message and the padding's boundaries (111, 112, 113, 127 and
+  128 zero bytes, digests from hashlib), the padded length, GNAT.SHA512
+  on every length up to 300 bytes and on 16,384 and 70,000 bytes, and
+  the model on every split of every message up to 260 bytes.
+* `test_suite` (34,793 calls): `Crypto.SHA512` on every length up to 300
+  bytes; the context fed in two pieces at every split of every message
+  up to 260 bytes; `Core_Preauth.Update` on 301 messages after 64 bytes
+  of previous value.
+* The proof follows SHA-256's, with two more steps where SHA-512's goals
+  grew: the digest's congruence is a lemma of its own
+  (`Lemma_Digest_Equal_512`; `Lemma_Finish_512`'s postcondition took
+  439k steps without it, and the lemma unit's slowest goal is now an
+  assertion of 26k), and `SHA512_Compress` ends with
+  `Lemma_Final_512` after asserting the rounds' result and each sum (the
+  postcondition took 158k steps; adding in the standard's order instead
+  made it 214k). The slowest goal in `Crypto` is now a round's assertion,
+  87k steps. The callers of `Core_Preauth.Update` prove with its new
+  postcondition (`Core_Connection` in 8 minutes, `Core_Client` in 36,
+  their slowest goals 73k and 144k steps).
+* Lesson: prove from an empty `build/proof-obj` before trusting a result.
+  `--limit-subp` over an earlier session reported three assertions as
+  unproved that a run from scratch proved.
+* Next: MD5 and MD4, then HMAC (RFC 2104) over the models, then `KDF`
+  and HMAC-SHA256 signing.
 
 ## Platinum phase 5, SHA-256's context and digest (#169)
 

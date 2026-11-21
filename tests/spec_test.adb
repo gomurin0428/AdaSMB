@@ -12,6 +12,7 @@ with Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
 with Ada.Streams;
 with Ada.Text_IO;
 with GNAT.SHA256;
+with GNAT.SHA512;
 with Interfaces;
 with SMB;
 with SMB.Spec.Encoding;
@@ -2109,6 +2110,153 @@ procedure Spec_Test is
       Passed;
    end Test_SHA256;
 
+   --  FIPS 180-4: SHA-512 on NIST's example (SHA512.pdf, "Examples with
+   --  Intermediate Values"): "abc" and the 896-bit two-block message; the
+   --  empty message and the padding's boundaries (111, 112, 113, 127 and
+   --  128 zero bytes), with digests from Python's hashlib; the padded
+   --  length on its own; GNAT.SHA512, an implementation independent of
+   --  ours, on every length up to 300 bytes and on 16,384 and 70,000
+   --  bytes; and the model of a message hashed in pieces on every split.
+   procedure Test_SHA512 is
+      package S renames SMB.Spec.SHA2;
+      use type SMB.Bytes;
+      use type S.State_512;
+
+      function Text (Value : String) return SMB.Bytes is
+         Result : SMB.Bytes (0 .. Value'Length - 1);
+      begin
+         for Index in Result'Range loop
+            Result (Index) := Character'Pos (Value (Value'First + Index));
+         end loop;
+         return Result;
+      end Text;
+
+      function Zeros (Length : Natural) return SMB.Bytes
+      is (SMB.Bytes'(0 .. Length - 1 => 0));
+
+      Lengths : constant array (Natural range <>) of Natural :=
+        [for Index in 0 .. 302 =>
+           (if Index <= 300 then Index
+            elsif Index = 301 then 16_384
+            else 70_000)];
+   begin
+      pragma Assert
+        (S.SHA512 (Text ("abc")) =
+           Hex ("DDAF35A193617ABACC417349AE204131"
+                & "12E6FA4E89A97EA20A9EEEE64B55D39A"
+                & "2192992A274FC1A836BA3C23A3FEEBBD"
+                & "454D4423643CE80E2A9AC94FA54CA49F"));
+      Passed;
+      pragma Assert
+        (S.Padded_Length_512 (112) = 256
+         and then S.SHA512
+           (Text ("abcdefghbcdefghicdefghijdefghijkefghijklfghijklm"
+                  & "ghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrs"
+                  & "mnopqrstnopqrstu"))
+           = Hex ("8E959B75DAE313DA8CF4F72814FC143F"
+                  & "8F7779C6EB9F7FA17299AEADB6889018"
+                  & "501D289E4900F7E4331B99DEC4B5433A"
+                  & "C7D329EEB6DD26545E96E55B874BE909"));
+      Passed;
+      pragma Assert
+        (S.SHA512 (Zeros (0)) =
+           Hex ("CF83E1357EEFB8BDF1542850D66D8007"
+                & "D620E4050B5715DC83F4A921D36CE9CE"
+                & "47D0D13C5D85F2B0FF8318D2877EEC2F"
+                & "63B931BD47417A81A538327AF927DA3E"));
+      Passed;
+      pragma Assert
+        (S.SHA512 (Zeros (111)) =
+           Hex ("77DDD3A542E530FD047B8977C657BA6C"
+                & "E72F1492E360B2B2212CD264E75EC038"
+                & "82E4FF0525517AB4207D14C70C2259BA"
+                & "88D4D335EE0E7E20543D22102AB1788C"));
+      Passed;
+      pragma Assert
+        (S.SHA512 (Zeros (112)) =
+           Hex ("2BE2E788C8A8ADEAA9C89A7F78904CAC"
+                & "EA6E39297D75E0573A73C756234534D6"
+                & "627AB4156B48A6657B29AB8BEB733340"
+                & "40AD39EAD81446BB09C70704EC707952"));
+      Passed;
+      pragma Assert
+        (S.SHA512 (Zeros (113)) =
+           Hex ("0E67910BCF0F9CCDE5464C63B9C850A1"
+                & "2A759227D16B040D98986D54253F9F34"
+                & "322318E56B8FEB86C5FB2270ED87F312"
+                & "52F7F68493EE759743909BD75E4BB544"));
+      Passed;
+      pragma Assert
+        (S.SHA512 (Zeros (127)) =
+           Hex ("876FEE26A8DC66D652341B4951D4A96F"
+                & "4F2652803231ED5EC625BBE0D5C49EA7"
+                & "0941F5299D775A1ACE2291FC33B26016"
+                & "F73C81ACDE83B3C495BE55B6916890A1"));
+      Passed;
+      pragma Assert
+        (S.SHA512 (Zeros (128)) =
+           Hex ("AB942F526272E456ED68A979F5020290"
+                & "5CA903A141ED98443567B11EF0BF25A5"
+                & "52D639051A01BE58558122C58E3DE07D"
+                & "749EE59DED36ACF0C55CD91924D6BA11"));
+      Passed;
+      --  The padding: the smallest multiple of 128 bytes that holds the
+      --  message, the byte 16#80# and the 16-byte length.
+      for Length in 0 .. 1_000 loop
+         pragma Assert
+           (S.Padded_Length_512 (Length) mod 128 = 0
+            and then S.Padded_Length_512 (Length) >= Length + 17
+            and then S.Padded_Length_512 (Length) - 128 < Length + 17);
+      end loop;
+      Passed;
+      --  16,384 bytes set the length field's byte 13 (counting from the
+      --  most significant, 0), the highest any input of the core sets.
+      for Length of Lengths loop
+         declare
+            Message : constant SMB.Bytes (0 .. Length - 1) :=
+              (for Index in 0 .. Length - 1 =>
+                 SMB.Byte ((Index * 7 + Length * 13) mod 256));
+            Stream : constant Ada.Streams.Stream_Element_Array :=
+              (for Index in 1 .. Ada.Streams.Stream_Element_Offset (Length) =>
+                 Ada.Streams.Stream_Element
+                   (Message (Natural (Index) - 1)));
+            Reference : constant GNAT.SHA512.Binary_Message_Digest :=
+              GNAT.SHA512.Digest (Stream);
+            Expected : constant SMB.Bytes (0 .. 63) :=
+              (for Index in 0 .. 63 =>
+                 SMB.Byte (Reference (Ada.Streams.Stream_Element_Offset
+                   (Index + 1))));
+         begin
+            pragma Assert (S.SHA512 (Message) = Expected);
+         end;
+      end loop;
+      Passed;
+      for Length in 0 .. 260 loop
+         declare
+            Message : constant SMB.Bytes (10 .. 9 + Length) :=
+              (for Index in 10 .. 9 + Length =>
+                 SMB.Byte ((Index * 11 + 3) mod 256));
+         begin
+            for Split in 10 .. 10 + Length loop
+               pragma Assert
+                 (S.Finish_512
+                    (S.Absorb_512
+                       (S.Absorb_512
+                          (S.Start_512, Message (Message'First .. Split - 1)),
+                        Message (Split .. Message'Last)),
+                     Length) = S.SHA512 (Message));
+               pragma Assert
+                 (S.Absorb_512
+                    (S.Absorb_512
+                       (S.Start_512, Message (Message'First .. Split - 1)),
+                     Message (Split .. Message'Last)) =
+                  S.Absorb_512 (S.Start_512, Message));
+            end loop;
+         end;
+      end loop;
+      Passed;
+   end Test_SHA512;
+
 begin
    Test_Encoding;
    Test_SMB2_Header;
@@ -2120,6 +2268,7 @@ begin
    Test_SMB2_Transform;
    Test_Unicode;
    Test_SHA256;
+   Test_SHA512;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;
