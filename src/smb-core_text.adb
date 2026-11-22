@@ -224,6 +224,40 @@ package body SMB.Core_Text is
    --  functions for the proof, and do nothing; checking their contracts at
    --  run time would walk the whole input at every step, so they are
    --  ignored even where every contract is checked.
+   --  The first Used bytes of Output are the run's in UTF-16, and the run's
+   --  bytes from Used on are those of the run from Position: the two
+   --  invariants of UTF8_To_UTF16's loop about the run. Their bodies are
+   --  hidden from that loop, where their quantifiers slowed the proof of its
+   --  other invariants past the provers' limit on GitHub's runners; the
+   --  lemmas (Lemma_Extend, Lemma_Run_Begins, Lemma_Holds_Whole_Run) and
+   --  Store_Unit unfold them. GNAT does not allow a hidden expression
+   --  function under Ghost => Ignore, so they are compiled; only ignored
+   --  code (loop invariants, Store_Unit's postcondition, the lemmas) refers
+   --  to them, so they never run.
+   function Holds_Run
+     (Input : String; Output : SMB.Bytes; Used : Natural) return Boolean is
+     (for all K in 0 .. Used - 1 =>
+        Output (Output'First + K) = U.UTF16_Run_Byte (Input, 0, K))
+   with Ghost,
+     Pre => Input'Length <= SMB.Maximum_Frame_Size
+       and then Output'Length <= 2 * SMB.Maximum_Frame_Size
+       and then Used <= Output'Length
+       and then Used <= U.UTF16_Run_Size (Input, 0),
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
+   function Shifted_Run
+     (Input : String; Used, Position : Natural) return Boolean is
+     (for all K in 0 .. U.UTF16_Run_Size (Input, Position) - 1 =>
+        U.UTF16_Run_Byte (Input, 0, Used + K) =
+          U.UTF16_Run_Byte (Input, Position, K))
+   with Ghost,
+     Pre => Input'Length <= SMB.Maximum_Frame_Size
+       and then Position <= Input'Length
+       and then Used <= U.UTF16_Run_Size (Input, 0)
+       and then U.UTF16_Run_Size (Input, 0) - Used =
+         U.UTF16_Run_Size (Input, Position),
+     Annotate => (GNATprove, Hide_Info, "Expression_Function_Body");
+
    pragma Assertion_Policy (Ghost => Ignore);
 
    --  One step of the specification's run from Position, where a valid
@@ -364,13 +398,8 @@ package body SMB.Core_Text is
            Start + U.Valid_UTF8_Run (Input, Start)
          and then U.UTF16_Run_Size (Input, 0) =
            Before + U.UTF16_Run_Size (Input, Start)
-         and then
-           (for all K in 0 .. Before - 1 =>
-              Output (Output'First + K) = U.UTF16_Run_Byte (Input, 0, K))
-         and then
-           (for all K in 0 .. U.UTF16_Run_Size (Input, Start) - 1 =>
-              U.UTF16_Run_Byte (Input, 0, Before + K) =
-                U.UTF16_Run_Byte (Input, Start, K))
+         and then Holds_Run (Input, Output, Before)
+         and then Shifted_Run (Input, Before, Start)
          and then
            (for all J in 0 .. 2 * U.UTF16_Units (U.UTF8_Scalar (Input, Start))
                              - 1 =>
@@ -383,25 +412,20 @@ package body SMB.Core_Text is
          and then U.UTF16_Run_Size (Input, 0) =
            (Before + 2 * U.UTF16_Units (U.UTF8_Scalar (Input, Start)))
            + U.UTF16_Run_Size (Input, Start + U.UTF8_Length (Input, Start))
-         and then
-           (for all K in
-              0 .. Before + 2 * U.UTF16_Units (U.UTF8_Scalar (Input, Start))
-                   - 1 =>
-              Output (Output'First + K) = U.UTF16_Run_Byte (Input, 0, K))
-         and then
-           (for all K in
-              0 .. U.UTF16_Run_Size
-                     (Input, Start + U.UTF8_Length (Input, Start)) - 1 =>
-              U.UTF16_Run_Byte
-                (Input, 0,
-                 Before + 2 * U.UTF16_Units (U.UTF8_Scalar (Input, Start))
-                 + K) =
-                U.UTF16_Run_Byte
-                  (Input, Start + U.UTF8_Length (Input, Start), K));
+         and then Holds_Run
+           (Input, Output,
+            Before + 2 * U.UTF16_Units (U.UTF8_Scalar (Input, Start)))
+         and then Shifted_Run
+           (Input, Before + 2 * U.UTF16_Units (U.UTF8_Scalar (Input, Start)),
+            Start + U.UTF8_Length (Input, Start));
 
    procedure Lemma_Extend
      (Input : String; Start : Natural; Output : SMB.Bytes; Before : Natural)
    is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Holds_Run);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Shifted_Run);
       Scalar : constant Natural := U.UTF8_Scalar (Input, Start);
       Width : constant Natural := 2 * U.UTF16_Units (Scalar);
    begin
@@ -421,6 +445,45 @@ package body SMB.Core_Text is
         (for all K in 0 .. Before + Width - 1 =>
            Output (Output'First + K) = U.UTF16_Run_Byte (Input, 0, K));
    end Lemma_Extend;
+
+   --  At the end of UTF8_To_UTF16: Output holds the whole run.
+   procedure Lemma_Holds_Whole_Run
+     (Input : String; Output : SMB.Bytes; Used : Natural)
+     with Ghost,
+       Pre => Input'Length <= SMB.Maximum_Frame_Size
+         and then Output'Length <= 2 * SMB.Maximum_Frame_Size
+         and then Used <= Output'Length
+         and then Used = U.UTF16_Run_Size (Input, 0)
+         and then Holds_Run (Input, Output, Used),
+       Post => U.Is_UTF16_Run
+         (Input, 0, Output (Output'First .. Output'First + (Used - 1)), 0);
+
+   procedure Lemma_Holds_Whole_Run
+     (Input : String; Output : SMB.Bytes; Used : Natural)
+   is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Holds_Run);
+   begin
+      Lemma_Run_Bytes
+        (Input, 0, Output (Output'First .. Output'First + (Used - 1)), 0);
+   end Lemma_Holds_Whole_Run;
+
+   --  Before UTF8_To_UTF16's loop: nothing written, nothing read.
+   procedure Lemma_Run_Begins (Input : String; Output : SMB.Bytes)
+     with Ghost,
+       Pre => Input'Length <= SMB.Maximum_Frame_Size
+         and then Output'Length <= 2 * SMB.Maximum_Frame_Size,
+       Post => Holds_Run (Input, Output, 0)
+         and then Shifted_Run (Input, 0, 0);
+
+   procedure Lemma_Run_Begins (Input : String; Output : SMB.Bytes) is
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Holds_Run);
+      pragma Annotate
+        (GNATprove, Unhide_Info, "Expression_Function_Body", Shifted_Run);
+   begin
+      null;
+   end Lemma_Run_Begins;
 
    --  The same for UTF16_To_UTF8: Position counts 16-bit units.
    procedure Lemma_Run16_Step (Input : SMB.Bytes; Position : Natural)
@@ -712,7 +775,16 @@ package body SMB.Core_Text is
             (for all Index in Output'Range =>
                (if Index - Output'First < Used'Old then
                   Output (Index) = Output'Old (Index)))
+          --  The run's bytes before where it writes stay (for the proof).
+          and then
+            (for all Before in 0 .. Used'Old =>
+               (if Input'Length <= SMB.Maximum_Frame_Size
+                  and then Before <= U.UTF16_Run_Size (Input, 0)
+                  and then Holds_Run (Input, Output'Old, Before)
+                then Holds_Run (Input, Output, Before)))
       is
+         pragma Annotate
+           (GNATprove, Unhide_Info, "Expression_Function_Body", Holds_Run);
          Previous_Used : constant Natural := Used;
       begin
          pragma Assert (2 * (Previous_Used / 2) = Previous_Used);
@@ -740,6 +812,11 @@ package body SMB.Core_Text is
    begin
       Used := 0;
       Output := (others => 0);
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_Run_Begins (Input, Output);
+      end;
       --  The exit comes after the invariants, so that at the exit the
       --  provers know them and not the whole last iteration.
       loop
@@ -765,13 +842,8 @@ package body SMB.Core_Text is
          pragma Loop_Invariant
            (U.UTF16_Run_Size (Input, 0) =
               Used + U.UTF16_Run_Size (Input, Position));
-         pragma Loop_Invariant
-           (for all K in 0 .. Used - 1 =>
-              Output (Output'First + K) = U.UTF16_Run_Byte (Input, 0, K));
-         pragma Loop_Invariant
-           (for all K in 0 .. U.UTF16_Run_Size (Input, Position) - 1 =>
-              U.UTF16_Run_Byte (Input, 0, Used + K) =
-                U.UTF16_Run_Byte (Input, Position, K));
+         pragma Loop_Invariant (Holds_Run (Input, Output, Used));
+         pragma Loop_Invariant (Shifted_Run (Input, Used, Position));
          pragma Loop_Variant (Increases => Position);
          exit when Position >= Input'Length;
          Scalar_Start := Position;
@@ -809,6 +881,21 @@ package body SMB.Core_Text is
                  U.UTF16_Byte (Decoded_Scalar, 0)
                and then Output (Output'First + Scalar_Output_Start + 1) =
                  U.UTF16_Byte (Decoded_Scalar, 1));
+            --  The units so far are still valid, the new one too (for the
+            --  proof only: over the whole output this would cost a pass a
+            --  character).
+            declare
+               pragma Assertion_Policy (Assert => Ignore);
+            begin
+               pragma Assert
+                 (for all Index in 0 .. Scalar_Output_Start / 2 - 1 =>
+                    Valid_UTF16_Unit (Output, Index));
+               pragma Assert
+                 (Valid_UTF16_Unit (Output, Scalar_Output_Start / 2));
+               pragma Assert
+                 (for all Index in 0 .. Used / 2 - 1 =>
+                    Valid_UTF16_Unit (Output, Index));
+            end;
          else
             if Output'Length - Used < 4 then
                pragma Assert (Output'Length < 2 * Input'Length);
@@ -829,6 +916,20 @@ package body SMB.Core_Text is
                  U.UTF16_Byte (Decoded_Scalar, 2)
                and then Output (Output'First + Scalar_Output_Start + 3) =
                  U.UTF16_Byte (Decoded_Scalar, 3));
+            declare
+               pragma Assertion_Policy (Assert => Ignore);
+            begin
+               pragma Assert
+                 (for all Index in 0 .. Scalar_Output_Start / 2 - 1 =>
+                    Valid_UTF16_Unit (Output, Index));
+               pragma Assert
+                 (Valid_UTF16_Unit (Output, Scalar_Output_Start / 2)
+                  and then
+                    Valid_UTF16_Unit (Output, Scalar_Output_Start / 2 + 1));
+               pragma Assert
+                 (for all Index in 0 .. Used / 2 - 1 =>
+                    Valid_UTF16_Unit (Output, Index));
+            end;
          end if;
          pragma Assert
            (Used = Scalar_Output_Start
@@ -861,8 +962,7 @@ package body SMB.Core_Text is
          pragma Assertion_Policy (Ghost => Ignore);
       begin
          Lemma_Run_Stop (Input, Position);
-         Lemma_Run_Bytes
-           (Input, 0, Output (Output'First .. Output'First + (Used - 1)), 0);
+         Lemma_Holds_Whole_Run (Input, Output, Used);
       end;
       Status := SMB.Ok;
    end UTF8_To_UTF16;
