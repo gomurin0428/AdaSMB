@@ -11778,6 +11778,7 @@ procedure Test_Suite is
    procedure Test_SHA512_Specification is
       pragma Assertion_Policy (Assert => Check, Ghost => Check);
       package S renames SMB.Spec.SHA2;
+      use type S.State_512;
       Calls : Natural := 0;
 
       function Pattern (Length : Natural) return SMB.Bytes is
@@ -11804,8 +11805,17 @@ procedure Test_Suite is
                   SMB.Crypto.SHA512_Start (Context);
                   SMB.Crypto.SHA512_Update
                     (Context, Message (Message'First .. Split - 1));
+                  pragma Assert
+                    (SMB.Crypto.SHA512_State (Context) =
+                       S.Absorb_512
+                         (S.Start_512, Message (Message'First .. Split - 1)),
+                     "SHA512_Update's state against the model");
                   SMB.Crypto.SHA512_Update
                     (Context, Message (Split .. Message'Last));
+                  pragma Assert
+                    (SMB.Crypto.SHA512_State (Context) =
+                       S.Absorb_512 (S.Start_512, Message),
+                     "SHA512_Update's state against the model");
                   SMB.Crypto.SHA512_Finish (Context, Digest);
                   pragma Assert
                     (Digest = S.SHA512 (Message),

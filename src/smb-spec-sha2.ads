@@ -321,6 +321,7 @@ is
      (Digest_Of_256
         (Compress_256 (Before_Length_256 (S), Length_Block_256 (S, Length))))
    with Pre => Length <= Maximum_Length;
+
    --  SHA-512, for the SMB 3.1.1 preauth integrity hash: the same steps on
    --  64-bit words, 128-byte blocks and 80 rounds.
 
@@ -579,12 +580,13 @@ is
       else Absorb_Byte_512
              (Absorb_Prefix_512 (S, Message, N - 1),
               Message (Message'First + (N - 1))))
-   with Pre => N <= Message'Length,
+   with Pre => Message'Length <= Maximum_Length and then N <= Message'Length,
      Subprogram_Variant => (Decreases => N);
 
    function Absorb_512 (S : State_512; Message : SMB.Bytes) return State_512
    is
-     (Absorb_Prefix_512 (S, Message, Message'Length));
+     (Absorb_Prefix_512 (S, Message, Message'Length))
+   with Pre => Message'Length <= Maximum_Length;
 
    --  5.1.2's padding after Length bytes: 16#80#, zeros, and the length in
    --  the last sixteen bytes, in a second block when fewer than seventeen

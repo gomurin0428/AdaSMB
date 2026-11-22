@@ -486,7 +486,10 @@ opens a received one. It is a stateless SPARK unit, like
   function giving the model, and states `SHA512_Start`, `SHA512_Update`
   and `SHA512_Finish` in it; `SHA512` is the specification's digest.
   These declarations moved below the spec's pragma that ignores
-  postconditions at run time.
+  postconditions at run time, so the test build no longer runs their
+  `Ready`/`Length` postconditions either (`test_suite` still asserts
+  them), and `SHA512_Update`'s invariants (`Total` unchanged, `Active`),
+  which ran in every build, are ignored with the rest; all are proved.
 * `Core_Preauth.Update`: `Value = SMB.Spec.SHA2.SHA512 (Value'Old &
   Message)`, MS-SMB2 3.2.5.2's step, proved from the context's contract,
   the join and `Lemma_Finish_512`, and not run.

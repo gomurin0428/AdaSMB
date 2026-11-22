@@ -6,7 +6,7 @@ pragma Assertion_Policy (Ghost => Ignore);
 --  Lemmas about SMB.Spec.SHA2, for the proofs of the code that hashes:
 --  its functions give equal results on equal arguments, absorbing two
 --  pieces in turn is absorbing them joined, and finishing what absorbed a
---  message from the start gives SHA256 of the message.
+--  message from the start gives its digest (SHA256 or SHA512).
 package SMB.Spec.SHA2.Lemmas
   with Ghost, SPARK_Mode
 is
@@ -176,6 +176,7 @@ is
 
    procedure Lemma_Absorb_None_512 (S : State_512; Message : SMB.Bytes)
    with Global => null,
+     Pre => Message'Length <= Maximum_Length,
      Post => Absorb_Prefix_512 (S, Message, 0) = S;
 
    procedure Lemma_Absorb_Unfold_512

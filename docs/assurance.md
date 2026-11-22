@@ -17,7 +17,7 @@ specifications" below), proved free of run-time errors like the rest.
 | Unit | Runtime responsibility |
 | --- | --- |
 | `SMB` | Fixed-width integers, bytes, frame limit and statuses |
-| `SMB.Crypto` | MD4, MD5, SHA-256, SHA-512, HMACs and digest comparison; run-time safety, not cryptographic hardness |
+| `SMB.Crypto` | MD4, MD5, SHA-256, SHA-512, HMACs and digest comparison; SHA-256 and SHA-512 against FIPS 180-4 (`SMB.Spec.SHA2`), the others run-time safety; not cryptographic hardness |
 | `SMB.AES` | AES-128 and AES-256 encryption with a computed S-box, for SMB 3.1.1; run-time safety, not cryptographic hardness or timing |
 | `SMB.AES.CMAC` | AES-128-CMAC, one-shot and incremental, for SMB 3.1.1 signing; run-time safety, the `Ready`/`Length` contracts and a wiped context after `Finish`, not cryptographic hardness or timing |
 | `SMB.AES.CCM` | AES-CCM with a 16- or 32-byte key and SMB's 11-byte nonce and 16-byte tag, in place, for SMB 3.x encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
@@ -356,7 +356,9 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   value is `SHA512` of the previous one and the message); inside the unit
   the SHA-256 context against the model and the compression functions
   against `Compress_256` and `Compress_512`. These postconditions are
-  proved and not run; `test_suite` checks them on 604 and 34,793 calls.
+  proved and not run; `test_suite` checks the digests, the public
+  context's states and the preauth step against the specification on
+  604 and 34,793 calls.
 * **Outputs not stated:** every other digest, MAC, cipher and derived key (`Crypto`,
   `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
   `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,
