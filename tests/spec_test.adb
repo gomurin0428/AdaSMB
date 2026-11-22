@@ -12,6 +12,7 @@ with Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
 with Ada.Streams;
 with Ada.Text_IO;
 with GNAT.SHA256;
+with GNAT.MD5;
 with GNAT.SHA512;
 with Interfaces;
 with SMB;
@@ -19,6 +20,8 @@ with SMB.Spec.Encoding;
 with SMB.Spec.FSCC;
 with SMB.Spec.SMB2;
 with SMB.Spec.SMB2.Negotiation;
+with SMB.Spec.MD4;
+with SMB.Spec.MD5;
 with SMB.Spec.SHA2;
 with SMB.Spec.SMB2.Transform;
 with SMB.Spec.Unicode;
@@ -2257,6 +2260,162 @@ procedure Spec_Test is
       Passed;
    end Test_SHA512;
 
+   --  RFC 1321: MD5 on its test suite (appendix A.5); the padded length;
+   --  GNAT.MD5, an implementation independent of ours, on every length up
+   --  to 300 bytes and on 8,192 and 70,000 bytes; and the model of a
+   --  message hashed in pieces on every split of every message up to 130
+   --  bytes.
+   procedure Test_MD5 is
+      package S renames SMB.Spec.MD5;
+      use type SMB.Bytes;
+      use type S.State;
+
+      function Text (Value : String) return SMB.Bytes is
+         Result : SMB.Bytes (0 .. Value'Length - 1);
+      begin
+         for Index in Result'Range loop
+            Result (Index) := Character'Pos (Value (Value'First + Index));
+         end loop;
+         return Result;
+      end Text;
+
+      Lengths : constant array (Natural range <>) of Natural :=
+        [for Index in 0 .. 302 =>
+           (if Index <= 300 then Index
+            elsif Index = 301 then 8_192
+            else 70_000)];
+   begin
+      pragma Assert
+        (S.MD5 (Text ("")) = Hex ("D41D8CD98F00B204E9800998ECF8427E"));
+      Passed;
+      pragma Assert
+        (S.MD5 (Text ("a")) = Hex ("0CC175B9C0F1B6A831C399E269772661"));
+      Passed;
+      pragma Assert
+        (S.MD5 (Text ("abc")) = Hex ("900150983CD24FB0D6963F7D28E17F72"));
+      Passed;
+      pragma Assert
+        (S.MD5 (Text ("message digest")) =
+           Hex ("F96B697D7CB7938D525A2F31AAF161D0"));
+      Passed;
+      pragma Assert
+        (S.MD5 (Text ("abcdefghijklmnopqrstuvwxyz")) =
+           Hex ("C3FCD3D76192E4007DFB496CCA67E13B"));
+      Passed;
+      pragma Assert
+        (S.MD5
+           (Text ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                  & "0123456789")) =
+           Hex ("D174AB98D277D9F5A5611C2C9F419D9F"));
+      Passed;
+      pragma Assert
+        (S.MD5
+           (Text ("1234567890123456789012345678901234567890"
+                  & "1234567890123456789012345678901234567890")) =
+           Hex ("57EDF4A22BE3C955AC49DA2E2107B67A"));
+      Passed;
+      for Length in 0 .. 1_000 loop
+         pragma Assert
+           (S.Padded_Length (Length) mod 64 = 0
+            and then S.Padded_Length (Length) >= Length + 9
+            and then S.Padded_Length (Length) - 64 < Length + 9);
+      end loop;
+      Passed;
+      for Length of Lengths loop
+         declare
+            Message : constant SMB.Bytes (0 .. Length - 1) :=
+              (for Index in 0 .. Length - 1 =>
+                 SMB.Byte ((Index * 7 + Length * 13) mod 256));
+            Stream : constant Ada.Streams.Stream_Element_Array :=
+              (for Index in 1 .. Ada.Streams.Stream_Element_Offset (Length) =>
+                 Ada.Streams.Stream_Element
+                   (Message (Natural (Index) - 1)));
+            Reference : constant GNAT.MD5.Binary_Message_Digest :=
+              GNAT.MD5.Digest (Stream);
+            Expected : constant SMB.Bytes (0 .. 15) :=
+              (for Index in 0 .. 15 =>
+                 SMB.Byte (Reference (Ada.Streams.Stream_Element_Offset
+                   (Index + 1))));
+         begin
+            pragma Assert (S.MD5 (Message) = Expected);
+         end;
+      end loop;
+      Passed;
+      for Length in 0 .. 130 loop
+         declare
+            Message : constant SMB.Bytes (10 .. 9 + Length) :=
+              (for Index in 10 .. 9 + Length =>
+                 SMB.Byte ((Index * 11 + 3) mod 256));
+         begin
+            for Split in 10 .. 10 + Length loop
+               pragma Assert
+                 (S.Finish
+                    (S.Absorb
+                       (S.Absorb
+                          (S.Start, Message (Message'First .. Split - 1)),
+                        Message (Split .. Message'Last)),
+                     Length) = S.MD5 (Message));
+               pragma Assert
+                 (S.Absorb
+                    (S.Absorb (S.Start, Message (Message'First .. Split - 1)),
+                     Message (Split .. Message'Last)) =
+                  S.Absorb (S.Start, Message));
+            end loop;
+         end;
+      end loop;
+      Passed;
+   end Test_MD5;
+
+   --  RFC 1320: MD4 on its test suite (appendix A.5), and MS-NLMP's
+   --  NTOWFv1 example (4.2.2.1.2), MD4 of "Password" in UTF-16LE.
+   procedure Test_MD4 is
+      package S renames SMB.Spec.MD4;
+      use type SMB.Bytes;
+
+      function Text (Value : String) return SMB.Bytes is
+         Result : SMB.Bytes (0 .. Value'Length - 1);
+      begin
+         for Index in Result'Range loop
+            Result (Index) := Character'Pos (Value (Value'First + Index));
+         end loop;
+         return Result;
+      end Text;
+   begin
+      pragma Assert
+        (S.MD4 (Text ("")) = Hex ("31D6CFE0D16AE931B73C59D7E0C089C0"));
+      Passed;
+      pragma Assert
+        (S.MD4 (Text ("a")) = Hex ("BDE52CB31DE33E46245E05FBDBD6FB24"));
+      Passed;
+      pragma Assert
+        (S.MD4 (Text ("abc")) = Hex ("A448017AAF21D8525FC10AE87AA6729D"));
+      Passed;
+      pragma Assert
+        (S.MD4 (Text ("message digest")) =
+           Hex ("D9130A8164549FE818874806E1C7014B"));
+      Passed;
+      pragma Assert
+        (S.MD4 (Text ("abcdefghijklmnopqrstuvwxyz")) =
+           Hex ("D79E1C308AA5BBCDEEA8ED63DF412DA9"));
+      Passed;
+      pragma Assert
+        (S.MD4
+           (Text ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                  & "0123456789")) =
+           Hex ("043F8582F241DB351CE627E153E7F0E4"));
+      Passed;
+      pragma Assert
+        (S.MD4
+           (Text ("1234567890123456789012345678901234567890"
+                  & "1234567890123456789012345678901234567890")) =
+           Hex ("E33B4DDC9C38F2199C3E7B164FCC0536"));
+      Passed;
+      pragma Assert
+        (S.MD4 (Hex ("500061007300730077006F0072006400")) =
+           Hex ("A4F49C406510BDCAB6824EE7C30FD852"));
+      Passed;
+   end Test_MD4;
+
 begin
    Test_Encoding;
    Test_SMB2_Header;
@@ -2269,6 +2428,8 @@ begin
    Test_Unicode;
    Test_SHA256;
    Test_SHA512;
+   Test_MD5;
+   Test_MD4;
    Ada.Text_IO.Put_Line
      ("specification tests passed:" & Natural'Image (Checks) & " checks");
 end Spec_Test;

@@ -18,6 +18,8 @@ with SMB.Core_Transform;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
+with SMB.Spec.MD4;
+with SMB.Spec.MD5;
 with SMB.Spec.SHA2;
 with SMB.Spec.Unicode;
 with SMB.Core_Transport;
@@ -11844,6 +11846,39 @@ procedure Test_Suite is
          & " calls passed");
    end Test_SHA512_Specification;
 
+   --  MD5's and MD4's postconditions, proved and never run: the digests are
+   --  SMB.Spec.MD5's and SMB.Spec.MD4's, on every length up to 300 bytes
+   --  and on 8,192 and 70,000 bytes, each from an index other than 0.
+   procedure Test_MD5_MD4_Specification is
+      pragma Assertion_Policy (Assert => Check, Ghost => Check);
+      Calls : Natural := 0;
+
+      function Pattern (Length : Natural) return SMB.Bytes is
+        (SMB.Bytes'
+           (for Index in 5 .. 4 + Length =>
+              SMB.Byte ((Index * 7 + Length) mod 256)));
+
+      procedure Check (Message : SMB.Bytes) is
+      begin
+         pragma Assert
+           (SMB.Crypto.MD5 (Message) = SMB.Spec.MD5.MD5 (Message),
+            "MD5 against the specification");
+         pragma Assert
+           (SMB.Crypto.MD4 (Message) = SMB.Spec.MD4.MD4 (Message),
+            "MD4 against the specification");
+         Calls := Calls + 2;
+      end Check;
+   begin
+      for Length in 0 .. 300 loop
+         Check (Pattern (Length));
+      end loop;
+      Check (Pattern (8_192));
+      Check (Pattern (70_000));
+      Ada.Text_IO.Put_Line
+        ("MD5 and MD4 against SMB.Spec.MD5 and SMB.Spec.MD4:"
+         & Natural'Image (Calls) & " calls passed");
+   end Test_MD5_MD4_Specification;
+
    procedure Test_Text_And_Wire is
       UTF8 : constant String :=
         Character'Val (16#E6#) & Character'Val (16#97#)
@@ -12238,6 +12273,7 @@ begin
    Test_UTF16_To_UTF8_Specification;
    Test_SHA256_Specification;
    Test_SHA512_Specification;
+   Test_MD5_MD4_Specification;
    Test_Wire_Facade;
    Ada.Text_IO.Put_Line ("AdaSMB unit tests passed");
 end Test_Suite;

@@ -90,6 +90,7 @@ of date.
 | after 0.4.0 | Platinum phase 4, `Core_Text.Validate_UTF16` against `SMB.Spec.Unicode` | merged (#164) |
 | after 0.4.0 | Platinum phase 5, SHA-256 whole: a model of a message hashed in pieces, `SHA256`'s context and digest against the specification | merged (#169) |
 | after 0.4.0 | Platinum phase 5, SHA-512 and the preauth integrity hash (`Core_Preauth.Update`) against the specification | #170 |
+| after 0.4.0 | Platinum phase 5, MD5 (RFC 1321) and MD4 (RFC 1320) against their specifications | #171 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -448,7 +449,8 @@ opens a received one. It is a stateless SPARK unit, like
   it, `Validate_UTF16` against the specification (it is complete against
   `Core_Text`'s own `Valid_UTF16_Text`). Phase 5 (hashes and HMAC)
   started with SHA-256's compression function (#168) and its context and
-  digest (#169), then SHA-512 and the preauth hash (#170).
+  digest (#169), then SHA-512 and the preauth hash (#170), then MD5 and
+  MD4 (#171).
   After Platinum, the maintainer wants the remaining SMB features in this
   order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
@@ -469,6 +471,49 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 5, MD5 and MD4 (#171)
+
+* `SMB.Spec.MD5` transcribes RFC 1321: the padding and the little-endian
+  length (3.1, 3.2), the buffer (3.3, a record of four words), the
+  auxiliary functions, the T table (computed again from the sines) and
+  the 64 operations with the RFC's word and shift tables (3.4), the
+  digest (3.5), and the model of a message hashed in pieces, as SHA-256's.
+  The RFC turns the operation's names (ABCD, DABC, ...); the specification
+  turns the buffer instead, which is what the code does.
+  `SMB.Spec.MD5.Lemmas` repeats #169's lemmas; a buffer is a record of
+  words, which the provers compare as values, so only blocks need the
+  congruence lemmas.
+* `SMB.Spec.MD4` transcribes RFC 1320's three rounds (48 operations, the
+  constants 5A827999 and 6ED9EBA1); its steps 1 to 3 are RFC 1321's word
+  for word, so they are `SMB.Spec.MD5`'s.
+* `Crypto`:
+  * `MD5_Compress`, the MD5 context and `MD5` are proved as SHA-256's,
+    with case-split lemmas for the code's word indices (`(5 * I + 1) mod
+    16` and the rest, against the RFC's table), the little-endian length
+    bytes and the digest's bytes, and `Lemma_MD5_Digest` for the digest
+    (233k steps in `MD5_Finish` before it).
+  * `MD4` hashes a padded copy: `Padded`'s postcondition now gives every
+    byte as `SMB.Spec.MD5.Padded_Byte`, and `Padded_Length` equals the
+    specification's; each block is the specification's `Padded_Block`,
+    and the three rounds are the specification's operations.
+  * The code is unchanged but for the word array, now set to zero before
+    the loop that fills it (its invariant reads it); `Get_Le` and
+    `Store_Le` gained postconditions.
+* A round's step with a shift taken from a table (MD5's and MD4's
+  shifts are not constants, as SHA-2's are) took 334k steps until its
+  sum was named by a ghost constant and the rotation asserted on it; the
+  slowest goal in the MD code is now 40k.
+* `spec_test` (+18 checks, 167): RFC 1321's and RFC 1320's test suites
+  (appendix A.5 of each), MS-NLMP's NTOWFv1 example for MD4, GNAT.MD5 on
+  every length up to 300 bytes and on 8,192 and 70,000 bytes, and the MD5
+  model on every split. Python's hashlib has no MD4 (OpenSSL 3 put it in
+  its legacy provider), so MD4 rests on the RFC's vectors, MS-NLMP's and
+  the NTLM tests.
+* `test_suite` (606 calls): `Crypto.MD5` and `Crypto.MD4` against the
+  specifications on every length up to 300 bytes and on 8,192 and 70,000
+  bytes.
+* Next: HMAC (RFC 2104) over the models, then `KDF` and the signatures.
 
 ## Platinum phase 5, SHA-512 and the preauth hash (#170)
 

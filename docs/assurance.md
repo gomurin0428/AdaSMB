@@ -17,7 +17,7 @@ specifications" below), proved free of run-time errors like the rest.
 | Unit | Runtime responsibility |
 | --- | --- |
 | `SMB` | Fixed-width integers, bytes, frame limit and statuses |
-| `SMB.Crypto` | MD4, MD5, SHA-256, SHA-512, HMACs and digest comparison; SHA-256 and SHA-512 against FIPS 180-4 (`SMB.Spec.SHA2`), the others run-time safety; not cryptographic hardness |
+| `SMB.Crypto` | MD4, MD5, SHA-256, SHA-512, HMACs and digest comparison; the four hashes against RFC 1320, RFC 1321 and FIPS 180-4 (`SMB.Spec.MD4`, `SMB.Spec.MD5`, `SMB.Spec.SHA2`), the HMACs run-time safety; not cryptographic hardness |
 | `SMB.AES` | AES-128 and AES-256 encryption with a computed S-box, for SMB 3.1.1; run-time safety, not cryptographic hardness or timing |
 | `SMB.AES.CMAC` | AES-128-CMAC, one-shot and incremental, for SMB 3.1.1 signing; run-time safety, the `Ready`/`Length` contracts and a wiped context after `Finish`, not cryptographic hardness or timing |
 | `SMB.AES.CCM` | AES-CCM with a 16- or 32-byte key and SMB's 11-byte nonce and 16-byte tag, in place, for SMB 3.x encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
@@ -236,7 +236,7 @@ checked, but for the postconditions whose specifications recurse, which
 are proved and never run: the whole-input postconditions of `Core_Text`'s
 two converters (`test_suite` checks them on every short input instead),
 and those of the `Crypto` body from `SHA256_Compress` on, of `Crypto`'s
-SHA-256 and SHA-512 declarations and of `Core_Preauth.Update`, whose
+hash declarations and of `Core_Preauth.Update`, whose
 specifications recurse over a block's schedule and rounds and over the
 message (the stack check rejects recursion reachable from `SMB.Client` in
 every build).
@@ -313,6 +313,8 @@ implementation.
 | `SMB.Spec.SMB2.Transform` | MS-SMB2 2.2.41: the TRANSFORM_HEADER's fields but the Signature (`Is_Transform_Header`), the nonce's length for each cipher (`Nonce_Size`); 3.1.4.3: the header a sender builds (`Client_Transform`) | `Core_Transform.Seal` |
 | `SMB.Spec.Unicode` | The Unicode Standard 16.0, section 3.9: scalar values (D76), UTF-8 (D92, Tables 3-6 and 3-7), UTF-16 (D91, Table 3-5); a string's run of valid UTF-8 sequences and its UTF-16 (`Valid_UTF8_Run`, `UTF16_Run_Size`, `UTF16_Run_Byte`, `Is_UTF16_Run`), and the other way (`UTF16_Length`, `UTF16_Scalar`, `UTF8_Byte`, `Valid_UTF16_Run`, `UTF8_Run_Size`, `UTF8_Run_Byte`, `Is_UTF8_Run`) | `Core_Text.UTF8_To_UTF16`, `UTF16_To_UTF8`, `Validate_UTF16` |
 | `SMB.Spec.SHA2` | FIPS 180-4: SHA-256's functions and constants (2.2.2, 4.1.2, 4.2.2, 5.3.3), the padded message and its blocks (5.1.1, 5.2.1), one block's hash computation (6.2.2: `Schedule_Prefix_256`, `Rounds_256`, `Compress_256`) and the digest (`Hash_Blocks_256`, `SHA256`); SHA-512's the same way (4.1.3, 4.2.3, 5.1.2, 5.2.2, 5.3.5, 6.4.2: `Compress_512`, `SHA512`); a model of a message hashed as it arrives for each (`State_256`, `Absorb_256`, `Finish_256`; `State_512`, `Absorb_512`, `Finish_512`), with `SMB.Spec.SHA2.Lemmas` proving that finishing it gives the digest of the message and that two pieces absorbed in turn are the two joined | `Crypto.SHA256`, `Crypto.SHA512` and their contexts (`SHA512_Start`, `SHA512_Update`, `SHA512_Finish` against the model in the public contract), `Core_Preauth.Update` |
+| `SMB.Spec.MD5` | RFC 1321: the padding and length (3.1, 3.2), the buffer (3.3), the auxiliary functions, T table and 64 operations (3.4: `Operation`, `Operations`, `Compress`), the digest (3.5: `Digest_Of`, `MD5`); a model of a message hashed as it arrives (`State`, `Absorb`, `Finish`), with `SMB.Spec.MD5.Lemmas` as for SHA-256 | `Crypto.MD5` and its context (`MD5_Compress`, `MD5_Start`, `MD5_Update`, `MD5_Finish`) |
+| `SMB.Spec.MD4` | RFC 1320: steps 1 to 3 as RFC 1321's (`SMB.Spec.MD5`), its three rounds of 48 operations (3.4: `Operation`, `Operations`, `Compress`), the digest (`MD4`) | `Crypto.MD4` |
 | `SMB.Spec.FSCC` | MS-FSCC 2.4.11, 2.4.14, 2.4.42.2, 2.4.34: FileDispositionInformation, FileEndOfFileInformation, FILE_RENAME_INFORMATION_TYPE_2 and FileNetworkOpenInformation's size, with their classes | `Core_Protocol.Build_Disposition`, `Build_End_Of_File`, `Build_Rename`, `Build_Query_Information`, `Rename_Information_Length`; `Core_Query.Prepare`, `Core_Resize.Prepare` |
 
 Where each unit stands, from the survey at 0.4.0 and the phases since:
@@ -349,7 +351,10 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   header checks of `Core_Transform.Unwrap` and `Core_Negotiate`'s
   response checks (phase 7), and the failure statuses and responses of
   `Core_Query` and `Core_Resize` (phases 7 and 9).
-* **Complete against a specification, with the digest:** `Crypto.SHA256`
+* **Complete against a specification, with the digest:** `Crypto.MD4` and
+  `Crypto.MD5` (the digest is `SMB.Spec.MD4`'s and `SMB.Spec.MD5`'s; the
+  MD5 context and compression function against the model inside the
+  unit; `test_suite` checks the digests on 606 calls), `Crypto.SHA256`
   and `Crypto.SHA512` (the digest is `SMB.Spec.SHA2`'s of the message),
   the public SHA-512 context (`SHA512_Start`, `SHA512_Update`,
   `SHA512_Finish`, against the model) and `Core_Preauth.Update` (the new
@@ -359,8 +364,8 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   proved and not run; `test_suite` checks the digests, the public
   context's states and the preauth step against the specification on
   604 and 34,793 calls.
-* **Outputs not stated:** every other digest, MAC, cipher and derived key (`Crypto`,
-  `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
+* **Outputs not stated:** every MAC, cipher and derived key (`Crypto`'s
+  HMACs, `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
   `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,
   `Core_Request.Sign_Packet`) and `Core_Wire.GMAC_Nonce`,
   and `Core_Auth`'s NTLMv2 response, Type 3 message
