@@ -1,5 +1,10 @@
+with SMB.Spec.SHA2;
+
 package body SMB.Crypto is
    pragma SPARK_Mode (On);
+   package SHA2 renames SMB.Spec.SHA2;
+   use type SHA2.Words_32;
+   use type SHA2.Working_32;
    subtype U32 is Interfaces.Unsigned_32;
    subtype U64 is Interfaces.Unsigned_64;
    use type SMB.Byte;
@@ -159,9 +164,89 @@ package body SMB.Crypto is
 
    subtype Block_Bytes is SMB.Bytes (0 .. 63);
 
+   --  From here on, the postconditions state results as the specifications
+   --  compute them (SMB.Spec.SHA2), whose schedule and rounds recurse, and
+   --  the stack check rejects recursion reachable from SMB.Client in every
+   --  build. GNATprove proves them, and no build runs them;
+   --  tests/spec_test.adb runs the specifications on published vectors.
+   pragma Assertion_Policy (Post => Ignore);
+
+   --  The specification's definitions unfolded once (Compress_256's after
+   --  the loops). Proved here, each in its own context: in a loop's, among
+   --  the facts about the code, the provers do not find the unfolding. Only
+   --  ignored code calls them, and no build compiles them.
+   pragma Assertion_Policy (Ghost => Ignore);
+
+   procedure Lemma_Schedule_Start (Block : SHA2.Block_256)
+   with Ghost, Global => null,
+     Post => SHA2.Schedule_Prefix_256 (Block, 16) =
+       (for J in SHA2.Schedule_256'Range =>
+          (if J < 16 then SHA2.Block_Word (Block, J) else 0));
+
+   procedure Lemma_Schedule_Start (Block : SHA2.Block_256) is null;
+
+   procedure Lemma_Schedule_Step (Block : SHA2.Block_256; T : Natural)
+   with Ghost, Global => null,
+     Pre => T in 17 .. 64,
+     Post =>
+       (declare
+           W : constant SHA2.Schedule_256 :=
+             SHA2.Schedule_Prefix_256 (Block, T - 1);
+        begin
+           (for all J in SHA2.Schedule_256'Range =>
+              SHA2.Schedule_Prefix_256 (Block, T) (J) =
+                (if J = T - 1
+                 then SHA2.Small_Sigma_1 (W (T - 3)) + W (T - 8)
+                      + SHA2.Small_Sigma_0 (W (T - 16)) + W (T - 17)
+                 else W (J))));
+
+   procedure Lemma_Schedule_Step (Block : SHA2.Block_256; T : Natural)
+   is null;
+
+   procedure Lemma_Rounds_Start
+     (H : SHA2.Hash_Value_256; W : SHA2.Schedule_256)
+   with Ghost, Global => null,
+     Post => SHA2.Rounds_256 (H, W, 0) =
+       (H (0), H (1), H (2), H (3), H (4), H (5), H (6), H (7));
+
+   procedure Lemma_Rounds_Start
+     (H : SHA2.Hash_Value_256; W : SHA2.Schedule_256) is null;
+
+   procedure Lemma_Rounds_Step
+     (H : SHA2.Hash_Value_256; W : SHA2.Schedule_256; T : Natural)
+   with Ghost, Global => null,
+     Pre => T in 1 .. 64,
+     Post => SHA2.Rounds_256 (H, W, T) =
+       SHA2.Round_256
+         (SHA2.Rounds_256 (H, W, T - 1), SHA2.K_256 (T - 1), W (T - 1));
+
+   procedure Lemma_Rounds_Step
+     (H : SHA2.Hash_Value_256; W : SHA2.Schedule_256; T : Natural) is null;
+
+   --  6.2.2 step 4, from the working variables after the 64 rounds.
+   procedure Lemma_Compress
+     (H : SHA2.Hash_Value_256; Block : SHA2.Block_256; V : SHA2.Working_32)
+   with Ghost, Global => null,
+     Pre => V = SHA2.Rounds_256 (H, SHA2.Message_Schedule_256 (Block), 64),
+     Post => SHA2.Compress_256 (H, Block) =
+       (V.A + H (0), V.B + H (1), V.C + H (2), V.D + H (3),
+        V.E + H (4), V.F + H (5), V.G + H (6), V.H + H (7));
+
+   procedure Lemma_Compress
+     (H : SHA2.Hash_Value_256; Block : SHA2.Block_256; V : SHA2.Working_32)
+   is null;
+
+   pragma Assertion_Policy (Ghost => Check);
+
+   --  FIPS 180-4 6.2.2, for one block.
    procedure SHA256_Compress (H : in out Hash_State; Block : Block_Bytes)
-     with Global => null
+     with Global => null,
+       Post => SHA2.Hash_Value_256 (H) =
+         SHA2.Compress_256 (SHA2.Hash_Value_256 (H'Old), Block)
    is
+      --  The invariants recompute the specification's schedule and rounds,
+      --  and the assertions are steps of the proof: none of them runs.
+      pragma Assertion_Policy (Loop_Invariant => Ignore, Assert => Ignore);
       W : Word_Array (0 .. 63) := (others => 0);
    begin
       for I in 0 .. 15 loop
@@ -169,7 +254,18 @@ package body SMB.Crypto is
            or Interfaces.Shift_Left (U32 (Block (I * 4 + 1)), 16)
            or Interfaces.Shift_Left (U32 (Block (I * 4 + 2)), 8)
            or U32 (Block (I * 4 + 3));
+         pragma Loop_Invariant
+           (for all J in 0 .. I => W (J) = SHA2.Block_Word (Block, J));
+         pragma Loop_Invariant (for all J in I + 1 .. 63 => W (J) = 0);
       end loop;
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_Schedule_Start (Block);
+      end;
+      pragma Assert
+        (for all J in W'Range =>
+           W (J) = SHA2.Schedule_Prefix_256 (Block, 16) (J));
       for I in 16 .. 63 loop
          declare
             S0 : constant U32 := Ror (W (I - 15), 7)
@@ -179,9 +275,27 @@ package body SMB.Crypto is
               xor Ror (W (I - 2), 19)
               xor Interfaces.Shift_Right (W (I - 2), 10);
          begin
+            pragma Assert (S0 = SHA2.Small_Sigma_0 (W (I - 15)));
+            pragma Assert (S1 = SHA2.Small_Sigma_1 (W (I - 2)));
             W (I) := W (I - 16) + S0 + W (I - 7) + S1;
          end;
+         pragma Assert
+           (W (I) = SHA2.Small_Sigma_1 (W (I - 2)) + W (I - 7)
+              + SHA2.Small_Sigma_0 (W (I - 15)) + W (I - 16));
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Schedule_Step (Block, I + 1);
+         end;
+         pragma Loop_Invariant
+           (for all J in W'Range =>
+              W (J) = SHA2.Schedule_Prefix_256 (Block, I + 1) (J));
       end loop;
+      --  The rounds below name the schedule as the specification computes
+      --  it, which W holds.
+      pragma Assert
+        (for all J in W'Range =>
+           W (J) = SHA2.Message_Schedule_256 (Block) (J));
       declare
          A : U32 := H (0); B : U32 := H (1);
          C : U32 := H (2); D : U32 := H (3);
@@ -189,14 +303,56 @@ package body SMB.Crypto is
          G : U32 := H (6); HH : U32 := H (7);
          T1, T2 : U32;
       begin
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Rounds_Start
+              (SHA2.Hash_Value_256 (H), SHA2.Message_Schedule_256 (Block));
+         end;
          for I in 0 .. 63 loop
-            T1 := HH + (Ror (E, 6) xor Ror (E, 11) xor Ror (E, 25))
-              + ((E and F) xor ((not E) and G)) + SHA256_K (I) + W (I);
-            T2 := (Ror (A, 2) xor Ror (A, 13) xor Ror (A, 22))
-              + ((A and B) xor (A and C) xor (B and C));
-            HH := G; G := F; F := E; E := D + T1;
-            D := C; C := B; B := A; A := T1 + T2;
+            pragma Loop_Invariant
+              (SHA2.Working_32'(A, B, C, D, E, F, G, HH) =
+                 SHA2.Rounds_256
+                   (SHA2.Hash_Value_256 (H),
+                    SHA2.Message_Schedule_256 (Block), I));
+            declare
+               pragma Assertion_Policy (Ghost => Ignore);
+               Before : constant SHA2.Working_32 := (A, B, C, D, E, F, G, HH)
+               with Ghost;
+            begin
+               T1 := HH + (Ror (E, 6) xor Ror (E, 11) xor Ror (E, 25))
+                 + ((E and F) xor ((not E) and G)) + SHA256_K (I) + W (I);
+               T2 := (Ror (A, 2) xor Ror (A, 13) xor Ror (A, 22))
+                 + ((A and B) xor (A and C) xor (B and C));
+               pragma Assert (SHA256_K (I) = SHA2.K_256 (I));
+               pragma Assert
+                 (T1 = Before.H + SHA2.Big_Sigma_1 (Before.E)
+                    + SHA2.Ch (Before.E, Before.F, Before.G)
+                    + SHA2.K_256 (I) + W (I));
+               pragma Assert
+                 (T2 = SHA2.Big_Sigma_0 (Before.A)
+                    + SHA2.Maj (Before.A, Before.B, Before.C));
+               HH := G; G := F; F := E; E := D + T1;
+               D := C; C := B; B := A; A := T1 + T2;
+               pragma Assert
+                 (SHA2.Working_32'(A, B, C, D, E, F, G, HH) =
+                    SHA2.Round_256 (Before, SHA2.K_256 (I), W (I)));
+               Lemma_Rounds_Step
+                 (SHA2.Hash_Value_256 (H), SHA2.Message_Schedule_256 (Block),
+                  I + 1);
+            end;
+            pragma Assert
+              (SHA2.Working_32'(A, B, C, D, E, F, G, HH) =
+                 SHA2.Rounds_256
+                   (SHA2.Hash_Value_256 (H),
+                    SHA2.Message_Schedule_256 (Block), I + 1));
          end loop;
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Compress
+              (SHA2.Hash_Value_256 (H), Block, (A, B, C, D, E, F, G, HH));
+         end;
          H (0) := H (0) + A; H (1) := H (1) + B;
          H (2) := H (2) + C; H (3) := H (3) + D;
          H (4) := H (4) + E; H (5) := H (5) + F;

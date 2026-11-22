@@ -76,7 +76,11 @@ The maintainer approved all of these on 2026-11-18.
   agreement. (Phase 4 found an exception: a whole-input specification
   that recurses over the input cannot run on the megabyte some tests
   convert, so the two converters' postconditions are proved and never
-  run, and tests check them on every short input instead.)
+  run, and tests check them on every short input instead. Phase 5 found
+  another: the stack check rejects recursion reachable from `SMB.Client`
+  in every build, so the hashes' postconditions, whose specifications
+  recurse over a block's schedule and rounds, are proved and never run
+  either.)
 * **Ada 2022 in the build.** The proof already runs as Ada 2022, the build as
   Ada 2012. Specifications need Ada 2022 features (big integers for
   arithmetic in GF(2^128) and modular reductions, iterated aggregates),
@@ -128,7 +132,8 @@ specification tests passing.
    (#150); a specification is stated as fields read at their offsets.
 4. **Text.** Whole-string UTF-8 and UTF-16 specifications, and exact
    outputs and statuses for both conversions.
-5. **Hashes and HMAC**, with the incremental model; then `KDF`,
+5. **Hashes and HMAC**, with the incremental model (SHA-256's
+   compression function came first, #168); then `KDF`,
    `Core_Preauth` and HMAC signing follow.
 6. **AES, then CMAC, CCM, GCM and GMAC**; then SMB 3.1.1 signing and the
    transform's tag and plaintext.

@@ -78,6 +78,7 @@ PROOF_UNITS = {
     "smb-spec-smb2-negotiation.ads",
     "smb-spec-smb2-transform.ads",
     "smb-spec-unicode.ads",
+    "smb-spec-sha2.ads",
     "smb-crypto.ads",
     "smb-crypto.adb",
     "smb-aes.ads",

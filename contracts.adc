@@ -7,9 +7,10 @@
 --  code stays (Check) because some preconditions call ghost functions; it
 --  runs only where a precondition, an assertion or a ghost statement uses it.
 --  -XADASMB_CONTRACT_CHECKS=all, and the test build, check everything but
---  the few contracts the source itself marks as never run (a whole-input
---  specification that recurses over the input, as Core_Text.UTF8_To_UTF16's
---  postcondition does).
+--  the contracts the source itself marks as never run, whose specifications
+--  recurse: over the whole input, as Core_Text.UTF8_To_UTF16's postcondition
+--  does, or over a block's rounds, as the Crypto body's from SHA256_Compress
+--  on do (the stack check rejects recursion reachable from SMB.Client).
 --
 --  It applies to every source of smb.gpr, including the trusted units that
 --  GNATprove does not prove (SMB.Client, SMB.Transport, the platform units);

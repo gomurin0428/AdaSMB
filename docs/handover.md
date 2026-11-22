@@ -85,7 +85,8 @@ of date.
 | after 0.4.0 | AdaMutant 4489d69 (the latest, at the maintainer's request) | merged (#165) |
 | after 0.4.0 | `Core_Negotiate.Request` proved a part at a time: its one postcondition goal timed out on a runner | merged (#166) |
 | after 0.4.0 | Platinum phase 4, UTF-16 to UTF-8: `Core_Text.UTF16_To_UTF8` against `SMB.Spec.Unicode` | merged (#163) |
-| after 0.4.0 | Proofs with a margin on CI: four goals near the provers' limits, split up | #167 |
+| after 0.4.0 | Proofs with a margin on CI: four goals near the provers' limits, split up | merged (#167) |
+| after 0.4.0 | Platinum phase 5, SHA-256: `SMB.Spec.SHA2` (FIPS 180-4) and `Crypto`'s compression function against it | #168 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
   came in with #103. The first full run over `src/*.adb` was triaged in
@@ -438,7 +439,8 @@ opens a received one. It is a stateless SPARK unit, like
   and `Core_Resize` (#161), which ends phase 3's builders. Phase 4
   (text) did UTF-8 to UTF-16 (#162) and UTF-16 to UTF-8 (#163); left of
   it, `Validate_UTF16` against the specification (it is complete against
-  `Core_Text`'s own `Valid_UTF16_Text`), then phase 5 (hashes and HMAC).
+  `Core_Text`'s own `Valid_UTF16_Text`). Phase 5 (hashes and HMAC)
+  started with SHA-256's compression function (#168).
   After Platinum, the maintainer wants the remaining SMB features in this
   order: Kerberos, several requests in flight, several
   shares per connection, DFS, share listing (DCE/RPC), then the remaining
@@ -459,6 +461,67 @@ opens a received one. It is a stateless SPARK unit, like
 * The adversarial proxy speaks 3.1.1 signing (#142) and encryption (#144;
   below). Hostile transform headers themselves are covered by unit tests
   through the engine. The other proxy modes still run over 2.1 only.
+
+## Platinum phase 5, SHA-256's compression function (#168)
+
+* `SMB.Spec.SHA2` transcribes FIPS 180-4 for SHA-256: the functions
+  (2.2.2, 4.1.2) and constants (4.2.2, 5.3.3), the padded message as
+  bytes and its blocks (5.1.1, 5.2.1: `Padded_Length_256`,
+  `Padded_Byte_256`, `Padded_Block_256`, `Block_Word`), one block's hash
+  computation (6.2.2: `Schedule_Prefix_256`, `Rounds_256`,
+  `Compress_256`), and the digest (`Hash_Blocks_256`, `SHA256`). The
+  schedule and the rounds are recursive, each step from the one before,
+  so the specification runs in linear time.
+* `Crypto.SHA256_Compress` states its result as `Compress_256`. The code
+  is unchanged; ghost steps lead the proof through it: in each round,
+  assertions that T1 and T2 are the specification's, then the round;
+  in the schedule, each new word in the standard's order. Five lemmas, in
+  an ignored ghost region as `Core_Text`'s, unfold the specification's
+  definitions once (the schedule's and the rounds' first and next steps,
+  and `Compress_256` after the loops). The procedure proves in 15 s, its
+  slowest goal 50k steps.
+* A first version put a round and a schedule word in subprograms of
+  their own, which proved alone in a few thousand steps, but the review
+  measured SHA-256 1.5 times slower without `-O` (smb.gpr passes none):
+  every round was a call copying eight words. The ghost steps keep the
+  proof as small without the calls.
+* From `SHA256_Compress` on, a pragma ignores the `Crypto` body's
+  postconditions at run time: the specifications recurse, and the stack
+  check rejects recursion reachable from `SMB.Client` in the
+  all-contracts build too. It also ignores the `Total` postconditions of
+  `SHA256_Start`, `SHA256_Update` and the MD5 ones, run-time-safety
+  facts the proof covers, which the specification's will replace. The
+  new assertions and loop invariants are ignored the same way.
+  `contracts.adc`, `assurance.md` and the design say so.
+* `spec_test` (+21 checks, 137): NIST's "abc" example with its padded
+  block, schedule and working variables after rounds 1 and 64, and the
+  two-block 448-bit message; SHA2_Additional's SHA-256 messages #1 to #9
+  (one byte, four bytes, 55, 56, 57, 64 and 1,000 zero bytes, 1,000 "A",
+  1,005 "U"); the empty message and the 896-bit one; the padding at its
+  boundaries; and GNAT.SHA256 on every length up to 300 bytes and on
+  8,191, 8,192 and 70,000 bytes, which set the length field's higher
+  bytes.
+* Lessons:
+  * In a loop's context the provers did not unfold a recursive
+    specification function (`Rounds_256 (..., I + 1)`), though alone it
+    takes one step: a lemma per unfolding.
+  * Give a recursive specification function the same term everywhere.
+    With the schedule as the code's array (`Words_32 (W)`) in one place
+    and `Message_Schedule_256 (Block)` in another, Ada's equality of the
+    two did not let the provers put one for the other. (Ada's `=` on
+    arrays compares elements, and a function of an array is not known to
+    give the same result on another array with the same elements; for
+    those, lemmas prove it, as the next step will need.)
+  * A round's bit operations are cheap against the specification once
+    T1 and T2 are asserted first; without those steps the same goal ran
+    out of time. The schedule's invariant went from 731k steps to 4k
+    when the new word was asserted in the standard's order of addition
+    and the invariant was stated element by element.
+  * Comparing the code's table of 64 constants with the specification's
+    is cheap.
+* Next: the incremental contexts (`SHA256_Update`, `SHA256_Finish`)
+  against a model of the absorbed message, and `SHA256`'s postcondition;
+  then SHA-512, MD5 and MD4 the same way, then HMAC.
 
 ## Proofs with a margin on CI (#167)
 

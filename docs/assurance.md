@@ -232,9 +232,12 @@ assumption or check-suppression pragma is introduced. The library build checks
 the core's preconditions and the assertions in its code at run time, but not
 its postconditions, which GNATprove proves ([`contracts.adc`](../contracts.adc),
 from 0.5.0 on); the test programs compile the same sources with every contract
-checked, but for the whole-input postconditions of `Core_Text`'s two
-converters, which recurse over the input and are proved and never run
-(`test_suite` checks them on every short input instead).
+checked, but for the postconditions whose specifications recurse, which
+are proved and never run: the whole-input postconditions of `Core_Text`'s
+two converters (`test_suite` checks them on every short input instead),
+and those of the `Crypto` body from `SHA256_Compress` on, whose
+specifications recurse over a block's schedule and rounds (the stack check
+rejects recursion reachable from `SMB.Client` in every build).
 
 `Validate_Path` now binds status to the executable `Lexically_Valid_Path`
 predicate: empty input is allowed only on request; NUL, colon, leading/trailing
@@ -307,6 +310,7 @@ implementation.
 | `SMB.Spec.SMB2.Negotiation` | MS-SMB2 2.2.3, 2.2.3.1, 2.2.3.1.1, 2.2.3.1.2, 2.2.3.1.7: the NEGOTIATE request's fields and dialects (`Is_Negotiate_Request`), negotiate contexts and their alignment (`Is_Negotiate_Context`, `Context_Data`, `First_Context`, `Next_Context`), the preauth integrity, encryption and signing contexts; 3.2.4.2.2.2: this client's request (`Client_Negotiate`, `Client_Dialects`, `Is_Client_Negotiate_Request`) | `Core_Negotiate.Request` |
 | `SMB.Spec.SMB2.Transform` | MS-SMB2 2.2.41: the TRANSFORM_HEADER's fields but the Signature (`Is_Transform_Header`), the nonce's length for each cipher (`Nonce_Size`); 3.1.4.3: the header a sender builds (`Client_Transform`) | `Core_Transform.Seal` |
 | `SMB.Spec.Unicode` | The Unicode Standard 16.0, section 3.9: scalar values (D76), UTF-8 (D92, Tables 3-6 and 3-7), UTF-16 (D91, Table 3-5); a string's run of valid UTF-8 sequences and its UTF-16 (`Valid_UTF8_Run`, `UTF16_Run_Size`, `UTF16_Run_Byte`, `Is_UTF16_Run`), and the other way (`UTF16_Length`, `UTF16_Scalar`, `UTF8_Byte`, `Valid_UTF16_Run`, `UTF8_Run_Size`, `UTF8_Run_Byte`, `Is_UTF8_Run`) | `Core_Text.UTF8_To_UTF16`, `UTF16_To_UTF8` |
+| `SMB.Spec.SHA2` | FIPS 180-4: SHA-256's functions and constants (2.2.2, 4.1.2, 4.2.2, 5.3.3), the padded message and its blocks (5.1.1, 5.2.1), one block's hash computation (6.2.2: `Schedule_Prefix_256`, `Rounds_256`, `Compress_256`) and the digest (`Hash_Blocks_256`, `SHA256`) | `Crypto`'s SHA-256 compression function |
 | `SMB.Spec.FSCC` | MS-FSCC 2.4.11, 2.4.14, 2.4.42.2, 2.4.34: FileDispositionInformation, FileEndOfFileInformation, FILE_RENAME_INFORMATION_TYPE_2 and FileNetworkOpenInformation's size, with their classes | `Core_Protocol.Build_Disposition`, `Build_End_Of_File`, `Build_Rename`, `Build_Query_Information`, `Rename_Information_Length`; `Core_Query.Prepare`, `Core_Resize.Prepare` |
 
 Where each unit stands, from the survey at 0.4.0 and the phases since:
@@ -343,6 +347,10 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   header checks of `Core_Transform.Unwrap` and `Core_Negotiate`'s
   response checks (phase 7), and the failure statuses and responses of
   `Core_Query` and `Core_Resize` (phases 7 and 9).
+* **Complete against a specification, inside a unit:** `Crypto`'s SHA-256
+  compression function (`SHA256_Compress`, one block against
+  `SMB.Spec.SHA2.Compress_256`; proved and not run); the incremental
+  contexts and the digests that use it are next.
 * **Outputs not stated:** every digest, MAC, cipher and derived key (`Crypto`,
   `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
   `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,
