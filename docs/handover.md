@@ -518,6 +518,14 @@ opens a received one. It is a stateless SPARK unit, like
     byte, each a constant shift, did.
   * A recursive function's unfolding at a loop's step is a lemma call,
     as in #168.
+  * A specification without a body is proved only when the whole project
+    is, or with `-u` on its own `.ads`: proving the units that use it
+    never analyzes it. `Absorb_Prefix_256`'s precondition compared `N`
+    with `Message'Length`, which does not fit `Natural` when an array
+    spans all of `Natural` (`'First = 0`, `'Last = Natural'Last`); the
+    mutation job's whole-project proof failed on it, and the preconditions
+    now bound the length first. Prove `-u smb-spec-*.ads` for each
+    specification a pull request changes.
   * Proof-only source still compiles in every build, so it must suit
     every GNAT the crate supports (`gnat >= 14`): GNAT 14 rejects an
     expression function whose body is a bare delta aggregate, which 16

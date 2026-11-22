@@ -57,6 +57,7 @@ is
 
    procedure Lemma_Absorb_None (S : State_256; Message : SMB.Bytes)
    with Global => null,
+     Pre => Message'Length <= Maximum_Length,
      Post => Absorb_Prefix_256 (S, Message, 0) = S;
 
    procedure Lemma_Absorb_Unfold

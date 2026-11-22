@@ -284,12 +284,13 @@ is
       else Absorb_Byte_256
              (Absorb_Prefix_256 (S, Message, N - 1),
               Message (Message'First + (N - 1))))
-   with Pre => N <= Message'Length,
+   with Pre => Message'Length <= Maximum_Length and then N <= Message'Length,
      Subprogram_Variant => (Decreases => N);
 
    function Absorb_256 (S : State_256; Message : SMB.Bytes) return State_256
    is
-     (Absorb_Prefix_256 (S, Message, Message'Length));
+     (Absorb_Prefix_256 (S, Message, Message'Length))
+   with Pre => Message'Length <= Maximum_Length;
 
    --  5.1.1's padding after Length bytes, which leave the block's first
    --  Used bytes pending: 16#80#, zeros, and the length in the last eight
