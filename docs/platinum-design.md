@@ -133,7 +133,8 @@ specification tests passing.
 4. **Text.** Whole-string UTF-8 and UTF-16 specifications, and exact
    outputs and statuses for both conversions.
 5. **Hashes and HMAC**, with the incremental model (SHA-256's
-   compression function came first, #168); then `KDF`,
+   compression function came first, #168, then its model of a message
+   hashed in pieces and the digest, #169); then `KDF`,
    `Core_Preauth` and HMAC signing follow.
 6. **AES, then CMAC, CCM, GCM and GMAC**; then SMB 3.1.1 signing and the
    transform's tag and plaintext.

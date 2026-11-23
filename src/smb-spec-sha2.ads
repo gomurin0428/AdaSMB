@@ -229,14 +229,95 @@ is
 
    subtype Digest_256 is SMB.Bytes (0 .. 31);
 
-   --  6.2.2: the message digest H(N)_0 || H(N)_1 || ... || H(N)_7, for the
-   --  last block N.
+   --  6.2.2: the message digest H(N)_0 || H(N)_1 || ... || H(N)_7.
+   function Digest_Of_256 (H : Hash_Value_256) return Digest_256 is
+     (for Index in Digest_256'Range => Word_Byte (H (Index / 4), Index mod 4));
+
+   --  The digest of a message, from its last block's hash value.
    function SHA256 (Message : SMB.Bytes) return Digest_256 is
-     (declare
-         H : constant Hash_Value_256 :=
-           Hash_Blocks_256 (Message, Padded_Length_256 (Message'Length) / 64);
-      begin
-         (for Index in Digest_256'Range =>
-            Word_Byte (H (Index / 4), Index mod 4)))
+     (Digest_Of_256
+        (Hash_Blocks_256 (Message, Padded_Length_256 (Message'Length) / 64)))
    with Pre => Message'Length <= Maximum_Length;
+
+   --  A message hashed as it arrives, a byte at a time: not the standard's
+   --  words, which state the hash of a whole message, but a model of what
+   --  such a computation holds. SMB.Spec.SHA2.Lemmas proves that finishing
+   --  it gives SHA256 of the message, and that absorbing two pieces in turn
+   --  is absorbing them joined.
+
+   subtype Block_Position_256 is Natural range 0 .. 63;
+
+   --  H(i) after the whole blocks so far, and the next block's first Used
+   --  bytes (the bytes after them are whatever the last block left).
+   type State_256 is record
+      H : Hash_Value_256;
+      Block : Block_256;
+      Used : Block_Position_256;
+   end record;
+
+   Start_256 : constant State_256 :=
+     (H => H0_256, Block => (others => 0), Used => 0);
+
+   --  Block with Byte at Position.
+   function Put_256
+     (Block : Block_256; Position : Block_Position_256; Byte : SMB.Byte)
+      return Block_256
+   is
+     ((Block with delta Position => Byte));
+
+   --  The block, once complete, goes through the hash computation.
+   function Absorb_Byte_256 (S : State_256; Byte : SMB.Byte) return State_256
+   is
+     (if S.Used = 63
+      then (H => Compress_256 (S.H, Put_256 (S.Block, S.Used, Byte)),
+            Block => Put_256 (S.Block, S.Used, Byte),
+            Used => 0)
+      else (H => S.H,
+            Block => Put_256 (S.Block, S.Used, Byte),
+            Used => S.Used + 1));
+
+   --  The first N bytes of Message absorbed after S.
+   function Absorb_Prefix_256
+     (S : State_256; Message : SMB.Bytes; N : Natural) return State_256
+   is
+     (if N = 0 then S
+      else Absorb_Byte_256
+             (Absorb_Prefix_256 (S, Message, N - 1),
+              Message (Message'First + (N - 1))))
+   with Pre => Message'Length <= Maximum_Length and then N <= Message'Length,
+     Subprogram_Variant => (Decreases => N);
+
+   function Absorb_256 (S : State_256; Message : SMB.Bytes) return State_256
+   is
+     (Absorb_Prefix_256 (S, Message, Message'Length))
+   with Pre => Message'Length <= Maximum_Length;
+
+   --  5.1.1's padding after Length bytes, which leave the block's first
+   --  Used bytes pending: 16#80#, zeros, and the length in the last eight
+   --  bytes, in a second block when fewer than nine are left.
+   function Pad_Block_256 (S : State_256) return Block_256 is
+     (for J in Block_256'Range =>
+        (if J < S.Used then S.Block (J)
+         elsif J = S.Used then 16#80#
+         else 0));
+
+   --  The block with the length: the padded block itself when it has
+   --  room, else a block of zeros.
+   function Length_Block_256
+     (S : State_256; Length : Natural) return Block_256
+   is
+     (for J in Block_256'Range =>
+        (if J >= 56 then Length_Byte (Length, J - 56)
+         elsif S.Used < 56 then Pad_Block_256 (S) (J)
+         else 0))
+   with Pre => Length <= Maximum_Length;
+
+   --  The hash value before the block with the length.
+   function Before_Length_256 (S : State_256) return Hash_Value_256 is
+     (if S.Used < 56 then S.H else Compress_256 (S.H, Pad_Block_256 (S)));
+
+   function Finish_256 (S : State_256; Length : Natural) return Digest_256 is
+     (Digest_Of_256
+        (Compress_256 (Before_Length_256 (S), Length_Block_256 (S, Length))))
+   with Pre => Length <= Maximum_Length;
 end SMB.Spec.SHA2;

@@ -18,6 +18,7 @@ with SMB.Core_Transform;
 with SMB.Core_NTLM;
 with SMB.Core_Protocol;
 with SMB.Core_Text;
+with SMB.Spec.SHA2;
 with SMB.Spec.Unicode;
 with SMB.Core_Transport;
 with SMB.Core_Wire;
@@ -11739,6 +11740,38 @@ procedure Test_Suite is
          & " verdicts passed");
    end Test_UTF16_To_UTF8_Specification;
 
+   --  Crypto.SHA256's postcondition, proved and never run (its
+   --  specification recurses): the digest is SMB.Spec.SHA2's. Checked here
+   --  on every length up to 300 bytes with two contents, each from an
+   --  index other than 0, and on 8,192 and 70,000 bytes.
+   procedure Test_SHA256_Specification is
+      pragma Assertion_Policy (Assert => Check, Ghost => Check);
+      Calls : Natural := 0;
+
+      procedure Check (Message : SMB.Bytes) is
+      begin
+         pragma Assert
+           (SMB.Crypto.SHA256 (Message) = SMB.Spec.SHA2.SHA256 (Message),
+            "SHA256 against the specification");
+         Calls := Calls + 1;
+      end Check;
+
+      function Pattern (Length : Natural) return SMB.Bytes is
+        (SMB.Bytes'
+           (for Index in 5 .. 4 + Length =>
+              SMB.Byte ((Index * 7 + Length) mod 256)));
+   begin
+      for Length in 0 .. 300 loop
+         Check (Pattern (Length));
+         Check (SMB.Bytes'(3 .. 2 + Length => 16#FF#));
+      end loop;
+      Check (Pattern (8_192));
+      Check (Pattern (70_000));
+      Ada.Text_IO.Put_Line
+        ("SHA256 against SMB.Spec.SHA2:" & Natural'Image (Calls)
+         & " calls passed");
+   end Test_SHA256_Specification;
+
    procedure Test_Text_And_Wire is
       UTF8 : constant String :=
         Character'Val (16#E6#) & Character'Val (16#97#)
@@ -12131,6 +12164,7 @@ begin
    Test_Text_And_Wire;
    Test_UTF8_To_UTF16_Specification;
    Test_UTF16_To_UTF8_Specification;
+   Test_SHA256_Specification;
    Test_Wire_Facade;
    Ada.Text_IO.Put_Line ("AdaSMB unit tests passed");
 end Test_Suite;

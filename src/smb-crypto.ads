@@ -1,4 +1,5 @@
 with Interfaces;
+with SMB.Spec.SHA2;
 
 package SMB.Crypto is
    pragma SPARK_Mode (On);
@@ -14,9 +15,6 @@ package SMB.Crypto is
    with Pre => Message'Length <= Maximum_Hash_Input;
 
    function MD5 (Message : SMB.Bytes) return Digest_128
-   with Pre => Message'Length <= Maximum_Hash_Input;
-
-   function SHA256 (Message : SMB.Bytes) return Digest_256
    with Pre => Message'Length <= Maximum_Hash_Input;
 
    subtype Digest_512 is SMB.Bytes (0 .. 63);
@@ -124,8 +122,18 @@ package SMB.Crypto is
    with Pre => HMAC_MD5_Ready (Context),
      Post => not HMAC_MD5_Ready (Context);
 
-   -- Keep the potentially short-circuiting equality oracle proof-only.
+   --  The postconditions from here on are proved and never run: the
+   --  specifications the digests are stated in recurse, over the message
+   --  and a block's rounds (the stack check rejects recursion reachable
+   --  from SMB.Client in every build), and the equality oracle may stop at
+   --  the first difference.
    pragma Assertion_Policy (Post => Ignore);
+
+   --  FIPS 180-4's SHA-256 (SMB.Spec.SHA2).
+   function SHA256 (Message : SMB.Bytes) return Digest_256
+   with Pre => Message'Length <= Maximum_Hash_Input,
+     Post => SHA256'Result = SMB.Spec.SHA2.SHA256 (Message);
+
    function Constant_Time_Equal (Left, Right : SMB.Bytes) return Boolean
    with Pre =>
      Left'Length <= Maximum_Hash_Input

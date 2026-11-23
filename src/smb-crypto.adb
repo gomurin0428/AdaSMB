@@ -1,10 +1,12 @@
-with SMB.Spec.SHA2;
+with SMB.Spec.SHA2.Lemmas;
 
 package body SMB.Crypto is
    pragma SPARK_Mode (On);
    package SHA2 renames SMB.Spec.SHA2;
+   package SHA2_Lemmas renames SMB.Spec.SHA2.Lemmas;
    use type SHA2.Words_32;
    use type SHA2.Working_32;
+   use type SHA2.State_256;
    subtype U32 is Interfaces.Unsigned_32;
    subtype U64 is Interfaces.Unsigned_64;
    use type SMB.Byte;
@@ -236,6 +238,85 @@ package body SMB.Crypto is
      (H : SHA2.Hash_Value_256; Block : SHA2.Block_256; V : SHA2.Working_32)
    is null;
 
+   --  The code's shifts give the specification's bytes, which it states
+   --  as quotients: one case per byte, where each shift is by a constant.
+   procedure Lemma_Length_Byte (Bits : U64; Length : Natural; I : Natural)
+   with Ghost, Global => null,
+     Pre => Length <= Maximum_Hash_Input and then Bits = U64 (Length) * 8
+       and then I < 8,
+     Post => SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#)
+       = SHA2.Length_Byte (Length, I);
+
+   procedure Lemma_Length_Byte (Bits : U64; Length : Natural; I : Natural) is
+   begin
+      case I is
+         when 0 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 56) and 16#FF#) =
+                 SHA2.Length_Byte (Length, 0));
+         when 1 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 48) and 16#FF#) =
+                 SHA2.Length_Byte (Length, 1));
+         when 2 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 40) and 16#FF#) =
+                 SHA2.Length_Byte (Length, 2));
+         when 3 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 32) and 16#FF#) =
+                 SHA2.Length_Byte (Length, 3));
+         when 4 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 24) and 16#FF#) =
+                 SHA2.Length_Byte (Length, 4));
+         when 5 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 16) and 16#FF#) =
+                 SHA2.Length_Byte (Length, 5));
+         when 6 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 8) and 16#FF#) =
+                 SHA2.Length_Byte (Length, 6));
+         when 7 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 0) and 16#FF#) =
+                 SHA2.Length_Byte (Length, 7));
+         when others =>
+            null;
+      end case;
+   end Lemma_Length_Byte;
+
+   procedure Lemma_Word_Byte (X : U32; J : Natural)
+   with Ghost, Global => null,
+     Pre => J < 4,
+     Post => SMB.Byte (Interfaces.Shift_Right (X, (3 - J) * 8) and 16#FF#) =
+       SHA2.Word_Byte (X, J);
+
+   procedure Lemma_Word_Byte (X : U32; J : Natural) is
+   begin
+      case J is
+         when 0 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 24) and 16#FF#) =
+                 SHA2.Word_Byte (X, 0));
+         when 1 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 16) and 16#FF#) =
+                 SHA2.Word_Byte (X, 1));
+         when 2 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 8) and 16#FF#) =
+                 SHA2.Word_Byte (X, 2));
+         when 3 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 0) and 16#FF#) =
+                 SHA2.Word_Byte (X, 3));
+         when others =>
+            null;
+      end case;
+   end Lemma_Word_Byte;
+
    pragma Assertion_Policy (Ghost => Check);
 
    --  FIPS 180-4 6.2.2, for one block.
@@ -360,8 +441,16 @@ package body SMB.Crypto is
       end;
    end SHA256_Compress;
 
+   --  The context as SMB.Spec.SHA2's model of a message hashed in pieces.
+   function SHA256_State (Context : SHA256_Context) return SHA2.State_256 is
+     ((H => SHA2.Hash_Value_256 (Context.H),
+       Block => Context.Block,
+       Used => Context.Used))
+   with Ghost;
+
    procedure SHA256_Start (Context : out SHA256_Context)
-     with Post => Context.Total = 0
+     with Post => SHA256_State (Context) = SHA2.Start_256
+       and then Context.Total = 0
    is
    begin
       Context :=
@@ -374,55 +463,146 @@ package body SMB.Crypto is
    procedure SHA256_Update (Context : in out SHA256_Context; Message : SMB.Bytes)
      with Pre => Message'Length <= Maximum_Hash_Input
        and then Context.Total <= Maximum_Hash_Input - Message'Length,
-       Post => Context.Total = Context.Total'Old + Message'Length
+       Post => SHA256_State (Context) =
+           SHA2.Absorb_256 (SHA256_State (Context'Old), Message)
+         and then Context.Total = Context.Total'Old + Message'Length
    is
+      --  The ghost code and the invariants restate the model; none of them
+      --  runs.
+      pragma Assertion_Policy
+        (Ghost => Ignore, Assert => Ignore, Loop_Invariant => Ignore);
+      Start : constant SHA2.State_256 := SHA256_State (Context) with Ghost;
    begin
+      SHA2_Lemmas.Lemma_Absorb_None (Start, Message);
       for I in Message'Range loop
-         Context.Block (Context.Used) := Message (I);
-         if Context.Used = Block_Position'Last then
-            SHA256_Compress (Context.H, Context.Block);
-            Context.Used := 0;
-         else
-            Context.Used := Context.Used + 1;
-         end if;
          pragma Loop_Invariant (Context.Total = Context.Total'Loop_Entry);
+         pragma Loop_Invariant
+           (SHA256_State (Context) =
+              SHA2.Absorb_Prefix_256 (Start, Message, I - Message'First));
+         declare
+            Before : constant SHA2.State_256 := SHA256_State (Context)
+            with Ghost;
+         begin
+            Context.Block (Context.Used) := Message (I);
+            pragma Assert
+              (Context.Block =
+                 SHA2.Put_256 (Before.Block, Before.Used, Message (I)));
+            if Context.Used = Block_Position'Last then
+               SHA256_Compress (Context.H, Context.Block);
+               SHA2_Lemmas.Lemma_Compress_Equal
+                 (Before.H, Before.H, Context.Block,
+                  SHA2.Put_256 (Before.Block, Before.Used, Message (I)));
+               Context.Used := 0;
+            else
+               Context.Used := Context.Used + 1;
+            end if;
+            pragma Assert
+              (SHA256_State (Context) =
+                 SHA2.Absorb_Byte_256 (Before, Message (I)));
+            SHA2_Lemmas.Lemma_Absorb_Unfold
+              (Start, Message, I - Message'First + 1);
+            SHA2_Lemmas.Lemma_Absorb_Byte_Equal
+              (Before,
+               SHA2.Absorb_Prefix_256 (Start, Message, I - Message'First),
+               Message (I));
+         end;
+         pragma Assert
+           (SHA256_State (Context) =
+              SHA2.Absorb_Prefix_256 (Start, Message, I - Message'First + 1));
       end loop;
       Context.Total := Context.Total + Message'Length;
    end SHA256_Update;
 
    procedure SHA256_Finish
      (Context : in out SHA256_Context; Digest : out Digest_256)
-     with Pre => Context.Total <= Maximum_Hash_Input
+     with Pre => Context.Total <= Maximum_Hash_Input,
+       Post => Digest =
+         SHA2.Finish_256 (SHA256_State (Context'Old), Context.Total'Old)
    is
+      pragma Assertion_Policy
+        (Ghost => Ignore, Assert => Ignore, Loop_Invariant => Ignore);
+      S : constant SHA2.State_256 := SHA256_State (Context) with Ghost;
       Bits : constant U64 := U64 (Context.Total) * 8;
    begin
       Context.Block (Context.Used) := 16#80#;
       Context.Block (Context.Used + 1 .. 63) := (others => 0);
+      pragma Assert (Context.Block = SHA2.Pad_Block_256 (S));
       if Context.Used >= 56 then
          SHA256_Compress (Context.H, Context.Block);
+         SHA2_Lemmas.Lemma_Compress_Equal
+           (S.H, S.H, Context.Block, SHA2.Pad_Block_256 (S));
          Context.Block := (others => 0);
       end if;
+      pragma Assert
+        (SHA2.Hash_Value_256 (Context.H) = SHA2.Before_Length_256 (S));
       for I in 0 .. 7 loop
          Context.Block (56 + I) :=
            SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#);
+         Lemma_Length_Byte (Bits, Context.Total, I);
+         pragma Loop_Invariant
+           (for all J in 0 .. 56 + I =>
+              Context.Block (J) =
+                SHA2.Length_Block_256 (S, Context.Total) (J));
       end loop;
-      SHA256_Compress (Context.H, Context.Block);
+      pragma Assert
+        (Context.Block = SHA2.Length_Block_256 (S, Context.Total));
+      declare
+         Before : constant SHA2.Hash_Value_256 :=
+           SHA2.Hash_Value_256 (Context.H)
+         with Ghost;
+      begin
+         SHA256_Compress (Context.H, Context.Block);
+         SHA2_Lemmas.Lemma_Compress_Equal
+           (Before, SHA2.Before_Length_256 (S),
+            Context.Block, SHA2.Length_Block_256 (S, Context.Total));
+      end;
       Digest := (others => 0);
       for I in 0 .. 7 loop
          for J in 0 .. 3 loop
             Digest (I * 4 + J) := SMB.Byte
               (Interfaces.Shift_Right (Context.H (I), (3 - J) * 8) and 16#FF#);
+            Lemma_Word_Byte (Context.H (I), J);
+            pragma Assert ((I * 4 + J) / 4 = I and then (I * 4 + J) mod 4 = J);
+            pragma Loop_Invariant
+              (for all K in Digest'Range =>
+                 (if K <= I * 4 + J
+                  then Digest (K) =
+                    SHA2.Word_Byte (Context.H (K / 4), K mod 4)));
          end loop;
+         pragma Loop_Invariant
+           (for all K in Digest'Range =>
+              (if K <= I * 4 + 3
+               then Digest (K) =
+                 SHA2.Word_Byte (Context.H (K / 4), K mod 4)));
       end loop;
+      pragma Assert
+        (Digest = SHA2.Digest_Of_256 (SHA2.Hash_Value_256 (Context.H)));
    end SHA256_Finish;
 
    function SHA256 (Message : SMB.Bytes) return Digest_256 is
+      pragma Assertion_Policy (Ghost => Ignore);
       Context : SHA256_Context;
       Digest : Digest_256;
    begin
       SHA256_Start (Context);
-      SHA256_Update (Context, Message);
-      SHA256_Finish (Context, Digest);
+      declare
+         Start : constant SHA2.State_256 := SHA256_State (Context)
+         with Ghost;
+      begin
+         SHA256_Update (Context, Message);
+         SHA2_Lemmas.Lemma_Absorb_Equal
+           (Start, SHA2.Start_256, Message, Message'Length);
+      end;
+      declare
+         Absorbed : constant SHA2.State_256 := SHA256_State (Context)
+         with Ghost;
+      begin
+         SHA256_Finish (Context, Digest);
+         SHA2_Lemmas.Lemma_Finish_Equal
+           (Absorbed, SHA2.Absorb_256 (SHA2.Start_256, Message),
+            Message'Length);
+      end;
+      SHA2_Lemmas.Lemma_Finish (Message);
       return Digest;
    end SHA256;
 
