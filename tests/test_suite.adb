@@ -11660,9 +11660,9 @@ procedure Test_Suite is
          & " calls passed");
    end Test_UTF8_To_UTF16_Specification;
 
-   --  The same for UTF16_To_UTF8: every input of up to three units from
-   --  an alphabet of D91's edges and others, odd lengths, at every output
-   --  capacity up to two bytes more than three per unit.
+   --  The same for UTF16_To_UTF8 and Validate_UTF16: every input of up to
+   --  three units from an alphabet of D91's edges and others, odd lengths,
+   --  at every output capacity up to two bytes more than three per unit.
    procedure Test_UTF16_To_UTF8_Specification is
       pragma Assertion_Policy (Assert => Check, Ghost => Check);
       package U renames SMB.Spec.Unicode;
@@ -11671,9 +11671,19 @@ procedure Test_Suite is
          16#D7FF#, 16#D800#, 16#DBFF#, 16#DC00#, 16#DFFF#, 16#E000#,
          16#FFFD#, 16#FFFF#);
       Calls : Natural := 0;
+      Verdicts : Natural := 0;
 
       procedure Check (Input : SMB.Bytes) is
+         Verdict : SMB.Core_Status;
       begin
+         SMB.Core_Text.Validate_UTF16 (Input, Verdict);
+         Verdicts := Verdicts + 1;
+         pragma Assert
+           (Verdict =
+              (if Input'Length mod 2 /= 0 then SMB.Invalid_Length
+               elsif U.Is_Client_UTF16 (Input) then SMB.Ok
+               else SMB.Invalid_Encoding),
+            "Validate_UTF16 against the specification");
          for Capacity in 0 .. 3 * (Input'Length / 2) + 2 loop
             declare
                Output : String (5 .. 4 + Capacity) :=
@@ -11725,7 +11735,8 @@ procedure Test_Suite is
       end loop;
       Ada.Text_IO.Put_Line
         ("UTF16_To_UTF8 against SMB.Spec.Unicode:" & Natural'Image (Calls)
-         & " calls passed");
+         & " calls passed; Validate_UTF16:" & Natural'Image (Verdicts)
+         & " verdicts passed");
    end Test_UTF16_To_UTF8_Specification;
 
    procedure Test_Text_And_Wire is
