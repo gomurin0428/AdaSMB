@@ -134,8 +134,8 @@ specification tests passing.
    outputs and statuses for both conversions.
 5. **Hashes and HMAC**, with the incremental model (SHA-256's
    compression function came first, #168, then its model of a message
-   hashed in pieces and the digest, #169); then `KDF`,
-   `Core_Preauth` and HMAC signing follow.
+   hashed in pieces and the digest, #169, then SHA-512 and the preauth
+   hash, `Core_Preauth`, #170); then `KDF` and HMAC signing follow.
 6. **AES, then CMAC, CCM, GCM and GMAC**; then SMB 3.1.1 signing and the
    transform's tag and plaintext.
 7. **Response acceptance.** Exact acceptance and failure statuses for

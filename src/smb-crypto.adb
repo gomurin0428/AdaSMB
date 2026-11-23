@@ -7,6 +7,8 @@ package body SMB.Crypto is
    use type SHA2.Words_32;
    use type SHA2.Working_32;
    use type SHA2.State_256;
+   use type SHA2.Words_64;
+   use type SHA2.Working_64;
    subtype U32 is Interfaces.Unsigned_32;
    subtype U64 is Interfaces.Unsigned_64;
    use type SMB.Byte;
@@ -648,16 +650,177 @@ package body SMB.Crypto is
 
    subtype Block_Bytes_128 is SMB.Bytes (0 .. 127);
 
-   procedure SHA512_Compress (H : in out Hash_State_64; Block : Block_Bytes_128)
-     with Global => null
+   --  SHA-512's definitions unfolded once, and the code's shifts against
+   --  the specification's bytes, as SHA-256's above.
+   pragma Assertion_Policy (Ghost => Ignore);
+
+   procedure Lemma_Schedule_Start_512 (Block : SHA2.Block_512)
+   with Ghost, Global => null,
+     Post => SHA2.Schedule_Prefix_512 (Block, 16) =
+       (for J in SHA2.Schedule_512'Range =>
+          (if J < 16 then SHA2.Block_Word_64 (Block, J) else 0));
+
+   procedure Lemma_Schedule_Start_512 (Block : SHA2.Block_512) is null;
+
+   procedure Lemma_Schedule_Step_512 (Block : SHA2.Block_512; T : Natural)
+   with Ghost, Global => null,
+     Pre => T in 17 .. 80,
+     Post =>
+       (declare
+           W : constant SHA2.Schedule_512 :=
+             SHA2.Schedule_Prefix_512 (Block, T - 1);
+        begin
+           (for all J in SHA2.Schedule_512'Range =>
+              SHA2.Schedule_Prefix_512 (Block, T) (J) =
+                (if J = T - 1
+                 then SHA2.Small_Sigma_1 (W (T - 3)) + W (T - 8)
+                      + SHA2.Small_Sigma_0 (W (T - 16)) + W (T - 17)
+                 else W (J))));
+
+   procedure Lemma_Schedule_Step_512 (Block : SHA2.Block_512; T : Natural)
+   is null;
+
+   procedure Lemma_Rounds_Start_512
+     (H : SHA2.Hash_Value_512; W : SHA2.Schedule_512)
+   with Ghost, Global => null,
+     Post => SHA2.Rounds_512 (H, W, 0) =
+       (H (0), H (1), H (2), H (3), H (4), H (5), H (6), H (7));
+
+   procedure Lemma_Rounds_Start_512
+     (H : SHA2.Hash_Value_512; W : SHA2.Schedule_512) is null;
+
+   procedure Lemma_Rounds_Step_512
+     (H : SHA2.Hash_Value_512; W : SHA2.Schedule_512; T : Natural)
+   with Ghost, Global => null,
+     Pre => T in 1 .. 80,
+     Post => SHA2.Rounds_512 (H, W, T) =
+       SHA2.Round_512
+         (SHA2.Rounds_512 (H, W, T - 1), SHA2.K_512 (T - 1), W (T - 1));
+
+   procedure Lemma_Rounds_Step_512
+     (H : SHA2.Hash_Value_512; W : SHA2.Schedule_512; T : Natural) is null;
+
+   procedure Lemma_Compress_512
+     (H : SHA2.Hash_Value_512; Block : SHA2.Block_512; V : SHA2.Working_64)
+   with Ghost, Global => null,
+     Pre => V = SHA2.Rounds_512 (H, SHA2.Message_Schedule_512 (Block), 80),
+     Post => SHA2.Compress_512 (H, Block) =
+       (V.A + H (0), V.B + H (1), V.C + H (2), V.D + H (3),
+        V.E + H (4), V.F + H (5), V.G + H (6), V.H + H (7));
+
+   procedure Lemma_Compress_512
+     (H : SHA2.Hash_Value_512; Block : SHA2.Block_512; V : SHA2.Working_64)
+   is null;
+
+   --  Step 4 from Lemma_Compress_512's terms: the code's sums are the
+   --  compression's result. Alone, out of the procedure's context, where
+   --  the same goal took 158k steps.
+   procedure Lemma_Final_512
+     (Before, After : SHA2.Hash_Value_512;
+      Block : SHA2.Block_512;
+      V : SHA2.Working_64)
+   with Ghost, Global => null,
+     Pre => V = SHA2.Rounds_512
+         (Before, SHA2.Message_Schedule_512 (Block), 80)
+       and then After (0) = Before (0) + V.A
+       and then After (1) = Before (1) + V.B
+       and then After (2) = Before (2) + V.C
+       and then After (3) = Before (3) + V.D
+       and then After (4) = Before (4) + V.E
+       and then After (5) = Before (5) + V.F
+       and then After (6) = Before (6) + V.G
+       and then After (7) = Before (7) + V.H,
+     Post => After = SHA2.Compress_512 (Before, Block);
+
+   procedure Lemma_Final_512
+     (Before, After : SHA2.Hash_Value_512;
+      Block : SHA2.Block_512;
+      V : SHA2.Working_64)
    is
+   begin
+      Lemma_Compress_512 (Before, Block, V);
+      pragma Assert
+        (After = (V.A + Before (0), V.B + Before (1), V.C + Before (2),
+                  V.D + Before (3), V.E + Before (4), V.F + Before (5),
+                  V.G + Before (6), V.H + Before (7)));
+   end Lemma_Final_512;
+
+   procedure Lemma_Word_Byte_64 (X : U64; J : Natural)
+   with Ghost, Global => null,
+     Pre => J < 8,
+     Post => SMB.Byte (Interfaces.Shift_Right (X, (7 - J) * 8) and 16#FF#) =
+       SHA2.Word_Byte (X, J);
+
+   procedure Lemma_Word_Byte_64 (X : U64; J : Natural) is
+   begin
+      case J is
+         when 0 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 56) and 16#FF#) =
+                 SHA2.Word_Byte (X, 0));
+         when 1 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 48) and 16#FF#) =
+                 SHA2.Word_Byte (X, 1));
+         when 2 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 40) and 16#FF#) =
+                 SHA2.Word_Byte (X, 2));
+         when 3 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 32) and 16#FF#) =
+                 SHA2.Word_Byte (X, 3));
+         when 4 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 24) and 16#FF#) =
+                 SHA2.Word_Byte (X, 4));
+         when 5 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 16) and 16#FF#) =
+                 SHA2.Word_Byte (X, 5));
+         when 6 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 8) and 16#FF#) =
+                 SHA2.Word_Byte (X, 6));
+         when 7 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 0) and 16#FF#) =
+                 SHA2.Word_Byte (X, 7));
+         when others =>
+            null;
+      end case;
+   end Lemma_Word_Byte_64;
+
+   pragma Assertion_Policy (Ghost => Check);
+
+   --  FIPS 180-4 6.4.2, for one block.
+   procedure SHA512_Compress (H : in out Hash_State_64; Block : Block_Bytes_128)
+     with Global => null,
+       Post => SHA2.Hash_Value_512 (H) =
+         SHA2.Compress_512 (SHA2.Hash_Value_512 (H'Old), Block)
+   is
+      --  As SHA256_Compress's, none of the proof's steps runs.
+      pragma Assertion_Policy (Loop_Invariant => Ignore, Assert => Ignore);
       W : Word64_Array (0 .. 79) := (others => 0);
    begin
       for I in 0 .. 15 loop
+         --  GNATprove unrolls this loop, which has no invariant.
          for J in 0 .. 7 loop
             W (I) := Interfaces.Shift_Left (W (I), 8) or U64 (Block (I * 8 + J));
          end loop;
+         pragma Assert (W (I) = SHA2.Block_Word_64 (Block, I));
+         pragma Loop_Invariant
+           (for all J in 0 .. I => W (J) = SHA2.Block_Word_64 (Block, J));
+         pragma Loop_Invariant (for all J in I + 1 .. 79 => W (J) = 0);
       end loop;
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_Schedule_Start_512 (Block);
+      end;
+      pragma Assert
+        (for all J in W'Range =>
+           W (J) = SHA2.Schedule_Prefix_512 (Block, 16) (J));
       for I in 16 .. 79 loop
          declare
             S0 : constant U64 := Ror64 (W (I - 15), 1)
@@ -667,9 +830,25 @@ package body SMB.Crypto is
               xor Ror64 (W (I - 2), 61)
               xor Interfaces.Shift_Right (W (I - 2), 6);
          begin
+            pragma Assert (S0 = SHA2.Small_Sigma_0 (W (I - 15)));
+            pragma Assert (S1 = SHA2.Small_Sigma_1 (W (I - 2)));
             W (I) := W (I - 16) + S0 + W (I - 7) + S1;
          end;
+         pragma Assert
+           (W (I) = SHA2.Small_Sigma_1 (W (I - 2)) + W (I - 7)
+              + SHA2.Small_Sigma_0 (W (I - 15)) + W (I - 16));
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Schedule_Step_512 (Block, I + 1);
+         end;
+         pragma Loop_Invariant
+           (for all J in W'Range =>
+              W (J) = SHA2.Schedule_Prefix_512 (Block, I + 1) (J));
       end loop;
+      pragma Assert
+        (for all J in W'Range =>
+           W (J) = SHA2.Message_Schedule_512 (Block) (J));
       declare
          A : U64 := H (0); B : U64 := H (1);
          C : U64 := H (2); D : U64 := H (3);
@@ -677,18 +856,76 @@ package body SMB.Crypto is
          G : U64 := H (6); HH : U64 := H (7);
          T1, T2 : U64;
       begin
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_Rounds_Start_512
+              (SHA2.Hash_Value_512 (H), SHA2.Message_Schedule_512 (Block));
+         end;
          for I in 0 .. 79 loop
-            T1 := HH + (Ror64 (E, 14) xor Ror64 (E, 18) xor Ror64 (E, 41))
-              + ((E and F) xor ((not E) and G)) + SHA512_K (I) + W (I);
-            T2 := (Ror64 (A, 28) xor Ror64 (A, 34) xor Ror64 (A, 39))
-              + ((A and B) xor (A and C) xor (B and C));
-            HH := G; G := F; F := E; E := D + T1;
-            D := C; C := B; B := A; A := T1 + T2;
+            pragma Loop_Invariant
+              (SHA2.Working_64'(A, B, C, D, E, F, G, HH) =
+                 SHA2.Rounds_512
+                   (SHA2.Hash_Value_512 (H),
+                    SHA2.Message_Schedule_512 (Block), I));
+            declare
+               pragma Assertion_Policy (Ghost => Ignore);
+               Before : constant SHA2.Working_64 := (A, B, C, D, E, F, G, HH)
+               with Ghost;
+            begin
+               T1 := HH + (Ror64 (E, 14) xor Ror64 (E, 18) xor Ror64 (E, 41))
+                 + ((E and F) xor ((not E) and G)) + SHA512_K (I) + W (I);
+               T2 := (Ror64 (A, 28) xor Ror64 (A, 34) xor Ror64 (A, 39))
+                 + ((A and B) xor (A and C) xor (B and C));
+               pragma Assert (SHA512_K (I) = SHA2.K_512 (I));
+               pragma Assert
+                 (T1 = Before.H + SHA2.Big_Sigma_1 (Before.E)
+                    + SHA2.Ch (Before.E, Before.F, Before.G)
+                    + SHA2.K_512 (I) + W (I));
+               pragma Assert
+                 (T2 = SHA2.Big_Sigma_0 (Before.A)
+                    + SHA2.Maj (Before.A, Before.B, Before.C));
+               HH := G; G := F; F := E; E := D + T1;
+               D := C; C := B; B := A; A := T1 + T2;
+               pragma Assert
+                 (SHA2.Working_64'(A, B, C, D, E, F, G, HH) =
+                    SHA2.Round_512 (Before, SHA2.K_512 (I), W (I)));
+               Lemma_Rounds_Step_512
+                 (SHA2.Hash_Value_512 (H), SHA2.Message_Schedule_512 (Block),
+                  I + 1);
+            end;
+            pragma Assert
+              (SHA2.Working_64'(A, B, C, D, E, F, G, HH) =
+                 SHA2.Rounds_512
+                   (SHA2.Hash_Value_512 (H),
+                    SHA2.Message_Schedule_512 (Block), I + 1));
          end loop;
-         H (0) := H (0) + A; H (1) := H (1) + B;
-         H (2) := H (2) + C; H (3) := H (3) + D;
-         H (4) := H (4) + E; H (5) := H (5) + F;
-         H (6) := H (6) + G; H (7) := H (7) + HH;
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+            Before : constant SHA2.Hash_Value_512 := SHA2.Hash_Value_512 (H)
+            with Ghost;
+         begin
+            pragma Assert
+              (SHA2.Working_64'(A, B, C, D, E, F, G, HH) =
+                 SHA2.Rounds_512
+                   (Before, SHA2.Message_Schedule_512 (Block), 80));
+            H (0) := H (0) + A; H (1) := H (1) + B;
+            H (2) := H (2) + C; H (3) := H (3) + D;
+            H (4) := H (4) + E; H (5) := H (5) + F;
+            H (6) := H (6) + G; H (7) := H (7) + HH;
+            pragma Assert
+              (SHA2.Hash_Value_512 (H) (0) = Before (0) + A
+               and then SHA2.Hash_Value_512 (H) (1) = Before (1) + B
+               and then SHA2.Hash_Value_512 (H) (2) = Before (2) + C
+               and then SHA2.Hash_Value_512 (H) (3) = Before (3) + D
+               and then SHA2.Hash_Value_512 (H) (4) = Before (4) + E
+               and then SHA2.Hash_Value_512 (H) (5) = Before (5) + F
+               and then SHA2.Hash_Value_512 (H) (6) = Before (6) + G
+               and then SHA2.Hash_Value_512 (H) (7) = Before (7) + HH);
+            Lemma_Final_512
+              (Before, SHA2.Hash_Value_512 (H), Block,
+               (A, B, C, D, E, F, G, HH));
+         end;
       end;
    end SHA512_Compress;
 
@@ -706,17 +943,48 @@ package body SMB.Crypto is
      (Context : in out SHA512_Context;
       Message : SMB.Bytes)
    is
+      --  As SHA256_Update's, none of the proof's steps runs.
+      pragma Assertion_Policy
+        (Ghost => Ignore, Assert => Ignore, Loop_Invariant => Ignore);
+      Start : constant SHA2.State_512 := SHA512_State (Context) with Ghost;
    begin
+      SHA2_Lemmas.Lemma_Absorb_None_512 (Start, Message);
       for I in Message'Range loop
-         Context.Block (Context.Used) := Message (I);
-         if Context.Used = Block_Position_128'Last then
-            SHA512_Compress (Context.H, Context.Block);
-            Context.Used := 0;
-         else
-            Context.Used := Context.Used + 1;
-         end if;
          pragma Loop_Invariant (Context.Total = Context.Total'Loop_Entry);
          pragma Loop_Invariant (Context.Active);
+         pragma Loop_Invariant
+           (SHA512_State (Context) =
+              SHA2.Absorb_Prefix_512 (Start, Message, I - Message'First));
+         declare
+            Before : constant SHA2.State_512 := SHA512_State (Context)
+            with Ghost;
+         begin
+            Context.Block (Context.Used) := Message (I);
+            pragma Assert
+              (Context.Block =
+                 SHA2.Put_512 (Before.Block, Before.Used, Message (I)));
+            if Context.Used = Block_Position_128'Last then
+               SHA512_Compress (Context.H, Context.Block);
+               SHA2_Lemmas.Lemma_Compress_Equal_512
+                 (Before.H, Before.H, Context.Block,
+                  SHA2.Put_512 (Before.Block, Before.Used, Message (I)));
+               Context.Used := 0;
+            else
+               Context.Used := Context.Used + 1;
+            end if;
+            pragma Assert
+              (SHA512_State (Context) =
+                 SHA2.Absorb_Byte_512 (Before, Message (I)));
+            SHA2_Lemmas.Lemma_Absorb_Unfold_512
+              (Start, Message, I - Message'First + 1);
+            SHA2_Lemmas.Lemma_Absorb_Byte_Equal_512
+              (Before,
+               SHA2.Absorb_Prefix_512 (Start, Message, I - Message'First),
+               Message (I));
+         end;
+         pragma Assert
+           (SHA512_State (Context) =
+              SHA2.Absorb_Prefix_512 (Start, Message, I - Message'First + 1));
       end loop;
       Context.Total := Context.Total + Message'Length;
    end SHA512_Update;
@@ -725,38 +993,91 @@ package body SMB.Crypto is
      (Context : in out SHA512_Context;
       Digest : out Digest_512)
    is
+      pragma Assertion_Policy
+        (Ghost => Ignore, Assert => Ignore, Loop_Invariant => Ignore);
+      S : constant SHA2.State_512 := SHA512_State (Context) with Ghost;
       Bits : constant U64 := U64 (Context.Total) * 8;
    begin
       Context.Block (Context.Used) := 16#80#;
       Context.Block (Context.Used + 1 .. 127) := (others => 0);
+      pragma Assert (Context.Block = SHA2.Pad_Block_512 (S));
       if Context.Used >= 112 then
          SHA512_Compress (Context.H, Context.Block);
+         SHA2_Lemmas.Lemma_Compress_Equal_512
+           (S.H, S.H, Context.Block, SHA2.Pad_Block_512 (S));
          Context.Block := (others => 0);
       end if;
+      pragma Assert
+        (SHA2.Hash_Value_512 (Context.H) = SHA2.Before_Length_512 (S));
       --  The length field is the last 16 bytes. Its upper half stays zero
       --  for every input this package accepts.
       for I in 0 .. 7 loop
          Context.Block (120 + I) :=
            SMB.Byte (Interfaces.Shift_Right (Bits, (7 - I) * 8) and 16#FF#);
+         Lemma_Length_Byte (Bits, Context.Total, I);
+         pragma Loop_Invariant
+           (for all J in 0 .. 120 + I =>
+              Context.Block (J) =
+                SHA2.Length_Block_512 (S, Context.Total) (J));
       end loop;
-      SHA512_Compress (Context.H, Context.Block);
+      declare
+         Before : constant SHA2.Hash_Value_512 :=
+           SHA2.Hash_Value_512 (Context.H)
+         with Ghost;
+      begin
+         SHA512_Compress (Context.H, Context.Block);
+         SHA2_Lemmas.Lemma_Compress_Equal_512
+           (Before, SHA2.Before_Length_512 (S),
+            Context.Block, SHA2.Length_Block_512 (S, Context.Total));
+      end;
       Digest := (others => 0);
       for I in 0 .. 7 loop
          for J in 0 .. 7 loop
             Digest (I * 8 + J) := SMB.Byte
               (Interfaces.Shift_Right (Context.H (I), (7 - J) * 8) and 16#FF#);
+            Lemma_Word_Byte_64 (Context.H (I), J);
+            pragma Assert ((I * 8 + J) / 8 = I and then (I * 8 + J) mod 8 = J);
+            pragma Loop_Invariant
+              (for all K in Digest'Range =>
+                 (if K <= I * 8 + J
+                  then Digest (K) =
+                    SHA2.Word_Byte (Context.H (K / 8), K mod 8)));
          end loop;
+         pragma Loop_Invariant
+           (for all K in Digest'Range =>
+              (if K <= I * 8 + 7
+               then Digest (K) =
+                 SHA2.Word_Byte (Context.H (K / 8), K mod 8)));
       end loop;
+      pragma Assert
+        (Digest = SHA2.Digest_Of_512 (SHA2.Hash_Value_512 (Context.H)));
       Context.Active := False;
    end SHA512_Finish;
 
    function SHA512 (Message : SMB.Bytes) return Digest_512 is
+      pragma Assertion_Policy (Ghost => Ignore);
       Context : SHA512_Context;
       Digest : Digest_512;
    begin
       SHA512_Start (Context);
-      SHA512_Update (Context, Message);
-      SHA512_Finish (Context, Digest);
+      declare
+         Start : constant SHA2.State_512 := SHA512_State (Context)
+         with Ghost;
+      begin
+         SHA512_Update (Context, Message);
+         SHA2_Lemmas.Lemma_Absorb_Equal_512
+           (Start, SHA2.Start_512, Message, Message'Length);
+      end;
+      declare
+         Absorbed : constant SHA2.State_512 := SHA512_State (Context)
+         with Ghost;
+      begin
+         SHA512_Finish (Context, Digest);
+         SHA2_Lemmas.Lemma_Finish_Equal_512
+           (Absorbed, SHA2.Absorb_512 (SHA2.Start_512, Message),
+            Message'Length);
+      end;
+      SHA2_Lemmas.Lemma_Finish_512 (Message);
       return Digest;
    end SHA512;
 

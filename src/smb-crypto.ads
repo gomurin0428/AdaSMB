@@ -4,6 +4,7 @@ with SMB.Spec.SHA2;
 package SMB.Crypto is
    pragma SPARK_Mode (On);
    pragma Unevaluated_Use_Of_Old (Allow);
+   use type SMB.Spec.SHA2.State_512;
 
    Maximum_Hash_Input : constant :=
      SMB.Maximum_Frame_Size + 64;
@@ -19,37 +20,20 @@ package SMB.Crypto is
 
    subtype Digest_512 is SMB.Bytes (0 .. 63);
 
-   function SHA512 (Message : SMB.Bytes) return Digest_512
-   with Pre => Message'Length <= Maximum_Hash_Input;
-
    --  Incremental SHA-512, for the SMB 3.1.1 preauth integrity hash: the
    --  previous hash value and a whole message are hashed without first
-   --  being copied together.
+   --  being copied together. Its subprograms are declared below, with the
+   --  postconditions that are never run.
    type SHA512_Context is private;
 
    function SHA512_Ready (Context : SHA512_Context) return Boolean;
    function SHA512_Length (Context : SHA512_Context) return Natural;
 
-   procedure SHA512_Start (Context : out SHA512_Context)
-   with Post => SHA512_Ready (Context)
-       and then SHA512_Length (Context) = 0;
-
-   procedure SHA512_Update
-     (Context : in out SHA512_Context;
-      Message : SMB.Bytes)
-   with Pre => SHA512_Ready (Context)
-       and then Message'Length <= Maximum_Hash_Input
-       and then SHA512_Length (Context) <=
-         Maximum_Hash_Input - Message'Length,
-     Post => SHA512_Ready (Context)
-       and then SHA512_Length (Context) =
-         SHA512_Length (Context)'Old + Message'Length;
-
-   procedure SHA512_Finish
-     (Context : in out SHA512_Context;
-      Digest : out Digest_512)
-   with Pre => SHA512_Ready (Context),
-     Post => not SHA512_Ready (Context);
+   --  What the context holds, in SMB.Spec.SHA2's model of a message hashed
+   --  in pieces.
+   function SHA512_State
+     (Context : SHA512_Context) return SMB.Spec.SHA2.State_512
+   with Ghost;
 
    function HMAC_MD5 (Key, Message : SMB.Bytes) return Digest_128
    with Pre =>
@@ -134,6 +118,41 @@ package SMB.Crypto is
    with Pre => Message'Length <= Maximum_Hash_Input,
      Post => SHA256'Result = SMB.Spec.SHA2.SHA256 (Message);
 
+   --  FIPS 180-4's SHA-512 (SMB.Spec.SHA2).
+   function SHA512 (Message : SMB.Bytes) return Digest_512
+   with Pre => Message'Length <= Maximum_Hash_Input,
+     Post => SHA512'Result = SMB.Spec.SHA2.SHA512 (Message);
+
+   --  The context starts at the model's start, absorbs each message as the
+   --  model does, and finishes with the model's digest (SMB.Spec.SHA2.Lemmas
+   --  proves that it is SHA512 of what was absorbed).
+   procedure SHA512_Start (Context : out SHA512_Context)
+   with Post => SHA512_Ready (Context)
+       and then SHA512_Length (Context) = 0
+       and then SHA512_State (Context) = SMB.Spec.SHA2.Start_512;
+
+   procedure SHA512_Update
+     (Context : in out SHA512_Context;
+      Message : SMB.Bytes)
+   with Pre => SHA512_Ready (Context)
+       and then Message'Length <= Maximum_Hash_Input
+       and then SHA512_Length (Context) <=
+         Maximum_Hash_Input - Message'Length,
+     Post => SHA512_Ready (Context)
+       and then SHA512_Length (Context) =
+         SHA512_Length (Context)'Old + Message'Length
+       and then SHA512_State (Context) =
+         SMB.Spec.SHA2.Absorb_512 (SHA512_State (Context)'Old, Message);
+
+   procedure SHA512_Finish
+     (Context : in out SHA512_Context;
+      Digest : out Digest_512)
+   with Pre => SHA512_Ready (Context),
+     Post => not SHA512_Ready (Context)
+       and then Digest =
+         SMB.Spec.SHA2.Finish_512
+           (SHA512_State (Context)'Old, SHA512_Length (Context)'Old);
+
    function Constant_Time_Equal (Left, Right : SMB.Bytes) return Boolean
    with Pre =>
      Left'Length <= Maximum_Hash_Input
@@ -167,6 +186,13 @@ private
 
    function SHA512_Length (Context : SHA512_Context) return Natural is
      (Context.Total);
+
+   function SHA512_State
+     (Context : SHA512_Context) return SMB.Spec.SHA2.State_512
+   is
+     ((H => SMB.Spec.SHA2.Hash_Value_512 (Context.H),
+       Block => Context.Block,
+       Used => Context.Used));
 
    type HMAC_SHA256_Context is record
       Inner : SHA256_Context;

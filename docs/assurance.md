@@ -17,7 +17,7 @@ specifications" below), proved free of run-time errors like the rest.
 | Unit | Runtime responsibility |
 | --- | --- |
 | `SMB` | Fixed-width integers, bytes, frame limit and statuses |
-| `SMB.Crypto` | MD4, MD5, SHA-256, SHA-512, HMACs and digest comparison; run-time safety, not cryptographic hardness |
+| `SMB.Crypto` | MD4, MD5, SHA-256, SHA-512, HMACs and digest comparison; SHA-256 and SHA-512 against FIPS 180-4 (`SMB.Spec.SHA2`), the others run-time safety; not cryptographic hardness |
 | `SMB.AES` | AES-128 and AES-256 encryption with a computed S-box, for SMB 3.1.1; run-time safety, not cryptographic hardness or timing |
 | `SMB.AES.CMAC` | AES-128-CMAC, one-shot and incremental, for SMB 3.1.1 signing; run-time safety, the `Ready`/`Length` contracts and a wiped context after `Finish`, not cryptographic hardness or timing |
 | `SMB.AES.CCM` | AES-CCM with a 16- or 32-byte key and SMB's 11-byte nonce and 16-byte tag, in place, for SMB 3.x encryption; run-time safety and all-zero data after a rejected tag, not cryptographic hardness or timing |
@@ -31,7 +31,7 @@ specifications" below), proved free of run-time errors like the rest.
 | `SMB.Core_Transport` | Native stream frame construction, exact receive-prefix copying with prefix/tail preservation, bounded partial-read/write progress and unsent-slice selection |
 | `SMB.Core_Clock` | Validated Gregorian date-to-FILETIME arithmetic, seconds-of-day/leap-second normalization, and exact 100-ns subsecond truncation |
 | `SMB.Core_Negotiate` | The SMB 3.1.1 NEGOTIATE request body with its preauth integrity, encryption and signing contexts, and the checks on a 3.1.1 response's negotiate contexts; the request every byte against `SMB.Spec.SMB2.Negotiation`, and for the checks run-time safety and a cipher of `No_Cipher` and AES-CMAC signing on failure |
-| `SMB.Core_Preauth` | The SMB 3.1.1 preauth integrity hash step, SHA-512 of the previous value and a message; run-time safety |
+| `SMB.Core_Preauth` | The SMB 3.1.1 preauth integrity hash step: the new value is SHA-512 (`SMB.Spec.SHA2`) of the previous value and the message |
 | `SMB.Core_Transform` | The SMB 3.x transform header: sealing a message with AES-CCM or AES-GCM under a 16-byte (AES-128) or 32-byte (AES-256) key of the cipher's length, and checking and opening a received one; the header fields and nonce field written (against `SMB.Spec.SMB2.Transform`) and the trailing zeros, the header and inner SMB2 header checks that hold on success (the tag itself is tested, not stated), and no message bytes left after any failure |
 | `SMB.Core_Protocol` | Operation request builders and response-body parsers, directory entry/UTF validation, exact directory-link progress and termination, transfer arithmetic and pagination limits |
 | `SMB.Core_Client` | Typed SESSION_SETUP authentication lifecycle, with the SMB 3.1.1 preauth integrity hash over its messages and the signing key derived from it; CREATE/CLOSE lifecycle; bounded READ/WRITE transfer state; bounded directory-query lifecycle, owned page snapshot, pagination and entry progress; bounded SET_INFO disposition/rename lifecycle; packet construction/signing, send acknowledgement, validated completion and handle identity/receipt updates |
@@ -235,10 +235,11 @@ from 0.5.0 on); the test programs compile the same sources with every contract
 checked, but for the postconditions whose specifications recurse, which
 are proved and never run: the whole-input postconditions of `Core_Text`'s
 two converters (`test_suite` checks them on every short input instead),
-and those of the `Crypto` body from `SHA256_Compress` on and of
-`Crypto.SHA256`, whose specifications recurse over a block's schedule and
-rounds and over the message (the stack check rejects recursion reachable
-from `SMB.Client` in every build).
+and those of the `Crypto` body from `SHA256_Compress` on, of `Crypto`'s
+SHA-256 and SHA-512 declarations and of `Core_Preauth.Update`, whose
+specifications recurse over a block's schedule and rounds and over the
+message (the stack check rejects recursion reachable from `SMB.Client` in
+every build).
 
 `Validate_Path` now binds status to the executable `Lexically_Valid_Path`
 predicate: empty input is allowed only on request; NUL, colon, leading/trailing
@@ -311,7 +312,7 @@ implementation.
 | `SMB.Spec.SMB2.Negotiation` | MS-SMB2 2.2.3, 2.2.3.1, 2.2.3.1.1, 2.2.3.1.2, 2.2.3.1.7: the NEGOTIATE request's fields and dialects (`Is_Negotiate_Request`), negotiate contexts and their alignment (`Is_Negotiate_Context`, `Context_Data`, `First_Context`, `Next_Context`), the preauth integrity, encryption and signing contexts; 3.2.4.2.2.2: this client's request (`Client_Negotiate`, `Client_Dialects`, `Is_Client_Negotiate_Request`) | `Core_Negotiate.Request` |
 | `SMB.Spec.SMB2.Transform` | MS-SMB2 2.2.41: the TRANSFORM_HEADER's fields but the Signature (`Is_Transform_Header`), the nonce's length for each cipher (`Nonce_Size`); 3.1.4.3: the header a sender builds (`Client_Transform`) | `Core_Transform.Seal` |
 | `SMB.Spec.Unicode` | The Unicode Standard 16.0, section 3.9: scalar values (D76), UTF-8 (D92, Tables 3-6 and 3-7), UTF-16 (D91, Table 3-5); a string's run of valid UTF-8 sequences and its UTF-16 (`Valid_UTF8_Run`, `UTF16_Run_Size`, `UTF16_Run_Byte`, `Is_UTF16_Run`), and the other way (`UTF16_Length`, `UTF16_Scalar`, `UTF8_Byte`, `Valid_UTF16_Run`, `UTF8_Run_Size`, `UTF8_Run_Byte`, `Is_UTF8_Run`) | `Core_Text.UTF8_To_UTF16`, `UTF16_To_UTF8`, `Validate_UTF16` |
-| `SMB.Spec.SHA2` | FIPS 180-4: SHA-256's functions and constants (2.2.2, 4.1.2, 4.2.2, 5.3.3), the padded message and its blocks (5.1.1, 5.2.1), one block's hash computation (6.2.2: `Schedule_Prefix_256`, `Rounds_256`, `Compress_256`) and the digest (`Hash_Blocks_256`, `SHA256`); a model of a message hashed as it arrives (`State_256`, `Start_256`, `Absorb_256`, `Finish_256`), with `SMB.Spec.SHA2.Lemmas` proving that finishing it gives `SHA256` of the message and that two pieces absorbed in turn are the two joined | `Crypto.SHA256` and its context (`SHA256_Start`, `SHA256_Update`, `SHA256_Finish`, `SHA256_Compress`) |
+| `SMB.Spec.SHA2` | FIPS 180-4: SHA-256's functions and constants (2.2.2, 4.1.2, 4.2.2, 5.3.3), the padded message and its blocks (5.1.1, 5.2.1), one block's hash computation (6.2.2: `Schedule_Prefix_256`, `Rounds_256`, `Compress_256`) and the digest (`Hash_Blocks_256`, `SHA256`); SHA-512's the same way (4.1.3, 4.2.3, 5.1.2, 5.2.2, 5.3.5, 6.4.2: `Compress_512`, `SHA512`); a model of a message hashed as it arrives for each (`State_256`, `Absorb_256`, `Finish_256`; `State_512`, `Absorb_512`, `Finish_512`), with `SMB.Spec.SHA2.Lemmas` proving that finishing it gives the digest of the message and that two pieces absorbed in turn are the two joined | `Crypto.SHA256`, `Crypto.SHA512` and their contexts (`SHA512_Start`, `SHA512_Update`, `SHA512_Finish` against the model in the public contract), `Core_Preauth.Update` |
 | `SMB.Spec.FSCC` | MS-FSCC 2.4.11, 2.4.14, 2.4.42.2, 2.4.34: FileDispositionInformation, FileEndOfFileInformation, FILE_RENAME_INFORMATION_TYPE_2 and FileNetworkOpenInformation's size, with their classes | `Core_Protocol.Build_Disposition`, `Build_End_Of_File`, `Build_Rename`, `Build_Query_Information`, `Rename_Information_Length`; `Core_Query.Prepare`, `Core_Resize.Prepare` |
 
 Where each unit stands, from the survey at 0.4.0 and the phases since:
@@ -349,15 +350,20 @@ Where each unit stands, from the survey at 0.4.0 and the phases since:
   response checks (phase 7), and the failure statuses and responses of
   `Core_Query` and `Core_Resize` (phases 7 and 9).
 * **Complete against a specification, with the digest:** `Crypto.SHA256`
-  (the digest is `SMB.Spec.SHA2.SHA256` of the message; proved and not
-  run, and `test_suite` checks it on 604 messages), and inside the unit
-  its context against the model (`SHA256_Start`, `SHA256_Update`,
-  `SHA256_Finish`) and the compression function against `Compress_256`.
+  and `Crypto.SHA512` (the digest is `SMB.Spec.SHA2`'s of the message),
+  the public SHA-512 context (`SHA512_Start`, `SHA512_Update`,
+  `SHA512_Finish`, against the model) and `Core_Preauth.Update` (the new
+  value is `SHA512` of the previous one and the message); inside the unit
+  the SHA-256 context against the model and the compression functions
+  against `Compress_256` and `Compress_512`. These postconditions are
+  proved and not run; `test_suite` checks the digests, the public
+  context's states and the preauth step against the specification on
+  604 and 34,793 calls.
 * **Outputs not stated:** every other digest, MAC, cipher and derived key (`Crypto`,
   `AES` and its modes, `KDF`), the signatures (`Core_Wire`'s `Sign`,
   `Compute_Signature` and `Verify_Signature` and their SMB 3.1.1 forms,
   `Core_Request.Sign_Packet`) and `Core_Wire.GMAC_Nonce`,
-  `Core_Preauth.Update`, and `Core_Auth`'s NTLMv2 response, Type 3 message
+  and `Core_Auth`'s NTLMv2 response, Type 3 message
   and session key.
 * **Partial frames over large state:** `Engine`, `Core_Connection`,
   `Core_Client`.
