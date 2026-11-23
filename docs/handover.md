@@ -508,8 +508,16 @@ opens a received one. It is a stateless SPARK unit, like
   (appendix A.5 of each), MS-NLMP's NTOWFv1 example for MD4, GNAT.MD5 on
   every length up to 300 bytes and on 8,192 and 70,000 bytes, and the MD5
   model on every split. Python's hashlib has no MD4 (OpenSSL 3 put it in
-  its legacy provider), so MD4 rests on the RFC's vectors, MS-NLMP's and
-  the NTLM tests.
+  its legacy provider), so the specification rests on the RFC's vectors
+  and MS-NLMP's; `make crypto-test` checks `Crypto.MD4` against OpenSSL's
+  legacy MD4 on lengths 0 to 129 and 255 up to the input bound, and
+  `test_suite` checks `Crypto.MD4` against the specification, which
+  together carry OpenSSL's check over to the specification.
+* GNAT 14.2 warns, wrongly, that the constant of `Compress`'s declare
+  expression is not used (as it does for `SMB.Spec.SHA2`'s since #168), so
+  `make check` (`-gnatwe`) fails with 14.2; the library builds. CI builds
+  with 16. Writing those functions without declare expressions would
+  silence it.
 * `test_suite` (606 calls): `Crypto.MD5` and `Crypto.MD4` against the
   specifications on every length up to 300 bytes and on 8,192 and 70,000
   bytes.
