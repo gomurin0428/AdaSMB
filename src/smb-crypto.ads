@@ -1,4 +1,6 @@
 with Interfaces;
+with SMB.Spec.MD4;
+with SMB.Spec.MD5;
 with SMB.Spec.SHA2;
 
 package SMB.Crypto is
@@ -11,12 +13,6 @@ package SMB.Crypto is
 
    subtype Digest_128 is SMB.Bytes (0 .. 15);
    subtype Digest_256 is SMB.Bytes (0 .. 31);
-
-   function MD4 (Message : SMB.Bytes) return Digest_128
-   with Pre => Message'Length <= Maximum_Hash_Input;
-
-   function MD5 (Message : SMB.Bytes) return Digest_128
-   with Pre => Message'Length <= Maximum_Hash_Input;
 
    subtype Digest_512 is SMB.Bytes (0 .. 63);
 
@@ -112,6 +108,16 @@ package SMB.Crypto is
    --  from SMB.Client in every build), and the equality oracle may stop at
    --  the first difference.
    pragma Assertion_Policy (Post => Ignore);
+
+   --  RFC 1320's MD4 (SMB.Spec.MD4).
+   function MD4 (Message : SMB.Bytes) return Digest_128
+   with Pre => Message'Length <= Maximum_Hash_Input,
+     Post => MD4'Result = SMB.Spec.MD4.MD4 (Message);
+
+   --  RFC 1321's MD5 (SMB.Spec.MD5).
+   function MD5 (Message : SMB.Bytes) return Digest_128
+   with Pre => Message'Length <= Maximum_Hash_Input,
+     Post => MD5'Result = SMB.Spec.MD5.MD5 (Message);
 
    --  FIPS 180-4's SHA-256 (SMB.Spec.SHA2).
    function SHA256 (Message : SMB.Bytes) return Digest_256

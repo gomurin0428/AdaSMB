@@ -1,14 +1,20 @@
+with SMB.Spec.MD5.Lemmas;
 with SMB.Spec.SHA2.Lemmas;
 
 package body SMB.Crypto is
    pragma SPARK_Mode (On);
    package SHA2 renames SMB.Spec.SHA2;
    package SHA2_Lemmas renames SMB.Spec.SHA2.Lemmas;
+   package MD5_Spec renames SMB.Spec.MD5;
+   package MD5_Lemmas renames SMB.Spec.MD5.Lemmas;
+   package MD4_Spec renames SMB.Spec.MD4;
    use type SHA2.Words_32;
    use type SHA2.Working_32;
    use type SHA2.State_256;
    use type SHA2.Words_64;
    use type SHA2.Working_64;
+   use type MD5_Spec.Buffer;
+   use type MD5_Spec.State;
    subtype U32 is Interfaces.Unsigned_32;
    subtype U64 is Interfaces.Unsigned_64;
    use type SMB.Byte;
@@ -29,14 +35,316 @@ package body SMB.Crypto is
      (Interfaces.Shift_Right (Value, Amount)
       or Interfaces.Shift_Left (Value, 32 - Amount));
 
+   --  MD5's definitions unfolded once, the code's word indices and shifts
+   --  against the RFC's tables and the specification's bytes (one case
+   --  each), as SHA-256's above.
+   pragma Assertion_Policy (Ghost => Ignore);
+
+   procedure Lemma_MD5_Operations_Start
+     (V : MD5_Spec.Buffer; B : MD5_Spec.Block)
+   with Ghost, Global => null,
+     Post => MD5_Spec.Operations (V, B, 0) = V;
+
+   procedure Lemma_MD5_Operations_Start
+     (V : MD5_Spec.Buffer; B : MD5_Spec.Block) is null;
+
+   procedure Lemma_MD5_Operations_Step
+     (V : MD5_Spec.Buffer; B : MD5_Spec.Block; N : Natural)
+   with Ghost, Global => null,
+     Pre => N in 1 .. 64,
+     Post => MD5_Spec.Operations (V, B, N) =
+       MD5_Spec.Operation
+         (MD5_Spec.Operations (V, B, N - 1), N - 1,
+          MD5_Spec.Block_Word (B, MD5_Spec.K_Index (N - 1)));
+
+   procedure Lemma_MD5_Operations_Step
+     (V : MD5_Spec.Buffer; B : MD5_Spec.Block; N : Natural) is null;
+
+   --  RFC 1321's word for each operation, as the code computes it.
+   procedure Lemma_MD5_Index (I : Natural)
+   with Ghost, Global => null,
+     Pre => I < 64,
+     Post => MD5_Spec.K_Index (I) =
+       (if I < 16 then I
+        elsif I < 32 then (5 * I + 1) mod 16
+        elsif I < 48 then (3 * I + 5) mod 16
+        else (7 * I) mod 16);
+
+   procedure Lemma_MD5_Index (I : Natural) is
+   begin
+      case I is
+         when 0 =>
+            null;
+         when 1 =>
+            null;
+         when 2 =>
+            null;
+         when 3 =>
+            null;
+         when 4 =>
+            null;
+         when 5 =>
+            null;
+         when 6 =>
+            null;
+         when 7 =>
+            null;
+         when 8 =>
+            null;
+         when 9 =>
+            null;
+         when 10 =>
+            null;
+         when 11 =>
+            null;
+         when 12 =>
+            null;
+         when 13 =>
+            null;
+         when 14 =>
+            null;
+         when 15 =>
+            null;
+         when 16 =>
+            null;
+         when 17 =>
+            null;
+         when 18 =>
+            null;
+         when 19 =>
+            null;
+         when 20 =>
+            null;
+         when 21 =>
+            null;
+         when 22 =>
+            null;
+         when 23 =>
+            null;
+         when 24 =>
+            null;
+         when 25 =>
+            null;
+         when 26 =>
+            null;
+         when 27 =>
+            null;
+         when 28 =>
+            null;
+         when 29 =>
+            null;
+         when 30 =>
+            null;
+         when 31 =>
+            null;
+         when 32 =>
+            null;
+         when 33 =>
+            null;
+         when 34 =>
+            null;
+         when 35 =>
+            null;
+         when 36 =>
+            null;
+         when 37 =>
+            null;
+         when 38 =>
+            null;
+         when 39 =>
+            null;
+         when 40 =>
+            null;
+         when 41 =>
+            null;
+         when 42 =>
+            null;
+         when 43 =>
+            null;
+         when 44 =>
+            null;
+         when 45 =>
+            null;
+         when 46 =>
+            null;
+         when 47 =>
+            null;
+         when 48 =>
+            null;
+         when 49 =>
+            null;
+         when 50 =>
+            null;
+         when 51 =>
+            null;
+         when 52 =>
+            null;
+         when 53 =>
+            null;
+         when 54 =>
+            null;
+         when 55 =>
+            null;
+         when 56 =>
+            null;
+         when 57 =>
+            null;
+         when 58 =>
+            null;
+         when 59 =>
+            null;
+         when 60 =>
+            null;
+         when 61 =>
+            null;
+         when 62 =>
+            null;
+         when 63 =>
+            null;
+         when others =>
+            null;
+      end case;
+   end Lemma_MD5_Index;
+
+   procedure Lemma_LE_Length_Byte (Bits : U64; Length : Natural; I : Natural)
+   with Ghost, Global => null,
+     Pre => Length <= Maximum_Hash_Input and then Bits = U64 (Length) * 8
+       and then I < 8,
+     Post => SMB.Byte (Interfaces.Shift_Right (Bits, I * 8) and 16#FF#) =
+       MD5_Spec.Length_Byte (Length, I);
+
+   procedure Lemma_LE_Length_Byte (Bits : U64; Length : Natural; I : Natural)
+   is
+   begin
+      case I is
+         when 0 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 0) and 16#FF#) =
+                 MD5_Spec.Length_Byte (Length, 0));
+         when 1 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 8) and 16#FF#) =
+                 MD5_Spec.Length_Byte (Length, 1));
+         when 2 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 16) and 16#FF#) =
+                 MD5_Spec.Length_Byte (Length, 2));
+         when 3 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 24) and 16#FF#) =
+                 MD5_Spec.Length_Byte (Length, 3));
+         when 4 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 32) and 16#FF#) =
+                 MD5_Spec.Length_Byte (Length, 4));
+         when 5 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 40) and 16#FF#) =
+                 MD5_Spec.Length_Byte (Length, 5));
+         when 6 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 48) and 16#FF#) =
+                 MD5_Spec.Length_Byte (Length, 6));
+         when 7 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (Bits, 56) and 16#FF#) =
+                 MD5_Spec.Length_Byte (Length, 7));
+         when others =>
+            null;
+      end case;
+   end Lemma_LE_Length_Byte;
+
+   procedure Lemma_LE_Word_Byte (X : U32; J : Natural)
+   with Ghost, Global => null,
+     Pre => J < 4,
+     Post => SMB.Byte (Interfaces.Shift_Right (X, J * 8) and 16#FF#) =
+       MD5_Spec.Word_Byte (X, J);
+
+   procedure Lemma_LE_Word_Byte (X : U32; J : Natural) is
+   begin
+      case J is
+         when 0 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 0) and 16#FF#) =
+                 MD5_Spec.Word_Byte (X, 0));
+         when 1 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 8) and 16#FF#) =
+                 MD5_Spec.Word_Byte (X, 1));
+         when 2 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 16) and 16#FF#) =
+                 MD5_Spec.Word_Byte (X, 2));
+         when 3 =>
+            pragma Assert
+              (SMB.Byte (Interfaces.Shift_Right (X, 24) and 16#FF#) =
+                 MD5_Spec.Word_Byte (X, 3));
+         when others =>
+            null;
+      end case;
+   end Lemma_LE_Word_Byte;
+
+   procedure Lemma_LE_Word (X : U32)
+   with Ghost, Global => null,
+     Post =>
+       (for all J in 0 .. 3 =>
+          SMB.Byte (Interfaces.Shift_Right (X, J * 8) and 16#FF#) =
+            MD5_Spec.Word_Byte (X, J));
+
+   procedure Lemma_LE_Word (X : U32) is
+   begin
+      Lemma_LE_Word_Byte (X, 0);
+      Lemma_LE_Word_Byte (X, 1);
+      Lemma_LE_Word_Byte (X, 2);
+      Lemma_LE_Word_Byte (X, 3);
+   end Lemma_LE_Word;
+
+   --  3.5's digest, from its sixteen bytes; alone, where the same goal
+   --  took 233k steps in MD5_Finish.
+   procedure Lemma_MD5_Digest (D : MD5_Spec.Digest; V : MD5_Spec.Buffer)
+   with Ghost, Global => null,
+     Pre =>
+       (for all J in 0 .. 3 =>
+          D (J) = MD5_Spec.Word_Byte (V.A, J)
+          and then D (4 + J) = MD5_Spec.Word_Byte (V.B, J)
+          and then D (8 + J) = MD5_Spec.Word_Byte (V.C, J)
+          and then D (12 + J) = MD5_Spec.Word_Byte (V.D, J)),
+     Post => D = MD5_Spec.Digest_Of (V);
+
+   procedure Lemma_MD5_Digest (D : MD5_Spec.Digest; V : MD5_Spec.Buffer)
+   is null;
+
+   procedure Lemma_MD5_Final
+     (Before, After : MD5_Spec.Buffer;
+      B : MD5_Spec.Block;
+      V : MD5_Spec.Buffer)
+   with Ghost, Global => null,
+     Pre => V = MD5_Spec.Operations (Before, B, 64)
+       and then After.A = Before.A + V.A and then After.B = Before.B + V.B
+       and then After.C = Before.C + V.C and then After.D = Before.D + V.D,
+     Post => After = MD5_Spec.Compress (Before, B);
+
+   procedure Lemma_MD5_Final
+     (Before, After : MD5_Spec.Buffer;
+      B : MD5_Spec.Block;
+      V : MD5_Spec.Buffer) is null;
+
+   pragma Assertion_Policy (Ghost => Check);
+
    function Padded_Length (Length : Natural) return Natural
      with Pre => Length <= Maximum_Hash_Input,
        Post => Padded_Length'Result >= Length + 9
          and then Padded_Length'Result <= Length + 72
-         and then Padded_Length'Result mod 64 = 0;
+         and then Padded_Length'Result mod 64 = 0
+         and then Padded_Length'Result = MD5_Spec.Padded_Length (Length);
 
    function Padded_Length (Length : Natural) return Natural is
+      pragma Assertion_Policy (Assert => Ignore);
    begin
+      pragma Assert
+        (if Length mod 64 <= 55
+         then MD5_Spec.Zero_Bytes (Length) = 55 - Length mod 64
+         else MD5_Spec.Zero_Bytes (Length) = 119 - Length mod 64);
       return ((Length + 72) / 64) * 64;
    end Padded_Length;
 
@@ -45,9 +353,13 @@ package body SMB.Crypto is
    function Padded (Message : SMB.Bytes) return SMB.Bytes
      with Pre => Message'Length <= Maximum_Hash_Input,
        Post => Padded'Result'First = 0
-         and then Padded'Result'Length = Padded_Length (Message'Length);
+         and then Padded'Result'Length = Padded_Length (Message'Length)
+         and then
+           (for all I in Padded'Result'Range =>
+              Padded'Result (I) = MD5_Spec.Padded_Byte (Message, I));
 
    function Padded (Message : SMB.Bytes) return SMB.Bytes is
+      pragma Assertion_Policy (Assert => Ignore, Loop_Invariant => Ignore);
       Length : constant Natural := Message'Length;
       Total  : constant Natural := Padded_Length (Length);
       Result : SMB.Bytes (0 .. Total - 1) := (others => 0);
@@ -57,16 +369,34 @@ package body SMB.Crypto is
          Result (0 .. Length - 1) := Message;
       end if;
       Result (Length) := 16#80#;
+      --  Proof steps only (they would read the whole message on each run).
+      pragma Assert
+        (for all I in 0 .. Total - 9 =>
+           Result (I) = MD5_Spec.Padded_Byte (Message, I));
       for I in 0 .. 7 loop
          Result (Total - 8 + I) :=
            SMB.Byte (Interfaces.Shift_Right (Bits, I * 8) and 16#FF#);
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+         begin
+            Lemma_LE_Length_Byte (Bits, Length, I);
+         end;
+         pragma Loop_Invariant
+           (for all J in 0 .. Total - 8 + I =>
+              Result (J) = MD5_Spec.Padded_Byte (Message, J));
       end loop;
       return Result;
    end Padded;
 
+   --  The little-endian word at Offset, as RFC 1320 and 1321 read one.
    function Get_Le (Data : SMB.Bytes; Offset : Natural) return U32
      with Pre => Data'Length <= Maximum_Hash_Input + 72
-       and then Offset <= Data'Length and then Data'Length - Offset >= 4;
+       and then Offset <= Data'Length and then Data'Length - Offset >= 4,
+       Post => Get_Le'Result =
+         U32 (Data (Data'First + Offset))
+         + U32 (Data (Data'First + Offset + 1)) * 2 ** 8
+         + U32 (Data (Data'First + Offset + 2)) * 2 ** 16
+         + U32 (Data (Data'First + Offset + 3)) * 2 ** 24;
 
    function Get_Le (Data : SMB.Bytes; Offset : Natural) return U32 is
    begin
@@ -78,17 +408,98 @@ package body SMB.Crypto is
 
    procedure Store_Le (Data : in out SMB.Bytes; Offset : Natural; Value : U32)
      with Pre => Data'Length <= Maximum_Hash_Input + 72
-       and then Offset <= Data'Length and then Data'Length - Offset >= 4;
+       and then Offset <= Data'Length and then Data'Length - Offset >= 4,
+       Post =>
+         (for all I in 0 .. 3 =>
+            Data (Data'First + Offset + I) =
+              SMB.Byte (Interfaces.Shift_Right (Value, I * 8) and 16#FF#))
+         and then
+           (for all I in Data'Range =>
+              (if I - Data'First not in Offset .. Offset + 3
+               then Data (I) = Data'Old (I)));
 
    procedure Store_Le (Data : in out SMB.Bytes; Offset : Natural; Value : U32) is
+      --  The invariants are steps of the proof only.
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
    begin
       for I in 0 .. 3 loop
          Data (Data'First + Offset + I) :=
            SMB.Byte (Interfaces.Shift_Right (Value, I * 8) and 16#FF#);
+         pragma Loop_Invariant
+           (for all J in 0 .. I =>
+              Data (Data'First + Offset + J) =
+                SMB.Byte (Interfaces.Shift_Right (Value, J * 8) and 16#FF#));
+         pragma Loop_Invariant
+           (for all J in Data'Range =>
+              (if J - Data'First not in Offset .. Offset + 3
+               then Data (J) = Data'Loop_Entry (J)));
       end loop;
    end Store_Le;
 
+   --  MD4's definitions unfolded once, and its word indices against RFC
+   --  1320's table.
+   pragma Assertion_Policy (Ghost => Ignore);
+
+   procedure Lemma_MD4_Operations_Start
+     (V : MD5_Spec.Buffer; B : MD5_Spec.Block)
+   with Ghost, Global => null,
+     Post => MD4_Spec.Operations (V, B, 0) = V;
+
+   procedure Lemma_MD4_Operations_Start
+     (V : MD5_Spec.Buffer; B : MD5_Spec.Block) is null;
+
+   procedure Lemma_MD4_Operations_Step
+     (V : MD5_Spec.Buffer; B : MD5_Spec.Block; N : Natural)
+   with Ghost, Global => null,
+     Pre => N in 1 .. 48,
+     Post => MD4_Spec.Operations (V, B, N) =
+       MD4_Spec.Operation
+         (MD4_Spec.Operations (V, B, N - 1), N - 1,
+          MD5_Spec.Block_Word (B, MD4_Spec.K_Index (N - 1)));
+
+   procedure Lemma_MD4_Operations_Step
+     (V : MD5_Spec.Buffer; B : MD5_Spec.Block; N : Natural) is null;
+
+   procedure Lemma_MD4_Final
+     (Before, After : MD5_Spec.Buffer;
+      B : MD5_Spec.Block;
+      V : MD5_Spec.Buffer)
+   with Ghost, Global => null,
+     Pre => V = MD4_Spec.Operations (Before, B, 48)
+       and then After.A = V.A + Before.A and then After.B = V.B + Before.B
+       and then After.C = V.C + Before.C and then After.D = V.D + Before.D,
+     Post => After = MD4_Spec.Compress (Before, B);
+
+   procedure Lemma_MD4_Final
+     (Before, After : MD5_Spec.Buffer;
+      B : MD5_Spec.Block;
+      V : MD5_Spec.Buffer) is null;
+
+   procedure Lemma_MD4_Blocks_Step (Message : SMB.Bytes; N : Natural)
+   with Ghost, Global => null,
+     Pre => Message'Length <= MD5_Spec.Maximum_Length
+       and then N in 1 .. MD5_Spec.Padded_Length (Message'Length) / 64,
+     Post => MD4_Spec.Hash_Blocks (Message, N) =
+       MD4_Spec.Compress
+         (MD4_Spec.Hash_Blocks (Message, N - 1),
+          MD5_Spec.Padded_Block (Message, N - 1));
+
+   procedure Lemma_MD4_Blocks_Step (Message : SMB.Bytes; N : Natural)
+   is null;
+
+   procedure Lemma_MD4_Blocks_Start (Message : SMB.Bytes)
+   with Ghost, Global => null,
+     Pre => Message'Length <= MD5_Spec.Maximum_Length,
+     Post => MD4_Spec.Hash_Blocks (Message, 0) = MD5_Spec.Initial;
+
+   procedure Lemma_MD4_Blocks_Start (Message : SMB.Bytes) is null;
+
+   pragma Assertion_Policy (Ghost => Check);
+
    function MD4 (Message : SMB.Bytes) return Digest_128 is
+      --  The proof's steps: the buffer against the specification block by
+      --  block and operation by operation; none of them runs.
+      pragma Assertion_Policy (Loop_Invariant => Ignore, Assert => Ignore);
       Input : constant SMB.Bytes := Padded (Message);
       A, B, C, D : U32;
       AA, BB, CC, DD : U32;
@@ -108,9 +519,22 @@ package body SMB.Crypto is
       B := 16#EFCDAB89#;
       C := 16#98BADCFE#;
       D := 16#10325476#;
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_MD4_Blocks_Start (Message);
+      end;
       for Block in 0 .. Input'Length / 64 - 1 loop
+         pragma Loop_Invariant
+           (MD5_Spec.Buffer'(A, B, C, D) =
+              MD4_Spec.Hash_Blocks (Message, Block));
          declare
-            X : Block_Words;
+            pragma Assertion_Policy (Ghost => Ignore);
+            PB : constant MD5_Spec.Block :=
+              MD5_Spec.Padded_Block (Message, Block)
+            with Ghost;
+            V0 : constant MD5_Spec.Buffer := (A, B, C, D) with Ghost;
+            X : Block_Words := (others => 0);
             function F (X1, X2, X3 : U32) return U32 is
               ((X1 and X2) or ((not X1) and X3));
             function G (X1, X2, X3 : U32) return U32 is
@@ -121,27 +545,148 @@ package body SMB.Crypto is
          begin
             for I in X'Range loop
                X (I) := Get_Le (Input, Block * 64 + I * 4);
+               pragma Loop_Invariant
+                 (for all J in 0 .. I => X (J) = MD5_Spec.Block_Word (PB, J));
             end loop;
             AA := A; BB := B; CC := C; DD := D;
+            Lemma_MD4_Operations_Start (V0, PB);
             for I in 0 .. 15 loop
+               pragma Loop_Invariant
+                 (MD5_Spec.Buffer'(A, B, C, D) =
+                    MD4_Spec.Operations (V0, PB, I));
+               pragma Assert
+                 (MD4_Spec.K_Index (I) = I and then F1 (I) = MD4_Spec.Shift (I));
+               pragma Assert
+                 (Rol (A + F (B, C, D) + X (I), F1 (I)) =
+                    MD5_Spec.Rotate_Left
+                      (A + MD4_Spec.Round_Value (I, B, C, D)
+                       + MD5_Spec.Block_Word (PB, MD4_Spec.K_Index (I)),
+                       MD4_Spec.Shift (I)));
+               Lemma_MD4_Operations_Step (V0, PB, I + 1);
                T := Rol (A + F (B, C, D) + X (I), F1 (I));
+               pragma Assert
+                 (T =
+                    MD5_Spec.Rotate_Left
+                      (A + MD4_Spec.Round_Value (I, B, C, D)
+                       + MD5_Spec.Block_Word (PB, MD4_Spec.K_Index (I)),
+                       MD4_Spec.Shift (I)));
                A := D; D := C; C := B; B := T;
+               pragma Assert
+                 (MD5_Spec.Buffer'(A, B, C, D) =
+                    MD4_Spec.Operations (V0, PB, I + 1));
             end loop;
             for I in 0 .. 15 loop
+               pragma Loop_Invariant
+                 (MD5_Spec.Buffer'(A, B, C, D) =
+                    MD4_Spec.Operations (V0, PB, 16 + I));
                Index := Orders_2 (I);
+               pragma Assert
+                 (Index = MD4_Spec.K_Index (16 + I)
+                  and then F2 (I) = MD4_Spec.Shift (16 + I));
+               declare
+                  Sum : constant U32 := A + G (B, C, D) + X (Index) + 16#5A827999#
+                  with Ghost;
+               begin
+                  pragma Assert
+                    (Sum =
+                       A + MD4_Spec.Round_Value (16 + I, B, C, D)
+                       + MD5_Spec.Block_Word (PB, MD4_Spec.K_Index (16 + I)));
+                  pragma Assert
+                    (Rol (Sum, F2 (I)) =
+                       MD5_Spec.Rotate_Left (Sum, MD4_Spec.Shift (16 + I)));
+               end;
+               Lemma_MD4_Operations_Step (V0, PB, 16 + I + 1);
                T := Rol (A + G (B, C, D) + X (Index) + 16#5A827999#, F2 (I));
+               pragma Assert
+                 (T =
+                    MD5_Spec.Rotate_Left
+                      (A + MD4_Spec.Round_Value (16 + I, B, C, D)
+                       + MD5_Spec.Block_Word (PB, MD4_Spec.K_Index (16 + I)),
+                       MD4_Spec.Shift (16 + I)));
                A := D; D := C; C := B; B := T;
+               pragma Assert
+                 (MD5_Spec.Buffer'(A, B, C, D) =
+                    MD4_Spec.Operations (V0, PB, 16 + I + 1));
             end loop;
             for I in 0 .. 15 loop
+               pragma Loop_Invariant
+                 (MD5_Spec.Buffer'(A, B, C, D) =
+                    MD4_Spec.Operations (V0, PB, 32 + I));
                Index := Orders_3 (I);
+               pragma Assert
+                 (Index = MD4_Spec.K_Index (32 + I)
+                  and then F3 (I) = MD4_Spec.Shift (32 + I));
+               declare
+                  Sum : constant U32 := A + H (B, C, D) + X (Index) + 16#6ED9EBA1#
+                  with Ghost;
+               begin
+                  pragma Assert
+                    (Sum =
+                       A + MD4_Spec.Round_Value (32 + I, B, C, D)
+                       + MD5_Spec.Block_Word (PB, MD4_Spec.K_Index (32 + I)));
+                  pragma Assert
+                    (Rol (Sum, F3 (I)) =
+                       MD5_Spec.Rotate_Left (Sum, MD4_Spec.Shift (32 + I)));
+               end;
+               Lemma_MD4_Operations_Step (V0, PB, 32 + I + 1);
                T := Rol (A + H (B, C, D) + X (Index) + 16#6ED9EBA1#, F3 (I));
+               pragma Assert
+                 (T =
+                    MD5_Spec.Rotate_Left
+                      (A + MD4_Spec.Round_Value (32 + I, B, C, D)
+                       + MD5_Spec.Block_Word (PB, MD4_Spec.K_Index (32 + I)),
+                       MD4_Spec.Shift (32 + I)));
                A := D; D := C; C := B; B := T;
+               pragma Assert
+                 (MD5_Spec.Buffer'(A, B, C, D) =
+                    MD4_Spec.Operations (V0, PB, 32 + I + 1));
             end loop;
-            A := A + AA; B := B + BB; C := C + CC; D := D + DD;
+            declare
+               V48 : constant MD5_Spec.Buffer := (A, B, C, D) with Ghost;
+            begin
+               A := A + AA; B := B + BB; C := C + CC; D := D + DD;
+               Lemma_MD4_Final (V0, (A, B, C, D), PB, V48);
+            end;
+            Lemma_MD4_Blocks_Step (Message, Block + 1);
          end;
+         pragma Assert
+           (MD5_Spec.Buffer'(A, B, C, D) =
+              MD4_Spec.Hash_Blocks (Message, Block + 1));
       end loop;
-      Store_Le (State, 0, A); Store_Le (State, 4, B);
-      Store_Le (State, 8, C); Store_Le (State, 12, D);
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_LE_Word (A);
+         Lemma_LE_Word (B);
+         Lemma_LE_Word (C);
+         Lemma_LE_Word (D);
+      end;
+      Store_Le (State, 0, A);
+      pragma Assert
+        (for all J in 0 .. 3 => State (J) = MD5_Spec.Word_Byte (A, J));
+      Store_Le (State, 4, B);
+      pragma Assert
+        (for all J in 0 .. 3 =>
+           State (J) = MD5_Spec.Word_Byte (A, J)
+           and then State (4 + J) = MD5_Spec.Word_Byte (B, J));
+      Store_Le (State, 8, C);
+      pragma Assert
+        (for all J in 0 .. 3 =>
+           State (J) = MD5_Spec.Word_Byte (A, J)
+           and then State (4 + J) = MD5_Spec.Word_Byte (B, J)
+           and then State (8 + J) = MD5_Spec.Word_Byte (C, J));
+      Store_Le (State, 12, D);
+      pragma Assert
+        (for all J in 0 .. 3 =>
+           State (J) = MD5_Spec.Word_Byte (A, J)
+           and then State (4 + J) = MD5_Spec.Word_Byte (B, J)
+           and then State (8 + J) = MD5_Spec.Word_Byte (C, J)
+           and then State (12 + J) = MD5_Spec.Word_Byte (D, J));
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_MD5_Digest (State, (A, B, C, D));
+      end;
       return State;
    end MD4;
 
@@ -1106,10 +1651,21 @@ package body SMB.Crypto is
    MD5_IV : constant MD5_State :=
      (16#67452301#, 16#EFCDAB89#, 16#98BADCFE#, 16#10325476#);
 
+   --  The buffer as SMB.Spec.MD5 names its words.
+   function MD5_Buffer (H : MD5_State) return MD5_Spec.Buffer is
+     ((A => H (0), B => H (1), C => H (2), D => H (3)))
+   with Ghost;
+
+
+   --  RFC 1321 3.4, for one block.
    procedure MD5_Compress (H : in out MD5_State; Block : Block_Bytes)
-     with Global => null
+     with Global => null,
+       Post => MD5_Buffer (H) = MD5_Spec.Compress (MD5_Buffer (H'Old), Block)
    is
-      X : Block_Words;
+      --  As SHA256_Compress's, none of the proof's steps runs.
+      pragma Assertion_Policy (Loop_Invariant => Ignore, Assert => Ignore);
+      --  Set before the loop that fills it, which its invariant reads.
+      X : Block_Words := (others => 0);
       A : U32 := H (0); B : U32 := H (1);
       C : U32 := H (2); D : U32 := H (3);
       Fv, T : U32;
@@ -1117,29 +1673,87 @@ package body SMB.Crypto is
    begin
       for I in X'Range loop
          X (I) := Get_Le (Block, I * 4);
+         pragma Loop_Invariant
+           (for all J in 0 .. I => X (J) = MD5_Spec.Block_Word (Block, J));
       end loop;
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+      begin
+         Lemma_MD5_Operations_Start (MD5_Buffer (H), Block);
+      end;
       for I in 0 .. 63 loop
-         if I < 16 then
-            Fv := (B and C) or ((not B) and D); Index := I;
-         elsif I < 32 then
-            Fv := (D and B) or ((not D) and C);
-            Index := (5 * I + 1) mod 16;
-         elsif I < 48 then
-            Fv := B xor C xor D; Index := (3 * I + 5) mod 16;
-         else
-            Fv := C xor (B or (not D)); Index := (7 * I) mod 16;
-         end if;
-         T := D;
-         D := C; C := B;
-         B := B + Rol (A + Fv + MD5_K (I) + X (Index), MD5_S (I));
-         A := T;
+         pragma Loop_Invariant
+           (MD5_Spec.Buffer'(A, B, C, D) =
+              MD5_Spec.Operations (MD5_Buffer (H), Block, I));
+         declare
+            pragma Assertion_Policy (Ghost => Ignore);
+            Before : constant MD5_Spec.Buffer := (A, B, C, D) with Ghost;
+         begin
+            if I < 16 then
+               Fv := (B and C) or ((not B) and D); Index := I;
+            elsif I < 32 then
+               Fv := (D and B) or ((not D) and C);
+               Index := (5 * I + 1) mod 16;
+            elsif I < 48 then
+               Fv := B xor C xor D; Index := (3 * I + 5) mod 16;
+            else
+               Fv := C xor (B or (not D)); Index := (7 * I) mod 16;
+            end if;
+            pragma Assert
+              (Fv = MD5_Spec.Round_Function (I, Before.B, Before.C, Before.D));
+            Lemma_MD5_Index (I);
+            pragma Assert (Index = MD5_Spec.K_Index (I));
+            pragma Assert
+              (MD5_K (I) = MD5_Spec.T (I) and then MD5_S (I) = MD5_Spec.Shift (I));
+            declare
+               Sum : constant U32 := A + Fv + MD5_K (I) + X (Index)
+               with Ghost;
+            begin
+               pragma Assert
+                 (Sum =
+                    Before.A + MD5_Spec.Round_Function
+                      (I, Before.B, Before.C, Before.D)
+                    + MD5_Spec.Block_Word (Block, MD5_Spec.K_Index (I))
+                    + MD5_Spec.T (I));
+               pragma Assert
+                 (Rol (Sum, MD5_S (I)) =
+                    MD5_Spec.Rotate_Left (Sum, MD5_Spec.Shift (I)));
+            end;
+            T := D;
+            D := C; C := B;
+            B := B + Rol (A + Fv + MD5_K (I) + X (Index), MD5_S (I));
+            A := T;
+            pragma Assert
+              (MD5_Spec.Buffer'(A, B, C, D) =
+                 MD5_Spec.Operation
+                   (Before, I,
+                    MD5_Spec.Block_Word (Block, MD5_Spec.K_Index (I))));
+            Lemma_MD5_Operations_Step (MD5_Buffer (H), Block, I + 1);
+         end;
+         pragma Assert
+           (MD5_Spec.Buffer'(A, B, C, D) =
+              MD5_Spec.Operations (MD5_Buffer (H), Block, I + 1));
       end loop;
-      H (0) := H (0) + A; H (1) := H (1) + B;
-      H (2) := H (2) + C; H (3) := H (3) + D;
+      declare
+         pragma Assertion_Policy (Ghost => Ignore);
+         Before : constant MD5_Spec.Buffer := MD5_Buffer (H) with Ghost;
+      begin
+         H (0) := H (0) + A; H (1) := H (1) + B;
+         H (2) := H (2) + C; H (3) := H (3) + D;
+         Lemma_MD5_Final (Before, MD5_Buffer (H), Block, (A, B, C, D));
+      end;
    end MD5_Compress;
 
+   --  The context as SMB.Spec.MD5's model of a message hashed in pieces.
+   function MD5_Model (Context : MD5_Context) return MD5_Spec.State is
+     ((Value => MD5_Buffer (Context.H),
+       Pending => Context.Block,
+       Used => Context.Used))
+   with Ghost;
+
    procedure MD5_Start (Context : out MD5_Context)
-     with Post => Context.Total = 0
+     with Post => MD5_Model (Context) = MD5_Spec.Start
+       and then Context.Total = 0
    is
    begin
       Context :=
@@ -1152,51 +1766,144 @@ package body SMB.Crypto is
    procedure MD5_Update (Context : in out MD5_Context; Message : SMB.Bytes)
      with Pre => Message'Length <= Maximum_Hash_Input
        and then Context.Total <= Maximum_Hash_Input - Message'Length,
-       Post => Context.Total = Context.Total'Old + Message'Length
+       Post => MD5_Model (Context) =
+           MD5_Spec.Absorb (MD5_Model (Context'Old), Message)
+         and then Context.Total = Context.Total'Old + Message'Length
    is
+      --  As SHA256_Update's, none of the proof's steps runs.
+      pragma Assertion_Policy
+        (Ghost => Ignore, Assert => Ignore, Loop_Invariant => Ignore);
+      Start : constant MD5_Spec.State := MD5_Model (Context) with Ghost;
    begin
+      MD5_Lemmas.Lemma_Absorb_None (Start, Message);
       for I in Message'Range loop
-         Context.Block (Context.Used) := Message (I);
-         if Context.Used = Block_Position'Last then
-            MD5_Compress (Context.H, Context.Block);
-            Context.Used := 0;
-         else
-            Context.Used := Context.Used + 1;
-         end if;
          pragma Loop_Invariant (Context.Total = Context.Total'Loop_Entry);
+         pragma Loop_Invariant
+           (MD5_Model (Context) =
+              MD5_Spec.Absorb_Prefix (Start, Message, I - Message'First));
+         declare
+            Before : constant MD5_Spec.State := MD5_Model (Context)
+            with Ghost;
+         begin
+            Context.Block (Context.Used) := Message (I);
+            pragma Assert
+              (Context.Block =
+                 MD5_Spec.Put (Before.Pending, Before.Used, Message (I)));
+            if Context.Used = Block_Position'Last then
+               MD5_Compress (Context.H, Context.Block);
+               MD5_Lemmas.Lemma_Compress_Equal
+                 (Before.Value, Context.Block,
+                  MD5_Spec.Put (Before.Pending, Before.Used, Message (I)));
+               Context.Used := 0;
+            else
+               Context.Used := Context.Used + 1;
+            end if;
+            pragma Assert
+              (MD5_Model (Context) = MD5_Spec.Absorb_Byte (Before, Message (I)));
+            MD5_Lemmas.Lemma_Absorb_Unfold
+              (Start, Message, I - Message'First + 1);
+            MD5_Lemmas.Lemma_Absorb_Byte_Equal
+              (Before,
+               MD5_Spec.Absorb_Prefix (Start, Message, I - Message'First),
+               Message (I));
+         end;
+         pragma Assert
+           (MD5_Model (Context) =
+              MD5_Spec.Absorb_Prefix (Start, Message, I - Message'First + 1));
       end loop;
       Context.Total := Context.Total + Message'Length;
    end MD5_Update;
 
    procedure MD5_Finish
      (Context : in out MD5_Context; Digest : out Digest_128)
-     with Pre => Context.Total <= Maximum_Hash_Input
+     with Pre => Context.Total <= Maximum_Hash_Input,
+       Post => Digest =
+         MD5_Spec.Finish (MD5_Model (Context'Old), Context.Total'Old)
    is
+      pragma Assertion_Policy
+        (Ghost => Ignore, Assert => Ignore, Loop_Invariant => Ignore);
+      S : constant MD5_Spec.State := MD5_Model (Context) with Ghost;
       Bits : constant U64 := U64 (Context.Total) * 8;
    begin
       Context.Block (Context.Used) := 16#80#;
       Context.Block (Context.Used + 1 .. 63) := (others => 0);
+      pragma Assert (Context.Block = MD5_Spec.Pad_Block (S));
       if Context.Used >= 56 then
          MD5_Compress (Context.H, Context.Block);
+         MD5_Lemmas.Lemma_Compress_Equal
+           (S.Value, Context.Block, MD5_Spec.Pad_Block (S));
          Context.Block := (others => 0);
       end if;
+      pragma Assert (MD5_Buffer (Context.H) = MD5_Spec.Before_Length (S));
       for I in 0 .. 7 loop
          Context.Block (56 + I) :=
            SMB.Byte (Interfaces.Shift_Right (Bits, I * 8) and 16#FF#);
+         Lemma_LE_Length_Byte (Bits, Context.Total, I);
+         pragma Loop_Invariant
+           (for all J in 0 .. 56 + I =>
+              Context.Block (J) = MD5_Spec.Length_Block (S, Context.Total) (J));
       end loop;
-      MD5_Compress (Context.H, Context.Block);
+      declare
+         Before : constant MD5_Spec.Buffer := MD5_Buffer (Context.H)
+         with Ghost;
+      begin
+         MD5_Compress (Context.H, Context.Block);
+         MD5_Lemmas.Lemma_Compress_Equal
+           (Before, Context.Block, MD5_Spec.Length_Block (S, Context.Total));
+      end;
       Digest := (others => 0);
-      Store_Le (Digest, 0, Context.H (0)); Store_Le (Digest, 4, Context.H (1));
-      Store_Le (Digest, 8, Context.H (2)); Store_Le (Digest, 12, Context.H (3));
+      Lemma_LE_Word (Context.H (0));
+      Lemma_LE_Word (Context.H (1));
+      Lemma_LE_Word (Context.H (2));
+      Lemma_LE_Word (Context.H (3));
+      Store_Le (Digest, 0, Context.H (0));
+      pragma Assert
+        (for all J in 0 .. 3 =>
+           Digest (J) = MD5_Spec.Word_Byte (Context.H (0), J));
+      Store_Le (Digest, 4, Context.H (1));
+      pragma Assert
+        (for all J in 0 .. 3 =>
+           Digest (J) = MD5_Spec.Word_Byte (Context.H (0), J)
+           and then Digest (4 + J) = MD5_Spec.Word_Byte (Context.H (1), J));
+      Store_Le (Digest, 8, Context.H (2));
+      pragma Assert
+        (for all J in 0 .. 3 =>
+           Digest (J) = MD5_Spec.Word_Byte (Context.H (0), J)
+           and then Digest (4 + J) = MD5_Spec.Word_Byte (Context.H (1), J)
+           and then Digest (8 + J) = MD5_Spec.Word_Byte (Context.H (2), J));
+      Store_Le (Digest, 12, Context.H (3));
+      pragma Assert
+        (for all J in 0 .. 3 =>
+           Digest (J) = MD5_Spec.Word_Byte (Context.H (0), J)
+           and then Digest (4 + J) = MD5_Spec.Word_Byte (Context.H (1), J)
+           and then Digest (8 + J) = MD5_Spec.Word_Byte (Context.H (2), J)
+           and then Digest (12 + J) = MD5_Spec.Word_Byte (Context.H (3), J));
+      Lemma_MD5_Digest (Digest, MD5_Buffer (Context.H));
    end MD5_Finish;
 
    function MD5 (Message : SMB.Bytes) return Digest_128 is
+      pragma Assertion_Policy (Ghost => Ignore);
       Context : MD5_Context;
       Digest : Digest_128;
    begin
       MD5_Start (Context);
-      MD5_Update (Context, Message);
-      MD5_Finish (Context, Digest);
+      declare
+         Start : constant MD5_Spec.State := MD5_Model (Context) with Ghost;
+      begin
+         MD5_Update (Context, Message);
+         MD5_Lemmas.Lemma_Absorb_Equal
+           (Start, MD5_Spec.Start, Message, Message'Length);
+      end;
+      declare
+         Absorbed : constant MD5_Spec.State := MD5_Model (Context)
+         with Ghost;
+      begin
+         MD5_Finish (Context, Digest);
+         MD5_Lemmas.Lemma_Finish_Equal
+           (Absorbed, MD5_Spec.Absorb (MD5_Spec.Start, Message),
+            Message'Length);
+      end;
+      MD5_Lemmas.Lemma_Finish (Message);
       return Digest;
    end MD5;
 
