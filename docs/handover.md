@@ -89,7 +89,7 @@ of date.
 | after 0.4.0 | Platinum phase 5, SHA-256: `SMB.Spec.SHA2` (FIPS 180-4) and `Crypto`'s compression function against it | merged (#168) |
 | after 0.4.0 | Platinum phase 4, `Core_Text.Validate_UTF16` against `SMB.Spec.Unicode` | merged (#164) |
 | after 0.4.0 | Platinum phase 5, SHA-256 whole: a model of a message hashed in pieces, `SHA256`'s context and digest against the specification | merged (#169) |
-| after 0.4.0 | Platinum phase 5, SHA-512 and the preauth integrity hash (`Core_Preauth.Update`) against the specification | #170 |
+| after 0.4.0 | Platinum phase 5, SHA-512 and the preauth integrity hash (`Core_Preauth.Update`) against the specification | merged (#170) |
 | after 0.4.0 | Platinum phase 5, MD5 (RFC 1321) and MD4 (RFC 1320) against their specifications | #171 |
 
 * Mutation testing: [AdaMutant](https://github.com/gomurin0428/AdaMutant)
